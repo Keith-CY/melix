@@ -202,8 +202,23 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
         mode == .apiKeys && keys.isEmpty == false
     }
 
+    public var supportsPersistentSessions: Bool {
+        switch mode {
+        case .none:
+            return false
+        case .bearerToken:
+            return keys.isEmpty == false
+        case .apiKeys:
+            return sharedAccessEnabled && keys.isEmpty == false
+        }
+    }
+
     public var acceptedAPIKeyCount: Int {
         mode == .apiKeys ? keys.count : 0
+    }
+
+    public func containsKey(id keyID: String) -> Bool {
+        keys.contains(where: { $0.keyID == keyID })
     }
 
     public var metricModeCode: Double {

@@ -99,6 +99,12 @@ message ServerCommand {
     GetServerSnapshot get_snapshot = 4;
     SetGlobalPolicy set_policy = 5;
     ApplyGatewayAccess apply_gateway_access = 6;
+    PauseServer pause = 7;
+    ResumeServer resume = 8;
+    WakeServer wake = 9;
+    SetServerIdlePolicy set_idle_policy = 10;
+    ApplyGatewayConfig apply_gateway_config = 11;
+    ApplyServingDefaults apply_serving_defaults = 12;
   }
 }
 
@@ -151,6 +157,7 @@ message OpsCommand {
     SubmitResults submit_results = 9;
     SearchHubModels search_hub_models = 10;
     GetHubModelCard get_hub_model_card = 11;
+    RunBenchMatrix run_bench_matrix = 12;
   }
 }
 
@@ -167,7 +174,15 @@ message ImageCommand {
   oneof kind {
     GenerateImage generate = 1;
     EditImage edit = 2;
+    ApplyImageDefaults apply_defaults = 3;
   }
+}
+
+enum ImageEditMode {
+  IMAGE_EDIT_MODE_UNSPECIFIED = 0;
+  IMAGE_EDIT_MODE_EDIT = 1;
+  IMAGE_EDIT_MODE_VARIATION = 2;
+  IMAGE_EDIT_MODE_ITERATE = 3;
 }
 
 message ServerReply {
@@ -202,6 +217,9 @@ message OpsReply {
   string submission_json = 9;
   HubSearchResult hub_search = 10;
   HubModelCard hub_model_card = 11;
+  BenchmarkMatrixJobSummary benchmark_matrix_job = 12;
+  repeated BenchmarkMatrixSummaryRow benchmark_matrix_summary_rows = 13;
+  DoctorReport doctor = 14;
 }
 
 message PresetReply {
@@ -210,14 +228,36 @@ message PresetReply {
 
 message ImageReply {
   ImageJobSummary job = 1;
+  ImageDefaultsSummary image_defaults = 2;
 }
 
-message StartServer {}
-message StopServer {}
-message RestartServer {}
+message StartServer {
+  string server_session_id = 1;
+}
+message StopServer {
+  string server_session_id = 1;
+}
+message RestartServer {
+  string server_session_id = 1;
+}
+message PauseServer {
+  string server_session_id = 1;
+}
+message ResumeServer {
+  string server_session_id = 1;
+}
+message WakeServer {
+  string server_session_id = 1;
+}
 message GetServerSnapshot {}
 message SetGlobalPolicy {
   map<string, string> values = 1;
+}
+message SetServerIdlePolicy {
+  string server_session_id = 1;
+  bool auto_sleep_enabled = 2;
+  uint32 light_sleep_after_seconds = 3;
+  uint32 deep_sleep_after_seconds = 4;
 }
 message GatewayAccessKeyRecord {
   string key_id = 1;
@@ -231,10 +271,33 @@ message ApplyGatewayAccess {
   bool shared_access_enabled = 3;
   GatewayAccessKeyRecord primary_key = 4;
 }
+message ApplyGatewayConfig {
+  string server_session_id = 1;
+  string host = 2;
+  uint32 port = 3;
+  string served_model_id = 4;
+  uint32 rate_limit_per_minute = 5;
+  uint32 timeout_seconds = 6;
+}
+message ApplyServingDefaults {
+  string server_session_id = 1;
+  double temperature = 2;
+  double top_p = 3;
+  uint32 max_tokens = 4;
+  uint32 stream_interval_tokens = 5;
+  uint32 max_concurrent_requests = 6;
+  bool concurrent_processing_enabled = 7;
+  uint32 prefill_batch_size = 8;
+  uint32 completion_batch_size = 9;
+  AccelerationMode acceleration_mode = 10;
+  string draft_model_id = 11;
+  uint32 num_draft_tokens = 12;
+}
 
 message ListModels {}
 message LoadModel {
   string model_id = 1;
+  uint64 memory_budget_bytes = 2;
 }
 message UnloadModel {
   string model_id = 1;
@@ -274,6 +337,9 @@ message GenerateImage {
   uint32 n = 4;
   string response_format = 5;
   string artifact_namespace = 6;
+  uint32 steps = 7;
+  float guidance = 8;
+  string negative_prompt = 9;
 }
 
 message EditImage {
@@ -287,6 +353,22 @@ message EditImage {
   string size = 8;
   uint32 n = 9;
   string response_format = 10;
+  string source_artifact_id = 11;
+  string prompt_delta = 12;
+  ImageEditMode edit_mode = 13;
+  uint32 steps = 14;
+  float guidance = 15;
+  string negative_prompt = 16;
+}
+
+message ApplyImageDefaults {
+  string generate_model_id = 1;
+  string edit_model_id = 2;
+  string size = 3;
+  uint32 steps = 4;
+  float guidance = 5;
+  float strength = 6;
+  string negative_prompt = 7;
 }
 
 message GetCacheSnapshot {}
@@ -337,6 +419,30 @@ message RunBench {
   map<string, string> parameters = 2;
   string model_id = 3;
   string hf_repo_id = 4;
+  repeated uint32 context_lengths = 5;
+  uint32 generation_length = 6;
+  repeated uint32 batch_sizes = 7;
+  uint32 repeats = 8;
+  string cache_profile = 9;
+  string reasoning_mode = 10;
+  string structured_output_mode = 11;
+}
+message RunBenchMatrix {
+  string model_id = 1;
+  string hf_repo_id = 2;
+  string task_kind = 3;
+  repeated string suite_ids = 4;
+  repeated uint32 context_lengths = 5;
+  repeated uint32 generation_lengths = 6;
+  repeated uint32 batch_sizes = 7;
+  repeated string cache_profiles = 8;
+  repeated string reasoning_modes = 9;
+  repeated string structured_output_modes = 10;
+  repeated uint32 concurrency_levels = 11;
+  uint32 repeats = 12;
+  uint32 requests = 13;
+  uint32 duration_seconds = 14;
+  bool allow_large_matrix = 15;
 }
 message RunEvaluation {
   string suite_id = 1;
@@ -345,6 +451,10 @@ message RunEvaluation {
   map<string, string> parameters = 4;
   string model_id = 5;
   string hf_repo_id = 6;
+  uint32 few_shot = 7;
+  uint64 seed = 8;
+  string scoring_mode = 9;
+  string code_exec_policy = 10;
 }
 message SearchHubModels {
   string query = 1;
@@ -386,6 +496,7 @@ message BenchmarkJobSummary {
   int64 updated_at_unix_ms = 9;
   string task_kind = 10;
   string source_repo = 11;
+  string benchmark_mode = 12;
 }
 
 message BenchmarkResultSummary {
@@ -395,6 +506,51 @@ message BenchmarkResultSummary {
   repeated BenchmarkMetricValue metrics = 4;
   string report_path = 5;
   string report_markdown = 6;
+}
+
+message BenchmarkMatrixJobSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  string task_kind = 4;
+  string source_repo = 5;
+  repeated string suite_ids = 6;
+  string benchmark_mode = 7;
+  string status = 8;
+  string output_dir = 9;
+  int64 created_at_unix_ms = 10;
+  int64 updated_at_unix_ms = 11;
+}
+
+message BenchmarkMatrixSummaryRow {
+  string job_id = 1;
+  string task_kind = 2;
+  string source_repo = 3;
+  string model_id = 4;
+  string suite_id = 5;
+  uint32 context_length = 6;
+  uint32 generation_length = 7;
+  uint32 batch_size = 8;
+  string cache_profile = 9;
+  string reasoning_mode = 10;
+  string structured_output_mode = 11;
+  uint32 concurrency_level = 12;
+  uint32 repeats = 13;
+  uint32 requests = 14;
+  uint32 duration_seconds = 15;
+  double ttft_mean_ms = 16;
+  double ttft_std_ms = 17;
+  double request_latency_mean_ms = 18;
+  double request_latency_std_ms = 19;
+  double prefill_tokens_per_second_mean = 20;
+  double decode_tokens_per_second_mean = 21;
+  double throughput_requests_per_second = 22;
+  double throughput_tokens_per_second = 23;
+  double success_rate = 24;
+  uint64 peak_memory_bytes_max = 25;
+  double queue_wait_mean_ms = 26;
+  double queue_wait_p95_ms = 27;
+  int64 created_at_unix_ms = 28;
 }
 
 message EvaluationJobSummary {
@@ -539,6 +695,13 @@ enum MemoryResidencyPolicy {
   MEMORY_RESIDENCY_TTL = 3;
 }
 
+enum DiskStreamingMode {
+  DISK_STREAMING_MODE_UNSPECIFIED = 0;
+  DISK_STREAMING_DISABLED = 1;
+  DISK_STREAMING_PREFER_DISK = 2;
+  DISK_STREAMING_REQUIRE_DISK = 3;
+}
+
 enum ResidencyState {
   RESIDENCY_STATE_UNSPECIFIED = 0;
   RESIDENCY_STATE_DISCOVERED = 1;
@@ -591,6 +754,14 @@ message ModelSettings {
   string acceleration_profile_id = 7;
   map<string, string> ext = 8;
   AdaptiveThinkingPolicy adaptive_thinking = 9;
+  DiskStreamingMode disk_streaming_mode = 10;
+  uint64 memory_budget_bytes = 11;
+  CacheMode cache_mode = 12;
+  uint64 cache_memory_budget_bytes = 13;
+  uint32 cache_memory_budget_pct = 14;
+  uint32 cache_block_size_tokens = 15;
+  string cache_directory = 16;
+  uint64 multimodal_cache_budget_bytes = 17;
 }
 
 message AdaptiveThinkingPolicy {
@@ -605,6 +776,41 @@ message ResidencySummary {
   bool pinned = 4;
   uint32 ttl_seconds = 5;
   string transition_reason = 6;
+  DiskStreamingMode effective_disk_streaming_mode = 7;
+  uint64 memory_budget_bytes = 8;
+  uint64 memory_headroom_bytes = 9;
+  uint64 required_bytes = 10;
+}
+
+enum CacheCompatibilityState {
+  CACHE_COMPATIBILITY_STATE_UNSPECIFIED = 0;
+  CACHE_COMPATIBILITY_COMPATIBLE = 1;
+  CACHE_COMPATIBILITY_LIMITED = 2;
+  CACHE_COMPATIBILITY_DISABLED = 3;
+  CACHE_COMPATIBILITY_UNKNOWN = 4;
+}
+
+message CachePolicySummary {
+  CacheMode requested_mode = 1;
+  CacheMode effective_mode = 2;
+  CacheCompatibilityState compatibility = 3;
+  string compatibility_reason = 4;
+  string requested_directory = 5;
+  string effective_directory = 6;
+  uint32 requested_block_size_tokens = 7;
+  uint32 effective_block_size_tokens = 8;
+  uint64 requested_cache_memory_budget_bytes = 9;
+  uint64 effective_cache_memory_budget_bytes = 10;
+  uint32 requested_cache_memory_budget_pct = 11;
+  uint32 effective_cache_memory_budget_pct = 12;
+  uint64 requested_multimodal_cache_budget_bytes = 13;
+  uint64 effective_multimodal_cache_budget_bytes = 14;
+  repeated CacheMode supported_modes = 15;
+  bool supports_prefix_cache = 16;
+  bool supports_paged_cache = 17;
+  bool supports_disk_cache = 18;
+  bool supports_boundary_snapshots = 19;
+  uint32 initial_cache_blocks = 20;
 }
 
 enum EventTopic {
@@ -646,6 +852,20 @@ message ImageJobProgress {
   uint32 total_steps = 4;
 }
 
+message ImageJobRecipeSummary {
+  string prompt = 1;
+  string size = 2;
+  uint32 steps = 3;
+  float guidance = 4;
+  float strength = 5;
+  string negative_prompt = 6;
+  uint32 variant_count = 7;
+  string response_format = 8;
+  string artifact_namespace = 9;
+  string source_image_uri = 10;
+  string mask_uri = 11;
+}
+
 message ImageArtifactRef {
   string artifact_id = 1;
   string job_id = 2;
@@ -659,6 +879,7 @@ message ImageArtifactRef {
   string sha256 = 10;
   uint32 variant_index = 11;
   map<string, string> ext = 12;
+  string parent_artifact_id = 13;
 }
 
 message ImageJobSummary {
@@ -676,6 +897,12 @@ message ImageJobSummary {
   int64 created_at_unix_ms = 12;
   int64 updated_at_unix_ms = 13;
   string prompt_digest = 14;
+  string source_artifact_id = 15;
+  string source_job_id = 16;
+  string prompt_delta = 17;
+  ImageEditMode edit_mode = 18;
+  ImageJobRecipeSummary recipe = 19;
+  uint32 timeout_seconds = 20;
 }
 
 message SubscribeRequest {
@@ -700,6 +927,62 @@ message MCPToolCatalogSummary {
   repeated MCPToolSourceSummary sources = 5;
 }
 
+message EmbeddingToolingSummary {
+  string model_id = 1;
+  string backend_id = 2;
+  string family_id = 3;
+  WorkerRouteClass route_class = 4;
+  ModelState model_state = 5;
+  bool loaded = 6;
+  bool preloaded = 7;
+  bool pinned = 8;
+}
+
+message ToolingConfigPathSummary {
+  string path_id = 1;
+  string path = 2;
+}
+
+message ToolingSettingsSummary {
+  EmbeddingToolingSummary embedding = 1;
+  repeated string builtin_tool_parser_modes = 2;
+  string mcp_default_parser_mode = 3;
+  string mcp_config_path = 4;
+  uint32 mcp_enabled_source_count = 5;
+  uint32 mcp_resolved_tool_count = 6;
+  repeated ToolingConfigPathSummary config_paths = 7;
+  repeated string additional_arguments = 8;
+}
+
+enum APIOnboardingSurfaceStatus {
+  API_ONBOARDING_SURFACE_STATUS_UNSPECIFIED = 0;
+  API_ONBOARDING_SURFACE_STATUS_SHIPPED = 1;
+  API_ONBOARDING_SURFACE_STATUS_COMPATIBILITY_ONLY = 2;
+}
+
+message APIOnboardingSurfaceSummary {
+  string surface_id = 1;
+  string title = 2;
+  string summary = 3;
+  APIOnboardingSurfaceStatus status = 4;
+  repeated string endpoint_ids = 5;
+  string compatibility_note = 6;
+}
+
+message APIReferenceEndpointSummary {
+  string endpoint_id = 1;
+  string surface_id = 2;
+  string method = 3;
+  string path = 4;
+  string summary = 5;
+  bool streaming = 6;
+}
+
+message APIOnboardingSummary {
+  repeated APIOnboardingSurfaceSummary surfaces = 1;
+  repeated APIReferenceEndpointSummary endpoints = 2;
+}
+
 enum GatewayAccessMode {
   GATEWAY_ACCESS_MODE_UNSPECIFIED = 0;
   GATEWAY_ACCESS_MODE_NONE = 1;
@@ -712,6 +995,14 @@ enum GatewayAuthHeader {
   GATEWAY_AUTH_HEADER_NONE = 1;
   GATEWAY_AUTH_HEADER_AUTHORIZATION_BEARER = 2;
   GATEWAY_AUTH_HEADER_X_API_KEY = 3;
+}
+
+enum GatewayConfigSource {
+  GATEWAY_CONFIG_SOURCE_UNSPECIFIED = 0;
+  GATEWAY_CONFIG_SOURCE_BUILT_IN_DEFAULTS = 1;
+  GATEWAY_CONFIG_SOURCE_ENVIRONMENT_DEFAULTS = 2;
+  GATEWAY_CONFIG_SOURCE_CONFIG_FILE_IMPORT = 3;
+  GATEWAY_CONFIG_SOURCE_OPERATOR_OVERRIDE = 4;
 }
 
 message GatewayAccessKeySummary {
@@ -729,6 +1020,95 @@ message GatewayAccessSummary {
   repeated GatewayAccessKeySummary keys = 6;
 }
 
+message GatewayListenerConfigSummary {
+  string server_session_id = 1;
+  string requested_host = 2;
+  uint32 requested_port = 3;
+  string effective_host = 4;
+  uint32 effective_port = 5;
+  string served_model_id = 6;
+  uint32 rate_limit_per_minute = 7;
+  uint32 timeout_seconds = 8;
+  GatewayConfigSource source = 9;
+  bool active_binding = 10;
+  bool requires_restart = 11;
+  int64 updated_at_unix_ms = 12;
+}
+
+message GatewayConfigSummary {
+  repeated GatewayListenerConfigSummary listeners = 1;
+}
+
+enum ServingDefaultsSource {
+  SERVING_DEFAULTS_SOURCE_UNSPECIFIED = 0;
+  SERVING_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS = 1;
+  SERVING_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS = 2;
+  SERVING_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT = 3;
+  SERVING_DEFAULTS_SOURCE_OPERATOR_OVERRIDE = 4;
+}
+
+enum ImageDefaultsSource {
+  IMAGE_DEFAULTS_SOURCE_UNSPECIFIED = 0;
+  IMAGE_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS = 1;
+  IMAGE_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS = 2;
+  IMAGE_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT = 3;
+  IMAGE_DEFAULTS_SOURCE_OPERATOR_OVERRIDE = 4;
+}
+
+message ServingDefaultsSessionSummary {
+  string server_session_id = 1;
+  string served_model_id = 2;
+  double requested_temperature = 3;
+  double requested_top_p = 4;
+  uint32 requested_max_tokens = 5;
+  uint32 requested_stream_interval_tokens = 6;
+  uint32 requested_max_concurrent_requests = 7;
+  double effective_temperature = 8;
+  double effective_top_p = 9;
+  uint32 effective_max_tokens = 10;
+  uint32 effective_stream_interval_tokens = 11;
+  uint32 effective_max_concurrent_requests = 12;
+  ServingDefaultsSource source = 13;
+  bool model_override_applied = 14;
+  int64 updated_at_unix_ms = 15;
+  bool requested_concurrent_processing_enabled = 16;
+  uint32 requested_prefill_batch_size = 17;
+  uint32 requested_completion_batch_size = 18;
+  bool effective_concurrent_processing_enabled = 19;
+  uint32 effective_prefill_batch_size = 20;
+  uint32 effective_completion_batch_size = 21;
+  AccelerationMode requested_acceleration_mode = 22;
+  string requested_draft_model_id = 23;
+  uint32 requested_num_draft_tokens = 24;
+  AccelerationMode effective_acceleration_mode = 25;
+  string effective_draft_model_id = 26;
+  uint32 effective_num_draft_tokens = 27;
+}
+
+message ServingDefaultsSummary {
+  repeated ServingDefaultsSessionSummary sessions = 1;
+}
+
+message ImageDefaultsSummary {
+  string requested_generate_model_id = 1;
+  string requested_edit_model_id = 2;
+  string requested_size = 3;
+  uint32 requested_steps = 4;
+  float requested_guidance = 5;
+  float requested_strength = 6;
+  string requested_negative_prompt = 7;
+  string effective_generate_model_id = 8;
+  string effective_edit_model_id = 9;
+  string effective_size = 10;
+  uint32 effective_steps = 11;
+  float effective_guidance = 12;
+  float effective_strength = 13;
+  string effective_negative_prompt = 14;
+  ImageDefaultsSource source = 15;
+  int64 updated_at_unix_ms = 16;
+  uint32 request_timeout_seconds = 17;
+}
+
 message ServerSnapshot {
   ServerState server_state = 1;
   repeated WorkerSummary workers = 2;
@@ -742,6 +1122,12 @@ message ServerSnapshot {
   repeated ImageJobSummary image_jobs = 10;
   MCPToolCatalogSummary mcp_tools = 11;
   GatewayAccessSummary gateway_access = 12;
+  repeated ServerSessionRuntimeState runtime_sessions = 13;
+  GatewayConfigSummary gateway_config = 14;
+  ServingDefaultsSummary serving_defaults = 15;
+  ToolingSettingsSummary tooling_settings = 16;
+  APIOnboardingSummary api_onboarding = 17;
+  ImageDefaultsSummary image_defaults = 18;
 }
 
 message WorkerSummary {
@@ -772,6 +1158,7 @@ message ModelSummary {
   repeated string supported_modalities = 13;
   repeated string supported_tasks = 14;
   ResidencySummary residency = 15;
+  CachePolicySummary cache_policy = 16;
 }
 
 message ModelInfo {
@@ -781,6 +1168,33 @@ message ModelInfo {
   repeated string supported_parsers = 4;
   repeated string supported_modalities = 5;
   repeated string supported_tasks = 6;
+  string backend_id = 7;
+  string family_id = 8;
+  string model_path = 9;
+  string model_revision = 10;
+  string default_workflow_role = 11;
+  string detected_identity_source = 12;
+}
+
+enum DoctorHealthStatus {
+  DOCTOR_HEALTH_STATUS_UNSPECIFIED = 0;
+  DOCTOR_HEALTH_STATUS_HEALTHY = 1;
+  DOCTOR_HEALTH_STATUS_WARNING = 2;
+  DOCTOR_HEALTH_STATUS_DEGRADED = 3;
+  DOCTOR_HEALTH_STATUS_FAILED = 4;
+}
+
+message DoctorFinding {
+  string code = 1;
+  DoctorHealthStatus severity = 2;
+  string summary = 3;
+  string detail = 4;
+}
+
+message DoctorReport {
+  string markdown = 1;
+  DoctorHealthStatus health_status = 2;
+  repeated DoctorFinding findings = 3;
 }
 
 message ModelOperationResult {
@@ -856,6 +1270,14 @@ message CacheSummary {
   repeated PrefixRef hot_prefixes = 13;
   repeated SnapshotRef recent_snapshots = 14;
   CacheMode active_mode = 15;
+  string cache_root = 16;
+  uint32 initial_cache_blocks = 17;
+  repeated CacheMode supported_modes = 18;
+  repeated CacheMode experimental_modes = 19;
+  bool supports_prefix_cache = 20;
+  bool supports_paged_cache = 21;
+  bool supports_disk_cache = 22;
+  bool supports_boundary_snapshots = 23;
 }
 
 enum CacheMode {
@@ -971,6 +1393,47 @@ message SessionSummary {
   string latest_snapshot_id = 5;
 }
 
+enum ServerSessionLifecycleState {
+  SERVER_SESSION_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  SERVER_SESSION_LIFECYCLE_STATE_LOADING = 1;
+  SERVER_SESSION_LIFECYCLE_STATE_READY = 2;
+  SERVER_SESSION_LIFECYCLE_STATE_PAUSED = 3;
+  SERVER_SESSION_LIFECYCLE_STATE_SLEEPING = 4;
+  SERVER_SESSION_LIFECYCLE_STATE_STOPPED = 5;
+  SERVER_SESSION_LIFECYCLE_STATE_ERROR = 6;
+}
+
+enum ServerSessionPowerState {
+  SERVER_SESSION_POWER_STATE_UNSPECIFIED = 0;
+  SERVER_SESSION_POWER_STATE_ACTIVE = 1;
+  SERVER_SESSION_POWER_STATE_LIGHT_SLEEP = 2;
+  SERVER_SESSION_POWER_STATE_DEEP_SLEEP = 3;
+  SERVER_SESSION_POWER_STATE_STOPPED = 4;
+}
+
+enum ServerWakeReason {
+  SERVER_WAKE_REASON_UNSPECIFIED = 0;
+  SERVER_WAKE_REASON_INITIAL_BOOT = 1;
+  SERVER_WAKE_REASON_OPERATOR_RESUME = 2;
+  SERVER_WAKE_REASON_REQUEST_ACTIVITY = 3;
+  SERVER_WAKE_REASON_TOOL_ACTIVITY = 4;
+  SERVER_WAKE_REASON_POLICY_APPLY = 5;
+}
+
+message ServerSessionRuntimeState {
+  string server_session_id = 1;
+  ServerSessionLifecycleState lifecycle_state = 2;
+  ServerSessionPowerState power_state = 3;
+  ServerWakeReason wake_reason = 4;
+  uint32 idle_timer_seconds = 5;
+  bool auto_sleep_enabled = 6;
+  uint32 light_sleep_after_seconds = 7;
+  uint32 deep_sleep_after_seconds = 8;
+  int64 updated_at_unix_ms = 9;
+  DiskStreamingMode requested_disk_streaming_mode = 10;
+  DiskStreamingMode effective_disk_streaming_mode = 11;
+}
+
 message SessionState {
   string session_id = 1;
   repeated BranchState branches = 2;
@@ -1022,6 +1485,7 @@ message PresetSummary {
 
 message ServerStateChanged {
   ServerState state = 1;
+  repeated ServerSessionRuntimeState runtime_sessions = 2;
 }
 
 message WorkerStateChanged {

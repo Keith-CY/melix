@@ -21,6 +21,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.capabilityClass == .modelCapabilityText)
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.mode == "adaptive")
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.adaptiveThinking.budgetTokens == 192)
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["text_family_id"] == "llama")
+        #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["melix.capability.route_kind"] == "swift_text")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
@@ -39,6 +41,79 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedModalities == ["text"])
         #expect(models.first(where: { $0.modelID == "melix-dev-rerank" })?.supportedTasks == ["rerank"])
         #expect(models.first(where: { $0.modelID == "melix-dev-model-ops" })?.routeClass == .workerRoutePythonModelOperations)
+    }
+
+    @Test("dev text model reads qwen3moe family overrides into compatibility routing metadata")
+    func devTextModelReadsQwen3MoEFamilyOverrides() async throws {
+        let model = ModelCatalog.devTextModel(environment: [
+            "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/qwen3-moe-128e",
+        ])
+
+        #expect(model.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(model.supportedModalities == ["text"])
+        #expect(model.supportedTasks == ["generate"])
+        #expect(model.settings.ext["text_backend_id"] == "mlx_lm")
+        #expect(model.settings.ext["text_family_id"] == "qwen3moe")
+        #expect(model.settings.ext["model_architecture"] == "qwen3_moe")
+        #expect(model.settings.ext["detected_identity_source"] == "explicit_override")
+        #expect(model.settings.ext["melix.adapter_set_hash"] == "text-family-qwen3moe")
+        #expect(model.settings.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(model.settings.ext["melix.capability.supported_parsers"] == "text,qwen")
+        #expect(model.settings.ext["tool_parser_mode"] == "qwen")
+        #expect(model.settings.ext["tool_parser_namespaces"] == "tools.text")
+        #expect(model.settings.ext["tool_parser_xml_fallback"] == "true")
+        #expect(model.settings.ext["melix.text.rope_profile"] == "yarn_interleaved")
+        #expect(model.settings.ext["melix.text.moe.enabled"] == "true")
+        #expect(model.settings.ext["melix.text.moe.expert_count"] == "128")
+        #expect(model.settings.ext["melix.text.moe.gate_dequant"] == "true")
+    }
+
+    @Test("dev text model infers directory based dense and moe families")
+    func devTextModelInfersDirectoryBasedFamilies() async throws {
+        let cases: [(String, String, String)] = [
+            ("models/mistral-small-4", "mistral4", "mistral4"),
+            ("models/mixtral-8x7b", "mixtral", "mixtral"),
+            ("models/qwen3-moe-128e", "qwen3moe", "qwen3_moe"),
+            ("models/deepseek-v3-mla", "deepseek-mla", "deepseek_v3"),
+            ("models/nemotron-h", "nemotron-h", "nemotron_h"),
+        ]
+
+        for (modelPath, familyID, architecture) in cases {
+            let model = ModelCatalog.devTextModel(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": modelPath,
+            ])
+
+            #expect(model.routeClass == .workerRoutePythonTextCompatibility)
+            #expect(model.settings.ext["text_family_id"] == familyID)
+            #expect(model.settings.ext["model_architecture"] == architecture)
+            #expect(model.settings.ext["detected_identity_source"] == "directory_name")
+        }
+    }
+
+    @Test("dev text model exposes explicit family defaults for dense and moe adapters")
+    func devTextModelExposesExplicitFamilyDefaults() async throws {
+        let cases: [(String, String, String, String, String)] = [
+            ("llama", "llama", "0", "false", "false"),
+            ("mistral4", "mistral4", "8", "true", "true"),
+            ("mixtral", "mixtral", "8", "true", "false"),
+            ("deepseek-mla", "deepseek_v3", "64", "true", "true"),
+            ("nemotron-h", "nemotron_h", "0", "false", "false"),
+        ]
+
+        for (familyID, architecture, expertCount, moeEnabled, gateDequant) in cases {
+            let model = ModelCatalog.devTextModel(environment: [
+                "MELIX_DEV_TEXT_FAMILY_ID": familyID,
+                "MELIX_DEV_TEXT_MODEL_PATH": "models/\(familyID)",
+            ])
+
+            #expect(model.settings.ext["text_family_id"] == familyID)
+            #expect(model.settings.ext["model_architecture"] == architecture)
+            #expect(model.settings.ext["detected_identity_source"] == "explicit_override")
+            #expect(model.settings.ext["melix.text.moe.enabled"] == moeEnabled)
+            #expect(model.settings.ext["melix.text.moe.gate_dequant"] == gateDequant)
+            #expect(model.settings.ext["melix.text.moe.expert_count", default: "0"] == expertCount)
+        }
     }
 
     @Test("dev rerank model reads causal-lm environment overrides")
@@ -319,6 +394,65 @@ struct ModelCatalogTests {
         #expect(await catalog.dispatchHandle(for: initial.modelID) == "registry::existing")
     }
 
+    @Test("syncRegistryModels merges disk streaming settings into warm discovered entries")
+    func syncRegistryModelsMergesDiskStreamingSettingsIntoWarmDiscoveredEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var initial = Melix_Controlplane_V1_ModelSummary()
+        initial.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        initial.kind = "text"
+        initial.state = .modelDiscovered
+        initial.capabilityClass = .modelCapabilityText
+        initial.routeClass = .workerRouteSwiftText
+
+        await catalog.syncRegistryModels([initial], reason: "worker_registry_sync")
+        _ = await catalog.loadModel(id: initial.modelID, dispatchHandle: "registry::existing")
+
+        var refreshed = initial
+        refreshed.settings.diskStreamingMode = .diskStreamingRequireDisk
+
+        await catalog.syncRegistryModels([refreshed], reason: "worker_registry_sync")
+
+        let merged = try #require(await catalog.model(id: initial.modelID))
+        #expect(merged.state == .modelWarm)
+        #expect(merged.settings.diskStreamingMode == .diskStreamingRequireDisk)
+        #expect(merged.residency.effectiveDiskStreamingMode == .diskStreamingRequireDisk)
+    }
+
+    @Test("syncRegistryModels merges cache policy settings into warm discovered entries")
+    func syncRegistryModelsMergesCachePolicySettingsIntoWarmDiscoveredEntries() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        var initial = Melix_Controlplane_V1_ModelSummary()
+        initial.modelID = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+        initial.kind = "text"
+        initial.state = .modelDiscovered
+        initial.capabilityClass = .modelCapabilityText
+        initial.routeClass = .workerRouteSwiftText
+
+        await catalog.syncRegistryModels([initial], reason: "worker_registry_sync")
+        _ = await catalog.loadModel(id: initial.modelID, dispatchHandle: "registry::existing")
+
+        var refreshed = initial
+        refreshed.settings.cacheMode = .hybrid
+        refreshed.settings.cacheMemoryBudgetBytes = 4_096
+        refreshed.settings.cacheMemoryBudgetPct = 25
+        refreshed.settings.cacheBlockSizeTokens = 64
+        refreshed.settings.cacheDirectory = "/tmp/melix-cache"
+        refreshed.settings.multimodalCacheBudgetBytes = 2_048
+
+        await catalog.syncRegistryModels([refreshed], reason: "worker_registry_sync")
+
+        let merged = try #require(await catalog.model(id: initial.modelID))
+        #expect(merged.state == .modelWarm)
+        #expect(merged.settings.cacheMode == .hybrid)
+        #expect(merged.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(merged.settings.cacheMemoryBudgetPct == 25)
+        #expect(merged.settings.cacheBlockSizeTokens == 64)
+        #expect(merged.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(merged.settings.multimodalCacheBudgetBytes == 2_048)
+    }
+
     @Test("syncRegistryModels preserves structured registry identity metadata from worker snapshots")
     func syncRegistryModelsPreservesStructuredRegistryIdentityMetadataFromWorkerSnapshots() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
@@ -346,6 +480,53 @@ struct ModelCatalogTests {
         #expect(synced.settings.ext["melix.registry_model_name"] == "Qwen2.5-7B-Instruct")
         #expect(synced.settings.ext["melix.registry_variant_id"] == "q4f16")
         #expect(synced.settings.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
+    @Test("registry snapshot state preserves explicit root overrides and sorts roots by order")
+    func registrySnapshotStatePreservesExplicitRootOverridesAndSortsRootsByOrder() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        await catalog.recordRegistrySnapshot(
+            roots: [
+                .init(
+                    rootID: "root-b",
+                    rootPath: "/tmp/root-b",
+                    rootOrder: 2,
+                    accessible: true,
+                    discoveredModelIDs: ["model-b"]
+                ),
+                .init(
+                    rootID: "root-a",
+                    rootPath: "/tmp/root-a",
+                    rootOrder: 1,
+                    accessible: false,
+                    errorCode: "not_found",
+                    errorMessage: "missing",
+                    discoveredModelIDs: []
+                ),
+            ],
+            scannedAtUnixMs: 1_712_000_000_000,
+            configuredRootPaths: ["/tmp/root-b", "/tmp/root-a"]
+        )
+
+        let state = await catalog.registrySnapshotState()
+
+        #expect(state.hasConfiguredRootOverride)
+        #expect(state.configuredRootPaths == ["/tmp/root-b", "/tmp/root-a"])
+        #expect(state.roots.map(\.rootID) == ["root-a", "root-b"])
+        #expect(state.roots.map(\.rootOrder) == [1, 2])
+        #expect(state.scannedAtUnixMs == 1_712_000_000_000)
+    }
+
+    @Test("configured registry root override distinguishes explicit empty roots from no override")
+    func configuredRegistryRootOverrideDistinguishesExplicitEmptyRootsFromNoOverride() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+
+        #expect(await catalog.configuredRegistryRootOverride() == nil)
+        await catalog.updateConfiguredRegistryRoots([])
+        #expect(await catalog.configuredRegistryRootOverride() == [])
+        await catalog.updateConfiguredRegistryRoots(nil)
+        #expect(await catalog.configuredRegistryRootOverride() == nil)
     }
 
     @Test("residency summary follows seed defaults and load-unload transitions")
@@ -485,6 +666,52 @@ struct ModelCatalogTests {
             #expect(await catalog.dispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
             #expect(await catalog.storedDispatchHandle(for: "melix-dev-text") == (keepsHandle ? "melix-dev-text::swift" : nil))
         }
+    }
+
+    @Test("worker residency disk streaming modes map into control-plane residency summaries")
+    func workerResidencyDiskStreamingModesMapIntoControlPlaneResidencySummaries() async throws {
+        let cases: [(Melix_Worker_V1_DiskStreamingMode, Melix_Controlplane_V1_DiskStreamingMode)] = [
+            (.diskStreamingDisabled, .diskStreamingDisabled),
+            (.diskStreamingPreferDisk, .diskStreamingPreferDisk),
+            (.diskStreamingRequireDisk, .diskStreamingRequireDisk),
+        ]
+
+        for (workerMode, expectedMode) in cases {
+            let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+            var workerResidency = Melix_Worker_V1_ResidencyInfo()
+            workerResidency.state = .warm
+            workerResidency.effectiveDiskStreamingMode = workerMode
+
+            let loaded = try #require(await catalog.recordLoadSucceeded(
+                id: "melix-dev-text",
+                dispatchHandle: "melix-dev-text::swift",
+                workerResidency: workerResidency
+            ))
+
+            #expect(loaded.residency.effectiveDiskStreamingMode == expectedMode)
+        }
+    }
+
+    @Test("model settings and failure evidence project memory budget state into residency summaries")
+    func modelSettingsAndFailureEvidenceProjectMemoryBudgetStateIntoResidencySummaries() async throws {
+        var seed = ModelCatalog.devTextModel()
+        seed.settings.memoryBudgetBytes = 8_192
+        let catalog = ModelCatalog(seedModels: [seed])
+
+        let failed = try #require(await catalog.recordLoadFailed(
+            id: "melix-dev-text",
+            reason: "operator_load_memory_budget_exceeded",
+            memoryBudgetEvidence: .init(
+                memoryBudgetBytes: 8_192,
+                memoryHeadroomBytes: 1_024,
+                requiredBytes: 9_216
+            )
+        ))
+
+        #expect(failed.settings.memoryBudgetBytes == 8_192)
+        #expect(failed.residency.memoryBudgetBytes == 8_192)
+        #expect(failed.residency.memoryHeadroomBytes == 1_024)
+        #expect(failed.residency.requiredBytes == 9_216)
     }
 
     @Test("explicit transition helpers handle missing models custom handles and unload failures")
@@ -646,7 +873,11 @@ struct ModelCatalogTests {
         #expect(vlmModel.settings.ext["vision_supports_tool_calls"] == "true")
         #expect(vlmModel.settings.ext["melix.multimodal_adapter_hash"] == "vision-family-llava-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-transcribe" })?.supportedTasks == ["transcribe"])
+        #expect(models.first(where: { $0.modelID == "melix-whisper-mlx" })?.supportedTasks == ["transcribe"])
+        #expect(models.first(where: { $0.modelID == "melix-parakeet-mlx" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
+        #expect(models.first(where: { $0.modelID == "melix-kokoro-mlx" })?.supportedTasks == ["speak"])
+        #expect(models.first(where: { $0.modelID == "melix-qwen3-tts-mlx" })?.supportedTasks == ["speak"])
     }
 
     @Test("audio seed models expose backend metadata for deterministic and mlx-audio paths")
@@ -654,7 +885,9 @@ struct ModelCatalogTests {
         let deterministicTranscription = ModelCatalog.devTranscriptionModel()
         let deterministicSpeech = ModelCatalog.devSpeechModel()
         let whisper = ModelCatalog.mlxWhisperModel()
+        let parakeet = ModelCatalog.mlxParakeetModel()
         let kokoro = ModelCatalog.mlxKokoroModel()
+        let qwen3TTS = ModelCatalog.mlxQwen3TTSModel()
 
         #expect(deterministicTranscription.settings.ext["melix.audio.backend_id"] == "deterministic")
         #expect(deterministicTranscription.settings.ext["melix.audio.family_id"] == "deterministic-transcription")
@@ -672,11 +905,37 @@ struct ModelCatalogTests {
         #expect(whisper.settings.ext["melix.audio.family_id"] == "whisper")
         #expect(whisper.settings.ext["melix.audio.install_profile"] == "audio-stt")
 
+        #expect(parakeet.kind == "transcription")
+        #expect(parakeet.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeet.settings.ext["melix.audio.family_id"] == "parakeet")
+        #expect(parakeet.settings.ext["melix.audio.install_profile"] == "audio-stt")
+
         #expect(kokoro.kind == "speech")
         #expect(kokoro.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
         #expect(kokoro.settings.ext["melix.audio.family_id"] == "kokoro")
         #expect(kokoro.settings.ext["melix.audio.output_formats"] == "wav")
         #expect(kokoro.settings.ext["melix.audio.supports_instructions"] == "false")
+        #expect(kokoro.settings.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
+        #expect(kokoro.settings.ext["melix.audio.voice_locales"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.default_locale"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.packaged_default_locale"] == "en")
+        #expect(kokoro.settings.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
+
+        #expect(qwen3TTS.kind == "speech")
+        #expect(qwen3TTS.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.family_id"] == "qwen3-tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.install_profile"] == "audio-tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.languages"] == "zh,en")
+        #expect(qwen3TTS.settings.ext["melix.audio.voice_mode"] == "hybrid")
+        #expect(qwen3TTS.settings.ext["melix.audio.supports_instructions"] == "true")
+        #expect(
+            qwen3TTS.settings.ext["melix.audio.voice_catalog_summary"]
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+        #expect(qwen3TTS.settings.ext["melix.audio.voice_locales"] == "zh,en")
+        #expect(qwen3TTS.settings.ext["melix.audio.default_locale"] == "zh")
+        #expect(qwen3TTS.settings.ext["melix.audio.packaged_default_locale"] == "zh")
+        #expect(qwen3TTS.settings.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
     }
 
     @Test("phase seven contract seed models expose image routes and tasks")
@@ -689,5 +948,93 @@ struct ModelCatalogTests {
         #expect(imageModel.routeClass == .workerRoutePythonImage)
         #expect(imageModel.supportedTasks == ["image_generate", "image_edit"])
         #expect(imageModel.supportedModalities == ["text", "image"])
+    }
+
+    @Test("dev image model reads family and role overrides")
+    func devImageModelReadsFamilyAndRoleOverrides() async throws {
+        let qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        let fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        let kontext = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-kontext-dev",
+        ])
+
+        #expect(qwen.routeClass == .workerRoutePythonImage)
+        #expect(qwen.settings.ext["melix.image.family_id"] == "qwenimage-v1")
+        #expect(qwen.settings.ext["melix.image.task_kind"] == "text-to-image")
+        #expect(qwen.settings.ext["melix.image.supports_generation"] == "true")
+        #expect(qwen.settings.ext["melix.image.supports_edit"] == "false")
+        #expect(qwen.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(qwen.settings.ext["melix.image.default_steps"] == "32")
+        #expect(qwen.settings.ext["melix.image.default_guidance"] == "4.0")
+        #expect(qwen.settings.ext["melix.image.default_strength"] == "1.0")
+        #expect(qwen.supportedTasks == ["image_generate"])
+        #expect(qwen.settings.ext["detected_identity_source"] == "explicit_override")
+
+        #expect(fill.settings.ext["melix.image.family_id"] == "fill-v1")
+        #expect(fill.settings.ext["melix.image.task_kind"] == "image-text-to-image")
+        #expect(fill.settings.ext["melix.image.default_workflow_role"] == "edit")
+        #expect(fill.settings.ext["melix.image.supports_generation"] == "false")
+        #expect(fill.settings.ext["melix.image.supports_edit"] == "true")
+        #expect(fill.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(fill.settings.ext["melix.image.default_steps"] == "24")
+        #expect(fill.settings.ext["melix.image.default_guidance"] == "6.5")
+        #expect(fill.settings.ext["melix.image.default_strength"] == "0.8")
+        #expect(fill.supportedTasks == ["image_edit"])
+        #expect(fill.settings.ext["task_override"] == "true")
+
+        #expect(kontext.settings.ext["melix.image.family_id"] == "kontext-v1")
+        #expect(kontext.settings.ext["detected_identity_source"] == "directory_name")
+        #expect(kontext.settings.ext["melix.image.default_size"] == "1024x1024")
+        #expect(kontext.settings.ext["melix.image.default_steps"] == "28")
+        #expect(kontext.settings.ext["melix.image.default_guidance"] == "6.5")
+        #expect(kontext.settings.ext["melix.image.default_strength"] == "0.8")
+        #expect(kontext.supportedTasks == ["image_generate", "image_edit"])
+    }
+
+    @Test("dev image model infers directory and task-kind families across image adapters")
+    func devImageModelInfersDirectoryAndTaskKindFamiliesAcrossImageAdapters() async throws {
+        let fibo = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fibo-dev",
+        ])
+        let klein = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/klein-edit-dev",
+        ])
+        let taskKindFallback = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/plain-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        let blankTaskKind = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/plain-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "   ",
+        ])
+        let invalidTaskKind = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-to-text",
+        ])
+
+        #expect(fibo.settings.ext["melix.image.family_id"] == "fibo-v1")
+        #expect(fibo.settings.ext["melix.image.supports_edit"] == "false")
+        #expect(fibo.settings.ext["detected_identity_source"] == "directory_name")
+
+        #expect(klein.settings.ext["melix.image.family_id"] == "klein-v1")
+        #expect(klein.settings.ext["melix.image.supports_generation"] == "false")
+        #expect(klein.settings.ext["melix.image.default_workflow_role"] == "edit")
+
+        #expect(taskKindFallback.settings.ext["melix.image.family_id"] == "kontext-v1")
+        #expect(taskKindFallback.settings.ext["detected_identity_source"] == "task_kind")
+        #expect(taskKindFallback.settings.ext["melix.image.task_kind"] == "image-text-to-image")
+
+        #expect(blankTaskKind.settings.ext["melix.image.family_id"] == "deterministic-v1")
+        #expect(blankTaskKind.settings.ext["melix.image.task_kind"] == "text-to-image")
+
+        #expect(invalidTaskKind.settings.ext["melix.image.family_id"] == "qwenimage-v1")
+        #expect(invalidTaskKind.settings.ext["melix.image.task_kind"] == "text-to-image")
     }
 }

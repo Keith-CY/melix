@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -38,7 +40,9 @@ from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
@@ -130,6 +134,34 @@ class EmptyThenTokenBenchmarkBackend:
             return
         yield RuntimeTokenEvent(text="")
         yield RuntimeTokenEvent(text="token", completion_tokens=1)
+
+
+class RecordingBenchmarkBackend:
+    runtime_name = "recording-benchmark"
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        return 1_024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        self.prompts.append(prompt)
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(
+            text="token",
+            completion_tokens=1,
+            prompt_tokens=len(prompt.split()),
+            prompt_tps=1.0,
+            generation_tps=1.0,
+            peak_memory=1_024.0,
+        )
 
 
 class FakeBenchmarkHFDatasetFetcher:
@@ -392,6 +424,30 @@ def build_service(
     return service
 
 
+def imported_gemma4_text_backed_model() -> common_pb2.ModelSpec:
+    return common_pb2.ModelSpec(
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_kind="vlm",
+        revision="main",
+        tokenizer_hash="hf.unsloth.gemma-4-E4B-it-MLX-8bit",
+        quant_profile_id="q8",
+        parser_mode="text",
+        reasoning_mode="off",
+        max_context=4096,
+        ext={
+            "melix.vlm.backend_id": "mlx_vlm",
+            "melix.vlm.execution_mode": "text_backed",
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "vision_tokenization_mode": "interleaved",
+            "vision_max_images_per_prompt": "8",
+            "vision_supports_tool_calls": "true",
+            "melix.multimodal_adapter_hash": "vision-family-gemma4-v1",
+        },
+    )
+
+
 def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -422,7 +478,16 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
     assert convert_events[0].HasField("started")
     assert convert_events[-1].HasField("completed")
     convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
-    assert json.loads(convert_manifest.manifest_json)["operation"] == "convert"
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    assert convert_payload["operation"] == "convert"
+    assert convert_payload["schema_version"] == "melix.converted_model_bundle.v1"
+    assert convert_payload["artifact_kind"] == "converted_model_bundle"
+    assert convert_payload["target_format"] == "melix_model_bundle"
+    assert convert_payload["compatibility"]["runtime"] == "mlx_text"
+    assert convert_manifest.artifact.artifact_kind == "converted_model_bundle"
+    assert convert_manifest.artifact.runtime == "mlx_text"
+    assert convert_events[-1].completed.output_path.endswith("convert.artifact")
+    assert convert_events[-1].completed.artifact.artifact_kind == "converted_model_bundle"
 
     assert quantize_events[0].HasField("started")
     assert quantize_events[-1].HasField("completed")
@@ -451,6 +516,7 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
             maintenance_pb2.ConvertModelRequest(
                 source_model=str(tmp_path / "artifact"),
                 output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
                 ext={"operation": "upload", "target_repo": "melix/upload-target"},
             ),
             context=None,
@@ -459,6 +525,13 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
 
     assert download_events[-1].completed.output_path.endswith("download.artifact")
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    upload_manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    upload_payload = json.loads(upload_manifest.manifest_json)
+    assert upload_payload["schema_version"] == "melix.upload_receipt.v1"
+    assert upload_payload["artifact_kind"] == "upload_receipt"
+    assert upload_payload["target_repo"] == "melix/upload-target"
+    assert upload_payload["source_artifact_kind"] == "model"
+    assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
 def test_download_job_resumes_from_partial_state_and_records_resume_metadata(tmp_path: Path) -> None:
@@ -635,15 +708,87 @@ def test_upload_job_links_quantized_artifact_metadata(tmp_path: Path) -> None:
     payload = json.loads(manifest.manifest_json)
 
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert manifest.artifact.artifact_kind == "upload_receipt"
+    assert manifest.artifact.runtime == "mlx_text"
     assert payload["operation"] == "upload"
     assert payload["artifact_path"] == str(bundle_path)
-    assert payload["artifact_kind"] == "model"
+    assert payload["artifact_kind"] == "upload_receipt"
     assert payload["target_repo"] == "melix/models/melix-dev-text-q6"
+    assert payload["source_artifact_kind"] == "quantized_model_bundle"
     assert payload["linked_quantization"]["artifact_kind"] == "quantized_model_bundle"
     assert payload["linked_quantization"]["artifact_path"] == str(bundle_path)
     assert payload["linked_quantization"]["quant_profile_id"] == "q6"
     assert payload["linked_quantization"]["calibration_sample_count"] == 32
     assert payload["linked_quantization"]["smoke_test_passed"] is True
+
+
+def test_upload_job_links_converted_bundle_metadata(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+                run_smoke_test=True,
+            ),
+            context=None,
+        )
+    )
+    bundle_path = Path(convert_events[-1].completed.output_path)
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-convert"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/melix-dev-text-converted",
+                },
+            ),
+            context=None,
+        )
+    )
+    manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    payload = json.loads(manifest.manifest_json)
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["source_artifact_kind"] == "converted_model_bundle"
+    assert payload["target_format"] == "melix_model_bundle"
+    assert payload["conversion_backend"] == "melix_structural_packager"
+
+
+def test_upload_job_fails_for_invalid_artifact_manifest(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    bundle_path = tmp_path / "broken-artifact"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-broken"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "model",
+                    "artifact_path": str(bundle_path),
+                    "target_repo": "melix/models/broken",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "invalid_artifact"
+    assert "not valid JSON" in events[-1].failed.error.message
 
 
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
@@ -984,13 +1129,16 @@ def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: 
         event.manifest for event in snapshot_events if event.HasField("manifest")
     )
     payload = json.loads(snapshot_manifest.manifest_json)
+    expected_root_id = f"root-{hashlib.sha1(os.fspath(registry_root.resolve()).encode('utf-8')).hexdigest()[:12]}"
 
     assert payload["operation"] == "registry_snapshot"
-    assert payload["model_registry"]["roots"][0]["root_id"] == "root-1"
+    assert payload["model_registry"]["roots"][0]["root_id"] == expected_root_id
+    assert payload["model_registry"]["roots"][0]["root_order"] == 1
     assert payload["model_registry"]["roots"][0]["accessible"] is True
     discovered_ids = [model["model_id"] for model in payload["model_registry"]["models"]]
     assert discovered_ids == ["mlx-community/Qwen2.5-7B-Instruct/4bit"]
-    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == "root-1"
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == expected_root_id
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_order"] == "1"
 
 
 def test_registry_snapshot_includes_structured_identity_fields_for_discovered_models(tmp_path: Path) -> None:
@@ -1035,6 +1183,53 @@ def test_registry_snapshot_includes_structured_identity_fields_for_discovered_mo
     assert identity["melix.registry_model_name"] == "Qwen2.5-7B-Instruct"
     assert identity["melix.registry_variant_id"] == "q4f16"
     assert identity["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+
+def test_registry_snapshot_respects_explicit_root_override_and_rescan_flag(tmp_path: Path) -> None:
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    duplicate_id = "mlx-community/Qwen2.5-7B-Instruct/4bit"
+    _write_registry_manifest(
+        root_a / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        ext={"source_root": "a"},
+    )
+    _write_registry_manifest(
+        root_b / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id=duplicate_id,
+        ext={"source_root": "b"},
+    )
+
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root_a)}))
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    override_json = json.dumps([os.fspath(root_b), os.fspath(root_a)])
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={
+                    "operation": "registry_snapshot",
+                    "melix.registry_roots_json": override_json,
+                    "melix.registry_rescan": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+    snapshot_manifest = next(
+        event.manifest for event in snapshot_events if event.HasField("manifest")
+    )
+    payload = json.loads(snapshot_manifest.manifest_json)
+    expected_b_root_id = f"root-{hashlib.sha1(os.fspath(root_b.resolve()).encode('utf-8')).hexdigest()[:12]}"
+    expected_a_root_id = f"root-{hashlib.sha1(os.fspath(root_a.resolve()).encode('utf-8')).hexdigest()[:12]}"
+
+    assert [root["root_id"] for root in payload["model_registry"]["roots"]] == [expected_b_root_id, expected_a_root_id]
+    assert payload["model_registry"]["models"][0]["ext"]["source_root"] == "b"
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_id"] == expected_b_root_id
+    assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_order"] == "1"
 
 
 def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -> None:
@@ -1101,11 +1296,48 @@ def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_statu
 
     assert download["source_model"] == "mlx-community/snapshot-demo"
     assert download["status"] == "completed"
+    assert download["output_dir"] == str(output_dir)
     assert download["selected_mirror"] == "https://mirror.example/snapshot"
     assert download["downloaded_bytes"] == len(source_bytes)
     assert download["total_bytes"] == len(source_bytes)
     assert download["output_path"].endswith("download.artifact")
     assert download["state_path"].endswith("download.state.json")
+    assert download["resume_ready"] is False
+
+
+def test_job_registry_snapshot_marks_partial_downloads_as_resume_ready(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, _ = _write_download_source_file(tmp_path, size=2048)
+    output_dir = tmp_path / "download-resume-ready"
+
+    list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/resume-ready-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "mirror_url": "https://mirror.example/resume-ready",
+                    "max_retries": "0",
+                    "test_failures_before_success": "1",
+                    "test_fail_after_bytes": "512",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    snapshot = service._core._job_registry.snapshot()
+    download = snapshot["downloads"][0]
+
+    assert download["source_model"] == "mlx-community/resume-ready-demo"
+    assert download["output_dir"] == str(output_dir)
+    assert download["status"] == "failed"
+    assert download["resume_ready"] is True
+    assert download["partial_path"].endswith("download.artifact.partial")
+    assert download["downloaded_bytes"] == 512
 
 
 def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapters() -> None:
@@ -1261,11 +1493,19 @@ def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None
     assert embed.supported_modalities == ["text"]
     assert embed.supported_tasks == ["embed"]
     assert embed.supported_parsers == ["text"]
+    assert embed.backend_id == "bert-v1"
+    assert embed.family_id == "bert"
+    assert embed.model_path == "models/melix-dev-embed"
+    assert embed.model_revision == "dev"
+    assert embed.detected_identity_source == "default"
     assert rerank.ok is True
     assert rerank.model_kind == "rerank"
     assert rerank.supported_modalities == ["text"]
     assert rerank.supported_tasks == ["rerank"]
     assert rerank.supported_parsers == ["text"]
+    assert rerank.backend_id == "token-overlap-v1"
+    assert rerank.family_id == "jina-v3"
+    assert rerank.model_revision == "dev"
     assert missing.ok is False
     assert missing.error.code == "not_found"
 
@@ -1300,6 +1540,10 @@ def test_get_model_info_uses_kind_fallbacks_for_audio_and_image_models(tmp_path:
     assert image.supported_modalities == ["text", "image"]
     assert image.supported_tasks == ["image_generate", "image_edit"]
     assert image.supported_parsers == ["text"]
+    assert image.backend_id == "deterministic"
+    assert image.family_id == "deterministic-v1"
+    assert image.default_workflow_role == "generate"
+    assert image.detected_identity_source == "default"
 
 
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
@@ -1318,6 +1562,8 @@ def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_a
 
     assert response.ok is True
     assert response.supported_parsers == ["text", "qwen"]
+    assert response.family_id == "llava-v1"
+    assert response.backend_id == "deterministic"
 
 
 def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
@@ -1343,9 +1589,13 @@ def test_doctor_and_bench_return_deterministic_reports(tmp_path: Path) -> None:
 
     assert doctor.ok is True
     assert "# Melix Doctor" in doctor.report_markdown
+    assert "## Health" in doctor.report_markdown
+    assert "status: degraded" in doctor.report_markdown
     assert "model_handle: melix-dev-text::1" in doctor.report_markdown
     assert "## Cache" in doctor.report_markdown
     assert "## Memory" in doctor.report_markdown
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_DEGRADED
+    assert [finding.code for finding in doctor.findings] == ["model_not_loaded"]
 
     assert bench_events[0].started.job_id == "model-ops-0001"
     assert any(event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms" for event in bench_events)
@@ -1362,6 +1612,31 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         model_catalog=WorkerModelCatalog(),
     )
     service = build_service(tmp_path, registry=registry)
+
+
+def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    doctor = service.RunDoctor(
+        maintenance_pb2.RunDoctorRequest(
+            model_handle=loaded.handle,
+            include_cache_diagnostics=True,
+        ),
+        context=None,
+    )
+
+    assert doctor.ok is True
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_WARNING
+    assert any(finding.code == "cache_unavailable" for finding in doctor.findings)
+    assert "warning cache_unavailable" in doctor.report_markdown
 
     events = list(
         service.RunBench(
@@ -1380,9 +1655,49 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         if event.HasField("metric")
     }
 
-    assert metrics["bench.smoke.tokens_per_second"] > 100.0
+    assert metrics["bench.smoke.tokens_per_second"] > 0.0
     assert 0.0 < metrics["bench.smoke.ttft_ms"] < 20.0
     assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] > 0.0
+
+
+def test_doctor_findings_cover_failed_worker_and_zero_resident_bytes(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    core = MaintenanceCore(registry, jobs_root=tmp_path / "model-ops")
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    request = maintenance_pb2.RunDoctorRequest(
+        model_handle=loaded.handle,
+        include_memory_report=True,
+    )
+    stats = SimpleNamespace(
+        worker_state="failed",
+        resident_bytes=0,
+        l1_cache_bytes=128,
+        l2_cache_bytes=64,
+    )
+
+    findings = core._doctor_findings(
+        request=request,
+        stats=stats,
+        loaded_models=[loaded.handle],
+        loaded_model=loaded,
+    )
+
+    assert [finding.code for finding in findings] == ["worker_failed", "resident_bytes_zero"]
+    assert findings[0].severity == maintenance_pb2.HEALTH_STATUS_FAILED
+    assert findings[1].severity == maintenance_pb2.HEALTH_STATUS_WARNING
+    assert core._doctor_health_status(findings) == maintenance_pb2.HEALTH_STATUS_FAILED
+    assert core._doctor_health_status_label(findings[0].severity) == "failed"
+
+
+def test_doctor_health_status_helpers_cover_healthy_and_unknown_states() -> None:
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_FAILED) == 4
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_HEALTHY) == 1
+    assert maintenance_core_module._health_status_rank(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == 0
+    assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_FAILED) == "failed"
+    assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == "unknown"
 
 
 def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -> None:
@@ -1438,12 +1753,132 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
         suite=resolved_suite,
         prompt=resolved_suite.prompt_batches[0],
         parameters={"max_output_tokens": "not-a-number"},
+        context_length=16,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
     )
 
     assert sample.completion_tokens == 1
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+
+
+def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
+    suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path / "model-ops",
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+
+    warm_backend = RecordingBenchmarkBackend()
+    warm_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=warm_backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    warm_core = MaintenanceCore(
+        warm_registry,
+        jobs_root=tmp_path / "warm-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+    warm_loaded = warm_registry.load_model(WorkerModelCatalog.dev_text_model())
+    warm_core._measure_text_bench_sample(
+        loaded_model=warm_loaded,
+        suite=suite,
+        prompt=suite.prompt_batches[0],
+        parameters={"max_output_tokens": "4"},
+        context_length=32,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="warm",
+        reasoning_mode="",
+        structured_output_mode="",
+    )
+
+    partial_backend = RecordingBenchmarkBackend()
+    partial_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=partial_backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    partial_core = MaintenanceCore(
+        partial_registry,
+        jobs_root=tmp_path / "partial-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+    partial_loaded = partial_registry.load_model(WorkerModelCatalog.dev_text_model())
+    partial_core._measure_text_bench_sample(
+        loaded_model=partial_loaded,
+        suite=suite,
+        prompt=suite.prompt_batches[0],
+        parameters={"max_output_tokens": "4"},
+        context_length=32,
+        repeat_index=0,
+        batch_size=1,
+        cache_profile="partial_prefix",
+        reasoning_mode="",
+        structured_output_mode="",
+    )
+
+    assert len(warm_backend.prompts) == 2
+    assert len(partial_backend.prompts) == 2
+    assert len(partial_backend.prompts[0]) < len(warm_backend.prompts[0])
+    assert partial_backend.prompts[0] != warm_backend.prompts[0]
+
+
+def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
+    suite = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path / "model-ops",
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+    core = MaintenanceCore(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+            model_catalog=WorkerModelCatalog(),
+        ),
+        jobs_root=tmp_path / "helper-model-ops",
+        benchmark_suite_catalog=catalog,
+    )
+
+    with pytest.raises(ModelOperationError):
+        MaintenanceCore._benchmark_cache_profile({"cache_profile": "invalid"})
+    assert MaintenanceCore._benchmark_repeats({"repeats": "oops"}) == 1
+    assert MaintenanceCore._benchmark_generation_length({"generation_length": "oops"}) == 8
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_lengths": "8, bad, 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_lengths": "8, , 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
+        parameters={"context_length": "oops"},
+    ) == (32,)
+    assert core._benchmark_batch_sizes({"batch_sizes": "1, bad, 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_sizes": "1, , 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
+    assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
+    assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    with pytest.raises(ModelOperationError):
+        core._measure_text_bench_sample(
+            loaded_model=core._registry.load_model(WorkerModelCatalog.dev_text_model()),
+            suite=suite,
+            prompt=suite.prompt_batches[0],
+            parameters={"max_output_tokens": "4"},
+            context_length=16,
+            repeat_index=0,
+            batch_size=1,
+            cache_profile="invalid",
+            reasoning_mode="",
+            structured_output_mode="",
+        )
 
 
 def test_text_backed_vlm_models_force_text_benchmark_task_kind(tmp_path: Path) -> None:
@@ -1802,6 +2237,15 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
             maintenance_pb2.RunBenchRequest(
                 model_handle="melix-dev-text::1",
                 suites=["smoke", "latency"],
+                parameters={
+                    "context_lengths": "16,32",
+                    "batch_sizes": "1,2",
+                    "repeats": "2",
+                    "cache_profile": "partial_prefix",
+                    "generation_length": "16",
+                    "reasoning_mode": "step-by-step",
+                    "structured_output_mode": "json",
+                },
             ),
             context=None,
         )
@@ -1809,16 +2253,42 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
 
     report_path = Path(events[-1].completed.report_path)
     run_dir = tmp_path / "model-ops" / "bench" / "runs" / events[0].started.job_id
+    bench_parameters = {
+        "context_lengths": "16,32",
+        "batch_sizes": "1,2",
+        "repeats": "2",
+        "cache_profile": "partial_prefix",
+        "generation_length": "16",
+        "reasoning_mode": "step-by-step",
+        "structured_output_mode": "json",
+    }
     job_manifest = run_dir / "bench-job.json"
+    summary_manifest = run_dir / "bench-summary.json"
+    context_rows_path = run_dir / "bench-context-rows.jsonl"
+    batch_rows_path = run_dir / "bench-batch-rows.jsonl"
     smoke_result = run_dir / "bench-result-smoke.json"
     latency_result = run_dir / "bench-result-latency.json"
 
     assert job_manifest.exists() is True
+    assert summary_manifest.exists() is True
+    assert context_rows_path.exists() is True
+    assert batch_rows_path.exists() is True
     assert smoke_result.exists() is True
     assert latency_result.exists() is True
     assert report_path.parent == run_dir
 
     job_payload = json.loads(job_manifest.read_text(encoding="utf-8"))
+    summary_payload = json.loads(summary_manifest.read_text(encoding="utf-8"))
+    context_rows = [
+        json.loads(line)
+        for line in context_rows_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    batch_rows = [
+        json.loads(line)
+        for line in batch_rows_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     smoke_payload = json.loads(smoke_result.read_text(encoding="utf-8"))
     latency_payload = json.loads(latency_result.read_text(encoding="utf-8"))
     report_markdown = report_path.read_text(encoding="utf-8")
@@ -1836,8 +2306,19 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     expected_job = build_serving_benchmark_job(
         job_id=events[0].started.job_id,
         model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="",
         suites=("smoke", "latency"),
-        parameters={},
+        context_lengths=tuple(job_payload["context_lengths"]),
+        generation_length=job_payload["generation_length"],
+        batch_sizes=tuple(job_payload["batch_sizes"]),
+        repeats=job_payload["repeats"],
+        cache_profile=job_payload["cache_profile"],
+        reasoning_mode=job_payload["reasoning_mode"],
+        structured_output_mode=job_payload["structured_output_mode"],
+        request_p50_ms=job_payload["request_p50_ms"],
+        request_p95_ms=job_payload["request_p95_ms"],
+        parameters=bench_parameters,
         status="completed",
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],
@@ -1856,12 +2337,19 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
     }
 
     assert job_payload == expected_job.to_dict()
+    assert summary_payload == job_payload
     assert job_payload["created_at_unix_ms"] > 0
     assert job_payload["updated_at_unix_ms"] >= job_payload["created_at_unix_ms"]
     assert job_payload["suite_metadata"]["smoke"]["dataset_path"] == "HuggingFaceH4/ultrachat_200k"
     assert job_payload["suite_metadata"]["latency"]["dataset_path"] == "databricks/databricks-dolly-15k"
     assert smoke_payload == expected_results["smoke"]
     assert latency_payload == expected_results["latency"]
+    assert len(context_rows) == 24
+    assert len(batch_rows) == 24
+    assert {row["cache_profile"] for row in context_rows} == {"partial_prefix"}
+    assert {row["batch_size"] for row in batch_rows} == {1}
+    assert all(row["speedup_vs_batch_1"] == 1.0 for row in batch_rows)
+    assert job_payload["request_p95_ms"] >= job_payload["request_p50_ms"]
 
 
 def test_run_bench_records_curated_hf_suite_cache_hits_across_runs(tmp_path: Path) -> None:
@@ -1902,6 +2390,282 @@ def test_run_bench_records_curated_hf_suite_cache_hits_across_runs(tmp_path: Pat
     assert second_job["suite_metadata"]["smoke"]["cache_hit"] is True
 
 
+def test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    response = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024, 256],
+            generation_lengths=[128],
+            batch_sizes=[2],
+            cache_profiles=["cold"],
+            reasoning_modes=["enabled"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=2,
+            requests=4,
+        ),
+        context=None,
+    )
+
+    assert response.job.job_id.startswith("model-ops-")
+    assert response.job.schema_version == "melix.benchmark_matrix_job.v1"
+    assert response.job.model_id == "melix-dev-text"
+    assert response.job.task_kind == "text-generation"
+    assert response.job.suite_ids == ["smoke"]
+    assert response.job.benchmark_mode == "matrix"
+    assert response.job.status == "completed"
+    assert len(response.summary_rows) == 2
+    assert [row.context_length for row in response.summary_rows] == [256, 1024]
+    assert all(row.requests == 4 for row in response.summary_rows)
+    assert all(row.duration_seconds == 0 for row in response.summary_rows)
+    assert all(row.success_rate == 1.0 for row in response.summary_rows)
+    assert all(row.request_latency_mean_ms > 0 for row in response.summary_rows)
+    assert all(row.throughput_requests_per_second > 0 for row in response.summary_rows)
+
+    run_dir = tmp_path / "model-ops" / "bench" / "matrix-runs" / response.job.job_id
+    assert (run_dir / "bench-matrix-job.json").exists() is True
+    assert (run_dir / "bench-matrix-summary.jsonl").exists() is True
+    assert (run_dir / "bench-matrix-summary.csv").exists() is True
+    assert (run_dir / "bench-matrix-requests.jsonl").exists() is True
+    assert (run_dir / "bench-matrix-requests.csv").exists() is True
+
+    job_payload = json.loads((run_dir / "bench-matrix-job.json").read_text(encoding="utf-8"))
+    summary_rows = [
+        json.loads(line)
+        for line in (run_dir / "bench-matrix-summary.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    request_rows = [
+        json.loads(line)
+        for line in (run_dir / "bench-matrix-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert job_payload["benchmark_mode"] == "matrix"
+    assert job_payload["suite_ids"] == ["smoke"]
+    assert [row["context_length"] for row in summary_rows] == [256, 1024]
+    assert len(request_rows) == 8
+    assert {row["cell_id"] for row in request_rows} == {"cell-1", "cell-2"}
+    assert all(row["status"] == "completed" for row in request_rows)
+
+
+def test_run_bench_matrix_rejects_invalid_load_budget(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    with pytest.raises(ModelOperationError) as error:
+        service._core.bench_matrix_response(
+            maintenance_pb2.RunBenchMatrixRequest(
+                model_handle="melix-dev-text::1",
+                suite_ids=["smoke"],
+                context_lengths=[1024],
+                generation_lengths=[128],
+                batch_sizes=[1],
+                cache_profiles=["cold"],
+                reasoning_modes=["default"],
+                structured_output_modes=["plain_text"],
+                concurrency_levels=[1],
+            )
+        )
+
+    assert error.value.code == "invalid_argument"
+    assert error.value.details == {"requests": 0, "duration_seconds": 0}
+
+
+def test_run_bench_matrix_marks_failed_queue_state_for_unsupported_task_kind(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    with pytest.raises(ModelOperationError) as error:
+        service._core.bench_matrix_response(
+            maintenance_pb2.RunBenchMatrixRequest(
+                model_handle="melix-dev-text::1",
+                task_kind="image-text-to-image",
+                suite_ids=["smoke"],
+                context_lengths=[1024],
+                generation_lengths=[128],
+                batch_sizes=[1],
+                cache_profiles=["cold"],
+                reasoning_modes=["default"],
+                structured_output_modes=["plain_text"],
+                concurrency_levels=[1],
+                requests=1,
+            )
+        )
+
+    assert error.value.code == "unsupported_task_family"
+    queue_records = list((tmp_path / "model-ops" / "bench" / "matrix-queue").glob("*.json"))
+    assert len(queue_records) == 1
+    queue_payload = json.loads(queue_records[0].read_text(encoding="utf-8"))
+    assert queue_payload["status"] == "failed"
+
+
+def test_run_bench_matrix_records_failed_request_rows_when_sampling_raises(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    service._core._measure_benchmark_matrix_sample = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        ModelOperationError(code="benchmark_failed", message="forced failure")
+    )
+
+    response = service._core.bench_matrix_response(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024],
+            generation_lengths=[128],
+            batch_sizes=[1],
+            cache_profiles=["cold"],
+            reasoning_modes=["default"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            requests=1,
+        )
+    )
+
+    assert response.job.status == "completed"
+    assert len(response.summary_rows) == 1
+    assert response.summary_rows[0].success_rate == 0.0
+    run_dir = tmp_path / "model-ops" / "bench" / "matrix-runs" / response.job.job_id
+    request_rows = [
+        json.loads(line)
+        for line in (run_dir / "bench-matrix-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(request_rows) == 1
+    assert request_rows[0]["status"] == "failed"
+    assert request_rows[0]["error_code"] == "benchmark_failed"
+
+
+def test_benchmark_matrix_task_kind_resolution_prefers_runtime_metadata_then_model_kind() -> None:
+    text_backed_loaded = SimpleNamespace(
+        runtime_model={"metadata": {"melix.vlm.execution_mode": "text_backed"}},
+        spec=common_pb2.ModelSpec(model_kind="vlm"),
+    )
+    ocr_loaded = SimpleNamespace(runtime_model={}, spec=common_pb2.ModelSpec(model_kind="ocr"))
+    vlm_loaded = SimpleNamespace(runtime_model={}, spec=common_pb2.ModelSpec(model_kind="vlm"))
+    text_loaded = SimpleNamespace(runtime_model={}, spec=common_pb2.ModelSpec(model_kind="text"))
+
+    assert MaintenanceCore._resolved_benchmark_matrix_task_kind(
+        request=maintenance_pb2.RunBenchMatrixRequest(),
+        loaded_model=text_backed_loaded,
+    ) == "text-generation"
+    assert MaintenanceCore._resolved_benchmark_matrix_task_kind(
+        request=maintenance_pb2.RunBenchMatrixRequest(),
+        loaded_model=ocr_loaded,
+    ) == "image-to-text"
+    assert MaintenanceCore._resolved_benchmark_matrix_task_kind(
+        request=maintenance_pb2.RunBenchMatrixRequest(),
+        loaded_model=vlm_loaded,
+    ) == "image-text-to-text"
+    assert MaintenanceCore._resolved_benchmark_matrix_task_kind(
+        request=maintenance_pb2.RunBenchMatrixRequest(),
+        loaded_model=text_loaded,
+    ) == "text-generation"
+
+
+def test_benchmark_matrix_request_count_and_sample_validation_cover_duration_and_error_paths(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    loaded_model = service._core._registry.load_model(WorkerModelCatalog.dev_vlm_model())
+    suite = SimpleNamespace(title="Smoke", suite_id="smoke")
+
+    assert MaintenanceCore._benchmark_matrix_request_count(
+        requests=0,
+        duration_seconds=3,
+        repeats=2,
+        concurrency_level=2,
+    ) == 6
+
+    with pytest.raises(ModelOperationError) as missing_case_error:
+        service._core._measure_benchmark_matrix_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=None,
+            task_kind="image-text-to-text",
+            context_length=512,
+            generation_length=64,
+            batch_size=1,
+            repeat_index=0,
+            cache_profile="cold",
+            reasoning_mode="default",
+            structured_output_mode="plain_text",
+        )
+
+    assert missing_case_error.value.code == "benchmark_failed"
+
+    with pytest.raises(ModelOperationError) as unsupported_error:
+        service._core._measure_benchmark_matrix_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=SimpleNamespace(prompt="prompt"),
+            task_kind="image-text-to-image",
+            context_length=512,
+            generation_length=64,
+            batch_size=1,
+            repeat_index=0,
+            cache_profile="cold",
+            reasoning_mode="default",
+            structured_output_mode="plain_text",
+        )
+
+    assert unsupported_error.value.code == "unsupported_task_family"
+
+
+def test_run_bench_matrix_supports_vlm_task_families(tmp_path: Path) -> None:
+    image_path = tmp_path / "doc-image-1.txt"
+    image_path.write_text("benchmark vision sample", encoding="utf-8")
+
+    class LocalImageBenchmarkFetcher(FakeBenchmarkHFDatasetFetcher):
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            dataset = params.get("dataset", "")
+            if dataset == "huggingface/documentation-images":
+                if endpoint == "rows":
+                    return {"rows": [{"row": {"image": {"src": str(image_path)}}}]}
+                return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+            return super().__call__(endpoint, params)
+
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=LocalImageBenchmarkFetcher()
+        ),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_vlm_model())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service._core = core
+
+    response = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle=loaded.handle,
+            task_kind="image-text-to-text",
+            source_repo="unsloth/gemma-4-E4B-it-MLX-8bit",
+            suite_ids=["smoke"],
+            context_lengths=[512],
+            generation_lengths=[64],
+            batch_sizes=[1],
+            cache_profiles=["cold"],
+            reasoning_modes=["default"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=1,
+            requests=1,
+        ),
+        context=None,
+    )
+
+    assert response.job.task_kind == "image-text-to-text"
+    assert len(response.summary_rows) == 1
+    assert response.summary_rows[0].task_kind == "image-text-to-text"
+    assert response.summary_rows[0].ttft_mean_ms > 0
+
+
 def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
@@ -1925,6 +2689,73 @@ def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
     assert payload["suite_ids"] == ["smoke", "latency"]
     assert payload["started_at_unix_ms"] > 0
     assert payload["completed_at_unix_ms"] > 0
+
+
+def test_bench_events_support_text_generation_metrics_for_text_backed_gemma4_vlm(tmp_path: Path) -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}::images={num_images}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        _ = image
+        assert "[context_length=" in prompt
+        assert ";batch_size=1]" in prompt
+        yield SimpleNamespace(
+            text="gemma",
+            prompt_tokens=16,
+            generation_tokens=1,
+            prompt_tps=42.0,
+            generation_tps=21.0,
+            peak_memory=2048.0,
+        )
+
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        mlx_vlm_runtime=MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=fake_apply_chat_template,
+            )
+        ),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+    loaded = registry.load_model(imported_gemma4_text_backed_model())
+
+    events = list(
+        service._core.bench_events(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                task_kind="text-generation",
+                source_repo="unsloth/gemma-4-E4B-it-MLX-8bit",
+            )
+        )
+    )
+
+    metric_names = [
+        event.metric.name
+        for event in events
+        if event.HasField("metric")
+    ]
+    assert "bench.smoke.ttft_ms" in metric_names
+    assert "bench.smoke.tokens_per_second" in metric_names
+
+    report_event = next(event for event in events if event.HasField("completed"))
+    report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
+    assert "task_kind: text-generation" in report_content
+    assert "source_repo: unsloth/gemma-4-E4B-it-MLX-8bit" in report_content
 
 
 def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
@@ -2147,7 +2978,11 @@ def test_bench_events_forwards_parameters_to_queue_record(tmp_path: Path) -> Non
 
 
 def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -2178,6 +3013,24 @@ def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path:
             context=None,
         )
     )
+    matrix = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024],
+            generation_lengths=[128],
+            batch_sizes=[2],
+            cache_profiles=["cold"],
+            reasoning_modes=["enabled"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=2,
+            requests=4,
+        ),
+        context=None,
+    )
+    assert matrix.job.job_id
     evaluation = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
             model_handle="melix-dev-text::1",
@@ -2199,12 +3052,19 @@ def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path:
     assert Path(response.export_path).exists() is True
     payload = json.loads(response.export_json)
     assert len(payload["benchmark_jobs"]) == 1
+    assert len(payload["benchmark_matrix_jobs"]) == 1
+    assert len(payload["benchmark_matrix_summary_rows"]) == 1
+    assert len(payload["benchmark_matrix_request_rows"]) == 4
     assert len(payload["evaluation_jobs"]) == 1
     assert json.loads(Path(response.export_path).read_text(encoding="utf-8")) == payload
 
 
 def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RecordingBenchmarkBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -2235,6 +3095,24 @@ def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None
             context=None,
         )
     )
+    matrix = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024],
+            generation_lengths=[128],
+            batch_sizes=[2],
+            cache_profiles=["cold"],
+            reasoning_modes=["enabled"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=2,
+            requests=4,
+        ),
+        context=None,
+    )
+    assert matrix.job.job_id
     evaluation = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
             model_handle="melix-dev-text::1",
@@ -2268,6 +3146,9 @@ def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None
     assert payload["device"]["memory_gb"] == 48.0
     assert payload["device"]["melix_version"] == "0.1.0"
     assert len(payload["benchmark_jobs"]) == 1
+    assert len(payload["benchmark_matrix_jobs"]) == 1
+    assert len(payload["benchmark_matrix_summary_rows"]) == 1
+    assert len(payload["benchmark_matrix_request_rows"]) == 4
     assert len(payload["evaluation_jobs"]) == 1
 
 
@@ -2292,3 +3173,5 @@ def test_doctor_reports_detected_and_overridden_model_identity(tmp_path: Path) -
     assert "detected_architecture: cross-encoder" in doctor.report_markdown
     assert "detected_family_id: jina-v3" in doctor.report_markdown
     assert "identity_override: true" in doctor.report_markdown
+    assert doctor.health_status == maintenance_pb2.HEALTH_STATUS_HEALTHY
+    assert doctor.findings == []

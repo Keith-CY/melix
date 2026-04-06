@@ -98,8 +98,35 @@ struct OnDemandModelLoaderTests {
         #expect(model.residency.transitionReason == "lazy_text_load")
         #expect(loadRequest.memoryBudgetBytes == 65_536)
         #expect(loadRequest.pinOnLoad == false)
+        #expect(loadRequest.diskStreamingMode == .diskStreamingDisabled)
         #expect(metrics.values["control_plane.text_first_load_estimated_resident_bytes"] == 4_096)
         #expect(metrics.values["control_plane.text_first_load_resident_bytes"] == 8_192)
+    }
+
+    @Test("discovered text models lazy-load with configured default memory budgets")
+    func discoveredTextModelsLazyLoadWithConfiguredDefaultMemoryBudgets() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 32_768
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-text::swift",
+            estimatedResidentBytes: 4_096
+        )
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let metricsStore = MetricsStore()
+
+        _ = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let loadRequest = try #require(await workerClient.lastLoadModelRequest)
+        #expect(loadRequest.memoryBudgetBytes == 32_768)
     }
 
     @Test("lazy load falls back to estimated resident bytes when runtime stats are unavailable")
@@ -197,12 +224,55 @@ struct OnDemandModelLoaderTests {
     func failedLazyLoadsPreserveExplicitWorkerErrorCodesInTransitionReasons() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
         let workerClient = LoaderTestingWorkerClient()
+        let metricsStore = MetricsStore()
         await workerClient.setLoadResponse(
             ok: false,
             handle: "",
             estimatedResidentBytes: 0,
             errorCode: "memory_budget_exceeded",
-            errorMessage: "Projected resident memory would exceed the process budget."
+            errorMessage: "Projected resident memory would exceed the process budget.",
+            errorDetails: [
+                "budget_bytes": "32768",
+                "headroom_bytes": "2048",
+                "required_bytes": "34816",
+            ]
+        )
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: metricsStore
+            )
+        }
+
+        let model = try #require(await catalog.model(id: "melix-dev-text"))
+        let metrics = await metricsStore.snapshot()
+        #expect(model.state == .modelFailed)
+        #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+        #expect(model.residency.memoryBudgetBytes == 32_768)
+        #expect(model.residency.memoryHeadroomBytes == 2_048)
+        #expect(model.residency.requiredBytes == 34_816)
+        #expect(metrics.values["control_plane.text_load_memory_budget_rejection_count"] == 1)
+        #expect(metrics.values["control_plane.text_load_last_budget_bytes"] == 32_768)
+        #expect(metrics.values["control_plane.text_load_last_headroom_bytes"] == 2_048)
+        #expect(metrics.values["control_plane.text_load_last_required_bytes"] == 34_816)
+    }
+
+    @Test("failed lazy loads forward disk-streaming mode and preserve explicit worker rejection codes")
+    func failedLazyLoadsForwardDiskStreamingModeAndPreserveExplicitWorkerRejectionCodes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = LoaderTestingWorkerClient()
+        await workerClient.setLoadResponse(
+            ok: false,
+            handle: "",
+            estimatedResidentBytes: 0,
+            errorCode: "disk_streaming_unsupported",
+            errorMessage: "The selected runtime does not support disk-streaming mode."
         )
         let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
 
@@ -215,9 +285,11 @@ struct OnDemandModelLoaderTests {
             )
         }
 
-        let model = try #require(await catalog.model(id: "melix-dev-text"))
-        #expect(model.state == .modelFailed)
-        #expect(model.residency.transitionReason == "lazy_text_load_memory_budget_exceeded")
+        let loadRequest = try #require(await workerClient.lastLoadModelRequest)
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        #expect(loadRequest.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "lazy_text_load_disk_streaming_unsupported")
     }
 
     @Test("failed lazy loads sanitize non-identifier worker error codes in transition reasons")
@@ -426,7 +498,8 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         handle: String,
         estimatedResidentBytes: UInt64,
         errorCode: String = "",
-        errorMessage: String = ""
+        errorMessage: String = "",
+        errorDetails: [String: String] = [:]
     ) {
         loadResponse = Melix_Worker_V1_LoadModelResponse()
         loadResponse.ok = ok
@@ -435,6 +508,7 @@ private actor LoaderTestingWorkerClient: WorkerRoutingClient, RuntimeIntrospecti
         loadResponse.residency.state = ok ? .warm : .failed
         loadResponse.error.code = errorCode
         loadResponse.error.message = errorMessage
+        loadResponse.error.details = errorDetails
     }
 
     func setUnloadResponse(ok: Bool) {

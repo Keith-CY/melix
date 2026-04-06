@@ -95,6 +95,38 @@ struct SSEStreamWriterTests {
         ]))
     }
 
+    @Test("SSE records lifecycle keepalive gap metrics while upstream is idle")
+    func recordsLifecycleKeepaliveGapMetricsWhileUpstreamIsIdle() async throws {
+        let metricsStore = MetricsStore()
+        let writer = SSEStreamWriter(
+            now: Date.init,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 0.01,
+                disconnectGracePeriod: 0.05
+            ),
+            metricsStore: metricsStore
+        )
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            Task {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                continuation.yield(makeCompletedEvent(requestID: "req-keepalive-gap", seq: 1, finishReason: "stop", assistantText: "A"))
+                continuation.finish()
+            }
+        }
+
+        _ = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-keepalive-gap",
+                modelID: "melix-dev-text"
+            )
+        )
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["disconnect.keepalive_gap_ms", default: 0] > 0)
+    }
+
     @Test("SSE invokes disconnect handler when the client stream is cancelled")
     func invokesDisconnectHandlerWhenClientStreamIsCancelled() async throws {
         let writer = SSEStreamWriter(
@@ -138,7 +170,7 @@ struct SSEStreamWriterTests {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
-        #expect(await probe.triggered)
+        #expect(await probe.triggerCount == 1)
     }
 
     @Test("SSE emits error frames and terminates with done marker")
@@ -583,9 +615,11 @@ struct SSEStreamWriterTests {
 
 private actor DisconnectProbe {
     private(set) var triggered = false
+    private(set) var triggerCount = 0
 
     func markTriggered() {
         triggered = true
+        triggerCount += 1
     }
 }
 

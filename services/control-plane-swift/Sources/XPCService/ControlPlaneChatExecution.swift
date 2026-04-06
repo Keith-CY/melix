@@ -18,6 +18,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
 
     public let modelID: String
     public let messages: [Message]
+    public let resumeRequestID: String?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
@@ -25,12 +26,14 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     public init(
         modelID: String,
         messages: [Message],
+        resumeRequestID: String? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil
     ) {
         self.modelID = modelID
         self.messages = messages
+        self.resumeRequestID = resumeRequestID
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
@@ -109,14 +112,19 @@ public struct ControlPlaneChatExecution: Sendable {
     public let requestID: String
     public let modelID: String
     public let stream: AsyncThrowingStream<ControlPlaneChatStreamEvent, Error>
+    public let lifecycle: AsyncStream<ConnectionLifecycleEvent>
 
     public init(
         requestID: String,
         modelID: String,
-        stream: AsyncThrowingStream<ControlPlaneChatStreamEvent, Error>
+        stream: AsyncThrowingStream<ControlPlaneChatStreamEvent, Error>,
+        lifecycle: AsyncStream<ConnectionLifecycleEvent> = AsyncStream { continuation in
+            continuation.finish()
+        }
     ) {
         self.requestID = requestID
         self.modelID = modelID
         self.stream = stream
+        self.lifecycle = lifecycle
     }
 }

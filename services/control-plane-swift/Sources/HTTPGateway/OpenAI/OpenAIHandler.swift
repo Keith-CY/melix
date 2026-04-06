@@ -2,9 +2,195 @@ import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
+public struct RichOutputSanitizationResult: Equatable, Sendable {
+    public let text: String
+    public let didSanitize: Bool
+    public let blockedHTMLFragmentCount: Int
+    public let unsafeURIRejectionCount: Int
+
+    public init(
+        text: String,
+        didSanitize: Bool,
+        blockedHTMLFragmentCount: Int,
+        unsafeURIRejectionCount: Int
+    ) {
+        self.text = text
+        self.didSanitize = didSanitize
+        self.blockedHTMLFragmentCount = blockedHTMLFragmentCount
+        self.unsafeURIRejectionCount = unsafeURIRejectionCount
+    }
+}
+
+public enum RichOutputSanitizer {
+    public static func sanitized(_ text: String) -> String {
+        sanitize(text).text
+    }
+
+    public static func sanitize(_ text: String) -> RichOutputSanitizationResult {
+        guard text.isEmpty == false else {
+            return RichOutputSanitizationResult(
+                text: text,
+                didSanitize: false,
+                blockedHTMLFragmentCount: 0,
+                unsafeURIRejectionCount: 0
+            )
+        }
+
+        var output = ""
+        var blockedHTMLFragmentCount = 0
+        var unsafeURIRejectionCount = 0
+        var cursor = text.startIndex
+
+        while let fenceStart = text[cursor...].range(of: "```") {
+            let plainSegment = String(text[cursor..<fenceStart.lowerBound])
+            let sanitizedSegment = sanitizePlainSegment(plainSegment)
+            output += sanitizedSegment.text
+            blockedHTMLFragmentCount += sanitizedSegment.blockedHTMLFragmentCount
+            unsafeURIRejectionCount += sanitizedSegment.unsafeURIRejectionCount
+
+            if let fenceEnd = text[fenceStart.upperBound...].range(of: "```") {
+                output += String(text[fenceStart.lowerBound..<fenceEnd.upperBound])
+                cursor = fenceEnd.upperBound
+            } else {
+                output += String(text[fenceStart.lowerBound...])
+                cursor = text.endIndex
+                break
+            }
+        }
+
+        if cursor < text.endIndex {
+            let trailingSegment = sanitizePlainSegment(String(text[cursor...]))
+            output += trailingSegment.text
+            blockedHTMLFragmentCount += trailingSegment.blockedHTMLFragmentCount
+            unsafeURIRejectionCount += trailingSegment.unsafeURIRejectionCount
+        }
+
+        return RichOutputSanitizationResult(
+            text: output,
+            didSanitize: output != text,
+            blockedHTMLFragmentCount: blockedHTMLFragmentCount,
+            unsafeURIRejectionCount: unsafeURIRejectionCount
+        )
+    }
+
+    private static func sanitizePlainSegment(_ text: String) -> RichOutputSanitizationResult {
+        guard text.isEmpty == false else {
+            return RichOutputSanitizationResult(
+                text: text,
+                didSanitize: false,
+                blockedHTMLFragmentCount: 0,
+                unsafeURIRejectionCount: 0
+            )
+        }
+
+        var sanitized = text
+        var blockedHTMLFragmentCount = 0
+        var unsafeURIRejectionCount = 0
+
+        for regex in activeFragmentRegexes {
+            let matches = regex.matches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length)
+            )
+            blockedHTMLFragmentCount += matches.count
+            sanitized = regex.stringByReplacingMatches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length),
+                withTemplate: ""
+            )
+        }
+
+        let markdownLinkMatches = unsafeMarkdownLinkRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        if markdownLinkMatches.isEmpty == false {
+            let mutable = NSMutableString(string: sanitized)
+            for match in markdownLinkMatches.reversed() {
+                guard match.numberOfRanges >= 3 else {
+                    continue
+                }
+                let label = mutable.substring(with: match.range(at: 1))
+                let rawTarget = mutable.substring(with: match.range(at: 2))
+                if isUnsafeLinkTarget(rawTarget) {
+                    mutable.replaceCharacters(in: match.range, with: label)
+                    unsafeURIRejectionCount += 1
+                }
+            }
+            sanitized = String(mutable)
+        }
+
+        let rawUnsafeMatches = rawUnsafeURIRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        if rawUnsafeMatches.isEmpty == false {
+            unsafeURIRejectionCount += rawUnsafeMatches.count
+            sanitized = rawUnsafeURIRegex.stringByReplacingMatches(
+                in: sanitized,
+                options: [],
+                range: NSRange(location: 0, length: NSString(string: sanitized).length),
+                withTemplate: "[unsafe link removed]"
+            )
+        }
+
+        let genericMatches = genericHTMLTagRegex.matches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length)
+        )
+        blockedHTMLFragmentCount += genericMatches.count
+        sanitized = genericHTMLTagRegex.stringByReplacingMatches(
+            in: sanitized,
+            options: [],
+            range: NSRange(location: 0, length: NSString(string: sanitized).length),
+            withTemplate: ""
+        )
+
+        return RichOutputSanitizationResult(
+            text: sanitized,
+            didSanitize: sanitized != text,
+            blockedHTMLFragmentCount: blockedHTMLFragmentCount,
+            unsafeURIRejectionCount: unsafeURIRejectionCount
+        )
+    }
+
+    private static func isUnsafeLinkTarget(_ rawTarget: String) -> Bool {
+        let candidate = rawTarget
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init) ?? rawTarget
+        let normalized = candidate
+            .trimmingCharacters(in: CharacterSet(charactersIn: "<>\"'"))
+            .lowercased()
+        return unsafeSchemes.contains { normalized.hasPrefix($0) }
+    }
+
+    private static let unsafeSchemes = ["javascript:", "data:", "vbscript:", "file:"]
+
+    private static let activeFragmentRegexes = [
+        regex(#"(?is)<!--.*?-->"#),
+        regex(#"(?is)<(script|style|iframe|object|embed|svg|math)\b[^>]*>.*?</\1\s*>"#),
+    ]
+
+    private static let genericHTMLTagRegex = regex(#"(?is)</?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*?)?/?>"#)
+    private static let unsafeMarkdownLinkRegex = regex(#"\[([^\]]+)\]\(((?:[^()]|\([^)]*\))+)\)"#)
+    private static let rawUnsafeURIRegex = regex(#"(?i)\b(?:javascript|data|vbscript|file):[^\s)\]]+"#)
+
+    private static func regex(_ pattern: String) -> NSRegularExpression {
+        try! NSRegularExpression(pattern: pattern, options: [])
+    }
+}
+
 public enum HTTPMethod: String, Sendable {
     case get = "GET"
     case post = "POST"
+    case delete = "DELETE"
 }
 
 public enum HTTPBody: Sendable {
@@ -47,6 +233,24 @@ public struct HTTPResponse: Sendable {
     }
 }
 
+private enum GatewayAuthorizationContext: Sendable {
+    case localTrusted
+    case credential(keyID: String, via: GatewayAccessPolicy.RequiredHeader)
+    case session(token: String, metadata: PersistentAuthSessionMetadata)
+}
+
+private enum GatewayAuthorizationRoute {
+    case health
+    case standard
+    case createSession
+    case currentSession
+}
+
+private enum GatewayAuthorizationResolution {
+    case success(GatewayAuthorizationContext)
+    case failure(HTTPResponse)
+}
+
 public struct OpenAIHandler: Sendable {
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -61,6 +265,10 @@ public struct OpenAIHandler: Sendable {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
+    private let gatewayRuntimeBinding: GatewayRuntimeBinding
+    private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let imageRequestTimeoutSeconds: UInt32
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
@@ -74,11 +282,15 @@ public struct OpenAIHandler: Sendable {
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
         translator: ChatRequestTranslator = ChatRequestTranslator(),
-        sseWriter: SSEStreamWriter = SSEStreamWriter(),
+        sseWriter: SSEStreamWriter? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
-        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
+        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.modelCatalog = modelCatalog
         self.requestCoordinator = requestCoordinator
@@ -92,73 +304,110 @@ public struct OpenAIHandler: Sendable {
         )
         self.cacheMetadataStore = cacheMetadataStore
         self.translator = translator
-        self.sseWriter = sseWriter
+        self.sseWriter = sseWriter ?? SSEStreamWriter(metricsStore: metricsStore)
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
+        self.gatewayRuntimeBinding = gatewayRuntimeBinding
+        self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.sortedKeys]
     }
 
     public func handle(_ request: HTTPRequest) async throws -> HTTPResponse {
-        if let authorizationFailure = await authorizationFailureResponse(for: request) {
+        let authorization = await authorizationContext(for: request)
+        switch authorization {
+        case .failure(let authorizationFailure):
             return authorizationFailure
-        }
-
-        switch (request.method, request.path) {
-        case (.get, "/v1/models"):
-            return try await handleModels()
-        case (.get, "/health"):
-            return try await handleHealth()
-        case (.get, "/v1/cache/stats"):
-            return try await handleCacheStats()
-        case (.post, "/v1/chat/completions"):
-            return try await handleChatCompletions(request)
-        case (.post, "/v1/completions"):
-            return try await handleCompletions(request)
-        case (.post, "/v1/responses"):
-            return try await handleResponses(request)
-        case (.post, "/v1/messages"):
-            return try await handleMessages(request)
-        case (.post, "/v1/embeddings"):
-            return try await handleEmbeddings(request)
-        case (.post, "/v1/rerank"):
-            return try await handleRerank(request)
-        case (.post, "/v1/audio/transcriptions"):
-            return try await handleAudioTranscriptions(request)
-        case (.post, "/v1/audio/speech"):
-            return try await handleAudioSpeech(request)
-        case (.post, "/v1/images/generations"):
-            return try await handleImageGenerations(request)
-        case (.post, "/v1/images/edits"):
-            return try await handleImageEdits(request)
-        default:
-            return jsonResponse(
-                statusCode: 404,
-                payload: ["error": ["code": "not_found", "message": "Unknown route."]]
-            )
+        case .success(let authorizationContext):
+            switch (request.method, request.path) {
+            case (.get, "/v1/models"):
+                return try await handleModels()
+            case (.get, "/health"):
+                return try await handleHealth()
+            case (.get, "/v1/cache/stats"):
+                return try await handleCacheStats()
+            case (.post, "/v1/melix/auth/session"):
+                return try await handleCreateAuthSession(request, authorization: authorizationContext)
+            case (.get, "/v1/melix/auth/session"):
+                return try await handleCurrentAuthSession(authorization: authorizationContext)
+            case (.delete, "/v1/melix/auth/session"):
+                return try await handleDeleteAuthSession(authorization: authorizationContext)
+            case (.post, "/v1/chat/completions"):
+                return try await handleChatCompletions(request)
+            case (.post, "/v1/completions"):
+                return try await handleCompletions(request)
+            case (.post, "/v1/responses"):
+                return try await handleResponses(request)
+            case (.post, "/v1/messages"):
+                return try await handleMessages(request)
+            case (.post, "/v1/embeddings"):
+                return try await handleEmbeddings(request)
+            case (.post, "/v1/rerank"):
+                return try await handleRerank(request)
+            case (.post, "/v1/audio/transcriptions"):
+                return try await handleAudioTranscriptions(request)
+            case (.post, "/v1/audio/speech"):
+                return try await handleAudioSpeech(request)
+            case (.post, "/v1/images/generations"):
+                return try await handleImageGenerations(request)
+            case (.post, "/v1/images/edits"):
+                return try await handleImageEdits(request)
+            default:
+                return jsonResponse(
+                    statusCode: 404,
+                    payload: ["error": ["code": "not_found", "message": "Unknown route."]]
+                )
+            }
         }
     }
 
-    private func authorizationFailureResponse(for request: HTTPRequest) async -> HTTPResponse? {
-        guard request.path != "/health" else {
-            return nil
+    private func authorizationContext(
+        for request: HTTPRequest
+    ) async -> GatewayAuthorizationResolution {
+        let route = authorizationRoute(for: request)
+        guard route != .health else {
+            return .success(.localTrusted)
+        }
+        let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
+        if
+            route != .createSession,
+            let sessionToken = header(named: PersistentAuthSessionStore.sessionHeaderName, in: request.headers),
+            let persistentAuthSessionStore
+        {
+            switch await persistentAuthSessionStore.validateSessionToken(sessionToken, policy: gatewayAccessPolicy) {
+            case .success(let metadata):
+                return .success(.session(token: sessionToken, metadata: metadata))
+            case .failure(let failure):
+                return .failure(await authSessionFailureResponse(for: failure))
+            }
+        } else if route == .currentSession {
+            return .failure(missingAuthSessionResponse())
         }
 
-        let gatewayAccessPolicy = await gatewayAccessPolicyStore.currentPolicy()
         switch gatewayAccessPolicy.authorize(headers: request.headers) {
         case .success(let outcome):
-            if case .authenticated = outcome, gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {
-                await metricsStore.increment("shared_access.accepted_client_count")
+            switch outcome {
+            case .localTrusted:
+                if route == .createSession {
+                    return .failure(authSessionUnsupportedResponse())
+                }
+                return .success(.localTrusted)
+            case let .authenticated(keyID, via):
+                if gatewayAccessPolicy.mode == .apiKeys, gatewayAccessPolicy.sharedAccessEnabled {
+                    await metricsStore.increment("shared_access.accepted_client_count")
+                }
+                return .success(.credential(keyID: keyID, via: via))
             }
-            return nil
         case .failure(let failure):
             await metricsStore.increment("gateway.auth_validation_failures")
             if gatewayAccessPolicy.mode == .apiKeys || hasNonEmptyHeader(named: "x-api-key", in: request.headers) {
                 await metricsStore.increment("shared_access.rejected_request_count")
             }
-            return jsonResponse(
+            return .failure(jsonResponse(
                 statusCode: failure.statusCode,
                 payload: [
                     "error": [
@@ -166,7 +415,7 @@ public struct OpenAIHandler: Sendable {
                         "message": failure.message,
                     ],
                 ]
-            )
+            ))
         }
     }
 
@@ -187,12 +436,7 @@ public struct OpenAIHandler: Sendable {
         }
 
         let response = OpenAIModelsResponse(object: "list", data: models)
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleHealth() async throws -> HTTPResponse {
@@ -211,12 +455,7 @@ public struct OpenAIHandler: Sendable {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "operator.health_latency_ms"
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
-        )
+        return try encodedJSONResponse(response)
     }
 
     private func handleCacheStats() async throws -> HTTPResponse {
@@ -242,18 +481,89 @@ public struct OpenAIHandler: Sendable {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "operator.cache_stats_latency_ms"
         )
-        let data = try encoder.encode(response)
-        return HTTPResponse(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: .data(data)
+        return try encodedJSONResponse(response)
+    }
+
+    private func handleCreateAuthSession(
+        _ request: HTTPRequest,
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .credential(keyID, _) = authorization else {
+            return authSessionUnsupportedResponse()
+        }
+        guard let persistentAuthSessionStore else {
+            return jsonResponse(
+                statusCode: 503,
+                payload: [
+                    "error": [
+                        "code": "auth_session_unavailable",
+                        "message": "Persistent auth sessions are unavailable.",
+                    ]
+                ]
+            )
+        }
+
+        let createRequest = try decoder.decode(OpenAICreateAuthSessionRequest.self, from: request.body)
+        let issued = try await persistentAuthSessionStore.issueSession(
+            keyID: keyID,
+            rememberMe: createRequest.rememberMe
         )
+        let response = OpenAIAuthSessionResponse(
+            session: OpenAIAuthSessionPayload(metadata: issued.metadata),
+            resume: OpenAIAuthSessionResumePayload(
+                header: PersistentAuthSessionStore.sessionHeaderName,
+                token: issued.token
+            )
+        )
+        return try encodedJSONResponse(response)
+    }
+
+    private func handleCurrentAuthSession(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .session(_, metadata) = authorization else {
+            return missingAuthSessionResponse()
+        }
+        let response = OpenAIAuthSessionResponse(
+            session: OpenAIAuthSessionPayload(metadata: metadata),
+            resume: nil
+        )
+        return try encodedJSONResponse(response)
+    }
+
+    private func handleDeleteAuthSession(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        guard case let .session(token, _) = authorization else {
+            return missingAuthSessionResponse()
+        }
+        guard let persistentAuthSessionStore else {
+            return missingAuthSessionResponse()
+        }
+        switch try await persistentAuthSessionStore.revokeSessionToken(token) {
+        case .success(let metadata):
+            let response = OpenAIAuthSessionResponse(
+                session: OpenAIAuthSessionPayload(metadata: metadata),
+                resume: nil
+            )
+            return try encodedJSONResponse(response)
+        case .failure(let failure):
+            return await authSessionFailureResponse(for: failure)
+        }
     }
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
         do {
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !resumeRequestID.isEmpty {
+                return try await resumeStreamResponse(
+                    requestID: resumeRequestID,
+                    modelID: chatRequest.model,
+                    shape: .chatCompletions
+                )
+            }
             let normalized = if chatRequest.messages.contains(where: \.hasMultimodalContent) {
                 try translator.normalizeMultimodalChat(chatRequest)
             } else {
@@ -370,6 +680,43 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func resumeStreamResponse(
+        requestID: String,
+        modelID: String,
+        shape: SSEStreamWriter.StreamShape
+    ) async throws -> HTTPResponse {
+        let execution: CoordinatedChatExecution
+
+        do {
+            execution = try await requestCoordinator.resumeChatCompletion(requestID: requestID)
+        } catch let error as RequestCoordinatorError {
+            return jsonResponse(statusCode: error.statusCode, payload: [
+                "error": [
+                    "code": error.errorCode,
+                    "message": error.errorMessage,
+                ],
+            ])
+        }
+
+        let stream = sseWriter.encode(
+            stream: execution.stream,
+            requestID: execution.requestID,
+            modelID: execution.modelID.isEmpty ? modelID : execution.modelID,
+            shape: shape,
+            options: SSEStreamWriter.StreamOptions(includeUsage: true)
+        )
+
+        return HTTPResponse(
+            statusCode: 200,
+            headers: [
+                "content-type": "text/event-stream; charset=utf-8",
+                "cache-control": "no-cache",
+                "connection": "keep-alive",
+            ],
+            body: .stream(stream)
+        )
+    }
+
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
         let embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
         let inputs = embeddingsRequest.normalizedInputs
@@ -412,12 +759,7 @@ public struct OpenAIHandler: Sendable {
                     totalTokens: estimatedTokenCount(for: inputs)
                 )
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
         }
@@ -464,12 +806,7 @@ public struct OpenAIHandler: Sendable {
                 model: rerankRequest.model,
                 topK: Int(rerankRequest.topK)
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
         }
@@ -483,8 +820,19 @@ public struct OpenAIHandler: Sendable {
             return preflightFailure
         }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: transcriptionRequest.model) else {
+        let modelHandle: String
+        do {
+            modelHandle = try await ensureAudioModelReady(
+                modelID: transcriptionRequest.model,
+                loadReason: "lazy_audio_transcription_load",
+                metricsPrefix: "audio_transcription"
+            )
+        } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerUnavailable {
+            return workerUnavailableResponse()
+        } catch {
+            return workerUnavailableResponse()
         }
         guard
             let workerRegistry,
@@ -556,12 +904,7 @@ public struct OpenAIHandler: Sendable {
                 language: response.language,
                 durationSeconds: response.durationSeconds
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
             await finishMultimodalRequest(
                 requestID: workerRequest.id.requestID,
@@ -585,9 +928,28 @@ public struct OpenAIHandler: Sendable {
         if let preflightFailure = await audioReadinessFailureResponse(for: speechRequest.model) {
             return preflightFailure
         }
+        let speechContextResult = await resolvedSpeechContext(for: speechRequest)
+        let speechContext: ResolvedAudioSpeechContext
+        switch speechContextResult {
+        case .failure(let response):
+            return response
+        case .success(let value):
+            speechContext = value
+        }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: speechRequest.model) else {
+        let modelHandle: String
+        do {
+            modelHandle = try await ensureAudioModelReady(
+                modelID: speechRequest.model,
+                loadReason: "lazy_audio_speech_load",
+                metricsPrefix: "audio_speech"
+            )
+        } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
+        } catch OnDemandModelLoadError.workerUnavailable {
+            return workerUnavailableResponse()
+        } catch {
+            return workerUnavailableResponse()
         }
         guard
             let workerRegistry,
@@ -633,10 +995,9 @@ public struct OpenAIHandler: Sendable {
                 routeKind: routeKind,
                 phase: .requestCompleted
             )
-
             return HTTPResponse(
                 statusCode: 200,
-                headers: ["content-type": audioContentType(for: resolvedFormat)],
+                headers: speechResponseHeaders(for: speechContext, resolvedFormat: resolvedFormat),
                 body: .data(response.audioBytes)
             )
         } catch {
@@ -647,6 +1008,26 @@ public struct OpenAIHandler: Sendable {
             )
             return workerUnavailableResponse()
         }
+    }
+
+    private func ensureAudioModelReady(
+        modelID: String,
+        loadReason: String,
+        metricsPrefix: String
+    ) async throws -> String {
+        guard let selectedModel = await modelCatalog.model(id: modelID) else {
+            throw OnDemandModelLoadError.modelNotReady
+        }
+        let hydratedModel = audioAssetManager.hydrate(selectedModel)
+        return try await OnDemandModelLoader.ensureModelReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            loadReason: loadReason,
+            metricsPrefix: metricsPrefix,
+            summaryOverride: hydratedModel
+        )
     }
 
     private func handleImageGenerations(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -685,7 +1066,21 @@ public struct OpenAIHandler: Sendable {
             jobID: jobID,
             modelID: imageRequest.model,
             operation: "image_generate",
-            lane: routeKind.defaultSchedulingLane
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: imageRequest.prompt,
+                size: workerRequest.size,
+                steps: 0,
+                guidance: 0,
+                strength: nil,
+                negativePrompt: "",
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: workerRequest.artifactNamespace,
+                sourceImageURI: "",
+                maskURI: ""
+            ),
+            timeoutSeconds: imageRequestTimeoutSeconds
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -756,6 +1151,13 @@ public struct OpenAIHandler: Sendable {
                 return workerErrorResponse(response.error)
             }
 
+            let queuedReplyJob = await imageJobReadModel?.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel?.job(requestID: requestID)
+            }
             let payload = OpenAIImagesResponse(
                 created: Int(Date().timeIntervalSince1970.rounded()),
                 model: imageRequest.model,
@@ -765,29 +1167,39 @@ public struct OpenAIHandler: Sendable {
                         artifact: OpenAIImageArtifactPayload(artifact: imageArtifactRef(from: artifact))
                     )
                 },
-                job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
+                job: OpenAIImageJobPayload(
+                    job: persistedReplyJob ?? controlPlaneImageJob(from: response.job, modelID: imageRequest.model)
+                )
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: imageRequestTimeoutSeconds)
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: requestID,
                 phase: .requestFailed
             )
-            return workerUnavailableResponse()
+            return workerErrorResponse({
+                var workerError = Melix_Worker_V1_ErrorStatus()
+                workerError.code = failure.code
+                workerError.message = failure.message
+                return workerError
+            }())
         }
     }
 
     private func handleImageEdits(_ request: HTTPRequest) async throws -> HTTPResponse {
         let imageRequest = try decoder.decode(OpenAIImageEditsRequest.self, from: request.body)
+        let resolvedEditMode = resolvedImageEditMode(imageRequest.editMode)
+        let sourceArtifactID = imageRequest.sourceArtifactID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptDelta = imageRequest.promptDelta?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return invalidArgumentResponse(message: "source_artifact_id is required for variation and iterate image requests.")
+        }
 
         let imageBytes: Data
         do {
@@ -802,6 +1214,37 @@ public struct OpenAIHandler: Sendable {
         } catch let error as ImageRequestNormalizationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         }
+
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return invalidArgumentResponse(message: "source_artifact_id is required for variation and iterate image requests.")
+        }
+        if resolvedEditMode != .iterate && promptDelta.isEmpty == false {
+            return invalidArgumentResponse(message: "prompt_delta is only supported for iterate image requests.")
+        }
+        if resolvedEditMode == .iterate && promptDelta.isEmpty {
+            return invalidArgumentResponse(message: "prompt_delta is required for iterate image requests.")
+        }
+        if sourceArtifactID.isEmpty == false && (imageBytes.isEmpty == false || imageRequest.imageURL != nil) {
+            return invalidArgumentResponse(message: "source_artifact_id cannot be combined with image_base64 or image_url.")
+        }
+
+        var resolvedImageURI = imageRequest.imageURL ?? ""
+        var sourceJobID = ""
+        if sourceArtifactID.isEmpty == false {
+            guard let imageJobReadModel, let sourceArtifact = await imageJobReadModel.artifact(artifactID: sourceArtifactID) else {
+                return invalidArgumentResponse(message: "Unknown source_artifact_id for image edit.")
+            }
+            guard sourceArtifact.storageUri.isEmpty == false else {
+                return invalidArgumentResponse(message: "Resolved source artifact does not expose a storage URI.")
+            }
+            resolvedImageURI = sourceArtifact.storageUri
+            sourceJobID = sourceArtifact.jobID
+        }
+        let resolvedPrompt = resolvedEditPrompt(
+            prompt: imageRequest.prompt,
+            promptDelta: promptDelta,
+            mode: resolvedEditMode
+        )
 
         guard let modelHandle = await modelCatalog.dispatchHandle(for: imageRequest.model) else {
             return httpErrorResponse(for: .modelNotReady)
@@ -825,22 +1268,46 @@ public struct OpenAIHandler: Sendable {
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = requestID
         workerRequest.modelHandle = modelHandle
-        workerRequest.prompt = imageRequest.prompt
+        workerRequest.prompt = resolvedPrompt
         workerRequest.image = imageBytes
-        workerRequest.imageUri = imageRequest.imageURL ?? ""
+        workerRequest.imageUri = resolvedImageURI
         workerRequest.mask = maskBytes ?? Data()
         workerRequest.maskUri = imageRequest.maskURL ?? ""
+        workerRequest.sourceArtifactID = sourceArtifactID
+        workerRequest.promptDelta = promptDelta
+        workerRequest.editMode = workerImageEditMode(resolvedEditMode)
         workerRequest.strength = imageRequest.strength ?? 1
         workerRequest.size = imageRequest.size ?? "1024x1024"
         workerRequest.n = UInt32(max(1, imageRequest.n ?? 1))
         workerRequest.responseFormat = imageRequest.responseFormat ?? "png"
+        if sourceJobID.isEmpty == false {
+            workerRequest.ext["melix.image.source_job_id"] = sourceJobID
+        }
 
         await imageJobReadModel?.recordQueued(
             requestID: requestID,
             jobID: jobID,
             modelID: imageRequest.model,
-            operation: "image_edit",
-            lane: routeKind.defaultSchedulingLane
+            operation: imageEditOperationName(for: resolvedEditMode),
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: resolvedPrompt,
+                size: workerRequest.size,
+                steps: 0,
+                guidance: 0,
+                strength: workerRequest.strength,
+                negativePrompt: "",
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: "",
+                sourceImageURI: resolvedImageURI,
+                maskURI: workerRequest.maskUri
+            ),
+            timeoutSeconds: imageRequestTimeoutSeconds,
+            sourceArtifactID: sourceArtifactID,
+            sourceJobID: sourceJobID,
+            promptDelta: promptDelta,
+            editMode: resolvedEditMode
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -912,6 +1379,13 @@ public struct OpenAIHandler: Sendable {
             }
 
             let outputArtifacts = Array(response.job.artifacts.suffix(response.images.count))
+            let queuedReplyJob = await imageJobReadModel?.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel?.job(requestID: requestID)
+            }
             let payload = OpenAIImagesResponse(
                 created: Int(Date().timeIntervalSince1970.rounded()),
                 model: imageRequest.model,
@@ -921,24 +1395,27 @@ public struct OpenAIHandler: Sendable {
                         artifact: OpenAIImageArtifactPayload(artifact: imageArtifactRef(from: artifact))
                     )
                 },
-                job: OpenAIImageJobPayload(job: controlPlaneImageJob(from: response.job, modelID: imageRequest.model))
+                job: OpenAIImageJobPayload(
+                    job: persistedReplyJob ?? controlPlaneImageJob(from: response.job, modelID: imageRequest.model)
+                )
             )
-            let data = try encoder.encode(payload)
-            return HTTPResponse(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: .data(data)
-            )
+            return try encodedJSONResponse(payload)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: imageRequestTimeoutSeconds)
             await imageJobReadModel?.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: requestID,
                 phase: .requestFailed
             )
-            return workerUnavailableResponse()
+            return workerErrorResponse({
+                var workerError = Melix_Worker_V1_ErrorStatus()
+                workerError.code = failure.code
+                workerError.message = failure.message
+                return workerError
+            }())
         }
     }
 
@@ -963,18 +1440,24 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let modelToolParser: ToolParserSelection? = if let model = await modelCatalog.model(id: normalized.model) {
-            ToolParserSelection(modelSettings: model.settings)
+        let resolvedModel = await modelCatalog.model(id: normalized.model)
+        let modelToolParser: ToolParserSelection? = if let resolvedModel {
+            ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            try ModelChatTemplatePolicy(modelSettings: model.settings)
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
+            try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelOCRPolicy: OCRExecutionPolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            OCRExecutionPolicy(modelSettings: model.settings)
+        let modelOCRPolicy: OCRExecutionPolicy? = if let resolvedModel {
+            OCRExecutionPolicy(modelSettings: resolvedModel.settings)
+        } else {
+            nil
+        }
+        let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
+            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
@@ -985,6 +1468,10 @@ public struct OpenAIHandler: Sendable {
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
+                serverSessionID: gatewayRuntimeBinding.activeServerSessionID
+            ),
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
@@ -1060,8 +1547,7 @@ public struct OpenAIHandler: Sendable {
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(
                 includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
-            ),
-            onDisconnect: execution.onStreamDisconnect
+            )
         )
 
         return HTTPResponse(
@@ -1075,13 +1561,61 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
-    private func jsonResponse(statusCode: Int, payload: [String: Any]) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data("{}".utf8)
+    private func encodedJSONResponse<T: Encodable>(_ payload: T, statusCode: Int = 200) throws -> HTTPResponse {
+        let encoded = try encoder.encode(payload)
+        let jsonObject = try JSONSerialization.jsonObject(with: encoded)
+        let sanitizedPayload = Self.sanitizeJSONValue(jsonObject)
+        let data: Data
+        if sanitizedPayload.metrics.isEmpty {
+            data = encoded
+        } else {
+            recordSanitizedOutputMetrics(sanitizedPayload.metrics)
+            data = try JSONSerialization.data(withJSONObject: sanitizedPayload.value, options: [.sortedKeys])
+        }
         return HTTPResponse(
             statusCode: statusCode,
             headers: ["content-type": "application/json"],
             body: .data(data)
         )
+    }
+
+    private func jsonResponse(statusCode: Int, payload: [String: Any]) -> HTTPResponse {
+        let sanitizedPayload = Self.sanitizeJSONValue(payload)
+        recordSanitizedOutputMetrics(sanitizedPayload.metrics)
+        let data = (try? JSONSerialization.data(withJSONObject: sanitizedPayload.value, options: [.sortedKeys]))
+            ?? Data("{}".utf8)
+        return HTTPResponse(
+            statusCode: statusCode,
+            headers: ["content-type": "application/json"],
+            body: .data(data)
+        )
+    }
+
+    private func recordSanitizedOutputMetrics(_ metrics: SanitizedOutputMetrics) {
+        guard metrics.isEmpty == false else {
+            return
+        }
+        let metricsStore = self.metricsStore
+        Task {
+            if metrics.enforcementCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.enforcement_count",
+                    by: Double(metrics.enforcementCount)
+                )
+            }
+            if metrics.blockedHTMLFragmentCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.blocked_html_fragment_count",
+                    by: Double(metrics.blockedHTMLFragmentCount)
+                )
+            }
+            if metrics.unsafeURIRejectionCount > 0 {
+                await metricsStore.increment(
+                    "sanitized_output.unsafe_uri_rejection_count",
+                    by: Double(metrics.unsafeURIRejectionCount)
+                )
+            }
+        }
     }
 
     private func httpErrorResponse(for error: HTTPRequestHandlingError) -> HTTPResponse {
@@ -1124,6 +1658,12 @@ public struct OpenAIHandler: Sendable {
             statusCode = 404
         case "cancelled":
             statusCode = 409
+        case "resource_exhausted":
+            statusCode = 503
+        case "deadline_exceeded":
+            statusCode = 504
+        case "unavailable", "worker_unavailable":
+            statusCode = 503
         default:
             statusCode = 500
         }
@@ -1195,6 +1735,136 @@ public struct OpenAIHandler: Sendable {
         }
     }
 
+    private func header(
+        named expectedName: String,
+        in headers: [String: String]
+    ) -> String? {
+        headers.first { key, value in
+            key.caseInsensitiveCompare(expectedName) == .orderedSame && value.isEmpty == false
+        }?.value
+    }
+
+    private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
+        switch (request.method, request.path) {
+        case (.get, "/health"):
+            return .health
+        case (.post, "/v1/melix/auth/session"):
+            return .createSession
+        case (.get, "/v1/melix/auth/session"), (.delete, "/v1/melix/auth/session"):
+            return .currentSession
+        default:
+            return .standard
+        }
+    }
+
+    private func authSessionUnsupportedResponse() -> HTTPResponse {
+        jsonResponse(
+            statusCode: 403,
+            payload: [
+                "error": [
+                    "code": "auth_session_requires_configured_gateway_auth",
+                    "message": "Remember-me sessions require a configured gateway credential.",
+                ]
+            ]
+        )
+    }
+
+    private func missingAuthSessionResponse() -> HTTPResponse {
+        jsonResponse(
+            statusCode: 401,
+            payload: [
+                "error": [
+                    "code": "missing_session",
+                    "message": "The requested gateway session is missing.",
+                    "session_state": [
+                        "state": "missing",
+                    ],
+                ]
+            ]
+        )
+    }
+
+    private func authSessionFailureResponse(
+        for failure: PersistentAuthSessionValidationFailure
+    ) async -> HTTPResponse {
+        await metricsStore.increment("gateway.auth_validation_failures")
+        let payload: [String: Any]
+        switch failure {
+        case .missingSession:
+            payload = [
+                "error": [
+                    "code": "missing_session",
+                    "message": "The requested gateway session is missing.",
+                    "session_state": [
+                        "state": "missing",
+                    ],
+                ]
+            ]
+        case let .revokedSession(sessionID, keyID, rememberMe):
+            payload = [
+                "error": [
+                    "code": "revoked_session",
+                    "message": "The requested gateway session has been revoked.",
+                    "session_state": [
+                        "state": "revoked",
+                        "session_id": sessionID,
+                        "key_id": keyID,
+                        "remember_me": rememberMe,
+                    ],
+                ]
+            ]
+        case let .expiredSession(sessionID, keyID, rememberMe):
+            payload = [
+                "error": [
+                    "code": "expired_session",
+                    "message": "The requested gateway session has expired.",
+                    "session_state": [
+                        "state": "expired",
+                        "session_id": sessionID,
+                        "key_id": keyID,
+                        "remember_me": rememberMe,
+                    ],
+                ]
+            ]
+        }
+        return jsonResponse(statusCode: 401, payload: payload)
+    }
+
+    private static func sanitizeJSONValue(_ value: Any) -> SanitizedJSONValue {
+        switch value {
+        case let string as String:
+            let result = RichOutputSanitizer.sanitize(string)
+            return SanitizedJSONValue(
+                value: result.text,
+                metrics: SanitizedOutputMetrics(
+                    enforcementCount: result.didSanitize ? 1 : 0,
+                    blockedHTMLFragmentCount: result.blockedHTMLFragmentCount,
+                    unsafeURIRejectionCount: result.unsafeURIRejectionCount
+                )
+            )
+        case let dictionary as [String: Any]:
+            var sanitizedDictionary: [String: Any] = [:]
+            var metrics = SanitizedOutputMetrics()
+            for (key, nestedValue) in dictionary {
+                let sanitizedValue = sanitizeJSONValue(nestedValue)
+                sanitizedDictionary[key] = sanitizedValue.value
+                metrics.formUnion(sanitizedValue.metrics)
+            }
+            return SanitizedJSONValue(value: sanitizedDictionary, metrics: metrics)
+        case let array as [Any]:
+            var sanitizedArray: [Any] = []
+            var metrics = SanitizedOutputMetrics()
+            for nestedValue in array {
+                let sanitizedValue = sanitizeJSONValue(nestedValue)
+                sanitizedArray.append(sanitizedValue.value)
+                metrics.formUnion(sanitizedValue.metrics)
+            }
+            return SanitizedJSONValue(value: sanitizedArray, metrics: metrics)
+        default:
+            return SanitizedJSONValue(value: value, metrics: SanitizedOutputMetrics())
+        }
+    }
+
     private func imageArtifactRef(
         from artifact: Melix_Worker_V1_ImageArtifactMetadata
     ) -> Melix_Controlplane_V1_ImageArtifactRef {
@@ -1211,6 +1881,7 @@ public struct OpenAIHandler: Sendable {
         ref.sha256 = artifact.sha256
         ref.variantIndex = artifact.variantIndex
         ref.ext = artifact.ext
+        ref.parentArtifactID = artifact.parentArtifactID
         return ref
     }
 
@@ -1233,7 +1904,128 @@ public struct OpenAIHandler: Sendable {
         job.cancelable = workerJob.cancelable
         job.createdAtUnixMs = workerJob.createdAtUnixMs
         job.updatedAtUnixMs = workerJob.updatedAtUnixMs
+        job.sourceArtifactID = workerJob.sourceArtifactID
+        job.sourceJobID = workerJob.sourceJobID
+        job.promptDelta = workerJob.promptDelta
+        job.editMode = Melix_Controlplane_V1_ImageEditMode(rawValue: workerJob.editMode.rawValue) ?? .unspecified
         return job
+    }
+
+    private func resolvedImageEditMode(
+        _ mode: OpenAIImageEditsRequest.EditMode?
+    ) -> Melix_Controlplane_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .none:
+            return .edit
+        }
+    }
+
+    private func workerImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Worker_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func imageEditOperationName(
+        for mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        switch mode {
+        case .variation:
+            return "image_variation"
+        case .iterate:
+            return "image_iterate"
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return "image_edit"
+        }
+    }
+
+    private func resolvedEditPrompt(
+        prompt: String,
+        promptDelta: String,
+        mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mode == .iterate && trimmedPrompt.isEmpty {
+            return promptDelta
+        }
+        return prompt
+    }
+
+    private func imageJobRecipe(
+        prompt: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float?,
+        negativePrompt: String,
+        variantCount: UInt32,
+        responseFormat: String,
+        artifactNamespace: String,
+        sourceImageURI: String,
+        maskURI: String
+    ) -> Melix_Controlplane_V1_ImageJobRecipeSummary {
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = prompt
+        recipe.size = size
+        recipe.steps = steps
+        recipe.guidance = guidance
+        recipe.strength = strength ?? 0
+        recipe.negativePrompt = negativePrompt
+        recipe.variantCount = variantCount
+        recipe.responseFormat = responseFormat
+        recipe.artifactNamespace = artifactNamespace
+        recipe.sourceImageUri = sourceImageURI
+        recipe.maskUri = maskURI
+        return recipe
+    }
+
+    private func imageWorkerFailure(
+        error: Error,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        guard let workerError = error as? WorkerClientError else {
+            return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+        }
+        switch workerError {
+        case .unavailable:
+            return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+        case let .requestFailed(code, message):
+            let normalizedCode = normalizedBridgeErrorCode(code)
+            switch normalizedCode {
+            case "deadline_exceeded":
+                return controlPlaneError(
+                    code: "deadline_exceeded",
+                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+                )
+            case "cancelled":
+                return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
+            case "":
+                return controlPlaneError(code: "worker_unavailable", message: "The worker cannot accept requests.")
+            default:
+                return controlPlaneError(
+                    code: normalizedCode,
+                    message: message.isEmpty ? "Image worker request failed." : message
+                )
+            }
+        }
+    }
+
+    private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
@@ -1336,6 +2128,15 @@ public struct OpenAIHandler: Sendable {
             return await workerRegistry.client(for: route)
         }
         return await workerRegistry.client(forModelID: modelID)
+    }
+
+    private static func resolveImageRequestTimeoutSeconds(environment: [String: String]) -> UInt32 {
+        let rawValue = environment["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let parsed = UInt32(rawValue), parsed > 0 else {
+            return 1_800
+        }
+        return parsed
     }
 
     private func routedWorkerKind(
@@ -1514,6 +2315,218 @@ public struct OpenAIHandler: Sendable {
         }
         return []
     }
+
+    private func resolvedSpeechContext(
+        for request: OpenAIAudioSpeechRequest
+    ) async -> ResolvedAudioSpeechContextResult {
+        guard let selectedModel = await modelCatalog.model(id: request.model) else {
+            return .success(
+                ResolvedAudioSpeechContext(
+                    requestedLocale: normalizedAudioLocale(request.locale),
+                    supportedLocales: [],
+                    resolvedLocale: "",
+                    localeSource: "",
+                    localePolicy: "",
+                    modelDefaultLocale: "",
+                    packagedDefaultLocale: "",
+                    installProfile: "",
+                    runtimePackState: "",
+                    runtimePackID: "",
+                    modelState: ""
+                )
+            )
+        }
+
+        let hydratedModel = audioAssetManager.hydrate(selectedModel)
+        let supportedLocales = advertisedSpeechLocales(for: hydratedModel)
+        let requestedLocale = normalizedAudioLocale(request.locale)
+        let localePolicy = trimmedAudioMetadata("melix.audio.locale_policy", from: hydratedModel)
+        let modelDefaultLocale = canonicalAudioLocale(
+            trimmedAudioMetadata("melix.audio.default_locale", from: hydratedModel),
+            supportedLocales: supportedLocales
+        )
+        let packagedDefaultLocale = canonicalAudioLocale(
+            trimmedAudioMetadata("melix.audio.packaged_default_locale", from: hydratedModel),
+            supportedLocales: supportedLocales
+        )
+
+        let resolvedLocale: String
+        let localeSource: String
+        if !requestedLocale.isEmpty {
+            let resolvedRequestedLocale = canonicalAudioLocale(requestedLocale, supportedLocales: supportedLocales)
+            guard !resolvedRequestedLocale.isEmpty else {
+                let supportedText = supportedLocales.isEmpty ? "none" : supportedLocales.joined(separator: ",")
+                return .failure(
+                    invalidArgumentResponse(
+                        message: "Model \(request.model) does not advertise locale \(requestedLocale). Supported locales: \(supportedText)."
+                    )
+                )
+            }
+            resolvedLocale = resolvedRequestedLocale
+            localeSource = "request"
+        } else if !modelDefaultLocale.isEmpty {
+            resolvedLocale = modelDefaultLocale
+            localeSource = "model_default"
+        } else if !packagedDefaultLocale.isEmpty {
+            resolvedLocale = packagedDefaultLocale
+            localeSource = "packaged_default"
+        } else {
+            resolvedLocale = ""
+            localeSource = ""
+        }
+
+        return .success(
+            ResolvedAudioSpeechContext(
+                requestedLocale: requestedLocale,
+                supportedLocales: supportedLocales,
+                resolvedLocale: resolvedLocale,
+                localeSource: localeSource,
+                localePolicy: localePolicy,
+                modelDefaultLocale: modelDefaultLocale,
+                packagedDefaultLocale: packagedDefaultLocale,
+                installProfile: trimmedAudioMetadata("melix.audio.install_profile", from: hydratedModel),
+                runtimePackState: trimmedAudioMetadata("melix.audio.runtime_pack_state", from: hydratedModel),
+                runtimePackID: trimmedAudioMetadata("melix.audio.runtime_pack_id", from: hydratedModel),
+                modelState: trimmedAudioMetadata("melix.audio.model_state", from: hydratedModel)
+            )
+        )
+    }
+
+    private func speechResponseHeaders(
+        for context: ResolvedAudioSpeechContext,
+        resolvedFormat: String
+    ) -> [String: String] {
+        var headers = ["content-type": audioContentType(for: resolvedFormat)]
+        if !context.requestedLocale.isEmpty {
+            headers["x-melix-audio-requested-locale"] = context.requestedLocale
+        }
+        if !context.resolvedLocale.isEmpty {
+            headers["x-melix-audio-resolved-locale"] = context.resolvedLocale
+        }
+        if !context.localeSource.isEmpty {
+            headers["x-melix-audio-locale-source"] = context.localeSource
+        }
+        if !context.localePolicy.isEmpty {
+            headers["x-melix-audio-locale-policy"] = context.localePolicy
+        }
+        if !context.modelDefaultLocale.isEmpty {
+            headers["x-melix-audio-model-default-locale"] = context.modelDefaultLocale
+        }
+        if !context.packagedDefaultLocale.isEmpty {
+            headers["x-melix-audio-packaged-default-locale"] = context.packagedDefaultLocale
+        }
+        if !context.supportedLocales.isEmpty {
+            headers["x-melix-audio-supported-locales"] = context.supportedLocales.joined(separator: ",")
+        }
+        if !context.installProfile.isEmpty {
+            headers["x-melix-audio-install-profile"] = context.installProfile
+        }
+        if !context.runtimePackState.isEmpty {
+            headers["x-melix-audio-runtime-pack-state"] = context.runtimePackState
+        }
+        if !context.runtimePackID.isEmpty {
+            headers["x-melix-audio-runtime-pack-id"] = context.runtimePackID
+        }
+        if !context.modelState.isEmpty {
+            headers["x-melix-audio-model-state"] = context.modelState
+        }
+        return headers
+    }
+
+    private func advertisedSpeechLocales(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let primaryLocales = csvAudioMetadata("melix.audio.voice_locales", from: model)
+        if !primaryLocales.isEmpty {
+            return primaryLocales
+        }
+        return csvAudioMetadata("melix.audio.languages", from: model)
+    }
+
+    private func trimmedAudioMetadata(
+        _ key: String,
+        from model: Melix_Controlplane_V1_ModelSummary
+    ) -> String {
+        model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func csvAudioMetadata(
+        _ key: String,
+        from model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let rawValue = trimmedAudioMetadata(key, from: model)
+        guard !rawValue.isEmpty else {
+            return []
+        }
+        var locales: [String] = []
+        for item in rawValue.split(separator: ",") {
+            let normalized = normalizedAudioLocale(String(item))
+            if normalized.isEmpty || locales.contains(normalized) {
+                continue
+            }
+            locales.append(normalized)
+        }
+        return locales
+    }
+
+    private func normalizedAudioLocale(_ rawValue: String?) -> String {
+        let trimmed = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+        return trimmed
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+    }
+
+    private func canonicalAudioLocale(
+        _ locale: String,
+        supportedLocales: [String]
+    ) -> String {
+        let normalized = normalizedAudioLocale(locale)
+        guard !normalized.isEmpty else {
+            return ""
+        }
+        guard
+            !supportedLocales.isEmpty,
+            !supportedLocales.contains("und"),
+            !supportedLocales.contains("auto")
+        else {
+            return normalized
+        }
+        if supportedLocales.contains(normalized) {
+            return normalized
+        }
+        let primaryLanguage = normalized.split(separator: "-").first.map(String.init) ?? normalized
+        if let matchedLocale = supportedLocales.first(where: { locale in
+            let localePrimaryLanguage = locale.split(separator: "-").first.map(String.init) ?? locale
+            return localePrimaryLanguage == primaryLanguage
+        }) {
+            return matchedLocale
+        }
+        return ""
+    }
+}
+
+private struct SanitizedJSONValue {
+    let value: Any
+    let metrics: SanitizedOutputMetrics
+}
+
+private struct SanitizedOutputMetrics {
+    var enforcementCount = 0
+    var blockedHTMLFragmentCount = 0
+    var unsafeURIRejectionCount = 0
+
+    var isEmpty: Bool {
+        enforcementCount == 0 && blockedHTMLFragmentCount == 0 && unsafeURIRejectionCount == 0
+    }
+
+    mutating func formUnion(_ other: SanitizedOutputMetrics) {
+        enforcementCount += other.enforcementCount
+        blockedHTMLFragmentCount += other.blockedHTMLFragmentCount
+        unsafeURIRejectionCount += other.unsafeURIRejectionCount
+    }
 }
 
 private enum HTTPRequestHandlingError: Error {
@@ -1560,6 +2573,57 @@ private struct CacheStatsResponse: Codable {
         case l2RestoreHitRate = "l2_restore_hit_rate"
         case activeCacheMode = "active_cache_mode"
     }
+}
+
+private struct OpenAICreateAuthSessionRequest: Codable {
+    let rememberMe: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case rememberMe = "remember_me"
+    }
+}
+
+private struct OpenAIAuthSessionResponse: Codable {
+    let session: OpenAIAuthSessionPayload
+    let resume: OpenAIAuthSessionResumePayload?
+}
+
+private struct OpenAIAuthSessionPayload: Codable {
+    let sessionID: String
+    let keyID: String
+    let rememberMe: Bool
+    let createdAtUnixMs: Int64
+    let expiresAtUnixMs: Int64
+    let revokedAtUnixMs: Int64
+    let lastRestoredAtUnixMs: Int64
+    let state: String
+
+    init(metadata: PersistentAuthSessionMetadata) {
+        sessionID = metadata.sessionID
+        keyID = metadata.keyID
+        rememberMe = metadata.rememberMe
+        createdAtUnixMs = metadata.createdAtUnixMs
+        expiresAtUnixMs = metadata.expiresAtUnixMs
+        revokedAtUnixMs = metadata.revokedAtUnixMs
+        lastRestoredAtUnixMs = metadata.lastRestoredAtUnixMs
+        state = metadata.state
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case keyID = "key_id"
+        case rememberMe = "remember_me"
+        case createdAtUnixMs = "created_at_unix_ms"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+        case revokedAtUnixMs = "revoked_at_unix_ms"
+        case lastRestoredAtUnixMs = "last_restored_at_unix_ms"
+        case state
+    }
+}
+
+private struct OpenAIAuthSessionResumePayload: Codable {
+    let header: String
+    let token: String
 }
 
 private struct OpenAIEmbeddingsRequest: Codable {
@@ -1709,7 +2773,28 @@ private struct OpenAIAudioSpeechRequest: Codable {
     let voice: String?
     let format: String?
     let instructions: String?
+    let locale: String?
 }
+
+private struct ResolvedAudioSpeechContext {
+    let requestedLocale: String
+    let supportedLocales: [String]
+    let resolvedLocale: String
+    let localeSource: String
+    let localePolicy: String
+    let modelDefaultLocale: String
+    let packagedDefaultLocale: String
+    let installProfile: String
+    let runtimePackState: String
+    let runtimePackID: String
+    let modelState: String
+}
+
+private enum ResolvedAudioSpeechContextResult {
+    case success(ResolvedAudioSpeechContext)
+    case failure(HTTPResponse)
+}
+
 
 private enum ImageRequestNormalizationError: Error {
     case missingImage
@@ -1753,6 +2838,12 @@ private struct OpenAIImageGenerationsRequest: Codable {
 }
 
 private struct OpenAIImageEditsRequest: Codable {
+    enum EditMode: String, Codable {
+        case edit
+        case variation
+        case iterate
+    }
+
     let id: String?
     let model: String
     let prompt: String
@@ -1764,6 +2855,9 @@ private struct OpenAIImageEditsRequest: Codable {
     let size: String?
     let n: Int?
     let responseFormat: String?
+    let sourceArtifactID: String?
+    let promptDelta: String?
+    let editMode: EditMode?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1777,6 +2871,9 @@ private struct OpenAIImageEditsRequest: Codable {
         case size
         case n
         case responseFormat = "response_format"
+        case sourceArtifactID = "source_artifact_id"
+        case promptDelta = "prompt_delta"
+        case editMode = "edit_mode"
     }
 
     var requestID: String {
@@ -1791,6 +2888,9 @@ private struct OpenAIImageEditsRequest: Codable {
             return data
         }
         if imageURL != nil {
+            return Data()
+        }
+        if sourceArtifactID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             return Data()
         }
         throw ImageRequestNormalizationError.missingImage
@@ -1827,6 +2927,7 @@ private struct OpenAIImageDatum: Codable {
 private struct OpenAIImageArtifactPayload: Codable {
     let artifactID: String
     let jobID: String
+    let parentArtifactID: String
     let role: String
     let mimeType: String
     let format: String
@@ -1840,6 +2941,7 @@ private struct OpenAIImageArtifactPayload: Codable {
     init(artifact: Melix_Controlplane_V1_ImageArtifactRef) {
         artifactID = artifact.artifactID
         jobID = artifact.jobID
+        parentArtifactID = artifact.parentArtifactID
         role = artifact.role.melixString
         mimeType = artifact.mimeType
         format = artifact.format
@@ -1854,6 +2956,7 @@ private struct OpenAIImageArtifactPayload: Codable {
     enum CodingKeys: String, CodingKey {
         case artifactID = "artifact_id"
         case jobID = "job_id"
+        case parentArtifactID = "parent_artifact_id"
         case role
         case mimeType = "mime_type"
         case format
@@ -1872,11 +2975,18 @@ private struct OpenAIImageJobPayload: Codable {
     let modelID: String
     let operation: String
     let state: String
+    let progress: OpenAIImageJobProgressPayload
     let lane: String
     let workerID: String
     let cancelable: Bool
     let createdAtUnixMs: Int64
     let updatedAtUnixMs: Int64
+    let sourceArtifactID: String
+    let sourceJobID: String
+    let promptDelta: String
+    let editMode: String
+    let requestTimeoutSeconds: UInt32
+    let recipe: OpenAIImageJobRecipePayload
     let artifacts: [OpenAIImageArtifactPayload]
 
     init(job: Melix_Controlplane_V1_ImageJobSummary) {
@@ -1885,11 +2995,18 @@ private struct OpenAIImageJobPayload: Codable {
         modelID = job.modelID
         operation = job.operation
         state = job.state.melixString
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
         lane = job.lane
         workerID = job.workerID
         cancelable = job.cancelable
         createdAtUnixMs = job.createdAtUnixMs
         updatedAtUnixMs = job.updatedAtUnixMs
+        sourceArtifactID = job.sourceArtifactID
+        sourceJobID = job.sourceJobID
+        promptDelta = job.promptDelta
+        editMode = job.editMode.melixString
+        requestTimeoutSeconds = job.timeoutSeconds
+        recipe = OpenAIImageJobRecipePayload(recipe: job.recipe)
         artifacts = job.artifacts.map(OpenAIImageArtifactPayload.init)
     }
 
@@ -1899,12 +3016,82 @@ private struct OpenAIImageJobPayload: Codable {
         case modelID = "model_id"
         case operation
         case state
+        case progress
         case lane
         case workerID = "worker_id"
         case cancelable
         case createdAtUnixMs = "created_at_unix_ms"
         case updatedAtUnixMs = "updated_at_unix_ms"
+        case sourceArtifactID = "source_artifact_id"
+        case sourceJobID = "source_job_id"
+        case promptDelta = "prompt_delta"
+        case editMode = "edit_mode"
+        case requestTimeoutSeconds = "request_timeout_seconds"
+        case recipe
         case artifacts
+    }
+}
+
+private struct OpenAIImageJobProgressPayload: Codable {
+    let stage: String
+    let pct: Float
+    let completedSteps: UInt32
+    let totalSteps: UInt32
+
+    init(progress: Melix_Controlplane_V1_ImageJobProgress) {
+        stage = progress.stage
+        pct = progress.pct
+        completedSteps = progress.completedSteps
+        totalSteps = progress.totalSteps
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case stage
+        case pct
+        case completedSteps = "completed_steps"
+        case totalSteps = "total_steps"
+    }
+}
+
+private struct OpenAIImageJobRecipePayload: Codable {
+    let prompt: String
+    let size: String
+    let steps: UInt32
+    let guidance: Float
+    let strength: Float
+    let negativePrompt: String
+    let variantCount: UInt32
+    let responseFormat: String
+    let artifactNamespace: String
+    let sourceImageURI: String
+    let maskURI: String
+
+    init(recipe: Melix_Controlplane_V1_ImageJobRecipeSummary) {
+        prompt = recipe.prompt
+        size = recipe.size
+        steps = recipe.steps
+        guidance = recipe.guidance
+        strength = recipe.strength
+        negativePrompt = recipe.negativePrompt
+        variantCount = recipe.variantCount
+        responseFormat = recipe.responseFormat
+        artifactNamespace = recipe.artifactNamespace
+        sourceImageURI = recipe.sourceImageUri
+        maskURI = recipe.maskUri
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case size
+        case steps
+        case guidance
+        case strength
+        case negativePrompt = "negative_prompt"
+        case variantCount = "variant_count"
+        case responseFormat = "response_format"
+        case artifactNamespace = "artifact_namespace"
+        case sourceImageURI = "source_image_uri"
+        case maskURI = "mask_uri"
     }
 }
 
@@ -1971,6 +3158,21 @@ private extension Melix_Controlplane_V1_ImageJobState {
     }
 }
 
+private extension Melix_Controlplane_V1_ImageEditMode {
+    var melixString: String {
+        switch self {
+        case .variation:
+            return "variation"
+        case .iterate:
+            return "iterate"
+        case .edit:
+            return "edit"
+        default:
+            return "unspecified"
+        }
+    }
+}
+
 private extension Melix_Controlplane_V1_ImageArtifactRole {
     var melixString: String {
         switch self {
@@ -1995,6 +3197,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return 409
+        case .requestNotResumable:
+            return 409
         case .workerUnavailable:
             return 503
         }
@@ -2004,6 +3208,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return "request_already_active"
+        case .requestNotResumable:
+            return "request_not_resumable"
         case .workerUnavailable:
             return "worker_unavailable"
         }
@@ -2013,6 +3219,8 @@ private extension RequestCoordinatorError {
         switch self {
         case .requestAlreadyActive:
             return "A text generation request is already active."
+        case .requestNotResumable:
+            return "The disconnected request is no longer eligible for resume."
         case .workerUnavailable:
             return "The worker cannot accept requests."
         }

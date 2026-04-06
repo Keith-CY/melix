@@ -2,7 +2,8 @@
 
 ## Purpose
 
-This runbook explains how to inspect the repository-owned support matrix for Melix embedding and rerank families.
+This runbook explains how to inspect the repository-owned support matrix for Melix text,
+speech-to-text, text-to-speech, embedding, rerank, and image families.
 
 The matrix distinguishes two support levels:
 
@@ -29,13 +30,41 @@ Check the following fields for each family row:
 - `live_path.status`
 - `live_path.integration_tests`
 
-Rows marked `contract_only` are intentional gaps. They indicate Melix can describe the family in the catalog, but repository-owned live-path verification has not landed yet.
+For `transcription` rows, also inspect:
+
+- `contract.backend_id`
+- `contract.install_profile`
+- `contract.languages`
+
+For `speech` rows, also inspect:
+
+- `contract.backend_id`
+- `contract.install_profile`
+- `contract.languages`
+- `contract.default_locale`
+- `contract.packaged_default_locale`
+- `contract.locale_policy`
+- `contract.voice_mode`
+- `contract.output_formats`
+- `contract.supports_instructions`
+- `contract.voice_catalog_summary`
+- `contract.voice_locales`
+
+Rows marked `contract_only` are intentional gaps. They indicate Melix can describe the family in
+the catalog, but repository-owned live-path verification has not landed yet.
 
 ## Operator Use
 
 Use this matrix when:
 
+- checking whether a requested dense or MoE text family is only declared or also live-verified
+- checking whether a requested speech-to-text family is only catalog-declared or already backed by
+  repository-owned live-path evidence
+- checking whether a requested text-to-speech family exposes the expected language and
+  voice-catalog contract, locale-policy defaults, packaged fallback behavior, and live-path test
+  coverage
 - checking whether a requested embedding or rerank family is only declared or also live-verified
+- checking whether a requested image family is only declared or also live-verified
 - reviewing family-expansion changes for support drift
 - locating the integration test that currently proves a family-specific live path
 
@@ -45,4 +74,6 @@ If the matrix drifts from runtime behavior:
 
 1. inspect the relevant `WorkerModelCatalog` family metadata
 2. re-run the linked integration test node from the matrix row
-3. update the matrix builder and the linked runbook evidence in the same change
+3. for speech families, also re-run `make phase17-metrics` and compare the output against
+   `docs/runbooks/speech-runtime-operator-evidence.md`
+4. update the matrix builder and the linked runbook evidence in the same change

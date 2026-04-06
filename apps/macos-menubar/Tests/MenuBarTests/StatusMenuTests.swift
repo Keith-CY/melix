@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixControlPlaneProtocol
 
 @Suite("Status Menu", .serialized)
 struct StatusMenuTests {
@@ -46,6 +47,100 @@ struct StatusMenuTests {
         let content = try #require(renderer.lastContent)
         #expect(content.title == "Melix Error")
         #expect(content.items.contains(.error("Startup failed: menu handshake failed. Open Melix Console for details.")))
+    }
+
+    @Test("install includes packaged update status when available")
+    @MainActor
+    func installRendersPackagedUpdateState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update available: 0.2.0",
+                    detail: "Current 0.1.0 on stable",
+                    isAvailable: true,
+                    checkSucceeded: true
+                ),
+                startupDiagnosticResponse: nil
+            )
+        )
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        menu.install()
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Update available: 0.2.0")))
+    }
+
+    @Test("install surfaces runtime banner titles before model actions")
+    @MainActor
+    func installSurfacesRuntimeBannerTitles() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        menu.install()
+        await client.sendServerStateChanged(state: .serverDraining)
+        try await eventually("status menu should refresh with the runtime warning banner", timeout: .seconds(2)) {
+            renderer.lastContent?.items.contains(.info("Runtime Needs Monitoring")) == true
+        }
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Runtime Needs Monitoring")))
+    }
+
+    @Test("install surfaces download recovery titles before model actions")
+    @MainActor
+    func installSurfacesDownloadRecoveryTitles() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeStatusMenuNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0100",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.5,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/status-menu",
+                            downloadedBytes: 1024,
+                            totalBytes: 2048,
+                            resumeUsed: true,
+                            resumeFromBytes: 512,
+                            retryCount: 1,
+                            stallDetectionCount: 1,
+                            stallReason: "no_progress_timeout",
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        menu.install()
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Download Recovery Available")))
     }
 
     @Test("perform routes primary model actions to the view model")
@@ -220,6 +315,22 @@ struct StatusMenuTests {
         #expect(statusItem.button?.title == "Melix Ready")
         #expect(statusItem.menu?.items.count == 2)
     }
+}
+
+private func makeStatusMenuNamedModelOperationResult(
+    operation: String,
+    outputPath: String,
+    manifestJSON: String
+) -> Melix_Controlplane_V1_ModelOperationResult {
+    var result = Melix_Controlplane_V1_ModelOperationResult()
+    result.ok = true
+    result.operation = operation
+    result.jobID = "job-\(operation)"
+    result.stage = "completed"
+    result.pct = 1
+    result.outputPath = outputPath
+    result.manifestJson = manifestJSON
+    return result
 }
 
 @MainActor

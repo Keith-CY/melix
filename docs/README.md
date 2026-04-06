@@ -119,6 +119,8 @@ Current phase-status and planning documents:
 - `plans/2026-03-31-m16-2-frame-policy-video-runtime-and-background-lane-routing.md`
 - `plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
 - `plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
+- `runbooks/video-understanding-evidence.md`
+- `runbooks/speech-runtime-operator-evidence.md`
 - `plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
 - `plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
 - `plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
@@ -139,6 +141,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-phase-6-vision-ocr-audio-transcription.md`
 - `plans/2026-03-27-phase-7-image-generation-editing.md`
 - `plans/2026-03-27-phase-8-desktop-productization-release.md`
+- `plans/2026-04-03-bench-matrix-performance-lab.md`
 
 Current roadmap and phase-status documents:
 
@@ -150,15 +153,27 @@ Recent decision records:
 
 - `decisions/2026-03-27-swift-text-runtime.md`
 - `decisions/2026-03-28-product-scope-and-runtime-priorities.md`
+- `decisions/2026-04-02-m9-security-stability-closure-audit.md`
 
 Current runbooks:
 
+- `runbooks/desktop-polish.md`
+- `runbooks/disk-streaming-evidence.md`
+- `runbooks/session-lifecycle.md`
+- `runbooks/connection-lifecycle.md`
+- `runbooks/admin-surface-persistence.md`
+- `runbooks/security-and-stability-closure.md`
 - `runbooks/m7-benchmark-and-evaluation-foundation.md`
 - `runbooks/m6-acceleration-benchmarks.md`
+- `runbooks/homebrew-install.md`
 - `runbooks/external-agent-integrations.md`
 - `runbooks/service-first-reuse.md`
 - `runbooks/shared-access.md`
+- `runbooks/persistent-sessions.md`
+- `runbooks/rich-output-sanitization.md`
 - `runbooks/model-family-support-matrix.md`
+- `runbooks/speech-runtime-operator-evidence.md`
+- `runbooks/platform-packaging-targets.md`
 - `runbooks/phase-1-local-stack.md`
 - `runbooks/phase-2-queue-pressure.md`
 - `runbooks/phase-6-chat-panel.md`

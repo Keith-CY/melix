@@ -1617,6 +1617,42 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(cacheResponse.stats.blockCount, 4)
     }
 
+    func testRuntimeRegistryDefaultsCacheHintsFromModelSettings() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var loadRequest = Melix_Worker_V1_ModelSpec()
+        loadRequest.modelID = "melix-dev-text"
+        loadRequest.settings.cacheMode = .hybrid
+        loadRequest.settings.cacheBlockSizeTokens = 16
+        let loaded = try await registry.loadModel(loadRequest)
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let messages = (0..<32).map { _ in makeUserMessage("token") }
+        let result = try await registry.prefill(
+            requestID: "req-prefill-model-cache-defaults",
+            modelHandle: loaded.handle,
+            messages: messages,
+            prefillStepSize: 8,
+            returnDecodeHandle: true,
+            resumeHint: "model-cache-defaults",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let cacheResponse = await registry.cacheStatsResponse()
+
+        XCTAssertEqual(result.promptTokens, 32)
+        XCTAssertEqual(result.blockTable.blocks.count, 2)
+        XCTAssertEqual(cacheResponse.stats.activeMode, .hybrid)
+    }
+
     func testRuntimeRegistryCountsNameOnlyPromptTokensForContextGuard() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
@@ -1681,9 +1717,12 @@ final class WorkerScaffoldTests: XCTestCase {
         var imagePart = Melix_Worker_V1_MessagePart()
         imagePart.imageUri = "file:///tmp/test.png"
 
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.videoUri = "file:///tmp/test.mp4"
+
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
-        message.parts = [blankPart, nilPart, imagePart]
+        message.parts = [blankPart, nilPart, imagePart, videoPart]
 
         var acceleration = Melix_Worker_V1_AccelerationPolicy()
         acceleration.mode = .baseline
@@ -1705,7 +1744,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 return XCTFail("expected contextLimitExceeded, got \(error)")
             }
             XCTAssertEqual(maxContext, 200)
-            XCTAssertEqual(promptTokens, 256)
+            XCTAssertEqual(promptTokens, 512)
         }
     }
 
@@ -1893,6 +1932,36 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadedModelCount, 0)
     }
 
+    func testRuntimeLifecycleRejectsUnsupportedDiskStreamingMode() async throws {
+        let services = makeServices(
+            environment: [:],
+            backend: FakeRuntimeBackend(),
+            residentMemorySamples: [1_000, 5_096]
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.diskStreamingMode = .diskStreamingRequireDisk
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(loadResponse.ok)
+        XCTAssertEqual(loadResponse.error.code, "disk_streaming_unsupported")
+        XCTAssertEqual(loadResponse.error.details["model_id"], "melix-dev-text")
+        XCTAssertEqual(loadResponse.error.details["requested_mode"], "3")
+        let loadedModelCount = await services.registry.loadedModelCount()
+        XCTAssertEqual(loadedModelCount, 0)
+    }
+
     func testRuntimeLifecycleRejectsModelLoadsThatExceedExplicitRequestBudget() async throws {
         let services = makeServices(
             environment: [
@@ -1974,6 +2043,32 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(loadedModelCount, 1)
     }
 
+    func testRuntimeRegistryDerivesResidencyPoliciesAndExplicitDiskStreamingDefaults() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(),
+            modelCatalog: WorkerModelCatalog(environment: [:]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var pinnedSpec = makeModelSpec(modelID: "pinned-model")
+        pinnedSpec.settings.pinOnLoad = true
+        let pinnedLoaded = try await registry.loadModel(pinnedSpec)
+
+        var policySpec = makeModelSpec(modelID: "policy-model")
+        policySpec.settings.memoryPolicy = .memoryResidencyPinned
+        let policyLoaded = try await registry.loadModel(policySpec)
+
+        var ttlAndDiskSpec = makeModelSpec(modelID: "ttl-disk-model")
+        ttlAndDiskSpec.settings.ttlSeconds = 60
+        ttlAndDiskSpec.settings.diskStreamingMode = .diskStreamingDisabled
+        let ttlAndDiskLoaded = try await registry.loadModel(ttlAndDiskSpec)
+
+        XCTAssertEqual(pinnedLoaded.residency.policy, .memoryResidencyPinned)
+        XCTAssertEqual(policyLoaded.residency.policy, .memoryResidencyPinned)
+        XCTAssertEqual(ttlAndDiskLoaded.residency.policy, .memoryResidencyTtl)
+        XCTAssertEqual(ttlAndDiskLoaded.residency.effectiveDiskStreamingMode, .diskStreamingDisabled)
+    }
+
     func testWorkerRuntimeRegistryErrorSupportsMemoryBudgetDescriptionsAndEquality() {
         let budgetError = WorkerRuntimeRegistryError.memoryBudgetExceeded(
             budgetBytes: 4_500,
@@ -2001,6 +2096,31 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(budgetError, sameBudgetError)
         XCTAssertNotEqual(budgetError, differentBudgetError)
         XCTAssertNotEqual(budgetError, .unknownModelHandle)
+    }
+
+    func testWorkerRuntimeRegistryErrorSupportsDiskStreamingMappingsAndEquality() {
+        let diskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingRequireDisk,
+            modelID: "melix-dev-text"
+        )
+        let sameDiskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingRequireDisk,
+            modelID: "melix-dev-text"
+        )
+        let differentDiskStreamingError = WorkerRuntimeRegistryError.diskStreamingUnsupported(
+            requestedMode: .diskStreamingPreferDisk,
+            modelID: "melix-dev-text"
+        )
+
+        XCTAssertEqual(
+            diskStreamingError.errorDescription,
+            "The selected runtime does not support disk-streaming mode."
+        )
+        XCTAssertEqual(diskStreamingError.explicitPrefillErrorDetails["requested_mode"], "3")
+        XCTAssertEqual(diskStreamingError.explicitPrefillErrorDetails["model_id"], "melix-dev-text")
+        XCTAssertEqual(diskStreamingError.saveRestoreErrorCode, "failed_precondition")
+        XCTAssertEqual(diskStreamingError, sameDiskStreamingError)
+        XCTAssertNotEqual(diskStreamingError, differentDiskStreamingError)
     }
 
     func testWorkerRuntimeRegistryErrorExposesPrefillGuardMetadataAndMappings() {
@@ -5372,6 +5492,18 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        let benchMatrixResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.runBenchMatrix(
+                request: Melix_Worker_V1_RunBenchMatrixRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.RunBenchMatrix.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let evaluationResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.runEvaluation(
                 request: Melix_Worker_V1_RunEvaluationRequest(),
@@ -5454,6 +5586,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(infoResponse.error.code, "unimplemented")
         XCTAssertFalse(doctorResponse.ok)
         XCTAssertEqual(doctorResponse.error.code, "unimplemented")
+        XCTAssertTrue(benchMatrixResponse.hasJob)
+        XCTAssertEqual(benchMatrixResponse.job.schemaVersion, "melix.benchmark_matrix_job.v1")
+        XCTAssertEqual(benchMatrixResponse.job.jobID, "swift-text-unimplemented")
+        XCTAssertEqual(benchMatrixResponse.job.benchmarkMode, "matrix")
+        XCTAssertEqual(benchMatrixResponse.job.status, "failed")
+        XCTAssertTrue(benchMatrixResponse.summaryRows.isEmpty)
         XCTAssertFalse(evaluationResponse.ok)
         XCTAssertEqual(evaluationResponse.error.code, "unimplemented")
         XCTAssertFalse(exportResponse.ok)
@@ -6219,8 +6357,14 @@ private func makeMediaRichMessage() -> Melix_Worker_V1_ChatMessage {
     var audioBytes = Melix_Worker_V1_MessagePart()
     audioBytes.audioBytes = Data([0x04, 0x05, 0x06])
 
+    var videoURI = Melix_Worker_V1_MessagePart()
+    videoURI.videoUri = "file:///tmp/video.mp4"
+
+    var videoBytes = Melix_Worker_V1_MessagePart()
+    videoBytes.videoBytes = Data([0x07, 0x08, 0x09])
+
     let empty = Melix_Worker_V1_MessagePart()
-    message.parts = [imageURI, imageBytes, audioURI, audioBytes, empty]
+    message.parts = [imageURI, imageBytes, audioURI, audioBytes, videoURI, videoBytes, empty]
     return message
 }
 

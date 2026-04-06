@@ -59,6 +59,7 @@ This verifies:
 - runtime-core multi-model evidence
 - runtime-core memory-guard evidence
 - training sanity
+- M9 ecosystem and security evidence, including closure-audit blockers and release-gate probe coverage
 
 For the manual LoRA operator workflow, use `docs/runbooks/phase-8-lora-adapter-workflow.md`.
 
@@ -100,6 +101,13 @@ The report includes:
 - install success rate
 - benchmark regression percentage
 - smoke pass rate
+- M9 required probe count
+- M9 missing probe count
+- M9 failed threshold count
+- closure-audit blocker count
+- closure-audit accepted-risk count
+- closure-audit evidence-gap count
+- closure-audit deferred-work count
 - training duration
 - adapter publish latency
 - restart-to-ready latency
@@ -123,4 +131,13 @@ Then rerun:
 ```bash
 make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json"
 make phase8-metrics PHASE8_METRICS_ARGS="--json"
+```
+
+When debugging the release decision, also run the deterministic M9-only smoke fixtures:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke.py --repo-root "$(pwd)" --json
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke.py --repo-root "$(pwd)" --fixture-mode failing --json
 ```

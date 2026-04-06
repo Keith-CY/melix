@@ -63,6 +63,13 @@ public struct BenchRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
     public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLength: UInt32
+    public let batchSizes: [UInt32]
+    public let repeats: UInt32
+    public let cacheProfile: String
+    public let reasoningMode: String
+    public let structuredOutputMode: String
     public let parameters: [String: String]
     public let json: Bool
 
@@ -70,18 +77,95 @@ public struct BenchRunOptions: Equatable, Sendable {
         modelID: String = "",
         hfRepoID: String = "",
         suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLength: UInt32 = 0,
+        batchSizes: [UInt32] = [],
+        repeats: UInt32 = 1,
+        cacheProfile: String = "",
+        reasoningMode: String = "",
+        structuredOutputMode: String = "",
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
         self.suites = suites
+        self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
+        self.generationLength = generationLength
+        self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.cacheProfile = cacheProfile
+        self.reasoningMode = reasoningMode
+        self.structuredOutputMode = structuredOutputMode
         self.parameters = parameters
         self.json = json
     }
 }
 
 public struct BenchListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct BenchMatrixRunOptions: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let taskKind: String
+    public let suites: [String]
+    public let contextLengths: [UInt32]
+    public let generationLengths: [UInt32]
+    public let batchSizes: [UInt32]
+    public let cacheProfiles: [String]
+    public let reasoningModes: [String]
+    public let structuredOutputModes: [String]
+    public let concurrencyLevels: [UInt32]
+    public let repeats: UInt32
+    public let requests: UInt32
+    public let durationSeconds: UInt32
+    public let allowLargeMatrix: Bool
+    public let json: Bool
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        taskKind: String = "",
+        suites: [String] = [],
+        contextLengths: [UInt32] = [],
+        generationLengths: [UInt32] = [],
+        batchSizes: [UInt32] = [],
+        cacheProfiles: [String] = [],
+        reasoningModes: [String] = [],
+        structuredOutputModes: [String] = [],
+        concurrencyLevels: [UInt32] = [],
+        repeats: UInt32 = 1,
+        requests: UInt32 = 0,
+        durationSeconds: UInt32 = 0,
+        allowLargeMatrix: Bool = false,
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.taskKind = taskKind
+        self.suites = Array(Set(suites)).sorted()
+        self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
+        self.generationLengths = ControlPlaneBenchRequest.normalizedBenchValues(generationLengths)
+        self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
+        self.cacheProfiles = ControlPlaneBenchMatrixRequest.normalizedStringValues(cacheProfiles)
+        self.reasoningModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(reasoningModes)
+        self.structuredOutputModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(structuredOutputModes)
+        self.concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(concurrencyLevels)
+        self.repeats = repeats == 0 ? 1 : repeats
+        self.requests = requests
+        self.durationSeconds = durationSeconds
+        self.allowLargeMatrix = allowLargeMatrix
+        self.json = json
+    }
+}
+
+public struct BenchMatrixListOptions: Equatable, Sendable {
     public let json: Bool
 
     public init(json: Bool = false) {
@@ -149,13 +233,71 @@ public struct EvalExportOptions: Equatable, Sendable {
     }
 }
 
+public struct ServerSnapshotOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ServerControlOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let json: Bool
+
+    public init(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        json: Bool = false
+    ) {
+        self.serverSessionID = serverSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : serverSessionID
+        self.json = json
+    }
+}
+
+public struct ServerIdlePolicyOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let autoSleepEnabled: Bool
+    public let lightSleepAfterSeconds: UInt32
+    public let deepSleepAfterSeconds: UInt32
+    public let json: Bool
+
+    public init(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32,
+        json: Bool = false
+    ) {
+        self.serverSessionID = serverSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : serverSessionID
+        self.autoSleepEnabled = autoSleepEnabled
+        self.lightSleepAfterSeconds = lightSleepAfterSeconds
+        self.deepSleepAfterSeconds = deepSleepAfterSeconds
+        self.json = json
+    }
+}
+
 public enum MelixCLICommand: Equatable, Sendable {
+    case serverSnapshot(ServerSnapshotOptions)
+    case serverStart(ServerControlOptions)
+    case serverPause(ServerControlOptions)
+    case serverResume(ServerControlOptions)
+    case serverWake(ServerControlOptions)
+    case serverStop(ServerControlOptions)
+    case serverSetIdlePolicy(ServerIdlePolicyOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
     case loraActivate(LoraActivateOptions)
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
+    case benchMatrixRun(BenchMatrixRunOptions)
+    case benchMatrixList(BenchMatrixListOptions)
+    case benchMatrixExportSummaryCSV(BenchExportCSVOptions)
+    case benchMatrixExportRequestsCSV(BenchExportCSVOptions)
     case evalRun(EvalRunOptions)
     case evalList(EvalListOptions)
     case evalExportSummaryCSV(EvalExportOptions)
@@ -190,6 +332,8 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "server":
+            return try parseServer(tail)
         case "lora":
             return try parseLora(tail)
         case "bench":
@@ -203,18 +347,82 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix server snapshot [--json]
+      melix server start [--server-session-id ID] [--json]
+      melix server pause [--server-session-id ID] [--json]
+      melix server resume [--server-session-id ID] [--json]
+      melix server wake [--server-session-id ID] [--json]
+      melix server stop [--server-session-id ID] [--json]
+      melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
-      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--sample-size N] [--batch-factor N] [--json]
+      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
+      melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--json]
+      melix bench matrix list [--json]
+      melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
+      melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
     """
+
+    private static func parseServer(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let json = values.flags.contains("--json")
+        switch action {
+        case "snapshot":
+            return .serverSnapshot(.init(json: json))
+        case "start":
+            return .serverStart(.init(serverSessionID: serverSessionID, json: json))
+        case "pause":
+            return .serverPause(.init(serverSessionID: serverSessionID, json: json))
+        case "resume":
+            return .serverResume(.init(serverSessionID: serverSessionID, json: json))
+        case "wake":
+            return .serverWake(.init(serverSessionID: serverSessionID, json: json))
+        case "stop":
+            return .serverStop(.init(serverSessionID: serverSessionID, json: json))
+        case "set-idle-policy":
+            guard let autoSleepValue = values.single["--auto-sleep"] else {
+                throw MelixCLIError.missingRequired("--auto-sleep is required for melix server set-idle-policy.")
+            }
+            guard let autoSleepEnabled = parseBooleanValue(autoSleepValue, option: "--auto-sleep") else {
+                throw MelixCLIError.usage("Invalid value for --auto-sleep. Expected true or false.")
+            }
+            guard let lightSleepAfterSeconds = try parseUInt32Value(
+                values.single["--light-sleep-after"],
+                option: "--light-sleep-after"
+            ) else {
+                throw MelixCLIError.missingRequired("--light-sleep-after is required for melix server set-idle-policy.")
+            }
+            guard let deepSleepAfterSeconds = try parseUInt32Value(
+                values.single["--deep-sleep-after"],
+                option: "--deep-sleep-after"
+            ) else {
+                throw MelixCLIError.missingRequired("--deep-sleep-after is required for melix server set-idle-policy.")
+            }
+            return .serverSetIdlePolicy(
+                .init(
+                    serverSessionID: serverSessionID,
+                    autoSleepEnabled: autoSleepEnabled,
+                    lightSleepAfterSeconds: lightSleepAfterSeconds,
+                    deepSleepAfterSeconds: deepSleepAfterSeconds,
+                    json: json
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
 
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
@@ -309,7 +517,12 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        if action == "matrix" {
+            return try parseBenchMatrix(Array(arguments.dropFirst()))
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--suite", "--context-length", "--batch-size"]
+        )
         switch action {
         case "run":
             let modelID = values.single["--model-id"] ?? ""
@@ -318,6 +531,16 @@ public enum MelixCLIParser {
             guard explicitTargetCount == 1 else {
                 throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix bench run.")
             }
+            let contextLengths = try parseUInt32List(values.multi["--context-length"] ?? [], option: "--context-length")
+            let generationLength = try parseUInt32Value(values.single["--generation-length"], option: "--generation-length") ?? 0
+            let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
+            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let cacheProfile = values.single["--cache-profile"] ?? ""
+            guard cacheProfile.isEmpty || ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) else {
+                throw MelixCLIError.usage("Invalid value for --cache-profile. Expected one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", ")).")
+            }
+            let reasoningMode = values.single["--reasoning-mode"] ?? ""
+            let structuredOutputMode = values.single["--structured-output-mode"] ?? ""
             var parameters: [String: String] = [:]
             if let sampleSize = values.single["--sample-size"] {
                 parameters["sample_size"] = sampleSize
@@ -330,6 +553,13 @@ public enum MelixCLIParser {
                     modelID: modelID,
                     hfRepoID: hfRepoID,
                     suites: values.multi["--suite"] ?? [],
+                    contextLengths: contextLengths,
+                    generationLength: generationLength,
+                    batchSizes: batchSizes,
+                    repeats: repeats,
+                    cacheProfile: cacheProfile,
+                    reasoningMode: reasoningMode,
+                    structuredOutputMode: structuredOutputMode,
                     parameters: parameters,
                     json: values.flags.contains("--json")
                 )
@@ -355,11 +585,129 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parseBenchMatrix(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: [
+                "--suite",
+                "--context-length",
+                "--generation-length",
+                "--batch-size",
+                "--cache-profile",
+                "--reasoning-mode",
+                "--structured-output-mode",
+                "--concurrency",
+            ]
+        )
+        switch action {
+        case "run":
+            let modelID = values.single["--model-id"] ?? ""
+            let hfRepoID = values.single["--repo-id"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix bench matrix run.")
+            }
+            let contextLengths = try parseUInt32List(values.multi["--context-length"] ?? [], option: "--context-length")
+            let generationLengths = try parseUInt32List(values.multi["--generation-length"] ?? [], option: "--generation-length")
+            let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
+            let concurrencyLevels = try parseUInt32List(values.multi["--concurrency"] ?? [], option: "--concurrency")
+            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let requests = try parseUInt32Value(values.single["--requests"], option: "--requests", defaultValue: 0) ?? 0
+            let durationSeconds = try parseUInt32Value(
+                values.single["--duration-seconds"],
+                option: "--duration-seconds",
+                defaultValue: 0
+            ) ?? 0
+            let loadBudgetCount = [requests > 0, durationSeconds > 0].filter(\.self).count
+            guard loadBudgetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --requests or --duration-seconds is required for melix bench matrix run.")
+            }
+            let cacheProfiles = values.multi["--cache-profile"] ?? []
+            for cacheProfile in cacheProfiles where ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) == false {
+                throw MelixCLIError.usage(
+                    "Invalid value for --cache-profile. Expected one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+                )
+            }
+            guard (values.multi["--suite"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --suite is required for melix bench matrix run.")
+            }
+            guard contextLengths.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --context-length is required for melix bench matrix run.")
+            }
+            guard generationLengths.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --generation-length is required for melix bench matrix run.")
+            }
+            guard batchSizes.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --batch-size is required for melix bench matrix run.")
+            }
+            guard cacheProfiles.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --cache-profile is required for melix bench matrix run.")
+            }
+            guard (values.multi["--reasoning-mode"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --reasoning-mode is required for melix bench matrix run.")
+            }
+            guard (values.multi["--structured-output-mode"] ?? []).isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --structured-output-mode is required for melix bench matrix run.")
+            }
+            guard concurrencyLevels.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --concurrency is required for melix bench matrix run.")
+            }
+            return .benchMatrixRun(
+                BenchMatrixRunOptions(
+                    modelID: modelID,
+                    hfRepoID: hfRepoID,
+                    taskKind: values.single["--task-kind"] ?? "",
+                    suites: values.multi["--suite"] ?? [],
+                    contextLengths: contextLengths,
+                    generationLengths: generationLengths,
+                    batchSizes: batchSizes,
+                    cacheProfiles: cacheProfiles,
+                    reasoningModes: values.multi["--reasoning-mode"] ?? [],
+                    structuredOutputModes: values.multi["--structured-output-mode"] ?? [],
+                    concurrencyLevels: concurrencyLevels,
+                    repeats: repeats,
+                    requests: requests,
+                    durationSeconds: durationSeconds,
+                    allowLargeMatrix: values.flags.contains("--allow-large-matrix"),
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "list":
+            return .benchMatrixList(BenchMatrixListOptions(json: values.flags.contains("--json")))
+        case "export-summary-csv":
+            guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+                throw MelixCLIError.missingRequired("--job-id is required for melix bench matrix export-summary-csv.")
+            }
+            guard let outputPath = values.single["--output"], !outputPath.isEmpty else {
+                throw MelixCLIError.missingRequired("--output is required for melix bench matrix export-summary-csv.")
+            }
+            return .benchMatrixExportSummaryCSV(
+                BenchExportCSVOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
+            )
+        case "export-requests-csv":
+            guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+                throw MelixCLIError.missingRequired("--job-id is required for melix bench matrix export-requests-csv.")
+            }
+            guard let outputPath = values.single["--output"], !outputPath.isEmpty else {
+                throw MelixCLIError.missingRequired("--output is required for melix bench matrix export-requests-csv.")
+            }
+            return .benchMatrixExportRequestsCSV(
+                BenchExportCSVOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
     private static func parseEval(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--suite"]
+        )
         switch action {
         case "run":
             let modelID = values.single["--model-id"] ?? ""
@@ -377,6 +725,12 @@ public enum MelixCLIParser {
             }
             if let fewShot = values.single["--few-shot"] {
                 parameters["few_shot"] = fewShot
+            }
+            if let scoringMode = values.single["--scoring-mode"] {
+                parameters["scoring_mode"] = scoringMode
+            }
+            if let codeExecPolicy = values.single["--code-exec-policy"] {
+                parameters["code_exec_policy"] = codeExecPolicy
             }
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
             return .evalRun(
@@ -421,6 +775,50 @@ public enum MelixCLIParser {
             .replacingOccurrences(of: "--", with: "")
             .replacingOccurrences(of: "-", with: "_")
     }
+
+    private static func parseUInt32Value(
+        _ value: String?,
+        option: String,
+        defaultValue: UInt32? = nil
+    ) throws -> UInt32? {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = UInt32(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+        }
+        return parsed
+    }
+
+    private static func parseBooleanValue(
+        _ value: String?,
+        option: String
+    ) -> Bool? {
+        guard let value else {
+            return nil
+        }
+        switch value.lowercased() {
+        case "true":
+            return true
+        case "false":
+            return false
+        default:
+            _ = option
+            return nil
+        }
+    }
+
+    private static func parseUInt32List(
+        _ values: [String],
+        option: String
+    ) throws -> [UInt32] {
+        try values.map { value in
+            guard let parsed = UInt32(value) else {
+                throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+            }
+            return parsed
+        }
+    }
 }
 
 private struct ParsedArguments {
@@ -432,10 +830,16 @@ private struct ParsedArguments {
 private struct ArgumentCursor {
     let arguments: [String]
 
-    func parse() throws -> ParsedArguments {
+    func parse(multiValueOptions: Set<String> = ["--suite"]) throws -> ParsedArguments {
         var result = ParsedArguments()
         var index = 0
-        let valueLessFlags: Set<String> = ["--json", "--response-only", "--mask-prompt", "--gradient-checkpointing"]
+        let valueLessFlags: Set<String> = [
+            "--json",
+            "--response-only",
+            "--mask-prompt",
+            "--gradient-checkpointing",
+            "--allow-large-matrix",
+        ]
         while index < arguments.count {
             let token = arguments[index]
             if valueLessFlags.contains(token) {
@@ -451,7 +855,7 @@ private struct ArgumentCursor {
                 throw MelixCLIError.missingValue(token)
             }
             let value = arguments[valueIndex]
-            if token == "--suite" {
+            if multiValueOptions.contains(token) {
                 result.multi[token, default: []].append(value)
             } else {
                 result.single[token] = value
@@ -473,13 +877,39 @@ public actor MelixCLIRunner {
         if let client {
             self.client = client
         } else {
-            let resolvedServiceBuilder = serviceBuilder ?? MelixCLILocalRuntime.makeService
+            let resolvedServiceBuilder = serviceBuilder ?? MelixLocalRuntimeFactory.makeService
             self.client = LocalControlPlaneXPCClient(service: resolvedServiceBuilder(environment))
         }
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {
         switch command {
+        case .serverSnapshot(let options):
+            let snapshot = try await client.serverSnapshot()
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverStart(let options):
+            let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverPause(let options):
+            let snapshot = try await client.pauseServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverResume(let options):
+            let snapshot = try await client.resumeServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverWake(let options):
+            let snapshot = try await client.wakeServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverStop(let options):
+            let snapshot = try await client.stopServerSession(serverSessionID: options.serverSessionID)
+            return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverSetIdlePolicy(let options):
+            let snapshot = try await client.updateServerIdlePolicy(
+                serverSessionID: options.serverSessionID,
+                autoSleepEnabled: options.autoSleepEnabled,
+                lightSleepAfterSeconds: options.lightSleepAfterSeconds,
+                deepSleepAfterSeconds: options.deepSleepAfterSeconds
+            )
+            return try renderServerSnapshot(snapshot, json: options.json)
         case .loraList(let options):
             let modelID = try await resolveModelID(preferred: options.modelID)
             let result = try await client.runModelOperation(
@@ -536,6 +966,13 @@ public actor MelixCLIRunner {
                     modelID: options.modelID,
                     hfRepoID: options.hfRepoID,
                     suites: options.suites,
+                    contextLengths: options.contextLengths,
+                    generationLength: options.generationLength,
+                    batchSizes: options.batchSizes,
+                    repeats: options.repeats,
+                    cacheProfile: options.cacheProfile,
+                    reasoningMode: options.reasoningMode,
+                    structuredOutputMode: options.structuredOutputMode,
                     parameters: options.parameters
                 )
             )
@@ -577,6 +1014,80 @@ public actor MelixCLIRunner {
                         outputPath: outputURL.path,
                         rowCount: rows.count
                     )
+                )
+            }
+            return outputURL.path + "\n"
+        case .benchMatrixRun(let options):
+            if !options.modelID.isEmpty {
+                _ = try await client.loadModel(modelID: options.modelID)
+            }
+            let result = try await client.runBenchMatrix(
+                ControlPlaneBenchMatrixRequest(
+                    modelID: options.modelID,
+                    hfRepoID: options.hfRepoID,
+                    taskKind: options.taskKind,
+                    suites: options.suites,
+                    contextLengths: options.contextLengths,
+                    generationLengths: options.generationLengths,
+                    batchSizes: options.batchSizes,
+                    cacheProfiles: options.cacheProfiles,
+                    reasoningModes: options.reasoningModes,
+                    structuredOutputModes: options.structuredOutputModes,
+                    concurrencyLevels: options.concurrencyLevels,
+                    repeats: options.repeats,
+                    requests: options.requests,
+                    durationSeconds: options.durationSeconds,
+                    allowLargeMatrix: options.allowLargeMatrix
+                )
+            )
+            if options.json {
+                return try prettyJSON(makeBenchmarkMatrixPayload(result))
+            }
+            return renderBenchmarkMatrixRun(result)
+        case .benchMatrixList(let options):
+            let bundle = try await benchmarkExportBundle()
+            let entries = bundle.benchmarkMatrixHistoryEntries()
+            if options.json {
+                return try prettyJSON(entries)
+            }
+            return renderBenchmarkMatrixHistory(entries)
+        case .benchMatrixExportSummaryCSV(let options):
+            let bundle = try await benchmarkExportBundle()
+            let rows = bundle.benchmarkMatrixSummaryCSVRows(jobID: options.jobID)
+            guard rows.isEmpty == false else {
+                throw MelixCLIError.runtime("No benchmark matrix summary rows were found for job \(options.jobID).")
+            }
+            let csv = bundle.benchmarkMatrixSummaryCSV(jobID: options.jobID)
+            let outputURL = URL(fileURLWithPath: options.outputPath)
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try csv.write(to: outputURL, atomically: true, encoding: .utf8)
+            if options.json {
+                return try prettyJSON(
+                    BenchExportCSVResponse(jobID: options.jobID, outputPath: outputURL.path, rowCount: rows.count)
+                )
+            }
+            return outputURL.path + "\n"
+        case .benchMatrixExportRequestsCSV(let options):
+            let bundle = try await benchmarkExportBundle()
+            let rows = bundle.benchmarkMatrixRequestRows(jobID: options.jobID)
+            guard rows.isEmpty == false else {
+                throw MelixCLIError.runtime("No benchmark matrix request rows were found for job \(options.jobID).")
+            }
+            let csv = bundle.benchmarkMatrixRequestsCSV(jobID: options.jobID)
+            let outputURL = URL(fileURLWithPath: options.outputPath)
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try csv.write(to: outputURL, atomically: true, encoding: .utf8)
+            if options.json {
+                return try prettyJSON(
+                    BenchExportCSVResponse(jobID: options.jobID, outputPath: outputURL.path, rowCount: rows.count)
                 )
             }
             return outputURL.path + "\n"
@@ -699,6 +1210,39 @@ public actor MelixCLIRunner {
         return outputURL.path + "\n"
     }
 
+    private func renderServerSnapshot(
+        _ snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        json: Bool
+    ) throws -> String {
+        if json {
+            return try prettyJSON(makeServerSnapshotPayload(snapshot))
+        }
+        return renderServerSnapshotText(snapshot)
+    }
+
+    private func renderServerSnapshotText(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) -> String {
+        guard snapshot.runtimeSessions.isEmpty == false else {
+            return "server_state=\(serverStateLabel(snapshot.serverState))\nNo runtime sessions found.\n"
+        }
+        let lines = snapshot.runtimeSessions.map { session in
+            [
+                serverStateLabel(snapshot.serverState),
+                session.serverSessionID,
+                lifecycleStateLabel(session.lifecycleState),
+                powerStateLabel(session.powerState),
+                wakeReasonLabel(session.wakeReason),
+                session.autoSleepEnabled ? "true" : "false",
+                String(session.lightSleepAfterSeconds),
+                String(session.deepSleepAfterSeconds),
+                String(session.idleTimerSeconds),
+                String(session.updatedAtUnixMs),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "server_state\tserver_session_id\tlifecycle_state\tpower_state\twake_reason\tauto_sleep_enabled\tlight_sleep_after_seconds\tdeep_sleep_after_seconds\tidle_timer_seconds\tupdated_at_unix_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
     private func renderBenchmarkHistory(_ entries: [ControlPlaneBenchmarkHistoryEntry]) -> String {
         guard entries.isEmpty == false else {
             return "No benchmark runs found.\n"
@@ -719,6 +1263,63 @@ public actor MelixCLIRunner {
         }
         return ([
             "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tdataset\tsample_size\tbatch_factor\tstatus\tcreated_at_unix_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderBenchmarkMatrixRun(_ result: ControlPlaneBenchMatrixResult) -> String {
+        guard result.summaryRows.isEmpty == false else {
+            return "No benchmark matrix rows were returned.\n"
+        }
+        let lines = result.summaryRows.map { row in
+            [
+                row.jobID,
+                row.modelID,
+                row.taskKind.isEmpty ? "-" : row.taskKind,
+                row.sourceRepo.isEmpty ? "-" : row.sourceRepo,
+                row.suiteID,
+                String(row.contextLength),
+                String(row.generationLength),
+                String(row.batchSize),
+                row.cacheProfile,
+                row.reasoningMode,
+                row.structuredOutputMode,
+                String(row.concurrencyLevel),
+                String(row.repeats),
+                matrixLoadBudgetLabel(requests: Int(row.requests), durationSeconds: Int(row.durationSeconds)),
+                String(row.ttftMeanMs),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length\tgeneration_length\tbatch_size\tcache_profile\treasoning_mode\tstructured_output_mode\tconcurrency_level\trepeats\tload_budget\tttft_mean_ms",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderBenchmarkMatrixHistory(_ entries: [ControlPlaneBenchmarkMatrixHistoryEntry]) -> String {
+        guard entries.isEmpty == false else {
+            return "No benchmark matrix runs found.\n"
+        }
+        let lines = entries.map { entry in
+            [
+                entry.jobID,
+                entry.modelID,
+                entry.taskKind.isEmpty ? "-" : entry.taskKind,
+                entry.sourceRepo.isEmpty ? "-" : entry.sourceRepo,
+                entry.suiteID,
+                String(entry.contextLength),
+                String(entry.generationLength),
+                String(entry.batchSize),
+                entry.cacheProfile,
+                entry.reasoningMode,
+                entry.structuredOutputMode,
+                String(entry.concurrencyLevel),
+                String(entry.repeats),
+                matrixLoadBudgetLabel(requests: entry.requests, durationSeconds: entry.durationSeconds),
+                entry.status,
+                String(entry.createdAtUnixMS),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tmodel_id\ttask_kind\tsource_repo\tsuite\tcontext_length\tgeneration_length\tbatch_size\tcache_profile\treasoning_mode\tstructured_output_mode\tconcurrency_level\trepeats\tload_budget\tstatus\tcreated_at_unix_ms",
         ] + lines).joined(separator: "\n") + "\n"
     }
 
@@ -814,6 +1415,167 @@ public actor MelixCLIRunner {
         ]
     }
 
+    private func makeBenchmarkMatrixPayload(_ result: ControlPlaneBenchMatrixResult) -> [String: Any] {
+        [
+            "job": [
+                "schema_version": result.job.schemaVersion,
+                "job_id": result.job.jobID,
+                "model_id": result.job.modelID,
+                "task_kind": result.job.taskKind,
+                "source_repo": result.job.sourceRepo,
+                "suite_ids": result.job.suiteIds,
+                "benchmark_mode": result.job.benchmarkMode,
+                "status": result.job.status,
+                "output_dir": result.job.outputDir,
+                "created_at_unix_ms": result.job.createdAtUnixMs,
+                "updated_at_unix_ms": result.job.updatedAtUnixMs,
+            ],
+            "summary_rows": result.summaryRows.map { row in
+                [
+                    "job_id": row.jobID,
+                    "task_kind": row.taskKind,
+                    "source_repo": row.sourceRepo,
+                    "model_id": row.modelID,
+                    "suite_id": row.suiteID,
+                    "context_length": Int(row.contextLength),
+                    "generation_length": Int(row.generationLength),
+                    "batch_size": Int(row.batchSize),
+                    "cache_profile": row.cacheProfile,
+                    "reasoning_mode": row.reasoningMode,
+                    "structured_output_mode": row.structuredOutputMode,
+                    "concurrency_level": Int(row.concurrencyLevel),
+                    "repeats": Int(row.repeats),
+                    "requests": Int(row.requests),
+                    "duration_seconds": Int(row.durationSeconds),
+                    "ttft_mean_ms": row.ttftMeanMs,
+                    "ttft_std_ms": row.ttftStdMs,
+                    "request_latency_mean_ms": row.requestLatencyMeanMs,
+                    "request_latency_std_ms": row.requestLatencyStdMs,
+                    "prefill_tokens_per_second_mean": row.prefillTokensPerSecondMean,
+                    "decode_tokens_per_second_mean": row.decodeTokensPerSecondMean,
+                    "throughput_requests_per_second": row.throughputRequestsPerSecond,
+                    "throughput_tokens_per_second": row.throughputTokensPerSecond,
+                    "success_rate": row.successRate,
+                    "peak_memory_bytes_max": row.peakMemoryBytesMax,
+                    "queue_wait_mean_ms": row.queueWaitMeanMs,
+                    "queue_wait_p95_ms": row.queueWaitP95Ms,
+                    "created_at_unix_ms": row.createdAtUnixMs,
+                ]
+            },
+        ]
+    }
+
+    private func matrixLoadBudgetLabel(requests: UInt32, durationSeconds: UInt32) -> String {
+        matrixLoadBudgetLabel(requests: Int(requests), durationSeconds: Int(durationSeconds))
+    }
+
+    private func matrixLoadBudgetLabel(requests: Int, durationSeconds: Int) -> String {
+        if requests > 0 {
+            return "requests=\(requests)"
+        }
+        if durationSeconds > 0 {
+            return "duration_seconds=\(durationSeconds)"
+        }
+        return "-"
+    }
+
+    private func makeServerSnapshotPayload(
+        _ snapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) -> [String: Any] {
+        [
+            "server_state": serverStateLabel(snapshot.serverState),
+            "runtime_sessions": snapshot.runtimeSessions.map { session in
+                [
+                    "server_session_id": session.serverSessionID,
+                    "lifecycle_state": lifecycleStateLabel(session.lifecycleState),
+                    "power_state": powerStateLabel(session.powerState),
+                    "wake_reason": wakeReasonLabel(session.wakeReason),
+                    "idle_timer_seconds": Int(session.idleTimerSeconds),
+                    "auto_sleep_enabled": session.autoSleepEnabled,
+                    "light_sleep_after_seconds": Int(session.lightSleepAfterSeconds),
+                    "deep_sleep_after_seconds": Int(session.deepSleepAfterSeconds),
+                    "updated_at_unix_ms": session.updatedAtUnixMs,
+                ]
+            },
+        ]
+    }
+
+    private func serverStateLabel(_ value: Melix_Controlplane_V1_ServerState) -> String {
+        switch value {
+        case .serverReady:
+            return "server_ready"
+        case .serverBooting:
+            return "server_booting"
+        case .serverDegraded:
+            return "server_degraded"
+        case .serverDraining:
+            return "server_draining"
+        case .serverStopped:
+            return "server_stopped"
+        case .serverFailed:
+            return "server_failed"
+        default:
+            return "server_state_unspecified"
+        }
+    }
+
+    private func lifecycleStateLabel(
+        _ value: Melix_Controlplane_V1_ServerSessionLifecycleState
+    ) -> String {
+        switch value {
+        case .ready:
+            return "ready"
+        case .paused:
+            return "paused"
+        case .sleeping:
+            return "sleeping"
+        case .stopped:
+            return "stopped"
+        case .loading:
+            return "loading"
+        case .error:
+            return "error"
+        default:
+            return "lifecycle_unspecified"
+        }
+    }
+
+    private func powerStateLabel(
+        _ value: Melix_Controlplane_V1_ServerSessionPowerState
+    ) -> String {
+        switch value {
+        case .active:
+            return "active"
+        case .lightSleep:
+            return "light_sleep"
+        case .deepSleep:
+            return "deep_sleep"
+        case .stopped:
+            return "stopped"
+        default:
+            return "power_unspecified"
+        }
+    }
+
+    private func wakeReasonLabel(
+        _ value: Melix_Controlplane_V1_ServerWakeReason
+    ) -> String {
+        switch value {
+        case .initialBoot:
+            return "initial_boot"
+        case .requestActivity:
+            return "request_activity"
+        case .operatorResume:
+            return "operator_resume"
+        case .toolActivity:
+            return "tool_activity"
+        case .policyApply:
+            return "policy_apply"
+        default:
+            return "wake_unspecified"
+        }
+    }
+
     private func prettyJSON(_ payload: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         return String(decoding: data, as: UTF8.self) + "\n"
@@ -847,48 +1609,4 @@ private struct EvalExportResponse: Encodable {
     let jobID: String
     let outputPath: String
     let rowCount: Int
-}
-
-private enum MelixCLILocalRuntime {
-    static func makeService(environment: [String: String]) -> any ControlPlaneExecuting {
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
-        let metricsStore = MetricsStore(exportPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"])
-        let mcpToolCatalog = MCPToolCatalog.load(environment: environment)
-        let gatewayAccessPolicyStore = GatewayAccessPolicyStore(GatewayAccessPolicy.load(environment: environment))
-
-        let swiftTextWorkerClient = SwiftTextWorkerClient(
-            socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
-        )
-        let pythonCompatibilityClient = PythonBridgeWorkerClient(
-            socketPath: environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock",
-            repoRoot: repoRoot(environment: environment),
-            processEnvironment: environment
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: swiftTextWorkerClient,
-            pythonCompatibilityClient: pythonCompatibilityClient,
-            modelCatalog: modelCatalog
-        )
-
-        return ControlPlaneService(
-            modelCatalog: modelCatalog,
-            metricsStore: metricsStore,
-            workerRegistry: workerRegistry,
-            mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
-        )
-    }
-
-    private static func repoRoot(environment: [String: String]) -> String {
-        if let repoRoot = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !repoRoot.isEmpty {
-            return repoRoot
-        }
-
-        return URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
-    }
 }

@@ -12,6 +12,9 @@ Close the desktop-polish milestone with integration evidence, navigation groundi
 
 ## Files
 
+- update `apps/macos-menubar/Tests/MenuBarTests/`
+- update `scripts/`
+- update `tests/`
 - update `tests/integration/`
 - update `docs/runbooks/`
 - update `docs/README.md`
@@ -24,8 +27,10 @@ Close the desktop-polish milestone with integration evidence, navigation groundi
 
 ## Verification
 
+- `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path apps/macos-menubar --filter DesktopPolishSmokeTests`
+- `python3 scripts/m15_desktop_polish_smoke.py --json`
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest tests/test_m15_desktop_polish_smoke.py tests/integration/test_desktop_polish_smoke.py -q`
 - `make integration-test`
-- desktop-polish smoke command for the touched scope
 
 ## Acceptance
 

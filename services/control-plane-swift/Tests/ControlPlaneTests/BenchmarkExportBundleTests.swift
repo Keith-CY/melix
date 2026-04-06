@@ -120,12 +120,23 @@ struct BenchmarkExportBundleTests {
         #expect(entries[0].taskKind == "text-generation")
         #expect(entries[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
         #expect(summaryRows.count == 1)
-        #expect(summaryRows[0].metricName == "eval.mmlu.accuracy")
-        #expect(summaryRows[0].metricValue == 0.75)
+        #expect(summaryRows[0].jobID == "eval-1")
+        #expect(summaryRows[0].modelID == "melix-dev-text")
+        #expect(summaryRows[0].taskKind == "text-generation")
+        #expect(summaryRows[0].sourceRepo == "HuggingFaceH4/ultrachat_200k")
+        #expect(summaryRows[0].suiteID == "mmlu")
+        #expect(summaryRows[0].datasetID == "mmlu.dev.v1")
+        #expect(summaryRows[0].sampleSize == 8)
+        #expect(summaryRows[0].scoreName == "eval.mmlu.accuracy")
+        #expect(summaryRows[0].scoreValue == 0.75)
+        #expect(summaryRows[0].correctCount == 6)
+        #expect(summaryRows[0].incorrectCount == 2)
+        #expect(summaryRows[0].durationSeconds == 12.5)
+        #expect(summaryRows[0].createdAtUnixMS == 1712400000000)
         #expect(samples.count == 1)
         #expect(samples[0].sampleID == "sample-1")
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,multiple_choice_accuracy,eval.mmlu.accuracy,0.75,ratio,1712400000000"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
         #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
         #expect(sampleCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
@@ -149,11 +160,89 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b", "eval-z"])
         #expect(rows[0].taskKind == "text-generation")
         #expect(rows[1].sourceRepo == "fallback/repo")
+        #expect(rows[0].scoreName == "eval.mmlu.accuracy")
+        #expect(rows[0].scoreValue == 0.5)
+        #expect(rows[0].correctCount == 0)
+        #expect(rows[0].incorrectCount == 0)
+        #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
         #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,scoring_mode,metric_name,metric_value,unit,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
         #expect(emptyBundle.evaluationSamplesCSV() == "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n")
+    }
+
+    @Test("canonical evaluation summary rows are sorted deterministically")
+    func canonicalEvaluationSummaryRowsAreSortedDeterministically() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: canonicalEvaluationSummaryRowsJSON
+        )
+
+        let rows = bundle.evaluationSummaryCSVRows()
+        let csv = bundle.evaluationSummaryCSV()
+
+        #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
+        #expect(rows[0].createdAtUnixMS == 1712400000000)
+        #expect(rows[1].createdAtUnixMS == 1712400000000)
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,9.75,1712400000000"))
+    }
+
+    @Test("canonical evaluation summary rows sort by timestamp before job id")
+    func canonicalEvaluationSummaryRowsSortByTimestampBeforeJobID() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: canonicalEvaluationSummaryTimestampJSON
+        )
+
+        let rows = bundle.evaluationSummaryCSVRows()
+
+        #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
+        #expect(rows[0].createdAtUnixMS == 1712400000000)
+        #expect(rows[1].createdAtUnixMS == 1712400001000)
+    }
+
+    @Test("decodes benchmark matrix history rows and csv exports")
+    func decodesBenchmarkMatrixHistoryRowsAndCSVExports() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkMatrixExportBundleJSON)
+
+        let history = bundle.benchmarkMatrixHistoryEntries()
+        let summaryRows = bundle.benchmarkMatrixSummaryCSVRows()
+        let requestRows = bundle.benchmarkMatrixRequestRows()
+        let summaryCSV = bundle.benchmarkMatrixSummaryCSV()
+        let requestsCSV = bundle.benchmarkMatrixRequestsCSV()
+
+        #expect(history.map(\.jobID) == ["matrix-a", "matrix-b", "matrix-c"])
+        #expect(history[0].benchmarkMode == "matrix")
+        #expect(history[1].benchmarkMode == "matrix")
+        #expect(history[2].benchmarkMode == "matrix")
+        #expect(history[0].status == "completed")
+        #expect(history[0].requests == 24)
+        #expect(history[2].durationSeconds == 60)
+
+        #expect(summaryRows.map(\.jobID) == ["matrix-c", "matrix-a", "matrix-b"])
+        #expect(summaryRows[0].taskKind == "text-generation")
+        #expect(summaryRows[1].contextLength == 1024)
+        #expect(summaryRows[2].batchSize == 4)
+
+        #expect(requestRows.map(\.cellID) == ["cell-0", "cell-1", "cell-2"])
+        #expect(requestRows[0].requestIndex == 0)
+        #expect(requestRows[1].repeatIndex == 0)
+        #expect(requestRows[2].status == "completed")
+
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms"))
+        #expect(summaryCSV.contains("matrix-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45"))
+        #expect(requestsCSV.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms"))
+        #expect(requestsCSV.contains("matrix-a,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,1,25.0"))
+    }
+
+    @Test("benchmark matrix exports emit empty csv headers when there is no matrix history")
+    func benchmarkMatrixExportsEmitEmptyCSVHeadersWhenThereIsNoMatrixHistory() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: emptyBenchmarkMatrixExportBundleJSON)
+
+        #expect(bundle.benchmarkMatrixHistoryEntries() == [])
+        #expect(bundle.benchmarkMatrixSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms\n")
+        #expect(bundle.benchmarkMatrixRequestsCSV() == "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms\n")
     }
 }
 
@@ -266,6 +355,23 @@ private let benchmarkExportBundleJSON = """
         {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"}
       ],
       "report_path": "/tmp/melix/evaluation/runs/eval-1/evaluation-result.json"
+    }
+  ],
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-1",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
     }
   ],
   "evaluation_samples": [
@@ -414,6 +520,304 @@ private let emptyEvaluationExportBundleJSON = """
   "evaluation_jobs": [],
   "evaluation_results": [],
   "evaluation_samples": []
+}
+"""
+
+private let canonicalEvaluationSummaryRowsJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.gsm8k.exact_match",
+      "score_value": 0.5,
+      "correct_count": 5,
+      "incorrect_count": 3,
+      "duration_seconds": 9.75,
+      "created_at_unix_ms": 1712400000000
+    },
+    {
+      "job_id": "eval-a",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
+    }
+  ]
+}
+"""
+
+private let canonicalEvaluationSummaryTimestampJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "gsm8k",
+      "dataset_id": "gsm8k.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.gsm8k.exact_match",
+      "score_value": 0.5,
+      "correct_count": 5,
+      "incorrect_count": 3,
+      "duration_seconds": 9.75,
+      "created_at_unix_ms": 1712400001000
+    },
+    {
+      "job_id": "eval-a",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
+    }
+  ]
+}
+"""
+
+private let benchmarkMatrixExportBundleJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "benchmark_matrix_jobs": [
+    {
+      "schema_version": "melix.benchmark_matrix_job.v1",
+      "job_id": "matrix-a",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_ids": ["smoke"],
+      "benchmark_mode": "matrix",
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/matrix-runs/matrix-a",
+      "created_at_unix_ms": 1712200000000,
+      "updated_at_unix_ms": 1712200005000
+    },
+    {
+      "schema_version": "melix.benchmark_matrix_job.v1",
+      "job_id": "matrix-b",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_ids": ["latency"],
+      "benchmark_mode": "",
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/matrix-runs/matrix-b",
+      "created_at_unix_ms": 1712200000000,
+      "updated_at_unix_ms": 1712200007000
+    },
+    {
+      "schema_version": "melix.benchmark_matrix_job.v1",
+      "job_id": "matrix-c",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_ids": ["smoke"],
+      "benchmark_mode": "matrix",
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/matrix-runs/matrix-c",
+      "created_at_unix_ms": 1712199999000,
+      "updated_at_unix_ms": 1712199999500
+    }
+  ],
+  "benchmark_matrix_summary_rows": [
+    {
+      "job_id": "matrix-a",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "model_id": "melix-dev-text",
+      "suite_id": "smoke",
+      "context_length": 1024,
+      "generation_length": 128,
+      "batch_size": 2,
+      "cache_profile": "cold",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeats": 3,
+      "requests": 24,
+      "duration_seconds": 0,
+      "ttft_mean_ms": 24.45,
+      "ttft_std_ms": 1.2,
+      "request_latency_mean_ms": 88.4,
+      "request_latency_std_ms": 3.1,
+      "prefill_tokens_per_second_mean": 1400.0,
+      "decode_tokens_per_second_mean": 58.2,
+      "throughput_requests_per_second": 3.8,
+      "throughput_tokens_per_second": 221.5,
+      "success_rate": 1.0,
+      "peak_memory_bytes_max": 2147483648,
+      "queue_wait_mean_ms": 5.1,
+      "queue_wait_p95_ms": 9.2,
+      "created_at_unix_ms": 1712200000000
+    },
+    {
+      "job_id": "matrix-b",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "model_id": "melix-dev-text",
+      "suite_id": "latency",
+      "context_length": 2048,
+      "generation_length": 256,
+      "batch_size": 4,
+      "cache_profile": "warm",
+      "reasoning_mode": "disabled",
+      "structured_output_mode": "json_schema",
+      "concurrency_level": 2,
+      "repeats": 2,
+      "requests": 48,
+      "duration_seconds": 0,
+      "ttft_mean_ms": 33.0,
+      "ttft_std_ms": 0.8,
+      "request_latency_mean_ms": 92.1,
+      "request_latency_std_ms": 4.6,
+      "prefill_tokens_per_second_mean": 1500.0,
+      "decode_tokens_per_second_mean": 61.1,
+      "throughput_requests_per_second": 4.1,
+      "throughput_tokens_per_second": 244.0,
+      "success_rate": 1.0,
+      "peak_memory_bytes_max": 3221225472,
+      "queue_wait_mean_ms": 2.0,
+      "queue_wait_p95_ms": 5.5,
+      "created_at_unix_ms": 1712200000000
+    },
+    {
+      "job_id": "matrix-c",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "model_id": "melix-dev-text",
+      "suite_id": "smoke",
+      "context_length": 512,
+      "generation_length": 64,
+      "batch_size": 1,
+      "cache_profile": "cold",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeats": 1,
+      "requests": 0,
+      "duration_seconds": 60,
+      "ttft_mean_ms": 19.2,
+      "ttft_std_ms": 0.5,
+      "request_latency_mean_ms": 48.0,
+      "request_latency_std_ms": 1.1,
+      "prefill_tokens_per_second_mean": 1700.0,
+      "decode_tokens_per_second_mean": 66.0,
+      "throughput_requests_per_second": 2.2,
+      "throughput_tokens_per_second": 145.0,
+      "success_rate": 1.0,
+      "peak_memory_bytes_max": 1073741824,
+      "queue_wait_mean_ms": 1.0,
+      "queue_wait_p95_ms": 2.0,
+      "created_at_unix_ms": 1712199999000
+    }
+  ],
+  "benchmark_matrix_request_rows": [
+    {
+      "job_id": "matrix-c",
+      "cell_id": "cell-0",
+      "task_kind": "text-generation",
+      "suite_id": "smoke",
+      "context_length": 512,
+      "generation_length": 64,
+      "batch_size": 1,
+      "cache_profile": "cold",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeat_index": 0,
+      "request_index": 0,
+      "ttft_ms": 19.0,
+      "request_latency_ms": 47.0,
+      "prefill_tokens_per_second": 1710.0,
+      "decode_tokens_per_second": 66.2,
+      "queue_wait_ms": 1.0,
+      "peak_memory_bytes": 1073741824,
+      "status": "completed",
+      "error_code": "",
+      "created_at_unix_ms": 1712199999000
+    },
+    {
+      "job_id": "matrix-a",
+      "cell_id": "cell-1",
+      "task_kind": "text-generation",
+      "suite_id": "smoke",
+      "context_length": 1024,
+      "generation_length": 128,
+      "batch_size": 2,
+      "cache_profile": "cold",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeat_index": 0,
+      "request_index": 1,
+      "ttft_ms": 25.0,
+      "request_latency_ms": 87.0,
+      "prefill_tokens_per_second": 1390.0,
+      "decode_tokens_per_second": 57.0,
+      "queue_wait_ms": 5.0,
+      "peak_memory_bytes": 2147483648,
+      "status": "completed",
+      "error_code": "",
+      "created_at_unix_ms": 1712200000000
+    },
+    {
+      "job_id": "matrix-a",
+      "cell_id": "cell-2",
+      "task_kind": "text-generation",
+      "suite_id": "smoke",
+      "context_length": 1024,
+      "generation_length": 128,
+      "batch_size": 2,
+      "cache_profile": "cold",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeat_index": 1,
+      "request_index": 0,
+      "ttft_ms": 24.4,
+      "request_latency_ms": 88.0,
+      "prefill_tokens_per_second": 1401.0,
+      "decode_tokens_per_second": 58.0,
+      "queue_wait_ms": 5.1,
+      "peak_memory_bytes": 2147483648,
+      "status": "completed",
+      "error_code": "",
+      "created_at_unix_ms": 1712200000000
+    }
+  ]
+}
+"""
+
+private let emptyBenchmarkMatrixExportBundleJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "benchmark_matrix_jobs": [],
+  "benchmark_matrix_summary_rows": [],
+  "benchmark_matrix_request_rows": []
 }
 """
 

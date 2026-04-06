@@ -21,18 +21,80 @@ public actor MenuBarMetricsStore {
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
+    public let supportedTasks: [String]
     public let state: Melix_Controlplane_V1_ModelState
     public let stateText: String
     public let actionTitle: String
     public let maxContext: UInt32
     public let alias: String
+    public let typeOverrideText: String
     public let memoryPolicyText: String
+    public let diskStreamingModeText: String
     public let adaptiveThinkingText: String
     public let accelerationModeText: String
     public let accelerationProfileID: String
+    public let toolParserFallbackText: String
     public let residencyText: String
     public let memoryText: String
     public let memoryAlertText: String
+    public let cachePolicyText: String
+    public let cacheSettingsText: String
+    public let imageFamilyID: String
+    public let imageDefaultWorkflowRole: String
+    public let imageSupportsGeneration: Bool
+    public let imageSupportsEdit: Bool
+
+    public init(
+        modelID: String,
+        kind: String,
+        supportedTasks: [String] = [],
+        state: Melix_Controlplane_V1_ModelState,
+        stateText: String,
+        actionTitle: String,
+        maxContext: UInt32,
+        alias: String,
+        typeOverrideText: String = "",
+        memoryPolicyText: String,
+        diskStreamingModeText: String,
+        adaptiveThinkingText: String,
+        accelerationModeText: String,
+        accelerationProfileID: String,
+        toolParserFallbackText: String = "Off",
+        residencyText: String,
+        memoryText: String,
+        memoryAlertText: String,
+        cachePolicyText: String = "",
+        cacheSettingsText: String = "",
+        imageFamilyID: String = "",
+        imageDefaultWorkflowRole: String = "",
+        imageSupportsGeneration: Bool = false,
+        imageSupportsEdit: Bool = false
+    ) {
+        self.modelID = modelID
+        self.kind = kind
+        self.supportedTasks = supportedTasks
+        self.state = state
+        self.stateText = stateText
+        self.actionTitle = actionTitle
+        self.maxContext = maxContext
+        self.alias = alias
+        self.typeOverrideText = typeOverrideText
+        self.memoryPolicyText = memoryPolicyText
+        self.diskStreamingModeText = diskStreamingModeText
+        self.adaptiveThinkingText = adaptiveThinkingText
+        self.accelerationModeText = accelerationModeText
+        self.accelerationProfileID = accelerationProfileID
+        self.toolParserFallbackText = toolParserFallbackText
+        self.residencyText = residencyText
+        self.memoryText = memoryText
+        self.memoryAlertText = memoryAlertText
+        self.cachePolicyText = cachePolicyText
+        self.cacheSettingsText = cacheSettingsText
+        self.imageFamilyID = imageFamilyID
+        self.imageDefaultWorkflowRole = imageDefaultWorkflowRole
+        self.imageSupportsGeneration = imageSupportsGeneration
+        self.imageSupportsEdit = imageSupportsEdit
+    }
 
     public var id: String {
         modelID
@@ -54,9 +116,170 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let maxContext: UInt32
     public let supportedParsers: [String]
     public let supportedModalities: [String]
+    public let supportedTasks: [String]
+    public let backendID: String
+    public let familyID: String
+    public let audioInstallProfileText: String
+    public let audioLanguagesText: String
+    public let audioVoiceModeText: String
+    public let audioOutputFormatsText: String
+    public let audioSupportsInstructionsText: String
+    public let audioVoiceCatalogSummaryText: String
+    public let audioVoiceLocalesText: String
+    public let audioDefaultLocaleText: String
+    public let audioPackagedDefaultLocaleText: String
+    public let audioLocalePolicyText: String
+    public let audioRuntimePackStateText: String
+    public let audioRuntimePackIDText: String
+    public let audioModelStateText: String
+    public let modelPath: String
+    public let modelRevision: String
+    public let defaultWorkflowRole: String
+    public let detectedIdentitySource: String
+    public let aliasText: String
+    public let typeOverrideText: String
+    public let ttlSeconds: UInt32
+    public let pinOnLoad: Bool
+    public let memoryPolicyText: String
+    public let memoryBudgetText: String
+    public let diskStreamingModeText: String
+    public let adaptiveThinkingText: String
+    public let accelerationModeText: String
+    public let accelerationProfileID: String
+    public let toolParserFallbackText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
+    public let ocrTemperatureText: String
+    public let ocrTopPText: String
+    public let ocrMaxTokensText: String
+    public let cacheModeText: String
+    public let cacheCompatibilityText: String
+    public let cacheCompatibilityReasonText: String
+    public let cacheDirectoryText: String
+    public let cacheBlockSizeText: String
+    public let cacheBudgetText: String
+    public let multimodalCacheBudgetText: String
+    public let cacheRootText: String
+    public let initialCacheBlocksText: String
+    public let generationConfigSourceText: String
+    public let generationConfigTemperatureText: String
+    public let generationConfigTopPText: String
+    public let generationConfigMaxTokensText: String
     public let ocrStopSequencesText: String
+
+    public init(
+        modelID: String,
+        modelKind: String,
+        maxContext: UInt32,
+        supportedParsers: [String],
+        supportedModalities: [String],
+        supportedTasks: [String] = [],
+        backendID: String = "",
+        familyID: String = "",
+        audioInstallProfileText: String = "",
+        audioLanguagesText: String = "",
+        audioVoiceModeText: String = "",
+        audioOutputFormatsText: String = "",
+        audioSupportsInstructionsText: String = "",
+        audioVoiceCatalogSummaryText: String = "",
+        audioVoiceLocalesText: String = "",
+        audioDefaultLocaleText: String = "",
+        audioPackagedDefaultLocaleText: String = "",
+        audioLocalePolicyText: String = "",
+        audioRuntimePackStateText: String = "",
+        audioRuntimePackIDText: String = "",
+        audioModelStateText: String = "",
+        modelPath: String = "",
+        modelRevision: String = "",
+        defaultWorkflowRole: String = "",
+        detectedIdentitySource: String = "",
+        aliasText: String = "",
+        typeOverrideText: String = "",
+        ttlSeconds: UInt32 = 0,
+        pinOnLoad: Bool = false,
+        memoryPolicyText: String = "Unspecified",
+        memoryBudgetText: String = "",
+        diskStreamingModeText: String = "Disabled",
+        adaptiveThinkingText: String = "Off",
+        accelerationModeText: String = "Unspecified",
+        accelerationProfileID: String = "",
+        toolParserFallbackText: String = "Off",
+        ocrPromptProfileText: String = "",
+        ocrSamplingProfileText: String = "",
+        ocrTemperatureText: String = "",
+        ocrTopPText: String = "",
+        ocrMaxTokensText: String = "",
+        cacheModeText: String = "",
+        cacheCompatibilityText: String = "",
+        cacheCompatibilityReasonText: String = "",
+        cacheDirectoryText: String = "",
+        cacheBlockSizeText: String = "",
+        cacheBudgetText: String = "",
+        multimodalCacheBudgetText: String = "",
+        cacheRootText: String = "",
+        initialCacheBlocksText: String = "",
+        generationConfigSourceText: String = "",
+        generationConfigTemperatureText: String = "",
+        generationConfigTopPText: String = "",
+        generationConfigMaxTokensText: String = "",
+        ocrStopSequencesText: String = ""
+    ) {
+        self.modelID = modelID
+        self.modelKind = modelKind
+        self.maxContext = maxContext
+        self.supportedParsers = supportedParsers
+        self.supportedModalities = supportedModalities
+        self.supportedTasks = supportedTasks
+        self.backendID = backendID
+        self.familyID = familyID
+        self.audioInstallProfileText = audioInstallProfileText
+        self.audioLanguagesText = audioLanguagesText
+        self.audioVoiceModeText = audioVoiceModeText
+        self.audioOutputFormatsText = audioOutputFormatsText
+        self.audioSupportsInstructionsText = audioSupportsInstructionsText
+        self.audioVoiceCatalogSummaryText = audioVoiceCatalogSummaryText
+        self.audioVoiceLocalesText = audioVoiceLocalesText
+        self.audioDefaultLocaleText = audioDefaultLocaleText
+        self.audioPackagedDefaultLocaleText = audioPackagedDefaultLocaleText
+        self.audioLocalePolicyText = audioLocalePolicyText
+        self.audioRuntimePackStateText = audioRuntimePackStateText
+        self.audioRuntimePackIDText = audioRuntimePackIDText
+        self.audioModelStateText = audioModelStateText
+        self.modelPath = modelPath
+        self.modelRevision = modelRevision
+        self.defaultWorkflowRole = defaultWorkflowRole
+        self.detectedIdentitySource = detectedIdentitySource
+        self.aliasText = aliasText
+        self.typeOverrideText = typeOverrideText
+        self.ttlSeconds = ttlSeconds
+        self.pinOnLoad = pinOnLoad
+        self.memoryPolicyText = memoryPolicyText
+        self.memoryBudgetText = memoryBudgetText
+        self.diskStreamingModeText = diskStreamingModeText
+        self.adaptiveThinkingText = adaptiveThinkingText
+        self.accelerationModeText = accelerationModeText
+        self.accelerationProfileID = accelerationProfileID
+        self.toolParserFallbackText = toolParserFallbackText
+        self.ocrPromptProfileText = ocrPromptProfileText
+        self.ocrSamplingProfileText = ocrSamplingProfileText
+        self.ocrTemperatureText = ocrTemperatureText
+        self.ocrTopPText = ocrTopPText
+        self.ocrMaxTokensText = ocrMaxTokensText
+        self.cacheModeText = cacheModeText
+        self.cacheCompatibilityText = cacheCompatibilityText
+        self.cacheCompatibilityReasonText = cacheCompatibilityReasonText
+        self.cacheDirectoryText = cacheDirectoryText
+        self.cacheBlockSizeText = cacheBlockSizeText
+        self.cacheBudgetText = cacheBudgetText
+        self.multimodalCacheBudgetText = multimodalCacheBudgetText
+        self.cacheRootText = cacheRootText
+        self.initialCacheBlocksText = initialCacheBlocksText
+        self.generationConfigSourceText = generationConfigSourceText
+        self.generationConfigTemperatureText = generationConfigTemperatureText
+        self.generationConfigTopPText = generationConfigTopPText
+        self.generationConfigMaxTokensText = generationConfigMaxTokensText
+        self.ocrStopSequencesText = ocrStopSequencesText
+    }
 }
 
 public struct RuntimeModelOperationState: Equatable, Sendable {
@@ -71,8 +294,127 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let artifactKind: String
     public let manifestPath: String
     public let artifactBytes: UInt64
+    public let artifactRuntime: String
+    public let servingCompatible: Bool
+    public let smokeTestRequested: Bool
     public let smokeTestPassed: Bool
     public let calibrationSampleCount: Int
+    public let targetRepo: String
+    public let sourceArtifactKind: String
+    public let conversionTargetFormat: String
+    public let linkedQuantizationProfileID: String
+}
+
+public struct RuntimeDownloadQueueEntryState: Codable, Identifiable, Equatable, Sendable {
+    public let jobID: String
+    public let sourceModel: String
+    public let status: String
+    public let stage: String
+    public let pct: Double
+    public let outputDir: String
+    public let outputPath: String
+    public let partialPath: String
+    public let statePath: String
+    public let selectedMirror: String
+    public let downloadedBytes: Int
+    public let totalBytes: Int
+    public let resumeUsed: Bool
+    public let resumeFromBytes: Int
+    public let retryCount: Int
+    public let stallDetectionCount: Int
+    public let stallReason: String
+    public let resumeReady: Bool
+
+    public var id: String {
+        jobID
+    }
+
+    public var statusText: String {
+        switch normalizedStatus {
+        case "completed":
+            "Completed"
+        case "running":
+            "Running"
+        case "retrying":
+            "Retrying"
+        case "stalled":
+            "Stalled"
+        case "failed":
+            "Failed"
+        default:
+            normalizedStatus.isEmpty ? "Unknown" : normalizedStatus.capitalized
+        }
+    }
+
+    public var progressText: String {
+        let percentText = "\(Int((pct * 100).rounded()))%"
+        guard totalBytes > 0 else {
+            return percentText
+        }
+        return "\(Self.formatBytes(downloadedBytes)) / \(Self.formatBytes(totalBytes)) • \(percentText)"
+    }
+
+    public var transferDetailText: String {
+        var parts: [String] = []
+        if !selectedMirror.isEmpty {
+            parts.append(selectedMirror)
+        }
+        if retryCount > 0 {
+            parts.append("retries \(retryCount)")
+        }
+        if stallDetectionCount > 0 {
+            parts.append("stall detections \(stallDetectionCount)")
+        }
+        if !stallReason.isEmpty {
+            parts.append(stallReason.replacingOccurrences(of: "_", with: " "))
+        }
+        if resumeUsed, resumeFromBytes > 0 {
+            parts.append("resumed from \(Self.formatBytes(resumeFromBytes))")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    public var resumeActionTitle: String {
+        "Resume Download"
+    }
+
+    public var isActive: Bool {
+        ["running", "retrying"].contains(normalizedStatus)
+    }
+
+    private var normalizedStatus: String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func formatBytes(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
+        formatter.countStyle = .binary
+        formatter.includesUnit = true
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: Int64(max(bytes, 0)))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case sourceModel = "source_model"
+        case status
+        case stage
+        case pct
+        case outputDir = "output_dir"
+        case outputPath = "output_path"
+        case partialPath = "partial_path"
+        case statePath = "state_path"
+        case selectedMirror = "selected_mirror"
+        case downloadedBytes = "downloaded_bytes"
+        case totalBytes = "total_bytes"
+        case resumeUsed = "resume_used"
+        case resumeFromBytes = "resume_from_bytes"
+        case retryCount = "retry_count"
+        case stallDetectionCount = "stall_detection_count"
+        case stallReason = "stall_reason"
+        case resumeReady = "resume_ready"
+    }
 }
 
 public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
@@ -92,8 +434,31 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeDoctorFindingState: Equatable, Sendable, Identifiable {
+    public let code: String
+    public let severityText: String
+    public let summary: String
+    public let detail: String
+
+    public var id: String {
+        code
+    }
+}
+
 public struct RuntimeDoctorReportState: Equatable, Sendable {
     public let markdown: String
+    public let healthStatusText: String
+    public let findings: [RuntimeDoctorFindingState]
+
+    public init(
+        markdown: String,
+        healthStatusText: String = "",
+        findings: [RuntimeDoctorFindingState] = []
+    ) {
+        self.markdown = RichOutputSanitizer.sanitized(markdown)
+        self.healthStatusText = healthStatusText
+        self.findings = findings
+    }
 }
 
 public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Sendable {
@@ -110,6 +475,79 @@ public enum RuntimeBenchmarkTargetMode: String, CaseIterable, Identifiable, Send
             return "Catalog Model"
         case .huggingFaceRepo:
             return "Hugging Face Repo"
+        }
+    }
+}
+
+public enum RuntimeImageWorkflowRole: String, CaseIterable, Sendable {
+    case generate
+    case edit
+}
+
+public enum RuntimeImageEditMode: String, CaseIterable, Identifiable, Sendable {
+    case edit
+    case variation
+    case iterate
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .edit:
+            return "Edit"
+        case .variation:
+            return "Variation"
+        case .iterate:
+            return "Iterate"
+        }
+    }
+
+    var controlPlaneMode: ControlPlaneImageEditRequest.Mode {
+        switch self {
+        case .edit:
+            return .edit
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        }
+    }
+}
+
+public enum RuntimeBenchmarkPresentationMode: String, CaseIterable, Identifiable, Sendable {
+    case standard = "standard"
+    case matrix = "matrix"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .standard:
+            return "Standard"
+        case .matrix:
+            return "Matrix"
+        }
+    }
+}
+
+public enum RuntimeBenchmarkMatrixLoadBudgetMode: String, CaseIterable, Identifiable, Sendable {
+    case requests = "requests"
+    case durationSeconds = "duration_seconds"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .requests:
+            return "Requests"
+        case .durationSeconds:
+            return "Duration"
         }
     }
 }
@@ -165,15 +603,49 @@ public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendabl
     public let targetRepo: String
 }
 
+public struct RuntimeRegistryRootState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let rootPath: String
+    public let rootOrder: Int
+    public let accessible: Bool
+    public let errorCode: String
+    public let errorMessage: String
+    public let discoveredModelIDs: [String]
+
+    public var statusText: String {
+        if accessible {
+            return "Accessible"
+        }
+        if errorCode.isEmpty {
+            return "Unavailable"
+        }
+        let normalized = errorCode.replacingOccurrences(of: "_", with: " ")
+        guard let first = normalized.first else {
+            return "Unavailable"
+        }
+        return String(first).uppercased() + normalized.dropFirst()
+    }
+
+    public var detailText: String {
+        let discoveredCount = discoveredModelIDs.count
+        let discoveredSummary = discoveredCount == 1 ? "1 model" : "\(discoveredCount) models"
+        if errorMessage.isEmpty {
+            return discoveredSummary
+        }
+        return "\(discoveredSummary) • \(errorMessage)"
+    }
+}
+
 public struct RuntimeBenchMetricState: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let value: String
 
     public init(name: String, value: String) {
-        self.id = name
-        self.name = name
-        self.value = value
+        let sanitizedName = RichOutputSanitizer.sanitized(name)
+        self.id = sanitizedName
+        self.name = sanitizedName
+        self.value = RichOutputSanitizer.sanitized(value)
     }
 }
 
@@ -181,6 +653,12 @@ public struct RuntimeBenchReportState: Equatable, Sendable {
     public let reportPath: String
     public let markdown: String
     public let metrics: [RuntimeBenchMetricState]
+
+    public init(reportPath: String, markdown: String, metrics: [RuntimeBenchMetricState]) {
+        self.reportPath = reportPath
+        self.markdown = RichOutputSanitizer.sanitized(markdown)
+        self.metrics = metrics
+    }
 }
 
 public struct RuntimeBenchmarkSuiteOptionState: Identifiable, Equatable, Sendable {
@@ -249,6 +727,59 @@ public struct RuntimeBenchmarkCSVExportState: Equatable, Sendable {
     public let rowCount: Int
 }
 
+public struct RuntimeBenchmarkMatrixHistoryEntryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let jobID: String
+    public let modelID: String
+    public let taskKind: String
+    public let taskTitle: String
+    public let sourceRepo: String
+    public let suiteSummary: String
+    public let cellCountText: String
+    public let loadBudgetText: String
+    public let statusText: String
+    public let createdAtText: String
+    public let createdAtUnixMS: Int64
+}
+
+public struct RuntimeBenchmarkMatrixSummaryCardState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let valueText: String
+    public let detail: String
+}
+
+public struct RuntimeBenchmarkMatrixSummaryRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let suiteTitle: String
+    public let configurationSummary: String
+    public let latencyText: String
+    public let throughputText: String
+    public let successRateText: String
+    public let peakMemoryText: String
+    public let createdAtText: String
+    public let contextLength: Int
+    public let batchSize: Int
+    public let concurrencyLevel: Int
+    public let ttftMeanMS: Double
+    public let throughputTokensPerSecond: Double
+}
+
+public struct RuntimeBenchmarkMatrixChartPointState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let seriesTitle: String
+    public let xLabel: String
+    public let xValue: Int
+    public let yValue: Double
+    public let unit: String
+}
+
+public struct RuntimeBenchmarkMatrixExportState: Equatable, Sendable {
+    public let outputPath: String
+    public let rowCount: Int
+    public let formatTitle: String
+}
+
 public struct RuntimeEvaluationSuiteOptionState: Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
@@ -301,6 +832,28 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
     public let correctText: String
     public let parseStatus: String
     public let timeText: String
+
+    public init(
+        id: String,
+        sampleID: String,
+        question: String,
+        expected: String,
+        predicted: String,
+        rawResponse: String,
+        correctText: String,
+        parseStatus: String,
+        timeText: String
+    ) {
+        self.id = id
+        self.sampleID = RichOutputSanitizer.sanitized(sampleID)
+        self.question = RichOutputSanitizer.sanitized(question)
+        self.expected = RichOutputSanitizer.sanitized(expected)
+        self.predicted = RichOutputSanitizer.sanitized(predicted)
+        self.rawResponse = RichOutputSanitizer.sanitized(rawResponse)
+        self.correctText = RichOutputSanitizer.sanitized(correctText)
+        self.parseStatus = RichOutputSanitizer.sanitized(parseStatus)
+        self.timeText = RichOutputSanitizer.sanitized(timeText)
+    }
 }
 
 public struct RuntimeEvaluationExportState: Equatable, Sendable {
@@ -347,6 +900,81 @@ private struct GatewayAccessProjection: Equatable, Sendable {
     let sharedAccessState: DesktopSharedAccessState
     let accessKeyCount: Int
     let accessKeyHints: [String]
+    let activeAuthSessionCount: Int
+    let rememberedAuthSessionCount: Int
+    let expiredRememberedSessionCount: Int
+    let authSessionRetentionSeconds: Int
+    let lastAuthSessionSignOutLatencyMs: Double
+}
+
+private struct GatewayConfigProjection: Equatable, Sendable {
+    let host: String
+    let port: Int
+    let effectiveHost: String
+    let effectivePort: Int
+    let servedModelID: String
+    let rateLimitPerMinute: Int
+    let timeoutSeconds: Int
+    let sourceText: String
+    let activeBinding: Bool
+    let requiresRestart: Bool
+}
+
+private struct ServingDefaultsProjection: Equatable, Sendable {
+    let temperature: Double
+    let topP: Double
+    let maxTokens: Int
+    let streamIntervalTokens: Int
+    let maxConcurrentRequests: Int
+    let concurrentProcessingEnabled: Bool
+    let prefillBatchSize: Int
+    let completionBatchSize: Int
+    let accelerationMode: String
+    let draftModelID: String
+    let numDraftTokens: Int
+    let effectiveTemperature: Double
+    let effectiveTopP: Double
+    let effectiveMaxTokens: Int
+    let effectiveStreamIntervalTokens: Int
+    let effectiveMaxConcurrentRequests: Int
+    let effectiveConcurrentProcessingEnabled: Bool
+    let effectivePrefillBatchSize: Int
+    let effectiveCompletionBatchSize: Int
+    let effectiveAccelerationMode: String
+    let effectiveDraftModelID: String
+    let effectiveNumDraftTokens: Int
+    let sourceText: String
+    let modelOverrideApplied: Bool
+    let updatedAtUnixMS: Int64
+}
+
+private struct ImageDefaultsProjection: Equatable, Sendable {
+    let generateModelID: String
+    let editModelID: String
+    let size: String
+    let steps: Int
+    let guidance: Double
+    let strength: Double
+    let negativePrompt: String
+    let effectiveGenerateModelID: String
+    let effectiveEditModelID: String
+    let effectiveSize: String
+    let effectiveSteps: Int
+    let effectiveGuidance: Double
+    let effectiveStrength: Double
+    let effectiveNegativePrompt: String
+    let requestTimeoutSeconds: UInt32
+    let sourceText: String
+    let updatedAtUnixMS: Int64
+}
+
+private struct ChatPresentationFragment: Sendable {
+    let kind: DesktopChatTranscriptEntry.Kind
+    let entryID: String
+    let title: String
+    let detail: String
+    var remainingText: String
+    let firstQueuedAt: Date
 }
 
 @MainActor
@@ -362,12 +990,17 @@ public final class RuntimeViewModel {
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
+    public private(set) var productUpdateSummary: String?
+    public private(set) var productUpdateDetail: String?
+    public private(set) var productUpdateIsAvailable = false
+    public private(set) var productUpdateCheckSucceeded = true
     public private(set) var protocolVersion = "melix.controlplane.v1"
     public private(set) var serverVersion = "0.1.0"
     public private(set) var daemonInstanceID = ""
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
     public private(set) var lastModelOperation: RuntimeModelOperationState?
+    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
     public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
@@ -375,12 +1008,22 @@ public final class RuntimeViewModel {
     public private(set) var benchmarkChartPoints: [RuntimeBenchmarkChartPointState] = []
     public private(set) var benchmarkMetricOptions: [String] = []
     public private(set) var lastBenchmarkCSVExport: RuntimeBenchmarkCSVExportState?
+    public private(set) var benchmarkMatrixHistory: [RuntimeBenchmarkMatrixHistoryEntryState] = []
+    public private(set) var benchmarkMatrixSummaryCards: [RuntimeBenchmarkMatrixSummaryCardState] = []
+    public private(set) var benchmarkMatrixSummaryRows: [RuntimeBenchmarkMatrixSummaryRowState] = []
+    public private(set) var benchmarkMatrixContextChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
+    public private(set) var benchmarkMatrixThroughputChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
+    public private(set) var lastBenchmarkMatrixExport: RuntimeBenchmarkMatrixExportState?
     public private(set) var evaluationHistory: [RuntimeEvaluationHistoryEntryState] = []
     public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
     public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
     public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
+    public private(set) var registryRoots: [RuntimeRegistryRootState] = []
+    public private(set) var registryConfiguredRootPaths: [String] = []
+    public private(set) var registryHasConfiguredRootOverride = false
+    public private(set) var registryScannedAtText = "Never"
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
@@ -391,18 +1034,59 @@ public final class RuntimeViewModel {
     public private(set) var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
     public private(set) var imageStatusText = "Idle"
     public private(set) var selectedImageJobID = ""
+    public private(set) var imageRequestTimeoutSeconds: UInt32 = 1_800
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
+    public var modelSettingsAliasDraft = ""
+    public var modelSettingsTypeOverrideDraft = ""
+    public var modelSettingsTTLDraft = ""
+    public var modelSettingsPinOnLoadDraft = false
+    public var modelSettingsMemoryPolicyDraft = "evictable"
+    public var modelSettingsMemoryBudgetDraft = ""
+    public var modelSettingsDiskStreamingModeDraft = "disabled"
+    public var modelSettingsCacheModeDraft = "tiered"
+    public var modelSettingsCacheMemoryBudgetDraft = ""
+    public var modelSettingsCacheMemoryBudgetPctDraft = ""
+    public var modelSettingsCacheBlockSizeTokensDraft = ""
+    public var modelSettingsCacheDirectoryDraft = ""
+    public var modelSettingsMultimodalCacheBudgetDraft = ""
+    public var modelSettingsAccelerationModeDraft = "baseline"
+    public var modelSettingsAccelerationProfileIDDraft = ""
+    public var modelSettingsAdaptiveThinkingModeDraft = "off"
+    public var modelSettingsAdaptiveThinkingBudgetDraft = ""
+    public var modelSettingsToolParserXMLFallbackDraft = false
+    public var modelSettingsOCRSamplingProfileDraft = ""
+    public var modelSettingsOCRTemperatureDraft = ""
+    public var modelSettingsOCRTopPDraft = ""
+    public var modelSettingsOCRMaxTokensDraft = ""
     public var selectedBenchmarkModelID = "melix-dev-text"
+    public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
+    public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
+    public var selectedBenchBatchSizes: [UInt32] = [2, 4]
+    public var benchRepeats = "3"
+    public var benchCacheProfile = "partial_prefix"
+    public var benchReasoningMode = "enabled"
+    public var benchStructuredOutputMode = "json_schema"
     public var benchmarkSampleSize = ""
     public var benchmarkBatchFactor = ""
     public var benchmarkHFRepoID = ""
     public var selectedBenchmarkHistoryJobID = ""
     public var selectedBenchmarkMetricName = ""
+    public var selectedBenchGenerationLengths: [UInt32] = [128, 256]
+    public var selectedBenchMatrixCacheProfiles: [String] = ["cold", "partial_prefix"]
+    public var selectedBenchMatrixReasoningModes: [String] = ["enabled"]
+    public var selectedBenchMatrixStructuredOutputModes: [String] = ["json_schema"]
+    public var selectedBenchMatrixConcurrencyLevels: [UInt32] = [1, 2]
+    public var selectedBenchmarkMatrixLoadBudgetMode: RuntimeBenchmarkMatrixLoadBudgetMode = .requests
+    public var benchMatrixRepeats = "3"
+    public var benchMatrixRequests = "8"
+    public var benchMatrixDurationSeconds = "60"
+    public var benchMatrixAllowLargeMatrix = false
+    public var selectedBenchmarkMatrixHistoryJobID = ""
     public var selectedEvaluationTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedEvaluationModelID = "melix-dev-text"
     public var selectedEvaluationSuiteIDs: Set<String> = ["mmlu"]
@@ -410,6 +1094,8 @@ public final class RuntimeViewModel {
     public var evaluationBatchFactor = ""
     public var evaluationSeed = ""
     public var evaluationFewShot = ""
+    public var evaluationScoringMode = "multiple_choice_accuracy"
+    public var evaluationCodeExecPolicy = "sandboxed"
     public var evaluationHFRepoID = ""
     public var selectedEvaluationHistoryJobID = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
@@ -439,12 +1125,29 @@ public final class RuntimeViewModel {
     public var loraGradientCheckpointing = false
     public var loraDerivedModelAlias = ""
     public var selectedAdapterPackageID = ""
+    public var registryRootPathDraft = ""
     public var imagePromptText = ""
+    public var imageEditMode: RuntimeImageEditMode = .edit
     public var imageEditSourceURL = ""
     public var imageEditMaskURL = ""
+    public var imageEditSourceArtifactID = ""
     public var imageSize = "1024x1024"
+    public var imageSteps = "28"
+    public var imageGuidance = "7.5"
+    public var imageStrength = "1.0"
+    public var imageNegativePrompt = ""
     public var imageVariantCount: UInt32 = 1
-    public var selectedImageModelID = "melix-dev-image"
+    public var selectedImageGenerateModelID = "melix-dev-image"
+    public var selectedImageEditModelID = "melix-dev-image"
+    public private(set) var imageDefaultsSourceText = "Built-in Defaults"
+    public private(set) var effectiveImageGenerateModelID = ""
+    public private(set) var effectiveImageEditModelID = ""
+    public private(set) var effectiveImageSize = "1024x1024"
+    public private(set) var effectiveImageSteps = "28"
+    public private(set) var effectiveImageGuidance = "7.5"
+    public private(set) var effectiveImageStrength = "1.0"
+    public private(set) var effectiveImageNegativePrompt = ""
+    public private(set) var imageDefaultsUpdatedAtUnixMS: Int64 = 0
     public let availableQuantizationProfileIDs = ["q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     public var selectedQuantizationProfileID = "q4"
     public var openCommandCenterAction: (@MainActor @Sendable () -> Void)?
@@ -455,6 +1158,7 @@ public final class RuntimeViewModel {
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
     private var lastSeenSeq: UInt64 = 0
     private var latestSnapshot = Melix_Controlplane_V1_ServerSnapshot()
@@ -464,7 +1168,13 @@ public final class RuntimeViewModel {
     private var activeAssistantEntryID: String?
     private var activeReasoningEntryID: String?
     private var activeToolEntryIDs: [String: String] = [:]
+    private var chatPresentationFragments: [ChatPresentationFragment] = []
+    private var chatPresentationTask: Task<Void, Never>?
+    private var chatPresentationMaxLagMs = 0.0
+    private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
+    private var dismissedBannerIDs: Set<String> = []
+    private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
@@ -576,6 +1286,14 @@ public final class RuntimeViewModel {
         ),
     ]
 
+    static let benchmarkContextLengthOptions: [UInt32] = [1024, 4096, 8192]
+    static let benchmarkBatchSizeOptions: [UInt32] = [1, 2, 4, 8]
+    static let benchmarkGenerationLengthOptions: [UInt32] = [128, 256, 512]
+    static let benchmarkConcurrencyOptions: [UInt32] = [1, 2, 4]
+    static let benchmarkCacheProfileOptions = ControlPlaneBenchRequest.validCacheProfiles
+    static let benchmarkReasoningModeOptions: [String] = ["off", "enabled", "deep_reasoning"]
+    static let benchmarkStructuredOutputModeOptions: [String] = ["off", "json_object", "json_schema"]
+
     private static let evaluationSuiteOptions = [
         RuntimeEvaluationSuiteOptionState(
             id: "mmlu",
@@ -642,17 +1360,21 @@ public final class RuntimeViewModel {
             defaultBatchFactor: 1
         ),
     ]
+    private static let chatPresentationFlushInterval: Duration = .milliseconds(24)
+    private static let chatPresentationCharactersPerFlush = 8
 
     public init(
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
-        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore()
+        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
         self.client = client
         self.metrics = metrics
         self.operatorSessionStore = operatorSessionStore
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.productInstallStateProvider = productInstallStateProvider
     }
 
     deinit {
@@ -682,6 +1404,62 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func toggleBenchContextLength(_ contextLength: UInt32) {
+        selectedBenchContextLengths = Self.toggledValues(
+            contextLength,
+            in: selectedBenchContextLengths
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchBatchSize(_ batchSize: UInt32) {
+        selectedBenchBatchSizes = Self.toggledValues(
+            batchSize,
+            in: selectedBenchBatchSizes
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchGenerationLength(_ generationLength: UInt32) {
+        selectedBenchGenerationLengths = Self.toggledValues(
+            generationLength,
+            in: selectedBenchGenerationLengths
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixCacheProfile(_ cacheProfile: String) {
+        selectedBenchMatrixCacheProfiles = Self.toggledStrings(
+            cacheProfile,
+            in: selectedBenchMatrixCacheProfiles
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixReasoningMode(_ reasoningMode: String) {
+        selectedBenchMatrixReasoningModes = Self.toggledStrings(
+            reasoningMode,
+            in: selectedBenchMatrixReasoningModes
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixStructuredOutputMode(_ structuredOutputMode: String) {
+        selectedBenchMatrixStructuredOutputModes = Self.toggledStrings(
+            structuredOutputMode,
+            in: selectedBenchMatrixStructuredOutputModes
+        )
+        notifyStateChanged()
+    }
+
+    public func toggleBenchMatrixConcurrencyLevel(_ concurrencyLevel: UInt32) {
+        selectedBenchMatrixConcurrencyLevels = Self.toggledValues(
+            concurrencyLevel,
+            in: selectedBenchMatrixConcurrencyLevels
+        )
+        notifyStateChanged()
+    }
+
     public func selectBenchmarkHistory(jobID: String) {
         selectedBenchmarkHistoryJobID = jobID
         rebuildBenchmarkDerivedState()
@@ -691,6 +1469,12 @@ public final class RuntimeViewModel {
     public func selectBenchmarkMetric(_ metricName: String) {
         selectedBenchmarkMetricName = metricName
         rebuildBenchmarkDerivedState()
+        notifyStateChanged()
+    }
+
+    public func selectBenchmarkMatrixHistory(jobID: String) {
+        selectedBenchmarkMatrixHistoryJobID = jobID
+        rebuildBenchmarkMatrixDerivedState()
         notifyStateChanged()
     }
 
@@ -829,9 +1613,79 @@ public final class RuntimeViewModel {
         }
     }
 
+    public func updateSelectedServerSessionStreamIntervalTokens(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.streamIntervalTokens = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
     public func updateSelectedServerSessionMaxConcurrentRequests(_ value: Int) {
         updateSelectedServerSession { session in
             session.servingDefaults.maxConcurrentRequests = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionConcurrentProcessingEnabled(_ value: Bool) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.concurrentProcessingEnabled = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionPrefillBatchSize(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.prefillBatchSize = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionCompletionBatchSize(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.completionBatchSize = max(1, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAccelerationMode(_ value: String) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.accelerationMode = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionDraftModelID(_ value: String) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.draftModelID = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionNumDraftTokens(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.servingDefaults.numDraftTokens = max(0, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAutoSleepEnabled(_ value: Bool) {
+        updateSelectedServerSession { session in
+            session.autoSleepEnabled = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionLightSleepAfterSeconds(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.lightSleepAfterSeconds = max(0, value)
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionDeepSleepAfterSeconds(_ value: Int) {
+        updateSelectedServerSession { session in
+            session.deepSleepAfterSeconds = max(0, value)
             session.updatedAt = Date()
         }
     }
@@ -881,35 +1735,118 @@ public final class RuntimeViewModel {
         guard let serverSession = selectedServerSession else {
             return
         }
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .starting
-            session.lastError = ""
-            session.updatedAt = Date()
+        await startServerSession(id: serverSession.id)
+    }
+
+    public func applySelectedServerGatewayConfig() async {
+        guard let serverSession = selectedServerSession else {
+            return
         }
-        notifyStateChanged()
-        await loadModel(modelID: serverSession.modelID)
+        _ = await persistGatewayConfig(for: serverSession.id)
+    }
+
+    public func applySelectedServerServingDefaults() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        _ = await persistServingDefaults(for: serverSession.id)
+    }
+
+    public func applySelectedServerServingDefaultsFromUI() {
+        Task {
+            await applySelectedServerServingDefaults()
+        }
     }
 
     public func stopSelectedServerSession() async {
         guard let serverSession = selectedServerSession else {
             return
         }
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .stopping
-            session.updatedAt = Date()
+        await stopServerSession(id: serverSession.id)
+    }
+
+    public func pauseSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
         }
-        notifyStateChanged()
-        await unloadModel(modelID: serverSession.modelID)
-        replaceServerSession(id: serverSession.id) { session in
-            session.lifecycle = .stopped
-            session.updatedAt = Date()
+        await pauseServerSession(id: serverSession.id)
+    }
+
+    public func resumeSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
         }
-        notifyStateChanged()
+        await resumeServerSession(id: serverSession.id)
+    }
+
+    public func wakeSelectedServerSession() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        await wakeServerSession(id: serverSession.id)
+    }
+
+    public func applySelectedServerIdlePolicy() async {
+        guard let serverSession = selectedServerSession else {
+            return
+        }
+        await performServerIdlePolicyUpdate(serverSessionID: serverSession.id)
+    }
+
+    public func startServerSession(id serverSessionID: String) async {
+        guard await persistGatewayConfig(for: serverSessionID) else {
+            return
+        }
+        guard await persistServingDefaults(for: serverSessionID) else {
+            return
+        }
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_start_ms"
+        ) { [client] targetServerSessionID in
+            try await client.startServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func pauseServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_pause_ms"
+        ) { [client] targetServerSessionID in
+            try await client.pauseServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func resumeServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_resume_ms"
+        ) { [client] targetServerSessionID in
+            try await client.resumeServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func wakeServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_wake_ms"
+        ) { [client] targetServerSessionID in
+            try await client.wakeServerSession(serverSessionID: targetServerSessionID)
+        }
+    }
+
+    public func stopServerSession(id serverSessionID: String) async {
+        await performServerLifecycleAction(
+            serverSessionID: serverSessionID,
+            metricName: "menu.server_stop_ms"
+        ) { [client] targetServerSessionID in
+            try await client.stopServerSession(serverSessionID: targetServerSessionID)
+        }
     }
 
     public func createChatSession() {
         guard let serverSession = selectedServerSession ?? serverSessions.first else {
-            lastError = "Create a Server Session before opening chat."
+            setLastError("Create a Server Session before opening chat.")
             chatStatusText = "No Server Session"
             selectedSurface = .server
             notifyStateChanged()
@@ -971,14 +1908,14 @@ public final class RuntimeViewModel {
         let exportURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(sanitizedName)-export.md")
         let lines = session.transcript.map { entry in
-            "## \(entry.title)\n\n\(entry.body)\n"
+            "## \(sanitizedRichText(entry.title))\n\n\(sanitizedRichText(entry.body))\n"
         }
         let payload = """
-        # \(session.title)
+        # \(sanitizedRichText(session.title))
 
         - Server Session: \(session.serverSessionID)
-        - Branch: \(session.branchTitle)
-        - Status: \(session.statusText)
+        - Branch: \(sanitizedRichText(session.branchTitle))
+        - Status: \(sanitizedRichText(session.statusText))
 
         \(lines.joined(separator: "\n"))
         """
@@ -1009,6 +1946,13 @@ public final class RuntimeViewModel {
         models.first { $0.modelID == "melix-dev-text" } ?? models.first
     }
 
+    private var primaryModelSummary: Melix_Controlplane_V1_ModelSummary? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return latestSnapshot.models.first(where: { $0.modelID == modelID })
+    }
+
     public var selectedServerSession: DesktopServerSessionState? {
         guard !selectedServerSessionID.isEmpty else {
             return serverSessions.first
@@ -1036,35 +1980,111 @@ public final class RuntimeViewModel {
     }
 
     public var desktopBannerState: DesktopBannerState? {
-        if serverStateText == "Failed" || connectionStateText == "Degraded" {
-            return DesktopBannerState(
-                title: "Operator Attention Required",
-                detail: lastError ?? connectionDetailText,
-                severity: .critical
-            )
+        desktopSignalStates.first
+    }
+
+    public var desktopSignalStates: [DesktopBannerState] {
+        resolvedDesktopSignals().filter { banner in
+            banner.isDismissible == false || dismissedBannerIDs.contains(banner.id) == false
         }
-        if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
-            return DesktopBannerState(
-                title: "Runtime Needs Monitoring",
-                detail: connectionDetailText,
-                severity: .warning
+    }
+
+    public var recoverableDownloads: [RuntimeDownloadQueueEntryState] {
+        downloadQueue.filter(\.resumeReady)
+    }
+
+    public var activeDownloads: [RuntimeDownloadQueueEntryState] {
+        downloadQueue.filter(\.isActive)
+    }
+
+    public func dismissDesktopBanner(id: String? = nil) {
+        let banner = desktopSignalStates.first { candidate in
+            guard let id else {
+                return true
+            }
+            return candidate.id == id
+        }
+        guard let banner, banner.isDismissible else {
+            return
+        }
+        dismissedBannerIDs.insert(banner.id)
+        notifyStateChanged()
+    }
+
+    private func resolvedDesktopSignals() -> [DesktopBannerState] {
+        var signals: [DesktopBannerState] = []
+        if serverStateText == "Failed" || connectionStateText == "Degraded" {
+            signals.append(
+                DesktopBannerState(
+                    id: "runtime-critical",
+                    title: "Operator Attention Required",
+                    detail: lastError ?? connectionDetailText,
+                    severity: .critical
+                )
             )
         }
         if let failingServer = serverSessions.first(where: { $0.lifecycle == .error }) {
-            return DesktopBannerState(
-                title: "\(failingServer.title) Needs Recovery",
-                detail: failingServer.lastError,
-                severity: .critical
+            signals.append(
+                DesktopBannerState(
+                    id: "server-session-\(failingServer.id)-critical",
+                    title: "\(failingServer.title) Needs Recovery",
+                    detail: failingServer.lastError,
+                    severity: .critical
+                )
+            )
+        }
+        if let selectedServerBanner = selectedServerSession?.lifecycleBannerState {
+            signals.append(selectedServerBanner)
+        }
+        if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
+            signals.append(
+                DesktopBannerState(
+                    id: "runtime-monitoring",
+                    title: "Runtime Needs Monitoring",
+                    detail: connectionDetailText,
+                    severity: .warning
+                )
             )
         }
         if let audioSetupAction = audioSetupActions.first {
-            return DesktopBannerState(
-                title: "Audio Setup Required",
-                detail: audioSetupAction.detail,
-                severity: .warning
+            signals.append(
+                DesktopBannerState(
+                    id: "audio-setup-\(audioSetupAction.modelID)",
+                    title: "Audio Setup Required",
+                    detail: audioSetupAction.detail,
+                    severity: .warning
+                )
             )
         }
-        return nil
+        if let recoverableDownload = recoverableDownloads.first {
+            let detail = recoverableDownloads.count == 1
+                ? "\(recoverableDownload.sourceModel) • \(recoverableDownload.progressText)"
+                : "\(recoverableDownloads.count) downloads can resume • \(recoverableDownload.progressText)"
+            signals.append(
+                DesktopBannerState(
+                    id: "download-recovery",
+                    title: "Download Recovery Available",
+                    detail: detail,
+                    severity: .warning
+                )
+            )
+        } else if let activeDownload = activeDownloads.first {
+            let detail = activeDownloads.count == 1
+                ? "\(activeDownload.sourceModel) • \(activeDownload.progressText)"
+                : "\(activeDownloads.count) downloads in progress • \(activeDownload.progressText)"
+            signals.append(
+                DesktopBannerState(
+                    id: "download-queue-active",
+                    title: "Download Queue Active",
+                    detail: detail,
+                    severity: .info
+                )
+            )
+        }
+        if let updateBanner = productUpdateBannerState {
+            signals.append(updateBanner)
+        }
+        return signals
     }
 
     public var audioSetupActions: [RuntimeAudioSetupActionState] {
@@ -1125,8 +2145,62 @@ public final class RuntimeViewModel {
         return adapterPackages.first(where: { $0.id == selectedAdapterPackageID }) ?? adapterPackages.first
     }
 
+    public var registryRootSummaryText: String {
+        if registryHasConfiguredRootOverride {
+            let count = registryConfiguredRootPaths.count
+            return count == 0
+                ? "Control-plane override active • no roots configured"
+                : "Control-plane override active • \(count) roots configured"
+        }
+        if registryRoots.isEmpty {
+            return "Using environment roots • no snapshot loaded yet"
+        }
+        return "Using environment roots • \(registryRoots.count) roots observed"
+    }
+
+    public var canAddRegistryRoot: Bool {
+        Self.normalizedRegistryRootPath(registryRootPathDraft) != nil
+    }
+
     public var imageModels: [RuntimeModelRow] {
         models.filter { $0.kind == "image" || $0.kind == "image_generation" }
+    }
+
+    public var selectedImageModelID: String {
+        get { selectedImageGenerateModelID }
+        set { selectedImageGenerateModelID = newValue }
+    }
+
+    public func imageModels(for role: RuntimeImageWorkflowRole) -> [RuntimeModelRow] {
+        imageModels
+            .filter { Self.imageModel($0, supports: role) }
+            .sorted { lhs, rhs in
+                let lhsPreferred = lhs.imageDefaultWorkflowRole == role.rawValue
+                let rhsPreferred = rhs.imageDefaultWorkflowRole == role.rawValue
+                if lhsPreferred != rhsPreferred {
+                    return lhsPreferred && !rhsPreferred
+                }
+                return lhs.modelID < rhs.modelID
+            }
+    }
+
+    public func selectedImageModelID(for role: RuntimeImageWorkflowRole) -> String {
+        switch role {
+        case .generate:
+            return selectedImageGenerateModelID
+        case .edit:
+            return selectedImageEditModelID
+        }
+    }
+
+    public func setSelectedImageModelID(_ modelID: String, for role: RuntimeImageWorkflowRole) {
+        switch role {
+        case .generate:
+            selectedImageGenerateModelID = modelID
+        case .edit:
+            selectedImageEditModelID = modelID
+        }
+        notifyStateChanged()
     }
 
     public var selectedImageJob: Melix_Controlplane_V1_ImageJobSummary? {
@@ -1134,6 +2208,48 @@ public final class RuntimeViewModel {
             return imageJobs.first
         }
         return imageJobs.first(where: { $0.jobID == selectedImageJobID }) ?? imageJobs.first
+    }
+
+    public var imageTimeoutPolicyText: String {
+        let minutes = max(1, Int(imageRequestTimeoutSeconds) / 60)
+        if minutes * 60 == Int(imageRequestTimeoutSeconds) {
+            return "\(minutes)-minute creative workflow deadline"
+        }
+        return "\(imageRequestTimeoutSeconds)-second creative workflow deadline"
+    }
+
+    public var selectedImageJobTimeoutText: String {
+        guard let job = selectedImageJob else {
+            return imageTimeoutPolicyText
+        }
+        let timeoutSeconds = job.timeoutSeconds == 0 ? imageRequestTimeoutSeconds : job.timeoutSeconds
+        let minutes = max(1, Int(timeoutSeconds) / 60)
+        let policyText = minutes * 60 == Int(timeoutSeconds)
+            ? "\(minutes)-minute deadline"
+            : "\(timeoutSeconds)-second deadline"
+        if job.error.code == "deadline_exceeded" {
+            return "Timed out • \(policyText)"
+        }
+        return policyText
+    }
+
+    public var canRedoSelectedImageJob: Bool {
+        selectedImageJob.map(Self.canRedoImageJob(_:)) ?? false
+    }
+
+    public var canPrepareReiterateFromSelectedImageJob: Bool {
+        selectedImageJob.flatMap(Self.reiterateSourceArtifactID(from:)) != nil
+    }
+
+    public var imageEditSourceArtifactSummaryText: String? {
+        let artifactID = imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artifactID.isEmpty else {
+            return nil
+        }
+        if let artifact = selectedImageJob?.artifacts.first(where: { $0.artifactID == artifactID }) {
+            return "\(artifactID) • \(artifact.storageUri)"
+        }
+        return artifactID
     }
 
     public var desktopFoundationState: DesktopFoundationState {
@@ -1147,6 +2263,8 @@ public final class RuntimeViewModel {
             serverVersion: serverVersion,
             daemonInstanceID: daemonInstanceID,
             features: features,
+            productUpdateSummary: productUpdateSummary,
+            productUpdateDetail: productUpdateDetail,
             lastError: lastError,
             recentEvents: recentEvents
         )
@@ -1194,6 +2312,32 @@ public final class RuntimeViewModel {
         }
     }
 
+    public var benchmarkMatrixCellCount: Int {
+        ControlPlaneBenchMatrixRequest(
+            suites: selectedBenchmarkSuiteIDs.sorted(),
+            contextLengths: normalizedBenchContextLengths(),
+            generationLengths: normalizedBenchGenerationLengths(),
+            batchSizes: normalizedBenchBatchSizes(),
+            cacheProfiles: normalizedBenchMatrixCacheProfiles(),
+            reasoningModes: normalizedBenchMatrixReasoningModes(),
+            structuredOutputModes: normalizedBenchMatrixStructuredOutputModes(),
+            concurrencyLevels: normalizedBenchMatrixConcurrencyLevels()
+        ).matrixCellCount
+    }
+
+    public var benchmarkMatrixCellCountText: String {
+        "\(benchmarkMatrixCellCount) cells"
+    }
+
+    public var benchmarkMatrixLoadBudgetSummaryText: String {
+        switch selectedBenchmarkMatrixLoadBudgetMode {
+        case .requests:
+            return "Requests • \(normalizedBenchMatrixRequests())"
+        case .durationSeconds:
+            return "Duration • \(normalizedBenchMatrixDurationSeconds())s"
+        }
+    }
+
     public var evaluationTargetTaskKind: String {
         "text-generation"
     }
@@ -1225,6 +2369,11 @@ public final class RuntimeViewModel {
             ?? benchmarkHistory.first
     }
 
+    public var selectedBenchmarkMatrixHistoryEntry: RuntimeBenchmarkMatrixHistoryEntryState? {
+        benchmarkMatrixHistory.first(where: { $0.jobID == selectedBenchmarkMatrixHistoryJobID })
+            ?? benchmarkMatrixHistory.first
+    }
+
     public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
         evaluationHistory.first(where: { $0.jobID == selectedEvaluationHistoryJobID })
             ?? evaluationHistory.first
@@ -1237,6 +2386,7 @@ public final class RuntimeViewModel {
         let restoreStartedAt = Date()
         restoreOperatorSessionState()
         operatorStateRestored = true
+        await refreshProductSignals()
         await metrics.record(
             name: "operator.session_restore_ms",
             valueMs: Date().timeIntervalSince(restoreStartedAt) * 1_000
@@ -1269,7 +2419,13 @@ public final class RuntimeViewModel {
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
         } catch {
             await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
-            lastError = startupFailureMessage(error)
+            if let diagnostic = productInstallStateProvider.startupFailureDiagnostic(for: error) {
+                setLastError(diagnostic.userMessage)
+                await metrics.record(name: "startup.failure_classification_count", valueMs: 1)
+            } else {
+                setLastError(startupFailureMessage(error))
+                await metrics.record(name: "startup.failure_classification_count", valueMs: 0)
+            }
             statusTitle = "Melix Error"
             notifyStateChanged()
         }
@@ -1298,7 +2454,11 @@ public final class RuntimeViewModel {
     public func loadModel(modelID: String) async {
         let startedAt = Date()
         do {
-            let model = try await client.loadModel(modelID: modelID)
+            let requestedMemoryBudgetBytes = resolvedModelLoadMemoryBudgetBytes(for: modelID)
+            let model = try await client.loadModel(
+                modelID: modelID,
+                memoryBudgetBytes: requestedMemoryBudgetBytes
+            )
             await metrics.record(
                 name: "menu.model_load_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -1322,14 +2482,14 @@ public final class RuntimeViewModel {
 
         guard let serverSession = selectedChatServerSession else {
             chatStatusText = "No Server Session"
-            lastError = "Create and start a Server Session before sending chat prompts."
+            setLastError("Create and start a Server Session before sending chat prompts.")
             selectedSurface = .server
             notifyStateChanged()
             return
         }
-        guard serverSession.isRunning else {
-            chatStatusText = "No Server Session"
-            lastError = "Start a running Server Session before sending chat prompts."
+        guard serverSession.isInteractiveReady else {
+            chatStatusText = serverSession.lifecycle.rawValue
+            setLastError(chatSubmissionBlockedMessage(for: serverSession))
             selectedSurface = .chat
             notifyStateChanged()
             return
@@ -1340,6 +2500,7 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         let userMessage = ControlPlaneChatRequest.Message(role: "user", content: prompt)
         chatConversationMessages.append(userMessage)
+        resetChatPresentationState()
         appendChatEntry(
             id: "user-\(UUID().uuidString)",
             kind: .user,
@@ -1398,22 +2559,27 @@ public final class RuntimeViewModel {
                     chatStatusText = decodeHandle.isEmpty ? "Decode" : "Decode • \(decodeHandle)"
                 case .tokenDelta(let text):
                     appendAssistantDelta(text, requestID: execution.requestID)
+                    await Task.yield()
                 case .reasoningDelta(let text):
                     reasoningDeltaCount += 1
                     appendReasoningDelta(text, requestID: execution.requestID)
+                    await Task.yield()
                 case .toolCallDelta(let callID, let toolName, let argumentsFragment):
                     toolDeltaCount += 1
                     appendToolDelta(callID: callID, toolName: toolName, argumentsFragment: argumentsFragment)
+                    await Task.yield()
                 case .usage(let promptTokens, let completionTokens):
                     lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
                 case .completed(let finishReason, let assistantText, let reasoningText):
+                    flushPendingChatPresentation()
                     chatStatusText = finishReason.isEmpty ? "Completed" : "Completed • \(finishReason)"
                     finalizeAssistantText(assistantText, requestID: execution.requestID)
                     finalizeReasoningText(reasoningText, requestID: execution.requestID)
                 case .failed(let code, let message):
+                    flushPendingChatPresentation()
                     chatStatusText = code.isEmpty ? "Failed" : "Failed • \(code)"
                     let failureMessage = message.isEmpty ? "Chat request failed." : message
-                    lastError = failureMessage
+                    setLastError(failureMessage)
                     appendChatEntry(
                         id: "error-\(UUID().uuidString)",
                         kind: .error,
@@ -1428,6 +2594,7 @@ public final class RuntimeViewModel {
                 notifyStateChanged()
             }
 
+            flushPendingChatPresentation()
             await metrics.record(
                 name: "menu.chat_stream_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -1440,9 +2607,11 @@ public final class RuntimeViewModel {
                 name: "menu.chat_tool_delta_count",
                 valueMs: Double(toolDeltaCount)
             )
+            await recordChatPresentationMetricsIfNeeded()
             commitAssistantMessageIfNeeded()
         } catch {
-            lastError = String(describing: error)
+            flushPendingChatPresentation()
+            setLastError(String(describing: error))
             chatStatusText = "Failed"
             appendChatEntry(
                 id: "error-\(UUID().uuidString)",
@@ -1454,6 +2623,7 @@ public final class RuntimeViewModel {
         }
 
         isChatStreaming = false
+        resetChatPresentationState()
         activeAssistantEntryID = nil
         activeReasoningEntryID = nil
         activeToolEntryIDs.removeAll()
@@ -1461,6 +2631,7 @@ public final class RuntimeViewModel {
     }
 
     public func clearChatTranscript() {
+        resetChatPresentationState()
         chatTranscript = []
         chatConversationMessages = []
         chatStatusText = "Idle"
@@ -1489,28 +2660,151 @@ public final class RuntimeViewModel {
         guard !prompt.isEmpty else {
             return
         }
+        guard
+            let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+            let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance")
+        else {
+            return
+        }
 
-        let modelID = resolvedImageModelID()
-        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
-            await loadModel(modelID: modelID)
+        await submitImageGeneration(
+            ControlPlaneImageGenerationRequest(
+                modelID: resolvedImageModelID(for: .generate),
+                prompt: prompt,
+                size: imageSize,
+                steps: imageSteps,
+                guidance: Float(imageGuidance),
+                negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                n: max(1, imageVariantCount)
+            ),
+            statusText: "Submitting",
+            clearPromptOnSuccess: true
+        )
+    }
+
+    public func submitImageEdit() async {
+        let sourceURL = imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceArtifactID = imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedEditMode = imageEditMode
+        let trimmedPrompt = imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptDelta = selectedEditMode == .iterate ? trimmedPrompt : ""
+
+        if selectedEditMode == .variation || selectedEditMode == .iterate {
+            guard !sourceArtifactID.isEmpty else {
+                imageStatusText = "Failed"
+                recordLocalError("Variation and iterate requests require a source artifact.")
+                notifyStateChanged()
+                return
+            }
+        }
+
+        guard !sourceURL.isEmpty || !sourceArtifactID.isEmpty else {
+            imageStatusText = "Failed"
+            recordLocalError("Image edit source is required.")
+            notifyStateChanged()
+            return
+        }
+        if selectedEditMode == .iterate, promptDelta.isEmpty {
+            imageStatusText = "Failed"
+            recordLocalError("Iterate requests require a prompt delta.")
+            notifyStateChanged()
+            return
+        }
+        guard let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+              let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance"),
+              let resolvedImageStrength = normalizedOptionalDoubleDraft(imageStrength, fieldName: "Image strength") else {
+            return
+        }
+        guard resolvedImageStrength > 0, resolvedImageStrength <= 1 else {
+            recordLocalError("Image strength must be between 0 and 1.")
+            notifyStateChanged()
+            return
+        }
+
+        await submitImageEdit(
+            ControlPlaneImageEditRequest(
+                modelID: resolvedImageModelID(for: .edit),
+                prompt: selectedEditMode == .iterate ? "" : trimmedPrompt,
+                imageURL: sourceArtifactID.isEmpty ? sourceURL : "",
+                maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                sourceArtifactID: sourceArtifactID,
+                promptDelta: promptDelta,
+                mode: selectedEditMode.controlPlaneMode,
+                strength: Float(resolvedImageStrength),
+                size: imageSize,
+                steps: imageSteps,
+                guidance: Float(imageGuidance),
+                negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                n: max(1, imageVariantCount)
+            ),
+            statusText: selectedEditMode == .iterate ? "Submitting Iterate" : "Submitting",
+            clearPromptOnSuccess: true
+        )
+    }
+
+    public func redoSelectedImageJob() async {
+        guard let job = selectedImageJob, Self.canRedoImageJob(job) else {
+            return
+        }
+        if job.operation == "image_generate" {
+            await submitImageGeneration(Self.redoGenerationRequest(from: job), statusText: "Redoing", clearPromptOnSuccess: false)
+            return
+        }
+        await submitImageEdit(Self.redoEditRequest(from: job), statusText: "Redoing", clearPromptOnSuccess: false)
+    }
+
+    public func prepareReiterateFromSelectedImageJob() {
+        guard let job = selectedImageJob,
+              let artifactID = Self.reiterateSourceArtifactID(from: job) else {
+            return
+        }
+        if let imageModel = models.first(where: { $0.modelID == job.modelID && Self.imageModel($0, supports: .edit) }) {
+            selectedImageEditModelID = imageModel.modelID
+        }
+        imageEditMode = .iterate
+        imageEditSourceArtifactID = artifactID
+        imageEditSourceURL = ""
+        imageEditMaskURL = ""
+        imagePromptText = ""
+        if job.recipe.steps > 0 {
+            imageSteps = String(job.recipe.steps)
+        }
+        if job.recipe.guidance > 0 {
+            imageGuidance = Self.formatImageDefaultNumber(Double(job.recipe.guidance))
+        }
+        if job.recipe.strength > 0 {
+            imageStrength = Self.formatImageDefaultNumber(Double(job.recipe.strength))
+        }
+        if job.recipe.size.isEmpty == false {
+            imageSize = job.recipe.size
+        }
+        if job.recipe.negativePrompt.isEmpty == false {
+            imageNegativePrompt = job.recipe.negativePrompt
+        }
+        imageStatusText = "Iterate draft seeded"
+        notifyStateChanged()
+    }
+
+    private func submitImageGeneration(
+        _ request: ControlPlaneImageGenerationRequest,
+        statusText: String,
+        clearPromptOnSuccess: Bool
+    ) async {
+        if models.contains(where: { $0.modelID == request.modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: request.modelID)
         }
 
         let startedAt = Date()
-        imageStatusText = "Submitting"
+        imageStatusText = statusText
         notifyStateChanged()
 
         do {
-            let job = try await client.generateImage(
-                ControlPlaneImageGenerationRequest(
-                    modelID: modelID,
-                    prompt: prompt,
-                    size: imageSize,
-                    n: max(1, imageVariantCount)
-                )
-            )
+            let job = try await client.generateImage(request)
             upsert(imageJob: job)
             imageStatusText = Self.imageStatusText(for: job)
-            imagePromptText = ""
+            if clearPromptOnSuccess {
+                imagePromptText = ""
+            }
             await metrics.record(
                 name: "desktop.image_action_latency_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -1523,45 +2817,80 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func submitImageEdit() async {
-        let sourceURL = imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sourceURL.isEmpty else {
-            imageStatusText = "Failed"
-            recordLocalError("Image edit source is required.")
-            notifyStateChanged()
-            return
-        }
-
-        let modelID = resolvedImageModelID()
-        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
-            await loadModel(modelID: modelID)
+    private func submitImageEdit(
+        _ request: ControlPlaneImageEditRequest,
+        statusText: String,
+        clearPromptOnSuccess: Bool
+    ) async {
+        if models.contains(where: { $0.modelID == request.modelID && $0.isLoaded }) == false {
+            await loadModel(modelID: request.modelID)
         }
 
         let startedAt = Date()
-        imageStatusText = "Submitting"
+        imageStatusText = statusText
         notifyStateChanged()
 
         do {
-            let job = try await client.editImage(
-                ControlPlaneImageEditRequest(
-                    modelID: modelID,
-                    prompt: imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    imageURL: sourceURL,
-                    maskURL: imageEditMaskURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                    strength: 1,
-                    size: imageSize,
-                    n: max(1, imageVariantCount)
-                )
-            )
+            let job = try await client.editImage(request)
             upsert(imageJob: job)
             imageStatusText = Self.imageStatusText(for: job)
-            imagePromptText = ""
+            if clearPromptOnSuccess {
+                imagePromptText = ""
+            }
+            if request.sourceArtifactID.isEmpty == false {
+                imageEditSourceArtifactID = ""
+                imageEditMode = .edit
+            }
             await metrics.record(
                 name: "desktop.image_action_latency_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
         } catch {
             imageStatusText = "Failed"
+            recordLocalError(String(describing: error))
+        }
+
+        notifyStateChanged()
+    }
+
+    public func applyImageDefaultsFromUI() {
+        Task {
+            await applyImageDefaults()
+        }
+    }
+
+    public func applyImageDefaults() async {
+        guard let imageSteps = normalizedOptionalUInt32Draft(imageSteps, fieldName: "Image steps"),
+              let imageGuidance = normalizedOptionalDoubleDraft(imageGuidance, fieldName: "Image guidance"),
+              let resolvedImageStrength = normalizedOptionalDoubleDraft(imageStrength, fieldName: "Image strength") else {
+            return
+        }
+        guard resolvedImageStrength > 0, resolvedImageStrength <= 1 else {
+            recordLocalError("Image strength must be between 0 and 1.")
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let summary = try await client.applyImageDefaults(
+                ControlPlaneImageDefaultsRequest(
+                    generateModelID: resolvedImageModelID(for: .generate),
+                    editModelID: resolvedImageModelID(for: .edit),
+                    size: imageSize.trimmingCharacters(in: .whitespacesAndNewlines),
+                    steps: imageSteps,
+                    guidance: Float(imageGuidance),
+                    strength: Float(resolvedImageStrength),
+                    negativePrompt: imageNegativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+            latestSnapshot.imageDefaults = summary
+            applyImageDefaultsProjection()
+            await metrics.record(
+                name: "desktop.image_defaults_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
             recordLocalError(String(describing: error))
         }
 
@@ -1621,34 +2950,214 @@ public final class RuntimeViewModel {
         await unloadModel(modelID: modelID)
     }
 
+    private func resolvedModelLoadMemoryBudgetBytes(for modelID: String) -> UInt64 {
+        if modelSettingsDraftModelID == modelID,
+           let draftValue = normalizedOptionalUInt64Draft(
+               modelSettingsMemoryBudgetDraft,
+               fieldName: "Memory budget bytes"
+           ) {
+            return draftValue
+        }
+        return primaryModelSummary?.modelID == modelID
+            ? primaryModelSummary?.settings.memoryBudgetBytes ?? 0
+            : latestSnapshot.models.first(where: { $0.modelID == modelID })?.settings.memoryBudgetBytes ?? 0
+    }
+
     public func updateModelSettings(
         modelID: String,
         alias: String,
+        typeOverride: String = "",
+        ttlSeconds: String = "",
         pinOnLoad: Bool,
         memoryPolicy: String,
+        memoryBudgetBytes: String = "",
+        diskStreamingMode: String,
+        cacheMode: String = "tiered",
+        cacheMemoryBudgetBytes: String = "",
+        cacheMemoryBudgetPct: String = "",
+        cacheBlockSizeTokens: String = "",
+        cacheDirectory: String = "",
+        multimodalCacheBudgetBytes: String = "",
         accelerationMode: String,
-        accelerationProfileID: String
+        accelerationProfileID: String,
+        adaptiveThinkingMode: String = "off",
+        adaptiveThinkingBudgetTokens: String = "",
+        toolParserXMLFallback: Bool = false,
+        ocrSamplingProfileID: String = "",
+        ocrDefaultTemperature: String = "",
+        ocrDefaultTopP: String = "",
+        ocrDefaultMaxTokens: String = "",
+        includeOCRSettings: Bool = false
     ) async {
         let startedAt = Date()
         do {
+            var values = [
+                "alias": alias,
+                "type_override": typeOverride,
+                "ttl_seconds": ttlSeconds,
+                "pin_on_load": pinOnLoad ? "true" : "false",
+                "memory_policy": memoryPolicy,
+                "memory_budget_bytes": memoryBudgetBytes,
+                "disk_streaming_mode": diskStreamingMode,
+                "cache_mode": cacheMode,
+                "cache_memory_budget_bytes": cacheMemoryBudgetBytes,
+                "cache_memory_budget_pct": cacheMemoryBudgetPct,
+                "cache_block_size_tokens": cacheBlockSizeTokens,
+                "cache_directory": cacheDirectory,
+                "multimodal_cache_budget_bytes": multimodalCacheBudgetBytes,
+                "default_acceleration_mode": accelerationMode,
+                "acceleration_profile_id": accelerationProfileID,
+                "adaptive_thinking_mode": adaptiveThinkingMode,
+                "adaptive_thinking_budget_tokens": adaptiveThinkingBudgetTokens,
+                "tool_parser_xml_fallback": toolParserXMLFallback ? "true" : "false",
+            ]
+            if includeOCRSettings {
+                values["ocr_sampling_profile_id"] = ocrSamplingProfileID
+                values["ocr_default_temperature"] = ocrDefaultTemperature
+                values["ocr_default_top_p"] = ocrDefaultTopP
+                values["ocr_default_max_tokens"] = ocrDefaultMaxTokens
+            }
             let model = try await client.updateModelSettings(
                 modelID: modelID,
-                values: [
-                    "alias": alias,
-                    "pin_on_load": pinOnLoad ? "true" : "false",
-                    "memory_policy": memoryPolicy,
-                    "default_acceleration_mode": accelerationMode,
-                    "acceleration_profile_id": accelerationProfileID,
-                ]
+                values: values
             )
             await metrics.record(
                 name: "menu.model_settings_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
             upsert(model: model)
+            synchronizeModelSettingsDrafts(force: true)
         } catch {
             recordLocalError(String(describing: error))
         }
+        notifyStateChanged()
+    }
+
+    public func applyPrimaryModelSettings() async {
+        guard let model = primaryModelSummary else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsTTLDraft,
+                fieldName: "TTL seconds"
+            ) != nil || modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsAdaptiveThinkingBudgetDraft,
+                fieldName: "Adaptive thinking budget"
+            ) != nil || modelSettingsAdaptiveThinkingBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsMemoryBudgetDraft,
+                fieldName: "Memory budget bytes"
+            ) != nil || modelSettingsMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsCacheMemoryBudgetDraft,
+                fieldName: "Cache memory budget bytes"
+            ) != nil || modelSettingsCacheMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsCacheMemoryBudgetPctDraft,
+                fieldName: "Cache memory budget percent"
+            ) != nil || modelSettingsCacheMemoryBudgetPctDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsCacheBlockSizeTokensDraft,
+                fieldName: "Cache block size tokens"
+            ) != nil || modelSettingsCacheBlockSizeTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt64Draft(
+                modelSettingsMultimodalCacheBudgetDraft,
+                fieldName: "Multimodal cache budget bytes"
+            ) != nil || modelSettingsMultimodalCacheBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalDoubleDraft(
+                modelSettingsOCRTemperatureDraft,
+                fieldName: "OCR temperature"
+            ) != nil || modelSettingsOCRTemperatureDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalDoubleDraft(
+                modelSettingsOCRTopPDraft,
+                fieldName: "OCR top-p"
+            ) != nil || modelSettingsOCRTopPDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        guard
+            normalizedOptionalUInt32Draft(
+                modelSettingsOCRMaxTokensDraft,
+                fieldName: "OCR max tokens"
+            ) != nil || modelSettingsOCRMaxTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        await updateModelSettings(
+            modelID: model.modelID,
+            alias: modelSettingsAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            typeOverride: modelSettingsTypeOverrideDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ttlSeconds: modelSettingsTTLDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            pinOnLoad: modelSettingsPinOnLoadDraft,
+            memoryPolicy: modelSettingsMemoryPolicyDraft,
+            memoryBudgetBytes: modelSettingsMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            diskStreamingMode: modelSettingsDiskStreamingModeDraft,
+            cacheMode: modelSettingsCacheModeDraft,
+            cacheMemoryBudgetBytes: modelSettingsCacheMemoryBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheMemoryBudgetPct: modelSettingsCacheMemoryBudgetPctDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheBlockSizeTokens: modelSettingsCacheBlockSizeTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            cacheDirectory: modelSettingsCacheDirectoryDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            multimodalCacheBudgetBytes: modelSettingsMultimodalCacheBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            accelerationMode: modelSettingsAccelerationModeDraft,
+            accelerationProfileID: modelSettingsAccelerationProfileIDDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            adaptiveThinkingMode: modelSettingsAdaptiveThinkingModeDraft,
+            adaptiveThinkingBudgetTokens: modelSettingsAdaptiveThinkingBudgetDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            toolParserXMLFallback: modelSettingsToolParserXMLFallbackDraft,
+            ocrSamplingProfileID: modelSettingsOCRSamplingProfileDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultTemperature: modelSettingsOCRTemperatureDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultTopP: modelSettingsOCRTopPDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            ocrDefaultMaxTokens: modelSettingsOCRMaxTokensDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+            includeOCRSettings: model.kind == "ocr"
+        )
+    }
+
+    public func resetPrimaryModelSettingsDrafts() {
+        synchronizeModelSettingsDrafts(force: true)
         notifyStateChanged()
     }
 
@@ -1661,6 +3170,7 @@ public final class RuntimeViewModel {
             alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
+            diskStreamingMode: "disabled",
             accelerationMode: "speculative_decode",
             accelerationProfileID: "draft-q4"
         )
@@ -1675,14 +3185,130 @@ public final class RuntimeViewModel {
                 name: "menu.model_info_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
+            let generationConfigSourceText = snapshotModel?.settings.ext["melix.generation_config.source"] ?? ""
+            let generationConfigTemperatureText = snapshotModel?.settings.ext["melix.generation_config.temperature"] ?? ""
+            let generationConfigTopPText = snapshotModel?.settings.ext["melix.generation_config.top_p"] ?? ""
+            let generationConfigMaxTokensText = snapshotModel?.settings.ext["melix.generation_config.max_tokens"] ?? ""
+            let audioInstallProfileText = snapshotModel?.settings.ext["melix.audio.install_profile"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioLanguagesText = snapshotModel?.settings.ext["melix.audio.languages"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioVoiceModeText = snapshotModel?.settings.ext["melix.audio.voice_mode"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioOutputFormatsText = snapshotModel?.settings.ext["melix.audio.output_formats"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rawAudioSupportsInstructionsText = snapshotModel?.settings.ext["melix.audio.supports_instructions"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioSupportsInstructionsText = rawAudioSupportsInstructionsText.isEmpty
+                ? ""
+                : (rawAudioSupportsInstructionsText == "true" ? "Yes" : "No")
+            let audioVoiceCatalogSummaryText = snapshotModel?.settings.ext["melix.audio.voice_catalog_summary"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioVoiceLocalesText = snapshotModel?.settings.ext["melix.audio.voice_locales"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioDefaultLocaleText = snapshotModel?.settings.ext["melix.audio.default_locale"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioPackagedDefaultLocaleText = snapshotModel?.settings.ext["melix.audio.packaged_default_locale"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioLocalePolicyText = snapshotModel?.settings.ext["melix.audio.locale_policy"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioRuntimePackStateText = snapshotModel?.settings.ext["melix.audio.runtime_pack_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioRuntimePackIDText = snapshotModel?.settings.ext["melix.audio.runtime_pack_id"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let audioModelStateText = snapshotModel?.settings.ext["melix.audio.model_state"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             selectedModelInfo = RuntimeModelInfoState(
                 modelID: modelID,
                 modelKind: info.modelKind,
                 maxContext: info.maxContext,
                 supportedParsers: info.supportedParsers,
                 supportedModalities: info.supportedModalities,
+                supportedTasks: info.supportedTasks,
+                backendID: info.backendID,
+                familyID: info.familyID,
+                audioInstallProfileText: audioInstallProfileText,
+                audioLanguagesText: audioLanguagesText,
+                audioVoiceModeText: audioVoiceModeText,
+                audioOutputFormatsText: audioOutputFormatsText,
+                audioSupportsInstructionsText: audioSupportsInstructionsText,
+                audioVoiceCatalogSummaryText: audioVoiceCatalogSummaryText,
+                audioVoiceLocalesText: audioVoiceLocalesText,
+                audioDefaultLocaleText: audioDefaultLocaleText,
+                audioPackagedDefaultLocaleText: audioPackagedDefaultLocaleText,
+                audioLocalePolicyText: audioLocalePolicyText,
+                audioRuntimePackStateText: audioRuntimePackStateText,
+                audioRuntimePackIDText: audioRuntimePackIDText,
+                audioModelStateText: audioModelStateText,
+                modelPath: info.modelPath,
+                modelRevision: info.modelRevision,
+                defaultWorkflowRole: info.defaultWorkflowRole,
+                detectedIdentitySource: info.detectedIdentitySource,
+                aliasText: snapshotModel?.settings.alias ?? "",
+                typeOverrideText: snapshotModel?.settings.typeOverride ?? "",
+                ttlSeconds: snapshotModel?.settings.ttlSeconds ?? 0,
+                pinOnLoad: snapshotModel?.settings.pinOnLoad ?? false,
+                memoryPolicyText: snapshotModel.map {
+                    runtimeMemoryPolicyText(resolvedResidencyPolicy(for: $0))
+                } ?? "Unspecified",
+                memoryBudgetText: snapshotModel.map {
+                    runtimeMemoryBudgetText($0.settings.memoryBudgetBytes)
+                } ?? "",
+                diskStreamingModeText: snapshotModel.map {
+                    runtimeDiskStreamingModeText($0.settings.diskStreamingMode)
+                } ?? "Disabled",
+                adaptiveThinkingText: snapshotModel.map {
+                    runtimeAdaptiveThinkingText($0.settings.adaptiveThinking)
+                } ?? "Off",
+                accelerationModeText: snapshotModel.map {
+                    runtimeAccelerationModeText($0.settings.defaultAccelerationMode)
+                } ?? "Unspecified",
+                accelerationProfileID: snapshotModel?.settings.accelerationProfileID ?? "",
+                toolParserFallbackText: snapshotModel.map(runtimeToolParserFallbackText) ?? "Off",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
-                ocrSamplingProfileText: snapshotModel?.settings.ext["ocr_sampling_profile_id"] ?? "",
+                ocrSamplingProfileText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingProfileText(
+                        for: $0,
+                        generationConfigAvailable: !generationConfigTemperatureText.isEmpty
+                            || !generationConfigTopPText.isEmpty
+                            || !generationConfigMaxTokensText.isEmpty
+                    )
+                } ?? "",
+                ocrTemperatureText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_temperature"] ?? "",
+                        generationConfigValue: generationConfigTemperatureText
+                    )
+                } ?? "",
+                ocrTopPText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_top_p"] ?? "",
+                        generationConfigValue: generationConfigTopPText
+                    )
+                } ?? "",
+                ocrMaxTokensText: snapshotModel.map {
+                    runtimeEffectiveOCRSamplingValue(
+                        explicitValue: $0.settings.ext["ocr_default_max_tokens"] ?? "",
+                        generationConfigValue: generationConfigMaxTokensText
+                    )
+                } ?? "",
+                cacheModeText: snapshotModel.map {
+                    runtimeCacheModeText($0.cachePolicy.effectiveMode)
+                } ?? "",
+                cacheCompatibilityText: snapshotModel.map {
+                    runtimeCacheCompatibilityText($0.cachePolicy.compatibility)
+                } ?? "",
+                cacheCompatibilityReasonText: snapshotModel?.cachePolicy.compatibilityReason ?? "",
+                cacheDirectoryText: snapshotModel.map(runtimeCacheDirectoryText(for:)) ?? "",
+                cacheBlockSizeText: snapshotModel.map(runtimeCacheBlockSizeText(for:)) ?? "",
+                cacheBudgetText: snapshotModel.map(runtimeCacheBudgetText(for:)) ?? "",
+                multimodalCacheBudgetText: snapshotModel.map(runtimeMultimodalCacheBudgetText(for:)) ?? "",
+                cacheRootText: snapshotModel?.cachePolicy.effectiveDirectory ?? "",
+                initialCacheBlocksText: snapshotModel.map(runtimeInitialCacheBlocksText(for:)) ?? "",
+                generationConfigSourceText: generationConfigSourceText,
+                generationConfigTemperatureText: generationConfigTemperatureText,
+                generationConfigTopPText: generationConfigTopPText,
+                generationConfigMaxTokensText: generationConfigMaxTokensText,
                 ocrStopSequencesText: snapshotModel?.settings.ext["ocr_stop_sequences"] ?? ""
             )
         } catch {
@@ -1723,6 +3349,8 @@ public final class RuntimeViewModel {
                 name: "menu.model_operation_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
+            let manifestPayload = Self.jsonPayload(from: result.manifestJson)
+            let compatibilityPayload = Self.dictionaryValue("compatibility", from: manifestPayload)
             lastModelOperation = RuntimeModelOperationState(
                 modelID: modelID,
                 operation: result.operation,
@@ -1735,8 +3363,26 @@ public final class RuntimeViewModel {
                 artifactKind: result.hasArtifact ? result.artifact.artifactKind : "",
                 manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
                 artifactBytes: result.hasArtifact ? result.artifact.artifactBytes : 0,
-                smokeTestPassed: result.hasArtifact && result.artifact.smokeTestPassed,
-                calibrationSampleCount: calibrationSampleCount(from: result.manifestJson)
+                artifactRuntime: result.hasArtifact
+                    ? result.artifact.runtime
+                    : Self.stringValue("runtime", from: compatibilityPayload),
+                servingCompatible: result.hasArtifact
+                    ? result.artifact.servingCompatible
+                    : Self.boolValue("serving_compatible", from: compatibilityPayload),
+                smokeTestRequested: result.hasArtifact
+                    ? result.artifact.smokeTestRequested
+                    : Self.boolValue("smoke_test_requested", from: compatibilityPayload),
+                smokeTestPassed: result.hasArtifact
+                    ? result.artifact.smokeTestPassed
+                    : Self.boolValue("smoke_test_passed", from: compatibilityPayload),
+                calibrationSampleCount: calibrationSampleCount(from: manifestPayload),
+                targetRepo: Self.stringValue("target_repo", from: manifestPayload),
+                sourceArtifactKind: Self.stringValue("source_artifact_kind", from: manifestPayload),
+                conversionTargetFormat: Self.stringValue("target_format", from: manifestPayload),
+                linkedQuantizationProfileID: Self.stringValue(
+                    "quant_profile_id",
+                    from: Self.dictionaryValue("linked_quantization", from: manifestPayload)
+                )
             )
             if refreshProductToolingState {
                 await refreshModelOpsProductState(modelID: modelID, notify: false)
@@ -1745,6 +3391,27 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    public func refreshDownloadQueueState() async {
+        await refreshDownloadQueueState(notify: true, surfaceErrors: true)
+    }
+
+    public func resumeDownload(jobID: String) async {
+        guard let entry = downloadQueue.first(where: { $0.jobID == jobID }), entry.resumeReady else {
+            return
+        }
+        var ext: [String: String] = [:]
+        if !entry.selectedMirror.isEmpty {
+            ext["mirror_url"] = entry.selectedMirror
+        }
+        await runModelOperation(
+            modelID: entry.sourceModel,
+            operation: "download",
+            outputDir: entry.outputDir,
+            ext: ext
+        )
+        await refreshDownloadQueueState(notify: true, surfaceErrors: false)
     }
 
     public func quantizePrimaryModel() async {
@@ -1761,6 +3428,18 @@ public final class RuntimeViewModel {
         )
     }
 
+    public func convertPrimaryModel() async {
+        guard let modelID = primaryModel?.modelID else {
+            return
+        }
+        await runModelOperation(
+            modelID: modelID,
+            operation: "convert",
+            outputDir: "/tmp/melix-convert",
+            ext: ["target_format": "melix_model_bundle"]
+        )
+    }
+
     public func downloadPrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return
@@ -1768,8 +3447,9 @@ public final class RuntimeViewModel {
         await runModelOperation(
             modelID: modelID,
             operation: "download",
-            outputDir: "/tmp/melix-download"
+            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-downloads", modelID: modelID)
         )
+        await refreshDownloadQueueState(notify: true, surfaceErrors: false)
     }
 
     public func installAudioRuntime(modelID: String) async {
@@ -1791,8 +3471,9 @@ public final class RuntimeViewModel {
         await runModelOperation(
             modelID: modelID,
             operation: "download",
-            outputDir: "/tmp/melix-audio-models"
+            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
         )
+        await refreshDownloadQueueState(notify: false, surfaceErrors: false)
         await refreshDesktopFoundation()
     }
 
@@ -1800,7 +3481,7 @@ public final class RuntimeViewModel {
         guard let modelID = primaryModel?.modelID else {
             return
         }
-        let linkedQuantizationExt = latestQuantizedArtifactUploadExt()
+        let linkedQuantizationExt = latestPackagedArtifactUploadExt()
         await runModelOperation(
             modelID: modelID,
             operation: "upload",
@@ -1850,7 +3531,76 @@ public final class RuntimeViewModel {
         guard !modelID.isEmpty else {
             return
         }
-        await refreshModelOpsProductState(modelID: modelID, notify: true)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: false,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: false
+        )
+    }
+
+    public func rescanRegistryRoots() async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty else {
+            return
+        }
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    public func addRegistryRoot() async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let normalizedRoot = Self.normalizedRegistryRootPath(registryRootPathDraft) else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        guard updatedRoots.contains(normalizedRoot) == false else {
+            registryRootPathDraft = ""
+            notifyStateChanged()
+            return
+        }
+        updatedRoots.append(normalizedRoot)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+        registryRootPathDraft = ""
+        notifyStateChanged()
+    }
+
+    public func removeRegistryRoot(rootID: String) async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let index = editableRegistryRootIndex(for: rootID) else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        updatedRoots.remove(at: index)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    public func moveRegistryRootUp(rootID: String) async {
+        await moveRegistryRoot(rootID: rootID, offset: -1)
+    }
+
+    public func moveRegistryRootDown(rootID: String) async {
+        await moveRegistryRoot(rootID: rootID, offset: 1)
     }
 
     public func publishLatestAdapter() async {
@@ -1873,23 +3623,31 @@ public final class RuntimeViewModel {
         )
     }
 
-    private func calibrationSampleCount(from manifestJSON: String) -> Int {
-        guard
-            let data = manifestJSON.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let calibration = payload["calibration"] as? [String: Any],
-            let sampleCount = calibration["sample_count"] as? Int
-        else {
-            return 0
+    private static func doctorHealthStatusText(
+        _ status: Melix_Controlplane_V1_DoctorHealthStatus
+    ) -> String {
+        switch status {
+        case .healthy:
+            return "Healthy"
+        case .warning:
+            return "Warning"
+        case .degraded:
+            return "Degraded"
+        case .failed:
+            return "Failed"
+        case .unspecified, .UNRECOGNIZED:
+            return "Unknown"
         }
-        return sampleCount
     }
 
-    private func latestQuantizedArtifactUploadExt() -> [String: String] {
+    private func calibrationSampleCount(from payload: [String: Any]) -> Int {
+        Self.intValue("sample_count", from: Self.dictionaryValue("calibration", from: payload))
+    }
+
+    private func latestPackagedArtifactUploadExt() -> [String: String] {
         guard
             let lastModelOperation,
-            lastModelOperation.operation == "quantize",
-            lastModelOperation.artifactKind == "quantized_model_bundle"
+            ["quantized_model_bundle", "converted_model_bundle"].contains(lastModelOperation.artifactKind)
         else {
             return [:]
         }
@@ -1898,7 +3656,11 @@ public final class RuntimeViewModel {
             "artifact_path": lastModelOperation.outputPath,
         ]
         if !lastModelOperation.manifestPath.isEmpty {
-            ext["quantization_manifest_path"] = lastModelOperation.manifestPath
+            if lastModelOperation.artifactKind == "quantized_model_bundle" {
+                ext["quantization_manifest_path"] = lastModelOperation.manifestPath
+            } else {
+                ext["artifact_manifest_path"] = lastModelOperation.manifestPath
+            }
         }
         if !lastModelOperation.quantProfileID.isEmpty {
             ext["quant_profile_id"] = lastModelOperation.quantProfileID
@@ -1910,6 +3672,29 @@ public final class RuntimeViewModel {
         "Startup failed: \(error). Open Melix Console for details."
     }
 
+    private func refreshProductSignals() async {
+        guard let updateStatus = productInstallStateProvider.updateStatus() else {
+            productUpdateSummary = nil
+            productUpdateDetail = nil
+            productUpdateIsAvailable = false
+            productUpdateCheckSucceeded = true
+            dismissedBannerIDs = dismissedBannerIDs.filter { $0.hasPrefix("product-update::") == false }
+            return
+        }
+        productUpdateSummary = updateStatus.summary
+        productUpdateDetail = updateStatus.detail
+        productUpdateIsAvailable = updateStatus.isAvailable
+        productUpdateCheckSucceeded = updateStatus.checkSucceeded
+        let activeUpdateBannerID = Self.productUpdateBannerID(summary: updateStatus.summary, detail: updateStatus.detail)
+        dismissedBannerIDs = dismissedBannerIDs.filter { bannerID in
+            bannerID.hasPrefix("product-update::") == false || bannerID == activeUpdateBannerID
+        }
+        await metrics.record(
+            name: "update.check_success_rate",
+            valueMs: updateStatus.checkSucceeded ? 100 : 0
+        )
+    }
+
     public func runDoctor() async {
         let startedAt = Date()
         do {
@@ -1918,7 +3703,18 @@ public final class RuntimeViewModel {
                 name: "menu.ops_doctor_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
-            lastDoctorReport = RuntimeDoctorReportState(markdown: report)
+            lastDoctorReport = RuntimeDoctorReportState(
+                markdown: report.markdown,
+                healthStatusText: Self.doctorHealthStatusText(report.healthStatus),
+                findings: report.findings.map {
+                    RuntimeDoctorFindingState(
+                        code: $0.code,
+                        severityText: Self.doctorHealthStatusText($0.severity),
+                        summary: $0.summary,
+                        detail: $0.detail
+                    )
+                }
+            )
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -1948,6 +3744,7 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        let contextLengths = normalizedBenchContextLengths()
         let startedAt = Date()
         do {
             let result = try await client.runBench(
@@ -1955,6 +3752,12 @@ public final class RuntimeViewModel {
                     modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
                     hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
                     suites: suites,
+                    contextLengths: contextLengths,
+                    batchSizes: normalizedBenchBatchSizes(),
+                    repeats: normalizedBenchRepeats(),
+                    cacheProfile: normalizedBenchCacheProfile(),
+                    reasoningMode: normalizedBenchReasoningMode(),
+                    structuredOutputMode: normalizedBenchStructuredOutputMode(),
                     parameters: benchmarkParameters()
                 )
             )
@@ -2014,6 +3817,112 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    public func runBenchMatrix() async {
+        let modelID = resolvedBenchmarkModelID()
+        let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch selectedBenchmarkTargetMode {
+        case .catalogModel:
+            guard !modelID.isEmpty else {
+                recordLocalError("Select a benchmark-capable model before running Matrix.")
+                notifyStateChanged()
+                return
+            }
+        case .huggingFaceRepo:
+            guard !repoID.isEmpty else {
+                recordLocalError("Enter a Hugging Face repo before running Matrix.")
+                notifyStateChanged()
+                return
+            }
+        }
+
+        let taskKind = resolvedBenchmarkTaskKind()
+        guard ["text-generation", "image-to-text", "image-text-to-text"].contains(taskKind) else {
+            recordLocalError("Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets.")
+            notifyStateChanged()
+            return
+        }
+
+        let suites = selectedBenchmarkSuiteIDs.sorted()
+        guard suites.isEmpty == false else {
+            recordLocalError("Select at least one matrix benchmark suite before running Matrix.")
+            notifyStateChanged()
+            return
+        }
+
+        let request = ControlPlaneBenchMatrixRequest(
+            modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+            hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
+            taskKind: taskKind,
+            suites: suites,
+            contextLengths: normalizedBenchContextLengths(),
+            generationLengths: normalizedBenchGenerationLengths(),
+            batchSizes: normalizedBenchBatchSizes(),
+            cacheProfiles: normalizedBenchMatrixCacheProfiles(),
+            reasoningModes: normalizedBenchMatrixReasoningModes(),
+            structuredOutputModes: normalizedBenchMatrixStructuredOutputModes(),
+            concurrencyLevels: normalizedBenchMatrixConcurrencyLevels(),
+            repeats: normalizedBenchMatrixRepeats(),
+            requests: selectedBenchmarkMatrixLoadBudgetMode == .requests ? normalizedBenchMatrixRequests() : 0,
+            durationSeconds: selectedBenchmarkMatrixLoadBudgetMode == .durationSeconds ? normalizedBenchMatrixDurationSeconds() : 0,
+            allowLargeMatrix: benchMatrixAllowLargeMatrix
+        )
+
+        guard request.requests > 0 || request.durationSeconds > 0 else {
+            let modeTitle = selectedBenchmarkMatrixLoadBudgetMode == .requests ? "requests" : "duration_seconds"
+            recordLocalError("Set a positive \(modeTitle) value before running Matrix.")
+            notifyStateChanged()
+            return
+        }
+        guard request.requests == 0 || request.durationSeconds == 0 else {
+            recordLocalError("Exactly one of requests or duration_seconds must be set for matrix benchmarks.")
+            notifyStateChanged()
+            return
+        }
+        guard request.allowLargeMatrix || request.matrixCellCount <= ControlPlaneBenchMatrixRequest.maxMatrixCellCount else {
+            recordLocalError("Matrix benchmark expands to \(request.matrixCellCount) cells; enable Allow Large Matrix to continue.")
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let result = try await client.runBenchMatrix(request)
+            selectedBenchmarkMatrixHistoryJobID = result.job.jobID
+            await metrics.record(
+                name: "menu.ops_bench_matrix_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            await refreshBenchmarkHistory(notify: false)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func exportSelectedBenchmarkMatrixSummaryCSV() async {
+        await exportBenchmarkMatrixArtifact(
+            formatTitle: "summary.csv",
+            fileName: Self.benchmarkMatrixSummaryCSVFileName(jobID: selectedBenchmarkMatrixHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.benchmarkMatrixSummaryCSVRows(jobID: jobID)
+                return (rows.count, bundle.benchmarkMatrixSummaryCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No matrix benchmark summary rows are available for CSV export."
+        )
+    }
+
+    public func exportSelectedBenchmarkMatrixRequestsCSV() async {
+        await exportBenchmarkMatrixArtifact(
+            formatTitle: "requests.csv",
+            fileName: Self.benchmarkMatrixRequestsCSVFileName(jobID: selectedBenchmarkMatrixHistoryJobID),
+            builder: { bundle, jobID in
+                let rows = bundle.benchmarkMatrixRequestRows(jobID: jobID)
+                return (rows.count, bundle.benchmarkMatrixRequestsCSV(jobID: jobID))
+            },
+            missingRowsMessage: "No matrix benchmark request rows are available for CSV export."
+        )
     }
 
     public func runEvaluation() async {
@@ -2130,7 +4039,73 @@ public final class RuntimeViewModel {
     }
 
     private func refreshModelOpsProductState(modelID: String, notify: Bool) async {
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: notify,
+            rescan: false,
+            registryRootsOverride: nil,
+            refreshFoundationAfterSuccess: false
+        )
+    }
+
+    private func refreshModelOpsProductState(
+        modelID: String,
+        notify: Bool,
+        rescan: Bool,
+        registryRootsOverride: [String]?,
+        refreshFoundationAfterSuccess: Bool
+    ) async {
         let startedAt = Date()
+        do {
+            var ext: [String: String] = [:]
+            let requestedRegistryRoots = resolvedRegistryRootOverride(registryRootsOverride)
+            if let requestedRegistryRoots,
+               let encodedRoots = Self.encodedRegistryRoots(requestedRegistryRoots) {
+                ext["melix.registry_roots_json"] = encodedRoots
+            }
+            if rescan {
+                ext["melix.registry_rescan"] = "true"
+            }
+            let result = try await client.runModelOperation(
+                modelID: modelID,
+                operation: "registry_snapshot",
+                outputDir: "",
+                quantProfileID: "",
+                weightQuant: "",
+                kvQuant: "",
+                ext: ext
+            )
+            await metrics.record(
+                name: "menu.model_ops_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            applyModelOpsSnapshot(manifestJSON: result.manifestJson)
+            if let requestedRegistryRoots {
+                registryHasConfiguredRootOverride = true
+                registryConfiguredRootPaths = requestedRegistryRoots
+            }
+            if refreshFoundationAfterSuccess {
+                await refreshDesktopFoundation()
+            }
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        if notify {
+            notifyStateChanged()
+        }
+    }
+
+    private func refreshDownloadQueueState(
+        notify: Bool,
+        surfaceErrors: Bool
+    ) async {
+        guard let modelID = resolvedModelOpsRefreshModelID() else {
+            if notify {
+                notifyStateChanged()
+            }
+            return
+        }
+
         do {
             let result = try await client.runModelOperation(
                 modelID: modelID,
@@ -2141,13 +4116,11 @@ public final class RuntimeViewModel {
                 kvQuant: "",
                 ext: [:]
             )
-            await metrics.record(
-                name: "menu.model_ops_refresh_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
-            )
             applyModelOpsSnapshot(manifestJSON: result.manifestJson)
         } catch {
-            recordLocalError(String(describing: error))
+            if surfaceErrors {
+                recordLocalError(String(describing: error))
+            }
         }
         if notify {
             notifyStateChanged()
@@ -2165,11 +4138,48 @@ public final class RuntimeViewModel {
 
         let adapters = (payload["adapters"] as? [[String: Any]]) ?? []
         let jobs = (payload["jobs"] as? [[String: Any]]) ?? []
+        let downloads = (payload["downloads"] as? [[String: Any]]) ?? []
         adapterPackages = adapters.map(Self.makeAdapterPackageState)
+        downloadQueue = downloads
+            .compactMap(Self.makeDownloadQueueEntryState)
+            .sorted { lhs, rhs in
+                if lhs.resumeReady == rhs.resumeReady {
+                    return lhs.jobID > rhs.jobID
+                }
+                return lhs.resumeReady && rhs.resumeReady == false
+            }
         trainingHistory = jobs
             .filter { Self.stringValue("operation", from: $0) == "train_lora" }
             .map(Self.makeTrainingHistoryEntryState)
+        if let registryPayload = payload["model_registry"] as? [String: Any] {
+            let roots = (registryPayload["roots"] as? [[String: Any]] ?? [])
+                .compactMap(Self.makeRegistryRootState)
+                .sorted { lhs, rhs in
+                    if lhs.rootOrder == rhs.rootOrder {
+                        return lhs.rootPath < rhs.rootPath
+                    }
+                    return lhs.rootOrder < rhs.rootOrder
+                }
+            registryRoots = roots
+            if registryHasConfiguredRootOverride == false {
+                registryConfiguredRootPaths = roots.map(\.rootPath)
+            }
+            let scannedAtUnixMS = Self.int64Value("scanned_at_unix_ms", from: registryPayload)
+            registryScannedAtText = scannedAtUnixMS > 0
+                ? Self.benchmarkTimestampLabel(scannedAtUnixMS)
+                : "Unknown"
+        }
         refreshLoraSelectionState()
+    }
+
+    private func resolvedModelOpsRefreshModelID() -> String? {
+        if let modelID = primaryModel?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        if let modelID = latestSnapshot.models.first?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        return nil
     }
 
     private func updateSelectedServerSession(
@@ -2193,6 +4203,144 @@ public final class RuntimeViewModel {
             var session = serverSessions[index]
             update(&session)
             serverSessions[index] = session
+        }
+    }
+
+    private func performServerLifecycleAction(
+        serverSessionID: String,
+        metricName: String,
+        action: @escaping @Sendable (String) async throws -> Melix_Controlplane_V1_ServerSnapshot
+    ) async {
+        guard !serverSessionID.isEmpty else {
+            return
+        }
+
+        selectedServerSessionID = serverSessionID
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await action(serverSessionID)
+            await metrics.record(
+                name: metricName,
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+        } catch {
+            replaceServerSession(id: serverSessionID) { session in
+                session.lastError = String(describing: error)
+                session.updatedAt = Date()
+            }
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    private func performServerIdlePolicyUpdate(serverSessionID: String) async {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.updateServerIdlePolicy(
+                serverSessionID: serverSession.id,
+                autoSleepEnabled: serverSession.autoSleepEnabled,
+                lightSleepAfterSeconds: UInt32(max(0, serverSession.lightSleepAfterSeconds)),
+                deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds))
+            )
+            await metrics.record(
+                name: "menu.server_idle_policy_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+        } catch {
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    @discardableResult
+    private func persistGatewayConfig(for serverSessionID: String) async -> Bool {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return false
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.applyServerSessionGatewayConfig(
+                serverSessionID: serverSession.id,
+                host: serverSession.host,
+                port: serverSession.port,
+                servedModelID: serverSession.modelID,
+                rateLimitPerMinute: serverSession.rateLimitPerMinute,
+                timeoutSeconds: serverSession.timeoutSeconds
+            )
+            await metrics.record(
+                name: "menu.gateway_config_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+            return true
+        } catch {
+            recordLocalError("Gateway config apply failed: \(error)")
+            notifyStateChanged()
+            return false
+        }
+    }
+
+    @discardableResult
+    private func persistServingDefaults(for serverSessionID: String) async -> Bool {
+        guard let serverSession = serverSession(id: serverSessionID) else {
+            return false
+        }
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await client.applyServerSessionServingDefaults(
+                serverSessionID: serverSession.id,
+                temperature: serverSession.servingDefaults.temperature,
+                topP: serverSession.servingDefaults.topP,
+                maxTokens: serverSession.servingDefaults.maxTokens,
+                streamIntervalTokens: serverSession.servingDefaults.streamIntervalTokens,
+                maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests,
+                concurrentProcessingEnabled: serverSession.servingDefaults.concurrentProcessingEnabled,
+                prefillBatchSize: serverSession.servingDefaults.prefillBatchSize,
+                completionBatchSize: serverSession.servingDefaults.completionBatchSize,
+                accelerationMode: servingDefaultsAccelerationMode(
+                    from: serverSession.servingDefaults.accelerationMode
+                ),
+                draftModelID: serverSession.servingDefaults.draftModelID,
+                numDraftTokens: serverSession.servingDefaults.numDraftTokens
+            )
+            await metrics.record(
+                name: "menu.serving_defaults_apply_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            apply(snapshot: snapshot)
+            return true
+        } catch {
+            recordLocalError("Serving defaults apply failed: \(error)")
+            notifyStateChanged()
+            return false
+        }
+    }
+
+    private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
+        switch serverSession.lifecycle {
+        case .paused:
+            return "Resume the paused Server Session before sending chat prompts."
+        case .starting:
+            return "Wait for the Server Session to finish starting before sending chat prompts."
+        case .stopping:
+            return "Wait for the Server Session to finish stopping or start it again before sending chat prompts."
+        case .stopped, .draft, .unavailable:
+            return "Start the bound Server Session before sending chat prompts."
+        case .error:
+            return serverSession.lastError.isEmpty
+                ? "Recover the failed Server Session before sending chat prompts."
+                : "Recover the failed Server Session before sending chat prompts. \(serverSession.lastError)"
+        case .running, .sleeping:
+            return ""
         }
     }
 
@@ -2278,8 +4426,24 @@ public final class RuntimeViewModel {
         }
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
-            let seeded = makeServerSession(for: firstTextModel, title: "Primary Server", port: 8080)
-            persistedServerSessions = [seeded]
+            let seededServerSessionID = latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
+            let projectedConfig = Self.gatewayConfigProjection(
+                from: latestSnapshot,
+                serverSessionID: seededServerSessionID
+            )
+            let seeded = makeServerSession(
+                for: firstTextModel,
+                title: "Primary Server",
+                port: projectedConfig?.port ?? 8080,
+                serverSessionID: seededServerSessionID
+            )
+            if projectedConfig != nil {
+                var projectedSeeded = seeded
+                applyGatewayConfigProjection(to: &projectedSeeded)
+                persistedServerSessions = [projectedSeeded]
+            } else {
+                persistedServerSessions = [seeded]
+            }
             selectedServerSessionID = seeded.id
         }
 
@@ -2290,23 +4454,33 @@ public final class RuntimeViewModel {
 
         serverSessions = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
+            applyGatewayConfigProjection(to: &updated)
+            applyServingDefaultsProjection(to: &updated)
+            let runtimeSession = runtimeSession(for: session.id, fallbackIndex: offset)
             if let model = models.first(where: { $0.modelID == session.modelID }) {
                 updated.lastKnownModelStateText = model.stateText
-                switch session.lifecycle {
-                case .draft, .running, .stopped, .error, .unavailable:
-                    updated.lifecycle = session.lifecycle
-                case .starting:
-                    updated.lifecycle = model.isLoaded ? .running : .starting
-                case .stopping:
-                    updated.lifecycle = model.isLoaded ? .stopping : .stopped
+                if runtimeSession == nil {
+                    switch session.lifecycle {
+                    case .draft, .running, .paused, .sleeping, .stopped, .error, .unavailable:
+                        updated.lifecycle = session.lifecycle
+                    case .starting:
+                        updated.lifecycle = model.isLoaded ? .running : .starting
+                    case .stopping:
+                        updated.lifecycle = model.isLoaded ? .stopping : .stopped
+                    }
                 }
             } else if let fallbackModel = textModels.first {
                 updated.modelID = fallbackModel.modelID
                 updated.lastKnownModelStateText = fallbackModel.stateText
-                updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
+                if runtimeSession == nil {
+                    updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
+                }
             } else {
                 updated.lifecycle = .unavailable
                 updated.lastKnownModelStateText = "Unavailable"
+            }
+            if let runtimeSession {
+                applyRuntimeSessionProjection(to: &updated, runtimeSession: runtimeSession)
             }
             if updated.title.isEmpty {
                 updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
@@ -2325,16 +4499,19 @@ public final class RuntimeViewModel {
     private func makeServerSession(
         for model: RuntimeModelRow,
         title: String,
-        port: Int
+        port: Int,
+        serverSessionID: String = "server-session-\(UUID().uuidString)"
     ) -> DesktopServerSessionState {
         var session = DesktopServerSessionState(
-            id: "server-session-\(UUID().uuidString)",
+            id: serverSessionID,
             title: title,
             modelID: model.modelID,
             port: port,
             lifecycle: .running,
             lastKnownModelStateText: model.stateText
         )
+        applyGatewayConfigProjection(to: &session)
+        applyServingDefaultsProjection(to: &session)
         applyGatewayAccessProjection(to: &session)
         return session
     }
@@ -2350,7 +4527,7 @@ public final class RuntimeViewModel {
             }
             var updated = session
             updated.lifecycle = lifecycle
-            updated.lastError = error
+            updated.lastError = sanitizedRichText(error)
             updated.updatedAt = Date()
             return updated
         }
@@ -2362,11 +4539,14 @@ public final class RuntimeViewModel {
                 return
             }
             selectedSurface = restoredState.selectedSurface
+            selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             if restoredState.serverSessions.isEmpty == false {
                 persistedServerSessions = restoredState.serverSessions
                 serverSessions = restoredState.serverSessions
             }
+            downloadQueue = restoredState.downloadQueue
             lastPersistedOperatorSessionState = restoredState
         } catch {
             recordLocalError("Operator session restore failed: \(error)")
@@ -2376,8 +4556,11 @@ public final class RuntimeViewModel {
     private func currentOperatorSessionState() -> OperatorSessionState {
         OperatorSessionState(
             selectedSurface: selectedSurface,
+            selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
-            serverSessions: persistedServerSessions
+            serverSessions: persistedServerSessions,
+            dismissedBannerIDs: dismissedBannerIDs.sorted(),
+            downloadQueue: downloadQueue
         )
     }
 
@@ -2409,7 +4592,7 @@ public final class RuntimeViewModel {
             scheduleGatewayAccessClear(serverSessionID: lastAppliedGatewaySessionID)
             return
         }
-        guard selectedServerSession.isRunning else {
+        guard selectedServerSession.retainsGatewayAccessConfiguration else {
             scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
             return
         }
@@ -2519,8 +4702,10 @@ public final class RuntimeViewModel {
         switch event.payload {
         case .serverState(let serverStateChanged):
             latestSnapshot.serverState = serverStateChanged.state
+            latestSnapshot.runtimeSessions = serverStateChanged.runtimeSessions
             serverStateText = Self.serverStateText(serverStateChanged.state)
             statusTitle = "Melix \(serverStateText)"
+            syncServerSessionsWithModels()
         case .modelState(let stateChanged):
             var model = existingModelSummary(for: stateChanged.modelID)
             model.modelID = stateChanged.modelID
@@ -2544,7 +4729,7 @@ public final class RuntimeViewModel {
             latestSnapshot.resources = resourcePressure.resources
         case .log(let logEvent):
             if logEvent.level.lowercased() == "error" {
-                lastError = logEvent.message
+                setLastError(logEvent.message)
             }
         case .imageJob(let imageJobChanged):
             upsert(imageJob: imageJobChanged.job)
@@ -2572,6 +4757,7 @@ public final class RuntimeViewModel {
         models = snapshot.models
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
+        applyImageDefaultsProjection()
         syncServerSessionsWithModels()
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
@@ -2580,6 +4766,7 @@ public final class RuntimeViewModel {
         refreshBenchmarkSelectionState()
         refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
+        synchronizeModelSettingsDrafts()
         notifyStateChanged()
     }
 
@@ -2594,7 +4781,31 @@ public final class RuntimeViewModel {
         if selectedBenchmarkSuiteIDs.isEmpty {
             selectedBenchmarkSuiteIDs = ["smoke"]
         }
+        selectedBenchContextLengths = Self.normalizedBenchValues(
+            selectedBenchContextLengths,
+            defaultValues: Self.benchmarkContextLengthOptions.prefix(2).map { $0 }
+        )
+        selectedBenchBatchSizes = Self.normalizedBenchValues(
+            selectedBenchBatchSizes,
+            defaultValues: Self.benchmarkBatchSizeOptions.filter { $0 > 1 }.prefix(2).map { $0 }
+        )
+        selectedBenchGenerationLengths = Self.normalizedBenchValues(
+            selectedBenchGenerationLengths,
+            defaultValues: Self.benchmarkGenerationLengthOptions.prefix(2).map { $0 }
+        )
+        selectedBenchMatrixCacheProfiles = normalizedBenchMatrixCacheProfiles()
+        selectedBenchMatrixReasoningModes = normalizedBenchMatrixReasoningModes()
+        selectedBenchMatrixStructuredOutputModes = normalizedBenchMatrixStructuredOutputModes()
+        selectedBenchMatrixConcurrencyLevels = normalizedBenchMatrixConcurrencyLevels()
+        benchRepeats = normalizedBenchRepeatsText()
+        benchMatrixRepeats = normalizedBenchMatrixRepeatsText()
+        benchMatrixRequests = normalizedBenchMatrixRequestsText()
+        benchMatrixDurationSeconds = normalizedBenchMatrixDurationSecondsText()
+        benchCacheProfile = normalizedBenchCacheProfile()
+        benchReasoningMode = normalizedBenchReasoningMode()
+        benchStructuredOutputMode = normalizedBenchStructuredOutputMode()
         rebuildBenchmarkDerivedState()
+        rebuildBenchmarkMatrixDerivedState()
     }
 
     private func refreshEvaluationSelectionState() {
@@ -2608,6 +4819,8 @@ public final class RuntimeViewModel {
         if selectedEvaluationSuiteIDs.isEmpty {
             selectedEvaluationSuiteIDs = ["mmlu"]
         }
+        evaluationScoringMode = normalizedEvaluationScoringMode()
+        evaluationCodeExecPolicy = normalizedEvaluationCodeExecPolicy()
         rebuildEvaluationDerivedState()
     }
 
@@ -2618,10 +4831,11 @@ public final class RuntimeViewModel {
             let export = try await client.exportResults(outputDir: exportDirectory.path)
             let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
             applyBenchmarkExportBundle(bundle)
-            await metrics.record(
-                name: "menu.bench_history_refresh_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
-            )
+            let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
+            await metrics.record(name: "menu.bench_history_refresh_ms", valueMs: elapsedMs)
+            if selectedBenchmarkPresentationMode == .matrix {
+                await metrics.record(name: "menu.bench_matrix_history_refresh_ms", valueMs: elapsedMs)
+            }
         } catch {
             recordLocalError(String(describing: error))
         }
@@ -2656,6 +4870,7 @@ public final class RuntimeViewModel {
             selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
         }
         rebuildBenchmarkDerivedState()
+        rebuildBenchmarkMatrixDerivedState()
         rebuildEvaluationDerivedState()
     }
 
@@ -2700,6 +4915,48 @@ public final class RuntimeViewModel {
                 return lhs.createdAtUnixMS < rhs.createdAtUnixMS
             }
             .map(Self.makeBenchmarkChartPointState)
+    }
+
+    private func rebuildBenchmarkMatrixDerivedState() {
+        guard let benchmarkExportBundle else {
+            benchmarkMatrixHistory = []
+            benchmarkMatrixSummaryCards = []
+            benchmarkMatrixSummaryRows = []
+            benchmarkMatrixContextChartPoints = []
+            benchmarkMatrixThroughputChartPoints = []
+            lastBenchmarkMatrixExport = nil
+            if selectedBenchmarkMatrixHistoryJobID.isEmpty == false {
+                selectedBenchmarkMatrixHistoryJobID = ""
+            }
+            return
+        }
+
+        let matrixHistoryEntries = benchmarkExportBundle.benchmarkMatrixHistoryEntries()
+        benchmarkMatrixHistory = Self.makeBenchmarkMatrixHistoryEntryStates(from: matrixHistoryEntries)
+        let selectedHistoryJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty
+            ? (benchmarkMatrixHistory.first?.jobID ?? "")
+            : selectedBenchmarkMatrixHistoryJobID
+        if selectedBenchmarkMatrixHistoryJobID != selectedHistoryJobID {
+            selectedBenchmarkMatrixHistoryJobID = selectedHistoryJobID
+        }
+
+        let selectedRows = benchmarkExportBundle.benchmarkMatrixSummaryCSVRows(jobID: selectedHistoryJobID.isEmpty ? nil : selectedHistoryJobID)
+        benchmarkMatrixSummaryRows = selectedRows.map(Self.makeBenchmarkMatrixSummaryRowState)
+        benchmarkMatrixSummaryCards = Self.makeBenchmarkMatrixSummaryCardStates(from: selectedRows)
+        benchmarkMatrixContextChartPoints = selectedRows.map(Self.makeBenchmarkMatrixContextChartPointState)
+            .sorted { lhs, rhs in
+                if lhs.xValue == rhs.xValue {
+                    return lhs.seriesTitle < rhs.seriesTitle
+                }
+                return lhs.xValue < rhs.xValue
+            }
+        benchmarkMatrixThroughputChartPoints = selectedRows.map(Self.makeBenchmarkMatrixThroughputChartPointState)
+            .sorted { lhs, rhs in
+                if lhs.xValue == rhs.xValue {
+                    return lhs.seriesTitle < rhs.seriesTitle
+                }
+                return lhs.xValue < rhs.xValue
+            }
     }
 
     private func rebuildEvaluationDerivedState() {
@@ -2780,7 +5037,74 @@ public final class RuntimeViewModel {
         if fewShot.isEmpty == false {
             parameters["few_shot"] = fewShot
         }
+        let scoringMode = normalizedEvaluationScoringMode()
+        if scoringMode.isEmpty == false {
+            parameters["scoring_mode"] = scoringMode
+        }
+        let codeExecPolicy = normalizedEvaluationCodeExecPolicy()
+        if codeExecPolicy.isEmpty == false {
+            parameters["code_exec_policy"] = codeExecPolicy
+        }
         return parameters
+    }
+
+    private func normalizedBenchGenerationLengths() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchGenerationLengths,
+            defaultValues: Self.benchmarkGenerationLengthOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchMatrixCacheProfiles() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixCacheProfiles)
+        return normalized.isEmpty ? [Self.benchmarkCacheProfileOptions.first ?? "cold"] : normalized
+    }
+
+    private func normalizedBenchMatrixReasoningModes() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixReasoningModes)
+        return normalized.isEmpty ? [Self.benchmarkReasoningModeOptions.first ?? "off"] : normalized
+    }
+
+    private func normalizedBenchMatrixStructuredOutputModes() -> [String] {
+        let normalized = ControlPlaneBenchMatrixRequest.normalizedStringValues(selectedBenchMatrixStructuredOutputModes)
+        return normalized.isEmpty ? [Self.benchmarkStructuredOutputModeOptions.first ?? "off"] : normalized
+    }
+
+    private func normalizedBenchMatrixConcurrencyLevels() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchMatrixConcurrencyLevels,
+            defaultValues: Self.benchmarkConcurrencyOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchMatrixRepeats() -> UInt32 {
+        let trimmed = benchMatrixRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return max(1, UInt32(trimmed) ?? 1)
+    }
+
+    private func normalizedBenchMatrixRepeatsText() -> String {
+        let trimmed = benchMatrixRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "3" : trimmed
+    }
+
+    private func normalizedBenchMatrixRequests() -> UInt32 {
+        let trimmed = benchMatrixRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        return UInt32(trimmed) ?? 0
+    }
+
+    private func normalizedBenchMatrixRequestsText() -> String {
+        let trimmed = benchMatrixRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "8" : trimmed
+    }
+
+    private func normalizedBenchMatrixDurationSeconds() -> UInt32 {
+        let trimmed = benchMatrixDurationSeconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        return UInt32(trimmed) ?? 0
+    }
+
+    private func normalizedBenchMatrixDurationSecondsText() -> String {
+        let trimmed = benchMatrixDurationSeconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "60" : trimmed
     }
 
     private func evaluationSampleSize(for suiteID: String) -> UInt32 {
@@ -2790,6 +5114,45 @@ public final class RuntimeViewModel {
         }
         let fallback = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.defaultSampleSize ?? 8
         return UInt32(fallback)
+    }
+
+    private func exportBenchmarkMatrixArtifact(
+        formatTitle: String,
+        fileName: String,
+        builder: (ControlPlaneBenchmarkExportBundle, String?) -> (Int, String),
+        missingRowsMessage: String
+    ) async {
+        let startedAt = Date()
+        do {
+            let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+            let export = try await client.exportResults(outputDir: exportDirectory.path)
+            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            applyBenchmarkExportBundle(bundle)
+            let selectedJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty ? nil : selectedBenchmarkMatrixHistoryJobID
+            let (rowCount, payload) = builder(bundle, selectedJobID)
+            guard rowCount > 0 else {
+                recordLocalError(missingRowsMessage)
+                notifyStateChanged()
+                return
+            }
+            let outputURL = exportDirectory.appendingPathComponent(fileName)
+            try payload.write(to: outputURL, atomically: true, encoding: .utf8)
+            lastBenchmarkMatrixExport = RuntimeBenchmarkMatrixExportState(
+                outputPath: outputURL.path,
+                rowCount: rowCount,
+                formatTitle: formatTitle
+            )
+            let metricName = formatTitle == "summary.csv"
+                ? "menu.bench_matrix_export_summary_csv_ms"
+                : "menu.bench_matrix_export_requests_csv_ms"
+            await metrics.record(
+                name: metricName,
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
     }
 
     private func exportEvaluationArtifact(
@@ -2846,6 +5209,7 @@ public final class RuntimeViewModel {
             models.append(row)
             models.sort { $0.modelID < $1.modelID }
         }
+        applyImageDefaultsProjection()
         syncServerSessionsWithModels()
         ensureChatSessionsBoundToServerSessions()
         refreshImageState()
@@ -2853,6 +5217,124 @@ public final class RuntimeViewModel {
         refreshLoraSelectionState()
         refreshEvaluationSelectionState()
         refreshAgentIntegrationExports()
+        synchronizeModelSettingsDrafts()
+    }
+
+    private func synchronizeModelSettingsDrafts(force: Bool = false) {
+        guard let model = primaryModelSummary else {
+            modelSettingsDraftModelID = ""
+            modelSettingsAliasDraft = ""
+            modelSettingsTypeOverrideDraft = ""
+            modelSettingsTTLDraft = ""
+            modelSettingsPinOnLoadDraft = false
+            modelSettingsMemoryPolicyDraft = "evictable"
+            modelSettingsMemoryBudgetDraft = ""
+            modelSettingsDiskStreamingModeDraft = "disabled"
+            modelSettingsCacheModeDraft = "tiered"
+            modelSettingsCacheMemoryBudgetDraft = ""
+            modelSettingsCacheMemoryBudgetPctDraft = ""
+            modelSettingsCacheBlockSizeTokensDraft = ""
+            modelSettingsCacheDirectoryDraft = ""
+            modelSettingsMultimodalCacheBudgetDraft = ""
+            modelSettingsAccelerationModeDraft = "baseline"
+            modelSettingsAccelerationProfileIDDraft = ""
+            modelSettingsAdaptiveThinkingModeDraft = "off"
+            modelSettingsAdaptiveThinkingBudgetDraft = ""
+            modelSettingsToolParserXMLFallbackDraft = false
+            modelSettingsOCRSamplingProfileDraft = ""
+            modelSettingsOCRTemperatureDraft = ""
+            modelSettingsOCRTopPDraft = ""
+            modelSettingsOCRMaxTokensDraft = ""
+            return
+        }
+
+        guard force || modelSettingsDraftModelID != model.modelID else {
+            return
+        }
+
+        modelSettingsDraftModelID = model.modelID
+        modelSettingsAliasDraft = model.settings.alias
+        modelSettingsTypeOverrideDraft = model.settings.typeOverride
+        modelSettingsTTLDraft = model.settings.ttlSeconds > 0 ? String(model.settings.ttlSeconds) : ""
+        modelSettingsPinOnLoadDraft = model.settings.pinOnLoad
+        modelSettingsMemoryPolicyDraft = runtimeMemoryPolicyDraftValue(resolvedResidencyPolicy(for: model))
+        modelSettingsMemoryBudgetDraft = model.settings.memoryBudgetBytes > 0
+            ? String(model.settings.memoryBudgetBytes)
+            : ""
+        modelSettingsDiskStreamingModeDraft = runtimeDiskStreamingModeDraftValue(model.settings.diskStreamingMode)
+        modelSettingsCacheModeDraft = runtimeCacheModeDraftValue(model.settings.cacheMode)
+        modelSettingsCacheMemoryBudgetDraft = model.settings.cacheMemoryBudgetBytes > 0
+            ? String(model.settings.cacheMemoryBudgetBytes)
+            : ""
+        modelSettingsCacheMemoryBudgetPctDraft = model.settings.cacheMemoryBudgetPct > 0
+            ? String(model.settings.cacheMemoryBudgetPct)
+            : ""
+        modelSettingsCacheBlockSizeTokensDraft = model.settings.cacheBlockSizeTokens > 0
+            ? String(model.settings.cacheBlockSizeTokens)
+            : ""
+        modelSettingsCacheDirectoryDraft = model.settings.cacheDirectory
+        modelSettingsMultimodalCacheBudgetDraft = model.settings.multimodalCacheBudgetBytes > 0
+            ? String(model.settings.multimodalCacheBudgetBytes)
+            : ""
+        modelSettingsAccelerationModeDraft = runtimeAccelerationModeDraftValue(model.settings.defaultAccelerationMode)
+        modelSettingsAccelerationProfileIDDraft = model.settings.accelerationProfileID
+        modelSettingsAdaptiveThinkingModeDraft = runtimeAdaptiveThinkingDraftValue(model.settings.adaptiveThinking)
+        modelSettingsAdaptiveThinkingBudgetDraft = model.settings.adaptiveThinking.budgetTokens > 0
+            ? String(model.settings.adaptiveThinking.budgetTokens)
+            : ""
+        modelSettingsToolParserXMLFallbackDraft = model.settings.ext["tool_parser_xml_fallback"] == "true"
+        modelSettingsOCRSamplingProfileDraft = model.settings.ext["ocr_sampling_profile_id"] ?? ""
+        modelSettingsOCRTemperatureDraft = model.settings.ext["ocr_default_temperature"] ?? ""
+        modelSettingsOCRTopPDraft = model.settings.ext["ocr_default_top_p"] ?? ""
+        modelSettingsOCRMaxTokensDraft = model.settings.ext["ocr_default_max_tokens"] ?? ""
+    }
+
+    private func normalizedOptionalUInt32Draft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> UInt32? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = UInt32(trimmed) else {
+            recordLocalError("\(fieldName) must be an unsigned integer.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedOptionalUInt64Draft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> UInt64? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = UInt64(trimmed) else {
+            recordLocalError("\(fieldName) must be an unsigned integer.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedOptionalDoubleDraft(
+        _ rawValue: String,
+        fieldName: String
+    ) -> Double? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let value = Double(trimmed) else {
+            recordLocalError("\(fieldName) must be numeric.")
+            notifyStateChanged()
+            return nil
+        }
+        return value
     }
 
     private func refreshAgentIntegrationExports() {
@@ -2886,6 +5368,123 @@ public final class RuntimeViewModel {
         session.sharedAccessState = projection.sharedAccessState
         session.accessKeyCount = projection.accessKeyCount
         session.accessKeyHints = projection.accessKeyHints
+        session.activeAuthSessionCount = projection.activeAuthSessionCount
+        session.rememberedAuthSessionCount = projection.rememberedAuthSessionCount
+        session.expiredRememberedSessionCount = projection.expiredRememberedSessionCount
+        session.authSessionRetentionSeconds = projection.authSessionRetentionSeconds
+        session.lastAuthSessionSignOutLatencyMs = projection.lastAuthSessionSignOutLatencyMs
+    }
+
+    private func applyGatewayConfigProjection(to session: inout DesktopServerSessionState) {
+        guard let projection = Self.gatewayConfigProjection(from: latestSnapshot, serverSessionID: session.id) else {
+            session.effectiveHost = session.host
+            session.effectivePort = session.port
+            return
+        }
+        session.host = projection.host
+        session.port = projection.port
+        session.effectiveHost = projection.effectiveHost
+        session.effectivePort = projection.effectivePort
+        session.modelID = projection.servedModelID
+        session.rateLimitPerMinute = projection.rateLimitPerMinute
+        session.timeoutSeconds = projection.timeoutSeconds
+        session.gatewayConfigSourceText = projection.sourceText
+        session.gatewayConfigActiveBinding = projection.activeBinding
+        session.gatewayConfigRequiresRestart = projection.requiresRestart
+    }
+
+    private func applyServingDefaultsProjection(to session: inout DesktopServerSessionState) {
+        guard let projection = Self.servingDefaultsProjection(from: latestSnapshot, serverSessionID: session.id) else {
+            let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
+                concurrentProcessingEnabled: session.servingDefaults.concurrentProcessingEnabled,
+                maxConcurrentRequests: session.servingDefaults.maxConcurrentRequests,
+                prefillBatchSize: session.servingDefaults.prefillBatchSize,
+                completionBatchSize: session.servingDefaults.completionBatchSize
+            )
+            session.servingDefaults.effectiveTemperature = session.servingDefaults.temperature
+            session.servingDefaults.effectiveTopP = session.servingDefaults.topP
+            session.servingDefaults.effectiveMaxTokens = session.servingDefaults.maxTokens
+            session.servingDefaults.effectiveStreamIntervalTokens = session.servingDefaults.streamIntervalTokens
+            session.servingDefaults.effectiveMaxConcurrentRequests = effectiveBatchingDefaults.maxConcurrentRequests
+            session.servingDefaults.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
+            session.servingDefaults.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
+            session.servingDefaults.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+            session.servingDefaults.effectiveAccelerationMode = session.servingDefaults.accelerationMode
+            if session.servingDefaults.accelerationMode == "speculative_decode" {
+                session.servingDefaults.effectiveDraftModelID = session.servingDefaults.draftModelID
+                session.servingDefaults.effectiveNumDraftTokens = session.servingDefaults.numDraftTokens
+            } else {
+                session.servingDefaults.effectiveDraftModelID = ""
+                session.servingDefaults.effectiveNumDraftTokens = 0
+            }
+            return
+        }
+        session.servingDefaults.temperature = projection.temperature
+        session.servingDefaults.topP = projection.topP
+        session.servingDefaults.maxTokens = projection.maxTokens
+        session.servingDefaults.streamIntervalTokens = projection.streamIntervalTokens
+        session.servingDefaults.maxConcurrentRequests = projection.maxConcurrentRequests
+        session.servingDefaults.concurrentProcessingEnabled = projection.concurrentProcessingEnabled
+        session.servingDefaults.prefillBatchSize = projection.prefillBatchSize
+        session.servingDefaults.completionBatchSize = projection.completionBatchSize
+        session.servingDefaults.accelerationMode = projection.accelerationMode
+        session.servingDefaults.draftModelID = projection.draftModelID
+        session.servingDefaults.numDraftTokens = projection.numDraftTokens
+        session.servingDefaults.effectiveTemperature = projection.effectiveTemperature
+        session.servingDefaults.effectiveTopP = projection.effectiveTopP
+        session.servingDefaults.effectiveMaxTokens = projection.effectiveMaxTokens
+        session.servingDefaults.effectiveStreamIntervalTokens = projection.effectiveStreamIntervalTokens
+        session.servingDefaults.effectiveMaxConcurrentRequests = projection.effectiveMaxConcurrentRequests
+        session.servingDefaults.effectiveConcurrentProcessingEnabled = projection.effectiveConcurrentProcessingEnabled
+        session.servingDefaults.effectivePrefillBatchSize = projection.effectivePrefillBatchSize
+        session.servingDefaults.effectiveCompletionBatchSize = projection.effectiveCompletionBatchSize
+        session.servingDefaults.effectiveAccelerationMode = projection.effectiveAccelerationMode
+        session.servingDefaults.effectiveDraftModelID = projection.effectiveDraftModelID
+        session.servingDefaults.effectiveNumDraftTokens = projection.effectiveNumDraftTokens
+        session.servingDefaults.sourceText = projection.sourceText
+        session.servingDefaults.modelOverrideApplied = projection.modelOverrideApplied
+        session.servingDefaults.updatedAtUnixMS = projection.updatedAtUnixMS
+    }
+
+    private func applyImageDefaultsProjection() {
+        guard let projection = Self.imageDefaultsProjection(from: latestSnapshot) else {
+            effectiveImageGenerateModelID = selectedImageGenerateModelID
+            effectiveImageEditModelID = selectedImageEditModelID
+            effectiveImageSize = imageSize
+            effectiveImageSteps = imageSteps
+            effectiveImageGuidance = imageGuidance
+            effectiveImageStrength = imageStrength
+            effectiveImageNegativePrompt = imageNegativePrompt
+            imageRequestTimeoutSeconds = 1_800
+            return
+        }
+
+        if projection.generateModelID.isEmpty == false {
+            selectedImageGenerateModelID = projection.generateModelID
+        } else if projection.effectiveGenerateModelID.isEmpty == false {
+            selectedImageGenerateModelID = projection.effectiveGenerateModelID
+        }
+        if projection.editModelID.isEmpty == false {
+            selectedImageEditModelID = projection.editModelID
+        } else if projection.effectiveEditModelID.isEmpty == false {
+            selectedImageEditModelID = projection.effectiveEditModelID
+        }
+
+        imageSize = projection.size
+        imageSteps = String(projection.steps)
+        imageGuidance = Self.formatImageDefaultNumber(projection.guidance)
+        imageStrength = Self.formatImageDefaultNumber(projection.strength)
+        imageNegativePrompt = projection.negativePrompt
+        imageDefaultsSourceText = projection.sourceText
+        effectiveImageGenerateModelID = projection.effectiveGenerateModelID
+        effectiveImageEditModelID = projection.effectiveEditModelID
+        effectiveImageSize = projection.effectiveSize
+        effectiveImageSteps = String(projection.effectiveSteps)
+        effectiveImageGuidance = Self.formatImageDefaultNumber(projection.effectiveGuidance)
+        effectiveImageStrength = Self.formatImageDefaultNumber(projection.effectiveStrength)
+        effectiveImageNegativePrompt = projection.effectiveNegativePrompt
+        imageRequestTimeoutSeconds = projection.requestTimeoutSeconds
+        imageDefaultsUpdatedAtUnixMS = projection.updatedAtUnixMS
     }
 
     private static func gatewayAccessProjection(
@@ -2897,6 +5496,11 @@ public final class RuntimeViewModel {
 
         let summary = snapshot.gatewayAccess
         let keyHints = summary.keys.map(\.tokenHint).filter { !$0.isEmpty }
+        let activeAuthSessionCount = Int(snapshot.metrics.values["persistent_session.active_session_count"] ?? 0)
+        let rememberedAuthSessionCount = Int(snapshot.metrics.values["persistent_session.remembered_session_count"] ?? 0)
+        let expiredRememberedSessionCount = Int(snapshot.metrics.values["persistent_session.expired_session_count"] ?? 0)
+        let authSessionRetentionSeconds = Int(snapshot.metrics.values["persistent_session.retention_ttl_seconds"] ?? 0)
+        let lastAuthSessionSignOutLatencyMs = snapshot.metrics.values["persistent_session.sign_out_latency_ms"] ?? 0
 
         switch summary.mode {
         case .none:
@@ -2905,7 +5509,12 @@ public final class RuntimeViewModel {
                 authTokenHint: "",
                 sharedAccessState: .localOnly,
                 accessKeyCount: 0,
-                accessKeyHints: []
+                accessKeyHints: [],
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         case .bearerToken:
             return GatewayAccessProjection(
@@ -2913,7 +5522,12 @@ public final class RuntimeViewModel {
                 authTokenHint: keyHints.first ?? "melix-api-key",
                 sharedAccessState: .localOnly,
                 accessKeyCount: max(keyHints.count, 1),
-                accessKeyHints: keyHints
+                accessKeyHints: keyHints,
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         case .apiKeys:
             let sharedState: DesktopSharedAccessState = summary.sharedAccessEnabled ? .enabled : .configuredDisabled
@@ -2924,11 +5538,250 @@ public final class RuntimeViewModel {
                 authTokenHint: keyHints.first ?? "",
                 sharedAccessState: sharedState,
                 accessKeyCount: keyCount,
-                accessKeyHints: keyHints
+                accessKeyHints: keyHints,
+                activeAuthSessionCount: activeAuthSessionCount,
+                rememberedAuthSessionCount: rememberedAuthSessionCount,
+                expiredRememberedSessionCount: expiredRememberedSessionCount,
+                authSessionRetentionSeconds: authSessionRetentionSeconds,
+                lastAuthSessionSignOutLatencyMs: lastAuthSessionSignOutLatencyMs
             )
         default:
             return nil
         }
+    }
+
+    private static func gatewayConfigProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        serverSessionID: String
+    ) -> GatewayConfigProjection? {
+        guard snapshot.hasGatewayConfig else {
+            return nil
+        }
+        guard
+            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })
+                ?? (snapshot.gatewayConfig.listeners.count == 1 ? snapshot.gatewayConfig.listeners.first : nil)
+        else {
+            return nil
+        }
+
+        return GatewayConfigProjection(
+            host: listener.requestedHost,
+            port: Int(listener.requestedPort),
+            effectiveHost: listener.effectiveHost.isEmpty ? listener.requestedHost : listener.effectiveHost,
+            effectivePort: listener.effectivePort == 0 ? Int(listener.requestedPort) : Int(listener.effectivePort),
+            servedModelID: listener.servedModelID,
+            rateLimitPerMinute: Int(listener.rateLimitPerMinute),
+            timeoutSeconds: Int(listener.timeoutSeconds),
+            sourceText: gatewayConfigSourceText(listener.source),
+            activeBinding: listener.activeBinding,
+            requiresRestart: listener.requiresRestart
+        )
+    }
+
+    private static func servingDefaultsProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot,
+        serverSessionID: String
+    ) -> ServingDefaultsProjection? {
+        guard snapshot.hasServingDefaults else {
+            return nil
+        }
+        guard
+            let summary = snapshot.servingDefaults.sessions.first(where: { $0.serverSessionID == serverSessionID })
+                ?? (snapshot.servingDefaults.sessions.count == 1 ? snapshot.servingDefaults.sessions.first : nil)
+        else {
+            return nil
+        }
+
+        let requestedConcurrentProcessingEnabled: Bool
+        let requestedPrefillBatchSize: Int
+        let requestedCompletionBatchSize: Int
+        if summary.requestedPrefillBatchSize == 0, summary.requestedCompletionBatchSize == 0 {
+            requestedConcurrentProcessingEnabled = true
+            requestedPrefillBatchSize = 2
+            requestedCompletionBatchSize = 2
+        } else {
+            requestedConcurrentProcessingEnabled = summary.requestedConcurrentProcessingEnabled
+            requestedPrefillBatchSize = Int(summary.requestedPrefillBatchSize)
+            requestedCompletionBatchSize = Int(summary.requestedCompletionBatchSize)
+        }
+
+        let effectiveConcurrentProcessingEnabled: Bool
+        let effectivePrefillBatchSize: Int
+        let effectiveCompletionBatchSize: Int
+        if summary.effectivePrefillBatchSize == 0, summary.effectiveCompletionBatchSize == 0 {
+            let effectiveBatchingDefaults = effectiveBatchingDefaults(
+                concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
+                maxConcurrentRequests: Int(summary.requestedMaxConcurrentRequests),
+                prefillBatchSize: requestedPrefillBatchSize,
+                completionBatchSize: requestedCompletionBatchSize
+            )
+            effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
+            effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
+            effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+        } else {
+            effectiveConcurrentProcessingEnabled = summary.effectiveConcurrentProcessingEnabled
+            effectivePrefillBatchSize = Int(summary.effectivePrefillBatchSize)
+            effectiveCompletionBatchSize = Int(summary.effectiveCompletionBatchSize)
+        }
+
+        let requestedAccelerationMode = runtimeAccelerationModeDraftValue(summary.requestedAccelerationMode)
+        let effectiveAccelerationMode = summary.effectiveAccelerationMode == .unspecified
+            ? requestedAccelerationMode
+            : runtimeAccelerationModeDraftValue(summary.effectiveAccelerationMode)
+        let requestedDraftModelID = summary.requestedDraftModelID
+        let requestedNumDraftTokens = Int(summary.requestedNumDraftTokens)
+        let effectiveDraftModelID = effectiveAccelerationMode == "speculative_decode"
+            ? (summary.effectiveDraftModelID.isEmpty ? requestedDraftModelID : summary.effectiveDraftModelID)
+            : ""
+        let effectiveNumDraftTokens = effectiveAccelerationMode == "speculative_decode"
+            ? (summary.effectiveNumDraftTokens == 0 ? requestedNumDraftTokens : Int(summary.effectiveNumDraftTokens))
+            : 0
+
+        return ServingDefaultsProjection(
+            temperature: summary.requestedTemperature,
+            topP: summary.requestedTopP,
+            maxTokens: Int(summary.requestedMaxTokens),
+            streamIntervalTokens: Int(summary.requestedStreamIntervalTokens),
+            maxConcurrentRequests: Int(summary.requestedMaxConcurrentRequests),
+            concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
+            prefillBatchSize: requestedPrefillBatchSize,
+            completionBatchSize: requestedCompletionBatchSize,
+            accelerationMode: requestedAccelerationMode,
+            draftModelID: requestedDraftModelID,
+            numDraftTokens: requestedNumDraftTokens,
+            effectiveTemperature: summary.effectiveTemperature,
+            effectiveTopP: summary.effectiveTopP,
+            effectiveMaxTokens: Int(summary.effectiveMaxTokens),
+            effectiveStreamIntervalTokens: Int(summary.effectiveStreamIntervalTokens),
+            effectiveMaxConcurrentRequests: Int(summary.effectiveMaxConcurrentRequests),
+            effectiveConcurrentProcessingEnabled: effectiveConcurrentProcessingEnabled,
+            effectivePrefillBatchSize: effectivePrefillBatchSize,
+            effectiveCompletionBatchSize: effectiveCompletionBatchSize,
+            effectiveAccelerationMode: effectiveAccelerationMode,
+            effectiveDraftModelID: effectiveDraftModelID,
+            effectiveNumDraftTokens: effectiveNumDraftTokens,
+            sourceText: servingDefaultsSourceText(summary.source),
+            modelOverrideApplied: summary.modelOverrideApplied,
+            updatedAtUnixMS: summary.updatedAtUnixMs
+        )
+    }
+
+    private static func imageDefaultsProjection(
+        from snapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) -> ImageDefaultsProjection? {
+        guard snapshot.hasImageDefaults else {
+            return nil
+        }
+        let summary = snapshot.imageDefaults
+        let requestedSize = summary.requestedSize.isEmpty ? (summary.effectiveSize.isEmpty ? "1024x1024" : summary.effectiveSize) : summary.requestedSize
+        let requestedSteps = summary.requestedSteps == 0 ? Int(summary.effectiveSteps == 0 ? 28 : summary.effectiveSteps) : Int(summary.requestedSteps)
+        let requestedGuidance = summary.requestedGuidance == 0 ? Double(summary.effectiveGuidance == 0 ? 7.5 : summary.effectiveGuidance) : Double(summary.requestedGuidance)
+        let requestedStrength = summary.requestedStrength == 0 ? Double(summary.effectiveStrength == 0 ? 1.0 : summary.effectiveStrength) : Double(summary.requestedStrength)
+        let requestedNegativePrompt = summary.requestedNegativePrompt.isEmpty ? summary.effectiveNegativePrompt : summary.requestedNegativePrompt
+
+        return ImageDefaultsProjection(
+            generateModelID: summary.requestedGenerateModelID,
+            editModelID: summary.requestedEditModelID,
+            size: requestedSize,
+            steps: requestedSteps,
+            guidance: requestedGuidance,
+            strength: requestedStrength,
+            negativePrompt: requestedNegativePrompt,
+            effectiveGenerateModelID: summary.effectiveGenerateModelID,
+            effectiveEditModelID: summary.effectiveEditModelID,
+            effectiveSize: summary.effectiveSize.isEmpty ? requestedSize : summary.effectiveSize,
+            effectiveSteps: Int(summary.effectiveSteps == 0 ? UInt32(requestedSteps) : summary.effectiveSteps),
+            effectiveGuidance: Double(summary.effectiveGuidance == 0 ? Float(requestedGuidance) : summary.effectiveGuidance),
+            effectiveStrength: Double(summary.effectiveStrength == 0 ? Float(requestedStrength) : summary.effectiveStrength),
+            effectiveNegativePrompt: summary.effectiveNegativePrompt,
+            requestTimeoutSeconds: summary.requestTimeoutSeconds == 0 ? 1_800 : summary.requestTimeoutSeconds,
+            sourceText: imageDefaultsSourceText(summary.source),
+            updatedAtUnixMS: summary.updatedAtUnixMs
+        )
+    }
+
+    private static func gatewayConfigSourceText(
+        _ source: Melix_Controlplane_V1_GatewayConfigSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
+        }
+    }
+
+    private static func servingDefaultsSourceText(
+        _ source: Melix_Controlplane_V1_ServingDefaultsSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
+        }
+    }
+
+    private static func imageDefaultsSourceText(
+        _ source: Melix_Controlplane_V1_ImageDefaultsSource
+    ) -> String {
+        switch source {
+        case .builtInDefaults:
+            return "Built-in Defaults"
+        case .environmentDefaults:
+            return "Environment Defaults"
+        case .configFileImport:
+            return "Config File Import"
+        case .operatorOverride:
+            return "Operator Override"
+        default:
+            return "Unknown Source"
+        }
+    }
+
+    private static func formatImageDefaultNumber(_ value: Double) -> String {
+        let rounded = (value * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(Int(rounded))
+        }
+        return String(format: "%.2f", rounded).replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    }
+
+    private static func effectiveBatchingDefaults(
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: Int,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
+    ) -> (
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: Int,
+        prefillBatchSize: Int,
+        completionBatchSize: Int
+    ) {
+        guard concurrentProcessingEnabled else {
+            return (false, 1, 1, 1)
+        }
+        let effectiveBatchCapacity = min(
+            max(1, maxConcurrentRequests),
+            max(1, prefillBatchSize),
+            max(1, completionBatchSize)
+        )
+        guard effectiveBatchCapacity > 1 else {
+            return (false, 1, 1, 1)
+        }
+        return (true, effectiveBatchCapacity, effectiveBatchCapacity, effectiveBatchCapacity)
     }
 
     private func upsert(session: Melix_Controlplane_V1_SessionState) {
@@ -2945,6 +5798,34 @@ public final class RuntimeViewModel {
             latestSnapshot.sessions.append(summary)
             latestSnapshot.sessions.sort { $0.sessionID < $1.sessionID }
         }
+    }
+
+    private func runtimeSession(
+        for serverSessionID: String,
+        fallbackIndex: Int
+    ) -> Melix_Controlplane_V1_ServerSessionRuntimeState? {
+        if let exactMatch = latestSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID }) {
+            return exactMatch
+        }
+        if latestSnapshot.runtimeSessions.count == 1, fallbackIndex == 0 {
+            return latestSnapshot.runtimeSessions.first
+        }
+        return nil
+    }
+
+    private func applyRuntimeSessionProjection(
+        to session: inout DesktopServerSessionState,
+        runtimeSession: Melix_Controlplane_V1_ServerSessionRuntimeState
+    ) {
+        session.lifecycle = Self.serverSessionLifecycle(runtimeSession.lifecycleState)
+        session.powerState = Self.serverSessionPowerState(runtimeSession.powerState)
+        session.wakeReason = Self.serverWakeReason(runtimeSession.wakeReason)
+        session.idleTimerSeconds = Int(runtimeSession.idleTimerSeconds)
+        session.autoSleepEnabled = runtimeSession.autoSleepEnabled
+        session.lightSleepAfterSeconds = Int(runtimeSession.lightSleepAfterSeconds)
+        session.deepSleepAfterSeconds = Int(runtimeSession.deepSleepAfterSeconds)
+        session.requestedDiskStreamingModeText = runtimeDiskStreamingModeText(runtimeSession.requestedDiskStreamingMode)
+        session.effectiveDiskStreamingModeText = runtimeDiskStreamingModeText(runtimeSession.effectiveDiskStreamingMode)
     }
 
     private func existingModelSummary(for modelID: String) -> Melix_Controlplane_V1_ModelSummary {
@@ -2981,9 +5862,10 @@ public final class RuntimeViewModel {
     }
 
     private func recordLocalError(_ message: String) {
-        lastError = message
+        let sanitizedMessage = sanitizedRichText(message)
+        lastError = sanitizedMessage
         recentEvents.insert(
-            DesktopLogEntry(kind: "error", message: message, detail: "local", level: "error"),
+            DesktopLogEntry(kind: "error", message: sanitizedMessage, detail: "local", level: "error"),
             at: 0
         )
         trimRecentEvents()
@@ -2998,6 +5880,14 @@ public final class RuntimeViewModel {
         )
         recentEvents.insert(entry, at: 0)
         trimRecentEvents()
+    }
+
+    private func setLastError(_ message: String) {
+        lastError = sanitizedRichText(message)
+    }
+
+    private func sanitizedRichText(_ text: String) -> String {
+        RichOutputSanitizer.sanitized(text)
     }
 
     private func resolvedChatModelID() -> String {
@@ -3027,22 +5917,72 @@ public final class RuntimeViewModel {
         return ""
     }
 
-    private func resolvedImageModelID() -> String {
-        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) {
-            return selectedImageModelID
+    private func resolvedImageModelID(for role: RuntimeImageWorkflowRole) -> String {
+        let current = selectedImageModelID(for: role)
+        if imageModels(for: role).contains(where: { $0.modelID == current }) {
+            return current
         }
-        if let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
-            selectedImageModelID = imageModel.modelID
+        if let imageModel = imageModels(for: role).first {
+            switch role {
+            case .generate:
+                selectedImageGenerateModelID = imageModel.modelID
+            case .edit:
+                selectedImageEditModelID = imageModel.modelID
+            }
             return imageModel.modelID
         }
-        return selectedImageModelID
+        return current
+    }
+
+    private func moveRegistryRoot(rootID: String, offset: Int) async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let index = editableRegistryRootIndex(for: rootID) else {
+            return
+        }
+        let destination = index + offset
+        guard destination >= 0, destination < editableRegistryRootPaths().count else {
+            return
+        }
+
+        var updatedRoots = editableRegistryRootPaths()
+        let root = updatedRoots.remove(at: index)
+        updatedRoots.insert(root, at: destination)
+        await refreshModelOpsProductState(
+            modelID: modelID,
+            notify: true,
+            rescan: true,
+            registryRootsOverride: updatedRoots,
+            refreshFoundationAfterSuccess: true
+        )
+    }
+
+    private func editableRegistryRootPaths() -> [String] {
+        if registryHasConfiguredRootOverride {
+            return registryConfiguredRootPaths
+        }
+        return registryRoots.map(\.rootPath)
+    }
+
+    private func editableRegistryRootIndex(for rootID: String) -> Int? {
+        guard let root = registryRoots.first(where: { $0.id == rootID }) else {
+            return nil
+        }
+        return editableRegistryRootPaths().firstIndex(of: root.rootPath)
+    }
+
+    private func resolvedRegistryRootOverride(_ registryRootsOverride: [String]?) -> [String]? {
+        if let registryRootsOverride {
+            return Self.normalizedRegistryRootPaths(registryRootsOverride)
+        }
+        if registryHasConfiguredRootOverride {
+            return registryConfiguredRootPaths
+        }
+        return nil
     }
 
     private func refreshImageState(preferredJobID: String? = nil) {
-        if models.contains(where: { $0.modelID == selectedImageModelID && Self.isImageModelKind($0.kind) }) == false,
-           let imageModel = models.first(where: { Self.isImageModelKind($0.kind) }) {
-            selectedImageModelID = imageModel.modelID
-        }
+        _ = resolvedImageModelID(for: .generate)
+        _ = resolvedImageModelID(for: .edit)
 
         imageJobs = latestSnapshot.imageJobs.sorted { lhs, rhs in
             if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
@@ -3159,14 +6099,26 @@ public final class RuntimeViewModel {
         guard !text.isEmpty else { return }
         let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
         activeAssistantEntryID = entryID
-        appendBody(text, toEntryID: entryID, kind: .assistant, title: "Assistant", detail: requestID)
+        enqueueChatPresentationText(
+            text,
+            entryID: entryID,
+            kind: .assistant,
+            title: "Assistant",
+            detail: requestID
+        )
     }
 
     private func appendReasoningDelta(_ text: String, requestID: String) {
         guard !text.isEmpty else { return }
         let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
         activeReasoningEntryID = entryID
-        appendBody(text, toEntryID: entryID, kind: .reasoning, title: "Reasoning", detail: requestID)
+        enqueueChatPresentationText(
+            text,
+            entryID: entryID,
+            kind: .reasoning,
+            title: "Reasoning",
+            detail: requestID
+        )
     }
 
     private func appendToolDelta(callID: String, toolName: String, argumentsFragment: String) {
@@ -3174,7 +6126,14 @@ public final class RuntimeViewModel {
         let entryID = activeToolEntryIDs[normalizedCallID] ?? "tool-\(normalizedCallID)"
         activeToolEntryIDs[normalizedCallID] = entryID
         let title = toolName.isEmpty ? "Tool Call" : "Tool • \(toolName)"
-        appendBody(argumentsFragment, toEntryID: entryID, kind: .tool, title: title, detail: normalizedCallID)
+        guard !argumentsFragment.isEmpty else { return }
+        enqueueChatPresentationText(
+            argumentsFragment,
+            entryID: entryID,
+            kind: .tool,
+            title: title,
+            detail: normalizedCallID
+        )
     }
 
     private func finalizeAssistantText(_ assistantText: String, requestID: String) {
@@ -3203,6 +6162,131 @@ public final class RuntimeViewModel {
         if chatConversationMessages.last != ControlPlaneChatRequest.Message(role: "assistant", content: entry.body) {
             chatConversationMessages.append(.init(role: "assistant", content: entry.body))
         }
+    }
+
+    private func enqueueChatPresentationText(
+        _ text: String,
+        entryID: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        detail: String
+    ) {
+        guard !text.isEmpty else { return }
+        if let index = chatPresentationFragments.indices.last,
+           chatPresentationFragments[index].entryID == entryID,
+           chatPresentationFragments[index].kind == kind,
+           chatPresentationFragments[index].title == title,
+           chatPresentationFragments[index].detail == detail {
+            chatPresentationFragments[index].remainingText += text
+        } else {
+            chatPresentationFragments.append(
+                ChatPresentationFragment(
+                    kind: kind,
+                    entryID: entryID,
+                    title: title,
+                    detail: detail,
+                    remainingText: text,
+                    firstQueuedAt: Date()
+                )
+            )
+        }
+        startChatPresentationLoopIfNeeded()
+    }
+
+    private func startChatPresentationLoopIfNeeded() {
+        if let task = chatPresentationTask, task.isCancelled == false {
+            return
+        }
+        guard chatPresentationFragments.isEmpty == false else {
+            return
+        }
+        chatPresentationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runChatPresentationLoop()
+        }
+    }
+
+    private func runChatPresentationLoop() async {
+        defer {
+            chatPresentationTask = nil
+        }
+
+        while Task.isCancelled == false {
+            guard flushNextChatPresentationChunk(forceComplete: false) else {
+                return
+            }
+            do {
+                try await Task.sleep(for: Self.chatPresentationFlushInterval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func flushPendingChatPresentation() {
+        chatPresentationTask?.cancel()
+        chatPresentationTask = nil
+        while flushNextChatPresentationChunk(forceComplete: true) {}
+    }
+
+    @discardableResult
+    private func flushNextChatPresentationChunk(forceComplete: Bool) -> Bool {
+        guard chatPresentationFragments.isEmpty == false else {
+            return false
+        }
+
+        var fragment = chatPresentationFragments.removeFirst()
+        let budget = forceComplete ? Int.max : Self.chatPresentationCharactersPerFlush
+        let (prefix, remainder) = Self.consumePresentationPrefix(fragment.remainingText, maxCharacters: budget)
+        guard prefix.isEmpty == false else {
+            return false
+        }
+
+        let lagMs = Date().timeIntervalSince(fragment.firstQueuedAt) * 1_000
+        chatPresentationMaxLagMs = max(chatPresentationMaxLagMs, lagMs)
+        chatPresentationFlushCount += 1
+        appendBody(
+            prefix,
+            toEntryID: fragment.entryID,
+            kind: fragment.kind,
+            title: fragment.title,
+            detail: fragment.detail
+        )
+
+        if remainder.isEmpty == false {
+            fragment.remainingText = remainder
+            chatPresentationFragments.insert(fragment, at: 0)
+        }
+
+        notifyStateChanged()
+        return true
+    }
+
+    private func resetChatPresentationState() {
+        chatPresentationTask?.cancel()
+        chatPresentationTask = nil
+        chatPresentationFragments.removeAll()
+        chatPresentationMaxLagMs = 0
+        chatPresentationFlushCount = 0
+    }
+
+    private func recordChatPresentationMetricsIfNeeded() async {
+        guard chatPresentationFlushCount > 0 else {
+            return
+        }
+        await metrics.record(name: "menu.chat_presentation_lag_ms", valueMs: chatPresentationMaxLagMs)
+        await metrics.record(name: "menu.chat_presentation_flush_count", valueMs: chatPresentationFlushCount)
+    }
+
+    private static func consumePresentationPrefix(
+        _ text: String,
+        maxCharacters: Int
+    ) -> (prefix: String, remainder: String) {
+        guard text.isEmpty == false, maxCharacters > 0 else {
+            return ("", text)
+        }
+        let endIndex = text.index(text.startIndex, offsetBy: maxCharacters, limitedBy: text.endIndex) ?? text.endIndex
+        return (String(text[..<endIndex]), String(text[endIndex...]))
     }
 
     private func appendChatEntry(
@@ -3375,6 +6459,26 @@ public final class RuntimeViewModel {
         onStateChanged?()
     }
 
+    private var productUpdateBannerState: DesktopBannerState? {
+        guard let productUpdateSummary, productUpdateSummary.isEmpty == false else {
+            return nil
+        }
+        guard productUpdateIsAvailable || productUpdateCheckSucceeded == false else {
+            return nil
+        }
+        return DesktopBannerState(
+            id: Self.productUpdateBannerID(summary: productUpdateSummary, detail: productUpdateDetail ?? ""),
+            title: productUpdateSummary,
+            detail: productUpdateDetail ?? "",
+            severity: productUpdateCheckSucceeded ? .info : .warning,
+            isDismissible: true
+        )
+    }
+
+    private static func productUpdateBannerID(summary: String, detail: String) -> String {
+        "product-update::\(summary)||\(detail)"
+    }
+
     private static func serverStateText(_ state: Melix_Controlplane_V1_ServerState) -> String {
         switch state {
         case .serverBooting:
@@ -3438,6 +6542,9 @@ public final class RuntimeViewModel {
     private static func eventMessage(for event: Melix_Controlplane_V1_ControlPlaneEvent) -> String {
         switch event.payload {
         case .serverState(let serverStateChanged):
+            if let runtimeSession = serverStateChanged.runtimeSessions.first {
+                return "Server is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
+            }
             return "Server is now \(serverStateText(serverStateChanged.state))"
         case .modelState(let modelStateChanged):
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
@@ -3460,6 +6567,63 @@ public final class RuntimeViewModel {
         }
     }
 
+    private static func serverSessionLifecycle(
+        _ state: Melix_Controlplane_V1_ServerSessionLifecycleState
+    ) -> DesktopServerSessionLifecycle {
+        switch state {
+        case .loading:
+            return .starting
+        case .ready:
+            return .running
+        case .paused:
+            return .paused
+        case .sleeping:
+            return .sleeping
+        case .stopped:
+            return .stopped
+        case .error:
+            return .error
+        default:
+            return .unavailable
+        }
+    }
+
+    private static func serverSessionPowerState(
+        _ state: Melix_Controlplane_V1_ServerSessionPowerState
+    ) -> DesktopServerPowerState {
+        switch state {
+        case .active:
+            return .active
+        case .lightSleep:
+            return .lightSleep
+        case .deepSleep:
+            return .deepSleep
+        case .stopped:
+            return .stopped
+        default:
+            return .unavailable
+        }
+    }
+
+    private static func serverWakeReason(
+        _ reason: Melix_Controlplane_V1_ServerWakeReason
+    ) -> DesktopServerWakeReason {
+        switch reason {
+        case .initialBoot:
+            return .initialBoot
+        case .operatorResume:
+            return .operatorResume
+        case .requestActivity:
+            return .requestActivity
+        case .toolActivity:
+            return .toolActivity
+        case .policyApply:
+            return .policyApply
+        default:
+            return .unspecified
+        }
+    }
+
     private static func imageStatusText(for job: Melix_Controlplane_V1_ImageJobSummary) -> String {
         switch job.state {
         case .imageJobQueued:
@@ -3471,6 +6635,9 @@ public final class RuntimeViewModel {
         case .imageJobCanceled:
             return "Canceled • \(job.operation)"
         case .imageJobFailed:
+            if job.error.code == "deadline_exceeded" {
+                return "Timed Out • \(job.operation)"
+            }
             return "Failed • \(job.operation)"
         default:
             return job.operation.isEmpty ? "Idle" : job.operation
@@ -3601,6 +6768,56 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeDownloadQueueEntryState(from payload: [String: Any]) -> RuntimeDownloadQueueEntryState? {
+        let jobID = stringValue("job_id", from: payload)
+        let sourceModel = stringValue("source_model", from: payload)
+        guard jobID.isEmpty == false, sourceModel.isEmpty == false else {
+            return nil
+        }
+        return RuntimeDownloadQueueEntryState(
+            jobID: jobID,
+            sourceModel: sourceModel,
+            status: stringValue("status", from: payload),
+            stage: stringValue("stage", from: payload),
+            pct: doubleValue("pct", from: payload),
+            outputDir: stringValue("output_dir", from: payload),
+            outputPath: stringValue("output_path", from: payload),
+            partialPath: stringValue("partial_path", from: payload),
+            statePath: stringValue("state_path", from: payload),
+            selectedMirror: stringValue("selected_mirror", from: payload),
+            downloadedBytes: intValue("downloaded_bytes", from: payload),
+            totalBytes: intValue("total_bytes", from: payload),
+            resumeUsed: boolValue("resume_used", from: payload),
+            resumeFromBytes: intValue("resume_from_bytes", from: payload),
+            retryCount: intValue("retry_count", from: payload),
+            stallDetectionCount: intValue("stall_detection_count", from: payload),
+            stallReason: stringValue("stall_reason", from: payload),
+            resumeReady: boolValue("resume_ready", from: payload)
+        )
+    }
+
+    private static func makeRegistryRootState(from payload: [String: Any]) -> RuntimeRegistryRootState? {
+        let rootID = stringValue("root_id", from: payload)
+        let rootPath = stringValue("root_path", from: payload)
+        guard rootID.isEmpty == false, rootPath.isEmpty == false else {
+            return nil
+        }
+        let discoveredModelIDs = (payload["discovered_model_ids"] as? [Any] ?? [])
+            .compactMap { element in
+                let value = String(describing: element).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        return RuntimeRegistryRootState(
+            id: rootID,
+            rootPath: rootPath,
+            rootOrder: intValue("root_order", from: payload),
+            accessible: boolValue("accessible", from: payload),
+            errorCode: stringValue("error_code", from: payload),
+            errorMessage: stringValue("error_message", from: payload),
+            discoveredModelIDs: discoveredModelIDs
+        )
+    }
+
     private static func makeBenchmarkHistoryEntryState(
         from entry: ControlPlaneBenchmarkHistoryEntry
     ) -> RuntimeBenchmarkHistoryEntryState {
@@ -3659,6 +6876,145 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeBenchmarkMatrixHistoryEntryStates(
+        from entries: [ControlPlaneBenchmarkMatrixHistoryEntry]
+    ) -> [RuntimeBenchmarkMatrixHistoryEntryState] {
+        let grouped = Dictionary(grouping: entries, by: \.jobID)
+        return grouped.values
+            .compactMap { group in
+                guard let representative = group.max(by: { $0.createdAtUnixMS < $1.createdAtUnixMS }) else {
+                    return nil
+                }
+                let suiteTitles = Array(Set(group.map { benchmarkSuiteTitle(for: $0.suiteID, taskKind: $0.taskKind) })).sorted()
+                let suiteSummary = suiteTitles.count == 1
+                    ? (suiteTitles.first ?? representative.suiteID)
+                    : "\(suiteTitles.count) suites"
+                let loadBudgetText = representative.requests > 0
+                    ? "\(representative.requests) requests • \(representative.repeats)x repeats"
+                    : "\(representative.durationSeconds)s duration • \(representative.repeats)x repeats"
+                return RuntimeBenchmarkMatrixHistoryEntryState(
+                    id: representative.jobID,
+                    jobID: representative.jobID,
+                    modelID: representative.modelID,
+                    taskKind: representative.taskKind,
+                    taskTitle: benchmarkTaskTitle(for: representative.taskKind),
+                    sourceRepo: representative.sourceRepo,
+                    suiteSummary: suiteSummary,
+                    cellCountText: "\(group.count) cells",
+                    loadBudgetText: loadBudgetText,
+                    statusText: humanizeStatus(representative.status),
+                    createdAtText: benchmarkTimestampLabel(representative.createdAtUnixMS),
+                    createdAtUnixMS: representative.createdAtUnixMS
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.createdAtUnixMS == rhs.createdAtUnixMS {
+                    return lhs.jobID > rhs.jobID
+                }
+                return lhs.createdAtUnixMS > rhs.createdAtUnixMS
+            }
+    }
+
+    private static func makeBenchmarkMatrixSummaryCardStates(
+        from rows: [ControlPlaneBenchmarkMatrixSummaryCSVRow]
+    ) -> [RuntimeBenchmarkMatrixSummaryCardState] {
+        guard rows.isEmpty == false else {
+            return []
+        }
+
+        let count = Double(rows.count)
+        let avgTTFT = rows.map(\.ttftMeanMS).reduce(0, +) / count
+        let avgLatency = rows.map(\.requestLatencyMeanMS).reduce(0, +) / count
+        let avgDecode = rows.map(\.decodeTokensPerSecondMean).reduce(0, +) / count
+        let avgThroughput = rows.map(\.throughputRequestsPerSecond).reduce(0, +) / count
+        let avgSuccess = rows.map(\.successRate).reduce(0, +) / count
+
+        return [
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "cells",
+                title: "Cells",
+                valueText: "\(rows.count)",
+                detail: "Selected matrix combinations"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "ttft",
+                title: "Avg TTFT",
+                valueText: String(format: "%.2f ms", avgTTFT),
+                detail: "Mean across selected cells"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "latency",
+                title: "Avg Latency",
+                valueText: String(format: "%.2f ms", avgLatency),
+                detail: "Request latency mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "decode",
+                title: "Avg Decode",
+                valueText: String(format: "%.2f tok/s", avgDecode),
+                detail: "Decode throughput mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "throughput",
+                title: "Avg Throughput",
+                valueText: String(format: "%.2f req/s", avgThroughput),
+                detail: "Request throughput mean"
+            ),
+            RuntimeBenchmarkMatrixSummaryCardState(
+                id: "success",
+                title: "Avg Success",
+                valueText: String(format: "%.1f%%", avgSuccess * 100),
+                detail: "Success rate"
+            ),
+        ]
+    }
+
+    private static func makeBenchmarkMatrixSummaryRowState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixSummaryRowState {
+        RuntimeBenchmarkMatrixSummaryRowState(
+            id: "\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.generationLength):\(row.batchSize):\(row.concurrencyLevel)",
+            suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
+            configurationSummary: "ctx \(row.contextLength) • gen \(row.generationLength) • batch \(row.batchSize) • conc \(row.concurrencyLevel) • \(humanizedControlTitle(row.cacheProfile)) • \(humanizedControlTitle(row.reasoningMode)) • \(humanizedControlTitle(row.structuredOutputMode))",
+            latencyText: String(format: "TTFT %.2f ms • Lat %.2f ms", row.ttftMeanMS, row.requestLatencyMeanMS),
+            throughputText: String(format: "Prefill %.2f • Decode %.2f • Req %.2f", row.prefillTokensPerSecondMean, row.decodeTokensPerSecondMean, row.throughputRequestsPerSecond),
+            successRateText: String(format: "%.1f%% success", row.successRate * 100),
+            peakMemoryText: "Peak \(formatBytes(row.peakMemoryBytesMax))",
+            createdAtText: benchmarkTimestampLabel(row.createdAtUnixMS),
+            contextLength: row.contextLength,
+            batchSize: row.batchSize,
+            concurrencyLevel: row.concurrencyLevel,
+            ttftMeanMS: row.ttftMeanMS,
+            throughputTokensPerSecond: row.throughputTokensPerSecond
+        )
+    }
+
+    private static func makeBenchmarkMatrixContextChartPointState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixChartPointState {
+        RuntimeBenchmarkMatrixChartPointState(
+            id: "ctx:\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.batchSize):\(row.concurrencyLevel)",
+            seriesTitle: "\(benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind)) • b\(row.batchSize)",
+            xLabel: String(row.contextLength),
+            xValue: row.contextLength,
+            yValue: row.ttftMeanMS,
+            unit: "ms"
+        )
+    }
+
+    private static func makeBenchmarkMatrixThroughputChartPointState(
+        from row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> RuntimeBenchmarkMatrixChartPointState {
+        RuntimeBenchmarkMatrixChartPointState(
+            id: "throughput:\(row.jobID):\(row.suiteID):\(row.batchSize):\(row.concurrencyLevel)",
+            seriesTitle: "\(benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind)) • c\(row.concurrencyLevel)",
+            xLabel: String(row.batchSize),
+            xValue: row.batchSize,
+            yValue: row.throughputTokensPerSecond,
+            unit: "tok/s"
+        )
+    }
+
     private static func makeEvaluationHistoryEntryState(
         from entry: ControlPlaneEvaluationHistoryEntry
     ) -> RuntimeEvaluationHistoryEntryState {
@@ -3686,13 +7042,13 @@ public final class RuntimeViewModel {
         from row: ControlPlaneEvaluationSummaryCSVRow
     ) -> RuntimeEvaluationMetricCardState {
         RuntimeEvaluationMetricCardState(
-            id: "\(row.jobID):\(row.suiteID):\(row.metricName)",
+            id: "\(row.jobID):\(row.suiteID):\(row.scoreName)",
             suiteTitle: evaluationSuiteTitle(for: row.suiteID),
-            metricName: row.metricName,
-            metricLabel: benchmarkMetricLabel(row.metricName),
-            value: row.metricValue,
-            valueText: String(format: "%.2f %@", row.metricValue, row.unit),
-            unit: row.unit
+            metricName: row.scoreName,
+            metricLabel: evaluationScoreLabel(row.scoreName),
+            value: row.scoreValue,
+            valueText: String(format: "%.2f", row.scoreValue),
+            unit: "score"
         )
     }
 
@@ -3714,6 +7070,49 @@ public final class RuntimeViewModel {
 
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
         payload[key] as? String ?? ""
+    }
+
+    private static func jsonPayload(from manifestJSON: String) -> [String: Any] {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
+        }
+        return payload
+    }
+
+    private static func dictionaryValue(_ key: String, from payload: [String: Any]) -> [String: Any] {
+        payload[key] as? [String: Any] ?? [:]
+    }
+
+    private static func intValue(_ key: String, from payload: [String: Any]) -> Int {
+        if let value = payload[key] as? Int {
+            return value
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.intValue
+        }
+        if let value = payload[key] as? String {
+            return Int(value) ?? 0
+        }
+        return 0
+    }
+
+    private static func int64Value(_ key: String, from payload: [String: Any]) -> Int64 {
+        if let value = payload[key] as? Int64 {
+            return value
+        }
+        if let value = payload[key] as? Int {
+            return Int64(value)
+        }
+        if let number = payload[key] as? NSNumber {
+            return number.int64Value
+        }
+        if let value = payload[key] as? String {
+            return Int64(value) ?? 0
+        }
+        return 0
     }
 
     private static func doubleValue(_ key: String, from payload: [String: Any]) -> Double {
@@ -3739,6 +7138,64 @@ public final class RuntimeViewModel {
         return false
     }
 
+    private static func encodedRegistryRoots(_ roots: [String]) -> String? {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: roots,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        ) else {
+            return nil
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func normalizedRegistryRootPaths(_ roots: [String]) -> [String] {
+        var normalizedRoots: [String] = []
+        var seen: Set<String> = []
+        for root in roots {
+            guard let normalized = normalizedRegistryRootPath(root), seen.contains(normalized) == false else {
+                continue
+            }
+            seen.insert(normalized)
+            normalizedRoots.append(normalized)
+        }
+        return normalizedRoots
+    }
+
+    private static func normalizedRegistryRootPath(_ rawPath: String) -> String? {
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return standardized.isEmpty ? nil : standardized
+    }
+
+    private static func defaultDownloadOutputDirectory(namespace: String, modelID: String) -> String {
+        let sanitizedNamespace = sanitizedDownloadPathComponent(namespace, fallback: "melix-downloads")
+        let sanitizedModelID = sanitizedDownloadPathComponent(modelID, fallback: "model")
+        let rootURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        return rootURL
+            .appendingPathComponent(sanitizedNamespace, isDirectory: true)
+            .appendingPathComponent(sanitizedModelID, isDirectory: true)
+            .path
+    }
+
+    private static func sanitizedDownloadPathComponent(_ rawValue: String, fallback: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return fallback
+        }
+        let sanitized = trimmed.map { character -> Character in
+            if character.isLetter || character.isNumber || character == "-" || character == "_" || character == "." {
+                return character
+            }
+            return "-"
+        }
+        let normalized = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
+        return normalized.isEmpty ? fallback : normalized
+    }
+
     private static func humanizeStatus(_ status: String) -> String {
         guard status.isEmpty == false else {
             return "Unknown"
@@ -3760,9 +7217,28 @@ public final class RuntimeViewModel {
         return String(format: "%.0fms", milliseconds)
     }
 
+    private static func formatBytes(_ bytes: UInt64) -> String {
+        guard bytes > 0 else {
+            return "0 B"
+        }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .memory
+        formatter.includesUnit = true
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    private static func humanizedControlTitle(_ value: String) -> String {
+        value.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
     private static func benchmarkMetricLabel(_ metricName: String) -> String {
         let normalized = metricName.split(separator: ".").last.map(String.init) ?? metricName
         return normalized.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private static func evaluationScoreLabel(_ scoreName: String) -> String {
+        scoreName.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private static func evaluationSuiteTitle(for suiteID: String) -> String {
@@ -3770,11 +7246,7 @@ public final class RuntimeViewModel {
     }
 
     private static func evaluationScoringModeLabel(_ scoringMode: String) -> String {
-        let normalized = scoringMode.replacingOccurrences(of: "_", with: " ")
-        guard let first = normalized.first else {
-            return "Unknown"
-        }
-        return String(first).uppercased() + normalized.dropFirst()
+        scoringMode.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private static func benchmarkSuiteTitle(for suiteID: String, taskKind: String) -> String {
@@ -3843,6 +7315,85 @@ public final class RuntimeViewModel {
         return "text-generation"
     }
 
+    private static func normalizedBenchValues(
+        _ values: [UInt32],
+        defaultValues: [UInt32]
+    ) -> [UInt32] {
+        let normalized = Array(Set(values.filter { $0 > 0 })).sorted()
+        return normalized.isEmpty ? defaultValues : normalized
+    }
+
+    private func normalizedBenchContextLengths() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchContextLengths,
+            defaultValues: Self.benchmarkContextLengthOptions.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchBatchSizes() -> [UInt32] {
+        Self.normalizedBenchValues(
+            selectedBenchBatchSizes,
+            defaultValues: Self.benchmarkBatchSizeOptions.filter { $0 > 1 }.prefix(2).map { $0 }
+        )
+    }
+
+    private func normalizedBenchRepeats() -> UInt32 {
+        let trimmed = benchRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return max(1, UInt32(trimmed) ?? 1)
+    }
+
+    private func normalizedBenchRepeatsText() -> String {
+        let trimmed = benchRepeats.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "3" : trimmed
+    }
+
+    private func normalizedBenchCacheProfile() -> String {
+        let trimmed = benchCacheProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return Self.benchmarkCacheProfileOptions.first ?? "cold"
+        }
+        return Self.benchmarkCacheProfileOptions.contains(trimmed) ? trimmed : (Self.benchmarkCacheProfileOptions.first ?? "cold")
+    }
+
+    private func normalizedBenchReasoningMode() -> String {
+        benchReasoningMode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedBenchStructuredOutputMode() -> String {
+        benchStructuredOutputMode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedEvaluationScoringMode() -> String {
+        let trimmed = evaluationScoringMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "multiple_choice_accuracy" : trimmed
+    }
+
+    private func normalizedEvaluationCodeExecPolicy() -> String {
+        let trimmed = evaluationCodeExecPolicy.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "sandboxed" : trimmed
+    }
+
+    private static func toggledValues(_ value: UInt32, in values: [UInt32]) -> [UInt32] {
+        var set = Set(values)
+        if set.contains(value) {
+            set.remove(value)
+        } else {
+            set.insert(value)
+        }
+        return Array(set).sorted()
+    }
+
+    private static func toggledStrings(_ value: String, in values: [String]) -> [String] {
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var set = Set(ControlPlaneBenchMatrixRequest.normalizedStringValues(values))
+        if set.contains(normalizedValue) {
+            set.remove(normalizedValue)
+        } else if normalizedValue.isEmpty == false {
+            set.insert(normalizedValue)
+        }
+        return Array(set).sorted()
+    }
+
     private static func benchmarkTimestampLabel(_ unixMS: Int64) -> String {
         let date = Date(timeIntervalSince1970: Double(unixMS) / 1_000)
         return date.formatted(date: .abbreviated, time: .shortened)
@@ -3889,6 +7440,18 @@ public final class RuntimeViewModel {
         return "melix-benchmark-\(sanitizedJobID).csv"
     }
 
+    private static func benchmarkMatrixSummaryCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-benchmark-matrix-summary-\(sanitizedJobID).csv"
+    }
+
+    private static func benchmarkMatrixRequestsCSVFileName(jobID: String?) -> String {
+        let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
+            .replacingOccurrences(of: "/", with: "-")
+        return "melix-benchmark-matrix-requests-\(sanitizedJobID).csv"
+    }
+
     private static func evaluationSummaryCSVFileName(jobID: String?) -> String {
         let sanitizedJobID = (jobID?.isEmpty == false ? jobID! : "all-runs")
             .replacingOccurrences(of: "/", with: "-")
@@ -3907,15 +7470,131 @@ public final class RuntimeViewModel {
         return "melix-evaluation-samples-\(sanitizedJobID).jsonl"
     }
 
+    private static func canRedoImageJob(_ job: Melix_Controlplane_V1_ImageJobSummary) -> Bool {
+        if job.operation == "image_generate" {
+            return job.recipe.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        return job.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || recipeSourceImageURI(from: job).isEmpty == false
+    }
+
+    private static func redoGenerationRequest(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> ControlPlaneImageGenerationRequest {
+        ControlPlaneImageGenerationRequest(
+            modelID: job.modelID,
+            prompt: job.recipe.prompt,
+            size: job.recipe.size.isEmpty ? "1024x1024" : job.recipe.size,
+            steps: job.recipe.steps,
+            guidance: job.recipe.guidance,
+            negativePrompt: job.recipe.negativePrompt,
+            n: max(1, job.recipe.variantCount),
+            responseFormat: job.recipe.responseFormat.isEmpty ? "png" : job.recipe.responseFormat,
+            artifactNamespace: job.recipe.artifactNamespace
+        )
+    }
+
+    private static func redoEditRequest(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> ControlPlaneImageEditRequest {
+        let sourceArtifactID = job.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = job.editMode == .iterate ? "" : job.recipe.prompt
+        let promptDelta: String
+        if job.editMode == .iterate {
+            let delta = job.promptDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+            promptDelta = delta.isEmpty ? job.recipe.prompt : delta
+        } else {
+            promptDelta = ""
+        }
+
+        return ControlPlaneImageEditRequest(
+            modelID: job.modelID,
+            prompt: prompt,
+            imageURL: sourceArtifactID.isEmpty ? recipeSourceImageURI(from: job) : "",
+            maskURL: recipeMaskURI(from: job),
+            sourceArtifactID: sourceArtifactID,
+            promptDelta: promptDelta,
+            mode: controlPlaneEditMode(from: job.editMode),
+            strength: job.recipe.strength > 0 ? job.recipe.strength : 1,
+            size: job.recipe.size.isEmpty ? "1024x1024" : job.recipe.size,
+            steps: job.recipe.steps,
+            guidance: job.recipe.guidance,
+            negativePrompt: job.recipe.negativePrompt,
+            n: max(1, job.recipe.variantCount),
+            responseFormat: job.recipe.responseFormat.isEmpty ? "png" : job.recipe.responseFormat
+        )
+    }
+
+    private static func reiterateSourceArtifactID(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String? {
+        job.artifacts
+            .last(where: { $0.role == .imageArtifactGenerated && !$0.artifactID.isEmpty })?
+            .artifactID
+    }
+
+    private static func recipeSourceImageURI(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String {
+        let directURI = job.recipe.sourceImageUri.trimmingCharacters(in: .whitespacesAndNewlines)
+        if directURI.isEmpty == false {
+            return directURI
+        }
+        return job.artifacts.first(where: {
+            $0.role == .imageArtifactEditSource || $0.role == .imageArtifactInput
+        })?.storageUri ?? ""
+    }
+
+    private static func recipeMaskURI(
+        from job: Melix_Controlplane_V1_ImageJobSummary
+    ) -> String {
+        let directURI = job.recipe.maskUri.trimmingCharacters(in: .whitespacesAndNewlines)
+        if directURI.isEmpty == false {
+            return directURI
+        }
+        return job.artifacts.first(where: { $0.role == .imageArtifactMask })?.storageUri ?? ""
+    }
+
+    private static func controlPlaneEditMode(
+        from mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> ControlPlaneImageEditRequest.Mode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
     private static func isImageModelKind(_ kind: String) -> Bool {
         kind == "image" || kind == "image_generation"
+    }
+
+    private static func imageModel(
+        _ model: RuntimeModelRow,
+        supports role: RuntimeImageWorkflowRole
+    ) -> Bool {
+        guard isImageModelKind(model.kind) else {
+            return false
+        }
+        switch role {
+        case .generate:
+            return model.imageSupportsGeneration
+        case .edit:
+            return model.imageSupportsEdit
+        }
     }
 }
 
 func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModelRow {
-    RuntimeModelRow(
+    let imageSupportsGeneration = runtimeImageSupportsGeneration(model)
+    let imageSupportsEdit = runtimeImageSupportsEdit(model)
+    return RuntimeModelRow(
         modelID: model.modelID,
         kind: model.kind,
+        supportedTasks: model.supportedTasks,
         state: model.state,
         stateText: runtimeModelStateText(
             model.state,
@@ -3924,14 +7603,59 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         actionTitle: runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
+        typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
+        diskStreamingModeText: runtimeDiskStreamingModeText(model.settings.diskStreamingMode),
         adaptiveThinkingText: runtimeAdaptiveThinkingText(model.settings.adaptiveThinking),
         accelerationModeText: runtimeAccelerationModeText(model.settings.defaultAccelerationMode),
         accelerationProfileID: model.settings.accelerationProfileID,
+        toolParserFallbackText: runtimeToolParserFallbackText(model),
         residencyText: runtimeResidencyText(for: model),
         memoryText: runtimeMemoryText(for: model),
-        memoryAlertText: runtimeMemoryAlertText(for: model)
+        memoryAlertText: runtimeMemoryAlertText(for: model),
+        cachePolicyText: runtimeCachePolicyText(for: model),
+        cacheSettingsText: runtimeCacheSettingsText(for: model),
+        imageFamilyID: model.settings.ext["melix.image.family_id"] ?? "",
+        imageDefaultWorkflowRole: model.settings.ext["melix.image.default_workflow_role"] ?? "",
+        imageSupportsGeneration: imageSupportsGeneration,
+        imageSupportsEdit: imageSupportsEdit
     )
+}
+
+private func runtimeImageSupportsGeneration(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    if let explicit = model.settings.ext["melix.image.supports_generation"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        switch explicit {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            break
+        }
+    }
+    if model.supportedTasks.contains("image_generate") {
+        return true
+    }
+    let taskKind = model.settings.ext["melix.image.task_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return taskKind != "image-text-to-image"
+}
+
+private func runtimeImageSupportsEdit(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+    if let explicit = model.settings.ext["melix.image.supports_edit"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        switch explicit {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            break
+        }
+    }
+    if model.supportedTasks.contains("image_edit") {
+        return true
+    }
+    let taskKind = model.settings.ext["melix.image.task_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return taskKind == "image-text-to-image"
 }
 
 private func runtimeModelStateText(
@@ -4023,6 +7747,162 @@ private func runtimeMemoryPolicyText(_ policy: Melix_Controlplane_V1_MemoryResid
     }
 }
 
+private func runtimeMemoryPolicyDraftValue(
+    _ policy: Melix_Controlplane_V1_MemoryResidencyPolicy
+) -> String {
+    switch policy {
+    case .memoryResidencyPinned:
+        return "pinned"
+    case .memoryResidencyTtl:
+        return "ttl"
+    case .memoryResidencyEvictable, .unspecified:
+        return "evictable"
+    default:
+        return "evictable"
+    }
+}
+
+private func runtimeMemoryBudgetText(_ bytes: UInt64) -> String {
+    guard bytes > 0 else {
+        return ""
+    }
+    return runtimeFormatBytes(bytes)
+}
+
+private func runtimeCacheModeText(_ mode: Melix_Controlplane_V1_CacheMode) -> String {
+    switch mode {
+    case .rotating:
+        return "Rotating"
+    case .hybrid:
+        return "Hybrid"
+    case .tiered:
+        return "Tiered"
+    default:
+        return "Unspecified"
+    }
+}
+
+private func runtimeCacheModeDraftValue(_ mode: Melix_Controlplane_V1_CacheMode) -> String {
+    switch mode {
+    case .rotating:
+        return "rotating"
+    case .hybrid:
+        return "hybrid"
+    case .tiered, .unspecified:
+        return "tiered"
+    default:
+        return "tiered"
+    }
+}
+
+private func runtimeCacheCompatibilityText(
+    _ compatibility: Melix_Controlplane_V1_CacheCompatibilityState
+) -> String {
+    switch compatibility {
+    case .cacheCompatibilityCompatible:
+        return "Compatible"
+    case .cacheCompatibilityLimited:
+        return "Limited"
+    case .cacheCompatibilityDisabled:
+        return "Disabled"
+    case .cacheCompatibilityUnknown, .unspecified:
+        return "Unknown"
+    default:
+        return "Unknown"
+    }
+}
+
+private func runtimeCachePolicyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let compatibility = runtimeCacheCompatibilityText(model.cachePolicy.compatibility)
+    let effectiveMode = runtimeCacheModeText(model.cachePolicy.effectiveMode)
+    return "\(compatibility) • \(effectiveMode)"
+}
+
+private func runtimeCacheSettingsText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    var parts: [String] = []
+    let effectiveDirectory = model.cachePolicy.effectiveDirectory
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !effectiveDirectory.isEmpty {
+        parts.append(effectiveDirectory)
+    }
+    if model.cachePolicy.effectiveBlockSizeTokens > 0 {
+        parts.append("block \(model.cachePolicy.effectiveBlockSizeTokens)")
+    }
+    if model.cachePolicy.effectiveCacheMemoryBudgetBytes > 0 {
+        parts.append("cache \(runtimeFormatBytes(model.cachePolicy.effectiveCacheMemoryBudgetBytes))")
+    } else if model.cachePolicy.effectiveCacheMemoryBudgetPct > 0 {
+        parts.append("cache \(model.cachePolicy.effectiveCacheMemoryBudgetPct)%")
+    }
+    if model.cachePolicy.effectiveMultimodalCacheBudgetBytes > 0 {
+        parts.append("multimodal \(runtimeFormatBytes(model.cachePolicy.effectiveMultimodalCacheBudgetBytes))")
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeCacheDirectoryText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    let effective = model.cachePolicy.effectiveDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !requested.isEmpty && requested != effective {
+        return "\(requested) -> \(effective)"
+    }
+    return effective
+}
+
+private func runtimeCacheBlockSizeText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedBlockSizeTokens
+    let effective = model.cachePolicy.effectiveBlockSizeTokens
+    guard requested > 0 || effective > 0 else {
+        return ""
+    }
+    if requested > 0 && requested != effective {
+        return "\(requested) -> \(effective) tokens"
+    }
+    let value = effective > 0 ? effective : requested
+    return "\(value) tokens"
+}
+
+private func runtimeCacheBudgetText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requestedBytes = model.cachePolicy.requestedCacheMemoryBudgetBytes
+    let effectiveBytes = model.cachePolicy.effectiveCacheMemoryBudgetBytes
+    let requestedPct = model.cachePolicy.requestedCacheMemoryBudgetPct
+    let effectivePct = model.cachePolicy.effectiveCacheMemoryBudgetPct
+    if requestedBytes > 0 || effectiveBytes > 0 {
+        if requestedBytes > 0 && requestedBytes != effectiveBytes {
+            return "\(runtimeFormatBytes(requestedBytes)) -> \(runtimeFormatBytes(effectiveBytes))"
+        }
+        let value = effectiveBytes > 0 ? effectiveBytes : requestedBytes
+        return runtimeFormatBytes(value)
+    }
+    if requestedPct > 0 || effectivePct > 0 {
+        if requestedPct > 0 && requestedPct != effectivePct {
+            return "\(requestedPct)% -> \(effectivePct)%"
+        }
+        let value = effectivePct > 0 ? effectivePct : requestedPct
+        return "\(value)%"
+    }
+    return ""
+}
+
+private func runtimeMultimodalCacheBudgetText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    let requested = model.cachePolicy.requestedMultimodalCacheBudgetBytes
+    let effective = model.cachePolicy.effectiveMultimodalCacheBudgetBytes
+    guard requested > 0 || effective > 0 else {
+        return ""
+    }
+    if requested > 0 && requested != effective {
+        return "\(runtimeFormatBytes(requested)) -> \(runtimeFormatBytes(effective))"
+    }
+    let value = effective > 0 ? effective : requested
+    return runtimeFormatBytes(value)
+}
+
+private func runtimeInitialCacheBlocksText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+    guard model.cachePolicy.initialCacheBlocks > 0 else {
+        return ""
+    }
+    return String(model.cachePolicy.initialCacheBlocks)
+}
+
 private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
     switch mode {
     case .speculativeDecode:
@@ -4040,16 +7920,108 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
     }
 }
 
+private func runtimeAccelerationModeDraftValue(_ mode: Melix_Controlplane_V1_AccelerationMode) -> String {
+    switch mode {
+    case .speculativeDecode:
+        return "speculative_decode"
+    case .acceleratedPrefill:
+        return "accelerated_prefill"
+    case .activeKvQuantized:
+        return "active_kv_quantized"
+    case .sparsePrefill:
+        return "sparse_prefill"
+    case .baseline, .unspecified:
+        return "baseline"
+    default:
+        return "baseline"
+    }
+}
+
+private func servingDefaultsAccelerationMode(
+    from rawValue: String
+) -> Melix_Controlplane_V1_AccelerationMode {
+    switch rawValue {
+    case "speculative_decode":
+        return .speculativeDecode
+    default:
+        return .baseline
+    }
+}
+
+private func runtimeDiskStreamingModeText(_ mode: Melix_Controlplane_V1_DiskStreamingMode) -> String {
+    switch mode {
+    case .diskStreamingPreferDisk:
+        return "Prefer Disk"
+    case .diskStreamingRequireDisk:
+        return "Require Disk"
+    case .diskStreamingDisabled, .unspecified:
+        return "Disabled"
+    default:
+        return "Disabled"
+    }
+}
+
+private func runtimeDiskStreamingModeDraftValue(_ mode: Melix_Controlplane_V1_DiskStreamingMode) -> String {
+    switch mode {
+    case .diskStreamingPreferDisk:
+        return "prefer_disk"
+    case .diskStreamingRequireDisk:
+        return "require_disk"
+    case .diskStreamingDisabled, .unspecified:
+        return "disabled"
+    default:
+        return "disabled"
+    }
+}
+
+private func runtimeAdaptiveThinkingDraftValue(
+    _ policy: Melix_Controlplane_V1_AdaptiveThinkingPolicy
+) -> String {
+    let normalizedMode = policy.mode
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    return normalizedMode.isEmpty ? "off" : normalizedMode
+}
+
+private func runtimeToolParserFallbackText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+    model.settings.ext["tool_parser_xml_fallback"] == "true" ? "XML" : "Off"
+}
+
+private func runtimeEffectiveOCRSamplingProfileText(
+    for model: Melix_Controlplane_V1_ModelSummary,
+    generationConfigAvailable: Bool
+) -> String {
+    let explicitValue = model.settings.ext["ocr_sampling_profile_id"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !explicitValue.isEmpty {
+        return explicitValue
+    }
+    return generationConfigAvailable && model.kind == "ocr" ? "generation-config" : ""
+}
+
+private func runtimeEffectiveOCRSamplingValue(
+    explicitValue: String,
+    generationConfigValue: String
+) -> String {
+    let normalizedExplicit = explicitValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !normalizedExplicit.isEmpty {
+        return normalizedExplicit
+    }
+    return generationConfigValue.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 private func runtimeResidencyText(for model: Melix_Controlplane_V1_ModelSummary) -> String {
     let residencyState = resolvedResidencyState(for: model)
     let policy = resolvedResidencyPolicy(for: model)
     let pinRequested = resolvedPinRequested(for: model)
     let pinned = resolvedPinned(for: model)
     let ttlSeconds = resolvedTTLSeconds(for: model)
+    let effectiveDiskStreamingMode = resolvedEffectiveDiskStreamingMode(for: model)
 
     var parts = [
         runtimeResidencyStateText(residencyState),
         runtimeMemoryPolicyText(policy),
+        runtimeDiskStreamingModeText(effectiveDiskStreamingMode),
     ]
     if pinRequested && !pinned {
         parts.append("Pin requested")
@@ -4065,6 +8037,9 @@ private func runtimeMemoryText(for model: Melix_Controlplane_V1_ModelSummary) ->
     if model.estimatedBytes > 0 {
         parts.append("\(runtimeFormatBytes(model.estimatedBytes)) estimated")
     }
+    if model.settings.memoryBudgetBytes > 0 {
+        parts.append("\(runtimeFormatBytes(model.settings.memoryBudgetBytes)) budget")
+    }
     if model.inflightRequests > 0 {
         parts.append("\(model.inflightRequests) inflight")
     }
@@ -4079,7 +8054,17 @@ private func runtimeMemoryAlertText(for model: Melix_Controlplane_V1_ModelSummar
     guard runtimeIsMemoryProtectionReason(reason) else {
         return ""
     }
-    return "Memory protection • \(runtimeTransitionReasonText(reason))"
+    var parts = ["Memory protection", runtimeTransitionReasonText(reason)]
+    if model.residency.memoryBudgetBytes > 0 {
+        parts.append("budget \(runtimeFormatBytes(model.residency.memoryBudgetBytes))")
+    }
+    if model.residency.memoryHeadroomBytes > 0 {
+        parts.append("headroom \(runtimeFormatBytes(model.residency.memoryHeadroomBytes))")
+    }
+    if model.residency.requiredBytes > 0 {
+        parts.append("required \(runtimeFormatBytes(model.residency.requiredBytes))")
+    }
+    return parts.joined(separator: " • ")
 }
 
 private func resolvedResidencyState(
@@ -4138,6 +8123,20 @@ private func resolvedTTLSeconds(for model: Melix_Controlplane_V1_ModelSummary) -
     max(model.residency.ttlSeconds, model.settings.ttlSeconds)
 }
 
+private func resolvedEffectiveDiskStreamingMode(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> Melix_Controlplane_V1_DiskStreamingMode {
+    if model.residency.effectiveDiskStreamingMode != .unspecified {
+        return model.residency.effectiveDiskStreamingMode
+    }
+    switch model.state {
+    case .modelWarm, .modelPinned:
+        return model.settings.diskStreamingMode == .unspecified ? .diskStreamingDisabled : model.settings.diskStreamingMode
+    default:
+        return .diskStreamingDisabled
+    }
+}
+
 private func runtimeResidencyStateText(_ state: Melix_Controlplane_V1_ResidencyState) -> String {
     switch state {
     case .discovered:
@@ -4165,6 +8164,7 @@ private func runtimeIsMemoryProtectionReason(_ reason: String) -> Bool {
         return false
     }
     return normalized.contains("memory_budget")
+        || normalized.contains("unsafe_load")
         || normalized.contains("prefill_memory_guard")
         || normalized.contains("quadratic_prefill_guard")
 }

@@ -18,6 +18,7 @@ class ImageEditCore:
         request_id = request.id.request_id
         job_id = f"{request_id}::image-edit"
         created_at_unix_ms = int(time.time() * 1000)
+        operation = _image_edit_operation(request)
 
         loaded_model = self._registry.get_loaded_model(request.model_handle)
         if loaded_model is None:
@@ -25,6 +26,7 @@ class ImageEditCore:
                 request=request,
                 job_id=job_id,
                 created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
                 code="not_found",
                 message="Unknown model handle.",
             )
@@ -34,8 +36,18 @@ class ImageEditCore:
                 request=request,
                 job_id=job_id,
                 created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
                 code="invalid_argument",
                 message="Loaded model does not support image editing.",
+            )
+        if _supports_image_edit(loaded_model.spec) is False:
+            return self._failed_response(
+                request=request,
+                job_id=job_id,
+                created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
+                code="invalid_argument",
+                message=f"Image model {loaded_model.spec.model_id} does not support editing workflows.",
             )
 
         state = self._registry.start_request(request_id, runtime_kind="image")
@@ -52,6 +64,7 @@ class ImageEditCore:
                 request=request,
                 job_id=job_id,
                 created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
                 state=common_pb2.IMAGE_JOB_CANCELED,
                 progress=common_pb2.ImageJobProgress(stage="canceled", pct=0.0),
                 images=[],
@@ -63,6 +76,7 @@ class ImageEditCore:
                 request=request,
                 job_id=job_id,
                 created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
                 code="invalid_argument",
                 message=str(exc),
             )
@@ -71,6 +85,7 @@ class ImageEditCore:
                 request=request,
                 job_id=job_id,
                 created_at_unix_ms=created_at_unix_ms,
+                operation=operation,
                 code="runtime_error",
                 message=str(exc),
             )
@@ -84,6 +99,7 @@ class ImageEditCore:
             request=request,
             job_id=job_id,
             created_at_unix_ms=created_at_unix_ms,
+            operation=operation,
             state=common_pb2.IMAGE_JOB_COMPLETED,
             progress=result.progress,
             images=result.images,
@@ -97,6 +113,7 @@ class ImageEditCore:
         request: inference_pb2.ImageEditRequest,
         job_id: str,
         created_at_unix_ms: int,
+        operation: str,
         code: str,
         message: str,
     ) -> inference_pb2.ImageEditResponse:
@@ -104,6 +121,7 @@ class ImageEditCore:
             request=request,
             job_id=job_id,
             created_at_unix_ms=created_at_unix_ms,
+            operation=operation,
             state=common_pb2.IMAGE_JOB_FAILED,
             progress=common_pb2.ImageJobProgress(stage="failed", pct=0.0),
             images=[],
@@ -117,6 +135,7 @@ class ImageEditCore:
         request: inference_pb2.ImageEditRequest,
         job_id: str,
         created_at_unix_ms: int,
+        operation: str,
         state: int,
         progress: common_pb2.ImageJobProgress,
         images: list[bytes],
@@ -131,7 +150,7 @@ class ImageEditCore:
                 request_id=request.id.request_id,
                 job_id=job_id,
                 model_handle=request.model_handle,
-                operation="image_edit",
+                operation=operation,
                 state=state,
                 progress=progress,
                 artifacts=artifacts,
@@ -139,5 +158,37 @@ class ImageEditCore:
                 cancelable=False,
                 created_at_unix_ms=created_at_unix_ms,
                 updated_at_unix_ms=updated_at_unix_ms,
+                source_artifact_id=request.source_artifact_id,
+                source_job_id=request.ext.get("melix.image.source_job_id", ""),
+                prompt_delta=request.prompt_delta,
+                edit_mode=request.edit_mode,
             ),
         )
+
+
+def _supports_image_edit(model_spec: common_pb2.ModelSpec) -> bool:
+    ext = model_spec.ext
+    raw = ext.get("melix.image.supports_edit", "").strip().lower()
+    if raw in {"true", "1", "yes", "on"}:
+        return True
+    if raw in {"false", "0", "no", "off"}:
+        return False
+    supported_tasks = {
+        part.strip()
+        for part in ext.get("melix.capability.supported_tasks", "").split(",")
+        if part.strip()
+    }
+    if "image_edit" in supported_tasks:
+        return True
+    task_kind = ext.get("melix.image.task_kind", "").strip().lower()
+    if task_kind == "text-to-image":
+        return False
+    return True
+
+
+def _image_edit_operation(request: inference_pb2.ImageEditRequest) -> str:
+    if request.edit_mode == inference_pb2.IMAGE_EDIT_MODE_VARIATION:
+        return "image_variation"
+    if request.edit_mode == inference_pb2.IMAGE_EDIT_MODE_ITERATE:
+        return "image_iterate"
+    return "image_edit"

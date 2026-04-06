@@ -26,6 +26,7 @@ public enum BridgeCommandKind: String, Sendable {
     case searchHubModels = "search-hub-models"
     case getHubModelCard = "get-hub-model-card"
     case runBench = "run-bench"
+    case runBenchMatrix = "run-bench-matrix"
     case runEvaluation = "run-evaluation"
     case exportResults = "export-results"
     case submitResults = "submit-results"
@@ -243,6 +244,16 @@ public struct PythonBridgeWorkerClient:
         try await sendStream(kind: .runBench, request: request, as: Melix_Worker_V1_RunBenchEvent.self)
     }
 
+    public func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        try await sendUnary(
+            kind: .runBenchMatrix,
+            request: request,
+            as: Melix_Worker_V1_RunBenchMatrixResponse.self
+        )
+    }
+
     public func runEvaluation(
         request: Melix_Worker_V1_RunEvaluationRequest
     ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
@@ -329,7 +340,10 @@ public struct PythonBridgeWorkerClient:
             }
             return try Message(serializedBytes: data)
         case "error":
-            throw WorkerClientError.unavailable
+            throw WorkerClientError.requestFailed(
+                code: payload.code ?? "unavailable",
+                message: payload.message ?? "Worker bridge request failed."
+            )
         default:
             throw WorkerClientError.unavailable
         }
@@ -377,10 +391,24 @@ public enum BootstrapWorkerPreparation {
         "melix.audio.voice_mode",
         "melix.audio.output_formats",
         "melix.audio.supports_instructions",
+        "melix.audio.voice_catalog_summary",
+        "melix.audio.voice_locales",
+        "melix.audio.default_locale",
+        "melix.audio.packaged_default_locale",
+        "melix.audio.locale_policy",
     ]
     private static let imageExtKeys = [
         "melix.image.backend_id",
+        "melix.image.family_id",
         "melix.image.task_kind",
+        "melix.image.default_workflow_role",
+        "melix.image.supports_generation",
+        "melix.image.supports_edit",
+        "detected_family_id",
+        "detected_task_kind",
+        "detected_identity_source",
+        "identity_override",
+        "task_override",
     ]
     private static let capabilityExtKeys = [
         "melix.capability.route_kind",
@@ -393,6 +421,18 @@ public enum BootstrapWorkerPreparation {
         "tool_parser_xml_fallback",
     ]
     private static let genericTextExtKeys = [
+        "text_backend_id",
+        "text_family_id",
+        "model_architecture",
+        "detected_architecture",
+        "detected_family_id",
+        "detected_identity_source",
+        "identity_override",
+        "melix.text.attention_profile",
+        "melix.text.rope_profile",
+        "melix.text.moe.enabled",
+        "melix.text.moe.expert_count",
+        "melix.text.moe.gate_dequant",
         "melix.model_path",
         "melix.model_revision",
         "melix.tokenizer_hash",
@@ -402,6 +442,13 @@ public enum BootstrapWorkerPreparation {
         "melix.derived_from_model_id",
         "melix.derived_from_model_revision",
         "melix.activation_mode",
+    ]
+    private static let generationConfigExtKeys = [
+        "melix.generation_config.source",
+        "melix.generation_config.temperature",
+        "melix.generation_config.top_p",
+        "melix.generation_config.max_tokens",
+        "melix.generation_config.do_sample",
     ]
 
     public static func modelSpec(for modelID: String) -> Melix_Worker_V1_ModelSpec? {
@@ -422,8 +469,12 @@ public enum BootstrapWorkerPreparation {
             return devSpeechModel()
         case "melix-whisper-mlx":
             return mlxWhisperModel()
+        case "melix-parakeet-mlx":
+            return mlxParakeetModel()
         case "melix-kokoro-mlx":
             return mlxKokoroModel()
+        case "melix-qwen3-tts-mlx":
+            return mlxQwen3TTSModel()
         case "melix-dev-image":
             return devImageModel()
         default:
@@ -437,6 +488,8 @@ public enum BootstrapWorkerPreparation {
         let baseSpec: Melix_Worker_V1_ModelSpec
         if let builtIn = modelSpec(for: summary.modelID) {
             baseSpec = builtIn
+        } else if let generic = genericOCRModel(from: summary) {
+            baseSpec = generic
         } else if let generic = genericVLMModel(from: summary) {
             baseSpec = generic
         } else if let generic = genericImageModel(from: summary) {
@@ -472,6 +525,9 @@ public enum BootstrapWorkerPreparation {
         for key in genericTextExtKeys {
             applyExtOverride(for: key, from: summary, to: &spec)
         }
+        for key in generationConfigExtKeys {
+            applyExtOverride(for: key, from: summary, to: &spec)
+        }
         let overriddenModelPath = summary.settings.ext["melix.model_path"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !overriddenModelPath.isEmpty {
@@ -496,6 +552,7 @@ public enum BootstrapWorkerPreparation {
         if summary.settings.adaptiveThinking.budgetTokens > 0 {
             spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
         }
+        applySettingsOverride(from: summary, to: &spec)
         return spec
     }
 
@@ -516,6 +573,31 @@ public enum BootstrapWorkerPreparation {
         model.modelKind = "text"
         model.revision = summary.settings.ext["melix.model_revision"] ?? "derived"
         model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-derived"
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
+    }
+
+    private static func genericOCRModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "ocr" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "ocr"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "imported"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? "tok-ocr-imported"
         model.quantProfileID = summary.quantProfileID
         model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
         model.reasoningMode = summary.settings.ext["melix.reasoning_mode"] ?? "off"
@@ -589,6 +671,70 @@ public enum BootstrapWorkerPreparation {
         }
     }
 
+    private static func applySettingsOverride(
+        from summary: Melix_Controlplane_V1_ModelSummary,
+        to spec: inout Melix_Worker_V1_ModelSpec
+    ) {
+        spec.settings.alias = summary.settings.alias
+        spec.settings.typeOverride = summary.settings.typeOverride
+        spec.settings.ttlSeconds = summary.settings.ttlSeconds
+        spec.settings.pinOnLoad = summary.settings.pinOnLoad
+        spec.settings.memoryPolicy = workerMemoryPolicy(for: summary.settings.memoryPolicy)
+        spec.settings.diskStreamingMode = workerDiskStreamingMode(for: summary.settings.diskStreamingMode)
+        spec.settings.cacheMode = workerCacheMode(for: summary.settings.cacheMode)
+        spec.settings.cacheMemoryBudgetBytes = summary.settings.cacheMemoryBudgetBytes
+        spec.settings.cacheMemoryBudgetPct = summary.settings.cacheMemoryBudgetPct
+        spec.settings.cacheBlockSizeTokens = summary.settings.cacheBlockSizeTokens
+        spec.settings.cacheDirectory = summary.settings.cacheDirectory
+        spec.settings.multimodalCacheBudgetBytes = summary.settings.multimodalCacheBudgetBytes
+        spec.settings.ext.merge(summary.settings.ext) { _, new in new }
+    }
+
+    private static func workerMemoryPolicy(
+        for policy: Melix_Controlplane_V1_MemoryResidencyPolicy
+    ) -> Melix_Worker_V1_MemoryResidencyPolicy {
+        switch policy {
+        case .memoryResidencyPinned:
+            return .memoryResidencyPinned
+        case .memoryResidencyTtl:
+            return .memoryResidencyTtl
+        case .memoryResidencyEvictable:
+            return .memoryResidencyEvictable
+        default:
+            return .unspecified
+        }
+    }
+
+    private static func workerDiskStreamingMode(
+        for mode: Melix_Controlplane_V1_DiskStreamingMode
+    ) -> Melix_Worker_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
+    private static func workerCacheMode(
+        for mode: Melix_Controlplane_V1_CacheMode
+    ) -> Melix_Worker_V1_CacheMode {
+        switch mode {
+        case .tiered:
+            return .tiered
+        case .rotating:
+            return .rotating
+        case .hybrid:
+            return .hybrid
+        default:
+            return .unspecified
+        }
+    }
+
     public static func preloadDevTextModel(
         workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,
@@ -641,28 +787,48 @@ public enum BootstrapWorkerPreparation {
             modelCatalog: modelCatalog,
             memoryBudgetBytes: memoryBudgetBytes
         )
-        _ = try await preloadModel(
-            workerClient: workerClient,
+        let ocrModel = await catalogAwareModelSpec(
+            for: "melix-dev-ocr",
             modelCatalog: modelCatalog,
-            model: devOCRModel(),
-            memoryBudgetBytes: memoryBudgetBytes
+            fallback: devOCRModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devVLMModel(),
+            model: ocrModel,
             memoryBudgetBytes: memoryBudgetBytes
+        )
+        let vlmModel = await catalogAwareModelSpec(
+            for: "melix-dev-vlm",
+            modelCatalog: modelCatalog,
+            fallback: devVLMModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devTranscriptionModel(),
+            model: vlmModel,
             memoryBudgetBytes: memoryBudgetBytes
+        )
+        let transcriptionModel = await catalogAwareModelSpec(
+            for: "melix-dev-transcribe",
+            modelCatalog: modelCatalog,
+            fallback: devTranscriptionModel()
         )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devSpeechModel(),
+            model: transcriptionModel,
+            memoryBudgetBytes: memoryBudgetBytes
+        )
+        let speechModel = await catalogAwareModelSpec(
+            for: "melix-dev-speech",
+            modelCatalog: modelCatalog,
+            fallback: devSpeechModel()
+        )
+        _ = try await preloadModel(
+            workerClient: workerClient,
+            modelCatalog: modelCatalog,
+            model: speechModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -677,10 +843,15 @@ public enum BootstrapWorkerPreparation {
             modelCatalog: modelCatalog,
             memoryBudgetBytes: memoryBudgetBytes
         )
+        let imageModel = await catalogAwareModelSpec(
+            for: "melix-dev-image",
+            modelCatalog: modelCatalog,
+            fallback: devImageModel()
+        )
         _ = try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devImageModel(),
+            model: imageModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -698,6 +869,7 @@ public enum BootstrapWorkerPreparation {
         request.memoryBudgetBytes = memoryBudgetBytes
         request.pinOnLoad = true
         request.warmupAfterLoad = false
+        request.diskStreamingMode = model.settings.diskStreamingMode
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {
@@ -857,6 +1029,11 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = ""
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-transcription"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
@@ -884,6 +1061,11 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = "named"
         model.ext["melix.audio.output_formats"] = "wav,mp3"
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = "Deterministic synthetic default voice."
+        model.ext["melix.audio.voice_locales"] = "und"
+        model.ext["melix.audio.default_locale"] = "und"
+        model.ext["melix.audio.packaged_default_locale"] = "und"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
         model.ext["melix.adapter_set_hash"] = "audio-family-deterministic-speech"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
@@ -911,7 +1093,44 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = ""
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
         model.ext["melix.adapter_set_hash"] = "audio-family-whisper"
+        model.ext["melix.capability.route_kind"] = "python_transcription"
+        model.ext["melix.capability.class"] = "transcription"
+        model.ext["melix.capability.supported_modalities"] = "audio,text"
+        model.ext["melix.capability.supported_tasks"] = "transcribe"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxParakeetModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-parakeet-mlx"
+        model.modelPath = "mlx-community/parakeet-tdt-0.6b-v2"
+        model.modelKind = "transcription"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-parakeet-mlx"
+        model.quantProfileID = "fp16"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.stt"
+        model.ext["melix.audio.family_id"] = "parakeet"
+        model.ext["melix.audio.install_profile"] = "audio-stt"
+        model.ext["melix.audio.languages"] = "auto"
+        model.ext["melix.audio.voice_mode"] = ""
+        model.ext["melix.audio.output_formats"] = ""
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] = ""
+        model.ext["melix.audio.voice_locales"] = ""
+        model.ext["melix.audio.default_locale"] = ""
+        model.ext["melix.audio.packaged_default_locale"] = ""
+        model.ext["melix.audio.locale_policy"] = ""
+        model.ext["melix.adapter_set_hash"] = "audio-family-parakeet"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
         model.ext["melix.capability.supported_modalities"] = "audio,text"
@@ -938,7 +1157,46 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.voice_mode"] = "named"
         model.ext["melix.audio.output_formats"] = "wav"
         model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.audio.voice_catalog_summary"] =
+            "Named English voices exposed by the Kokoro speaker catalog."
+        model.ext["melix.audio.voice_locales"] = "en"
+        model.ext["melix.audio.default_locale"] = "en"
+        model.ext["melix.audio.packaged_default_locale"] = "en"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
         model.ext["melix.adapter_set_hash"] = "audio-family-kokoro"
+        model.ext["melix.capability.route_kind"] = "python_speech"
+        model.ext["melix.capability.class"] = "speech"
+        model.ext["melix.capability.supported_modalities"] = "text,audio"
+        model.ext["melix.capability.supported_tasks"] = "speak"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxQwen3TTSModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.modelPath = "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+        model.modelKind = "speech"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-qwen3-tts-mlx"
+        model.quantProfileID = "4bit"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.tts"
+        model.ext["melix.audio.family_id"] = "qwen3-tts"
+        model.ext["melix.audio.install_profile"] = "audio-tts"
+        model.ext["melix.audio.languages"] = "zh,en"
+        model.ext["melix.audio.voice_mode"] = "hybrid"
+        model.ext["melix.audio.output_formats"] = "wav"
+        model.ext["melix.audio.supports_instructions"] = "true"
+        model.ext["melix.audio.voice_catalog_summary"] =
+            "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        model.ext["melix.audio.voice_locales"] = "zh,en"
+        model.ext["melix.audio.default_locale"] = "zh"
+        model.ext["melix.audio.packaged_default_locale"] = "zh"
+        model.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
+        model.ext["melix.adapter_set_hash"] = "audio-family-qwen3-tts"
         model.ext["melix.capability.route_kind"] = "python_speech"
         model.ext["melix.capability.class"] = "speech"
         model.ext["melix.capability.supported_modalities"] = "text,audio"
@@ -965,10 +1223,14 @@ public enum BootstrapWorkerPreparation {
 private struct WorkerBridgeLine: Decodable {
     let kind: String
     let messageBase64: String?
+    let code: String?
+    let message: String?
 
     enum CodingKeys: String, CodingKey {
         case kind
         case messageBase64 = "message_b64"
+        case code
+        case message
     }
 
     static func decode(from line: String) throws -> WorkerBridgeLine {
@@ -1019,7 +1281,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         process.standardError = stderr
 
         try process.run()
-        let terminationStatus = await waitForTermination(
+        _ = await waitForTermination(
             of: process,
             state: terminationState
         )
@@ -1027,8 +1289,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         let output = String(decoding: try stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
         _ = String(decoding: try stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
 
-        guard terminationStatus == 0,
-              let line = output.split(separator: "\n").last.map(String.init),
+        guard let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
         else {
             throw WorkerClientError.unavailable

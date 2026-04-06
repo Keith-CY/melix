@@ -52,6 +52,26 @@ class MemoryBudgetExceeded(Exception):
         }
 
 
+@dataclass
+class DiskStreamingUnsupported(Exception):
+    model_id: str
+    requested_mode: int
+
+    def __str__(self) -> str:
+        return "The selected runtime does not support disk-streaming mode."
+
+    @property
+    def details(self) -> dict[str, str]:
+        return {
+            "model_id": self.model_id,
+            "requested_mode": {
+                common_pb2.DISK_STREAMING_DISABLED: "DISK_STREAMING_DISABLED",
+                common_pb2.DISK_STREAMING_PREFER_DISK: "DISK_STREAMING_PREFER_DISK",
+                common_pb2.DISK_STREAMING_REQUIRE_DISK: "DISK_STREAMING_REQUIRE_DISK",
+            }.get(self.requested_mode, "DISK_STREAMING_MODE_UNSPECIFIED"),
+        }
+
+
 class WorkerRegistry:
     def __init__(
         self,
@@ -110,6 +130,13 @@ class WorkerRegistry:
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
         self._last_language_fallback_count = 0
+        self._last_video_effective_frame_count = 0
+        self._last_video_requested_frame_budget = 0
+        self._last_video_window_ms = 0
+        self._last_temp_media_artifact_count = 0
+        self._last_temp_media_artifact_bytes = 0
+        self._last_temp_media_cleanup_latency_ms = 0.0
+        self._last_temp_media_cleanup_failure_count = 0
         self._last_image_job_latency_ms = 0.0
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
@@ -127,6 +154,7 @@ class WorkerRegistry:
             execution=common_pb2.ExecutionCapabilities(
                 supports_continuous_batching=False,
                 supports_speculative_decoding=False,
+                supports_disk_streaming=False,
             ),
             parsing=common_pb2.ParserCapabilities(
                 supports_tool_call_auto_parsing=False,
@@ -146,8 +174,21 @@ class WorkerRegistry:
         model_spec: common_pb2.ModelSpec,
         pin_on_load: bool = False,
         memory_budget_bytes: int = 0,
+        disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
     ) -> LoadedModel:
-        resolved = self.model_catalog.get(model_spec.model_id) or model_spec
+        resolved = self._resolved_model_spec(model_spec)
+        requested_disk_streaming_mode = self._effective_disk_streaming_mode_request(
+            resolved,
+            request_mode=disk_streaming_mode,
+        )
+        if requested_disk_streaming_mode in {
+            common_pb2.DISK_STREAMING_PREFER_DISK,
+            common_pb2.DISK_STREAMING_REQUIRE_DISK,
+        }:
+            raise DiskStreamingUnsupported(
+                model_id=resolved.model_id,
+                requested_mode=requested_disk_streaming_mode,
+            )
         runtime_kind, runtime = self._runtime_for_model(resolved)
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
@@ -174,7 +215,11 @@ class WorkerRegistry:
             )
 
         runtime_model = runtime.load_model(resolved)
-        residency = self._loaded_residency(resolved, pin_on_load=pin_on_load)
+        residency = self._loaded_residency(
+            resolved,
+            pin_on_load=pin_on_load,
+            effective_disk_streaming_mode=requested_disk_streaming_mode,
+        )
 
         with self._lock:
             handle = f"{resolved.model_id}::{self._next_model_handle}"
@@ -192,6 +237,19 @@ class WorkerRegistry:
             if runtime_kind in {"transcription", "speech"}:
                 self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
             return loaded
+
+    def _resolved_model_spec(self, requested: common_pb2.ModelSpec) -> common_pb2.ModelSpec:
+        catalog_model = self.model_catalog.get(requested.model_id)
+        if catalog_model is None:
+            return requested
+        if self._is_sparse_model_request(requested):
+            return catalog_model
+        return requested
+
+    @staticmethod
+    def _is_sparse_model_request(model_spec: common_pb2.ModelSpec) -> bool:
+        populated_fields = {descriptor.name for descriptor, _ in model_spec.ListFields()}
+        return populated_fields <= {"model_id"}
 
     def unload_model(self, handle: str) -> bool:
         with self._lock:
@@ -267,6 +325,13 @@ class WorkerRegistry:
             last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
             last_voice_fallback_count = self._last_voice_fallback_count
             last_language_fallback_count = self._last_language_fallback_count
+            last_video_effective_frame_count = self._last_video_effective_frame_count
+            last_video_requested_frame_budget = self._last_video_requested_frame_budget
+            last_video_window_ms = self._last_video_window_ms
+            last_temp_media_artifact_count = self._last_temp_media_artifact_count
+            last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
+            last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
+            last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
             last_image_job_latency_ms = self._last_image_job_latency_ms
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
@@ -296,6 +361,13 @@ class WorkerRegistry:
             last_audio_backend_unavailable_count=last_audio_backend_unavailable_count,
             last_voice_fallback_count=last_voice_fallback_count,
             last_language_fallback_count=last_language_fallback_count,
+            last_video_effective_frame_count=last_video_effective_frame_count,
+            last_video_requested_frame_budget=last_video_requested_frame_budget,
+            last_video_window_ms=last_video_window_ms,
+            last_temp_media_artifact_count=last_temp_media_artifact_count,
+            last_temp_media_artifact_bytes=last_temp_media_artifact_bytes,
+            last_temp_media_cleanup_latency_ms=last_temp_media_cleanup_latency_ms,
+            last_temp_media_cleanup_failure_count=last_temp_media_cleanup_failure_count,
             last_image_job_latency_ms=last_image_job_latency_ms,
             last_image_artifact_publish_ms=last_image_artifact_publish_ms,
             last_image_output_bytes=last_image_output_bytes,
@@ -336,6 +408,13 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
+            self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
+            self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
+            self._last_temp_media_artifact_count = int(getattr(probe, "temp_media_artifact_count", 0))
+            self._last_temp_media_artifact_bytes = int(getattr(probe, "temp_media_artifact_bytes", 0))
+            self._last_temp_media_cleanup_latency_ms = float(getattr(probe, "temp_media_cleanup_latency_ms", 0.0))
+            self._last_temp_media_cleanup_failure_count = int(getattr(probe, "temp_media_cleanup_failure_count", 0))
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -354,6 +433,13 @@ class WorkerRegistry:
             self._last_audio_chunk_count = int(getattr(probe, "chunk_count", 0))
             self._last_audio_output_bytes = 0
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -372,6 +458,13 @@ class WorkerRegistry:
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = int(getattr(probe, "output_bytes", 0))
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -397,6 +490,13 @@ class WorkerRegistry:
             self._last_audio_duration_seconds = 0.0
             self._last_audio_chunk_count = 0
             self._last_audio_output_bytes = 0
+            self._last_video_effective_frame_count = 0
+            self._last_video_requested_frame_budget = 0
+            self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = float(getattr(probe, "job_latency_ms", 0.0))
             self._last_image_artifact_publish_ms = float(getattr(probe, "artifact_publish_ms", 0.0))
             self._last_image_output_bytes = int(getattr(probe, "output_bytes", 0))
@@ -473,6 +573,7 @@ class WorkerRegistry:
         model_spec: common_pb2.ModelSpec,
         *,
         pin_on_load: bool,
+        effective_disk_streaming_mode: int,
     ) -> common_pb2.ResidencyInfo:
         policy = self._effective_residency_policy(model_spec, pin_on_load=pin_on_load)
         residency = common_pb2.ResidencyInfo()
@@ -486,6 +587,7 @@ class WorkerRegistry:
         residency.pinned = residency.state == common_pb2.RESIDENCY_STATE_PINNED
         residency.ttl_seconds = model_spec.settings.ttl_seconds
         residency.transition_reason = "load_model"
+        residency.effective_disk_streaming_mode = effective_disk_streaming_mode
         return residency
 
     def _effective_residency_policy(
@@ -502,3 +604,15 @@ class WorkerRegistry:
         if settings.ttl_seconds > 0:
             return common_pb2.MEMORY_RESIDENCY_TTL
         return common_pb2.MEMORY_RESIDENCY_EVICTABLE
+
+    def _effective_disk_streaming_mode_request(
+        self,
+        model_spec: common_pb2.ModelSpec,
+        *,
+        request_mode: int,
+    ) -> int:
+        if request_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            return request_mode
+        if model_spec.settings.disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
+            return model_spec.settings.disk_streaming_mode
+        return common_pb2.DISK_STREAMING_DISABLED

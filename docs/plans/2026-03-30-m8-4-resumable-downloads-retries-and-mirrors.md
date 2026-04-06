@@ -1,5 +1,12 @@
 # M8.4 Resumable Downloads, Retries, And Mirrors
 
+## Status
+
+Completed on 2026-04-04. Melix now ships resumable model-download workflows with explicit retry,
+stall, mirror, and progress-manifest state, exposes that state through the existing worker bridge
+and control-plane model-operations path, and records the changed-line coverage and deterministic
+download-smoke evidence for the touched scope in the backend-foundations implementation plan.
+
 ## Goal
 
 Add resilient model-download flows with resume, retry, stall detection, and mirror support for constrained network environments.

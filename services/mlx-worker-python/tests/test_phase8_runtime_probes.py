@@ -1394,9 +1394,41 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
             "training": {"training_duration_ms": 1420.0, "adapter_publish_ms": 118.0},
             "recovery": recovery,
             "runtime_core": runtime_core,
+            "m9": {
+                "summary": {
+                    "required_probe_count": 23.0,
+                    "missing_probe_count": 0.0,
+                    "failed_threshold_count": 0.0,
+                }
+            },
             "passed": True,
             "failures": [],
         },
+    )
+    monkeypatch.setattr(
+        phase8_metrics_report,
+        "build_closure_audit",
+        lambda repo_root: type(
+            "FakeClosureAudit",
+            (),
+            {
+                "to_dict": staticmethod(
+                    lambda: {
+                        "metrics": {
+                            "closure_audit.blocker_count": 0.0,
+                            "closure_audit.accepted_risk_count": 1.0,
+                            "closure_audit.evidence_gap_count": 0.0,
+                            "closure_audit.deferred_work_count": 1.0,
+                        },
+                        "summary": {
+                            "top_unresolved_findings": [
+                                "M9.8 release-gate wiring remains deferred until ecosystem evidence is consumed by the release gate."
+                            ]
+                        },
+                    }
+                )
+            },
+        )(),
     )
     monkeypatch.setattr(
         phase8_metrics_report,
@@ -1447,6 +1479,9 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["runtime.multi_model_request_success_rate"] == 100.0
     assert metrics["runtime.prefill_memory_guard_rejection_count"] == 1.0
     assert metrics["runtime.prefill_memory_guard_success_rate"] == 100.0
+    assert metrics["release_gate.m9_required_probe_count"] == 23.0
+    assert metrics["release_gate.m9_missing_probe_count"] == 0.0
+    assert metrics["release_gate.m9_failed_threshold_count"] == 0.0
 
 
 def test_phase8_metrics_report_main_returns_nonzero_when_release_gate_fails(

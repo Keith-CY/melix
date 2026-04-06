@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AppMain
@@ -26,6 +27,468 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-text")
         #expect(await metrics.snapshot()["menu.handshake_ms"] != nil)
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
+    }
+
+    @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
+    @MainActor
+    func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(18080)
+        viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+        viewModel.updateSelectedServerSessionRateLimit(240)
+        viewModel.updateSelectedServerSessionTimeout(90)
+
+        await viewModel.applySelectedServerGatewayConfig()
+
+        let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(request.serverSessionID == session.id)
+        #expect(request.host == "0.0.0.0")
+        #expect(request.port == 18_080)
+        #expect(request.servedModelID == "melix-dev-text")
+        #expect(request.rateLimitPerMinute == 240)
+        #expect(request.timeoutSeconds == 90)
+        #expect(session.host == "0.0.0.0")
+        #expect(session.port == 18_080)
+        #expect(session.effectiveHost == "0.0.0.0")
+        #expect(session.effectivePort == 18_080)
+        #expect(session.modelID == "melix-dev-text")
+        #expect(session.gatewayConfigSourceText == "Operator Override")
+        #expect(session.gatewayConfigActiveBinding)
+        #expect(session.gatewayConfigRequiresRestart == false)
+        #expect(await metrics.snapshot()["menu.gateway_config_apply_ms"] != nil)
+    }
+
+    @Test("applySelectedServerServingDefaults sends a typed request and hydrates effective defaults")
+    @MainActor
+    func applySelectedServerServingDefaultsSendsATypedRequestAndHydratesEffectiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.33)
+        viewModel.updateSelectedServerSessionTopP(0.92)
+        viewModel.updateSelectedServerSessionMaxTokens(384)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(3)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(2)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        let session = try #require(viewModel.selectedServerSession)
+
+        #expect(request.serverSessionID == session.id)
+        #expect(request.temperature == 0.33)
+        #expect(request.topP == 0.92)
+        #expect(request.maxTokens == 384)
+        #expect(request.streamIntervalTokens == 3)
+        #expect(request.maxConcurrentRequests == 5)
+        #expect(request.concurrentProcessingEnabled == true)
+        #expect(request.prefillBatchSize == 3)
+        #expect(request.completionBatchSize == 2)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(request.draftModelID == "melix-dev-draft")
+        #expect(request.numDraftTokens == 6)
+        #expect(session.servingDefaults.temperature == 0.33)
+        #expect(session.servingDefaults.topP == 0.92)
+        #expect(session.servingDefaults.maxTokens == 384)
+        #expect(session.servingDefaults.streamIntervalTokens == 3)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.prefillBatchSize == 3)
+        #expect(session.servingDefaults.completionBatchSize == 2)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
+    }
+
+    @Test("applySelectedServerServingDefaults no-ops without a selected session")
+    @MainActor
+    func applySelectedServerServingDefaultsNoOpsWithoutSelectedSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        #expect(await client.recordedServingDefaultsApplyRequests.isEmpty)
+    }
+
+    @Test("applySelectedServerServingDefaultsFromUI schedules the typed request through the view model")
+    @MainActor
+    func applySelectedServerServingDefaultsFromUISchedulesTypedRequest() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.41)
+        viewModel.updateSelectedServerSessionTopP(0.9)
+        viewModel.updateSelectedServerSessionMaxTokens(300)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(6)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(false)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(4)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(3)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(7)
+
+        viewModel.applySelectedServerServingDefaultsFromUI()
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline {
+            if await client.recordedServingDefaultsApplyRequests.isEmpty == false {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        #expect(request.temperature == 0.41)
+        #expect(request.topP == 0.9)
+        #expect(request.maxTokens == 300)
+        #expect(request.streamIntervalTokens == 2)
+        #expect(request.maxConcurrentRequests == 6)
+        #expect(request.concurrentProcessingEnabled == false)
+        #expect(request.prefillBatchSize == 4)
+        #expect(request.completionBatchSize == 3)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(request.draftModelID == "melix-dev-draft")
+        #expect(request.numDraftTokens == 7)
+    }
+
+    @Test("applySelectedServerServingDefaults updates an existing projected summary in the fake control plane client")
+    @MainActor
+    func applySelectedServerServingDefaultsUpdatesExistingProjectedSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.7
+        servingDefaults.requestedTopP = 1.0
+        servingDefaults.requestedMaxTokens = 256
+        servingDefaults.requestedStreamIntervalTokens = 1
+        servingDefaults.requestedMaxConcurrentRequests = 4
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 2
+        servingDefaults.requestedCompletionBatchSize = 2
+        servingDefaults.requestedAccelerationMode = .baseline
+        servingDefaults.effectiveTemperature = 0.7
+        servingDefaults.effectiveTopP = 1.0
+        servingDefaults.effectiveMaxTokens = 256
+        servingDefaults.effectiveStreamIntervalTokens = 1
+        servingDefaults.effectiveMaxConcurrentRequests = 4
+        servingDefaults.effectiveConcurrentProcessingEnabled = true
+        servingDefaults.effectivePrefillBatchSize = 2
+        servingDefaults.effectiveCompletionBatchSize = 2
+        servingDefaults.source = .builtInDefaults
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionTemperature(0.33)
+        viewModel.updateSelectedServerSessionTopP(0.92)
+        viewModel.updateSelectedServerSessionMaxTokens(384)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(3)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(5)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(3)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(2)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.33)
+        #expect(session.servingDefaults.topP == 0.92)
+        #expect(session.servingDefaults.maxTokens == 384)
+        #expect(session.servingDefaults.streamIntervalTokens == 3)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.effectiveTemperature == 0.33)
+        #expect(session.servingDefaults.effectiveTopP == 0.92)
+        #expect(session.servingDefaults.effectiveMaxTokens == 384)
+        #expect(session.servingDefaults.effectiveStreamIntervalTokens == 3)
+        #expect(session.servingDefaults.effectiveMaxConcurrentRequests == 2)
+        #expect(session.servingDefaults.effectiveConcurrentProcessingEnabled == true)
+        #expect(session.servingDefaults.effectivePrefillBatchSize == 2)
+        #expect(session.servingDefaults.effectiveCompletionBatchSize == 2)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(session.servingDefaults.modelOverrideApplied == false)
+    }
+
+    @Test("starting a selected server session persists gateway config and serving defaults before the lifecycle mutation")
+    @MainActor
+    func startingASelectedServerSessionPersistsGatewayConfigAndServingDefaultsBeforeTheLifecycleMutation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.updateSelectedServerSessionHost("127.0.0.1")
+        viewModel.updateSelectedServerSessionPort(18081)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        let applyConfigIndex = try #require(actions.firstIndex(of: "gateway.config:\(serverSessionID)"))
+        let applyServingDefaultsIndex = try #require(actions.firstIndex(of: "serving-defaults.apply:\(serverSessionID)"))
+        let startIndex = try #require(actions.firstIndex(of: "server.start:\(serverSessionID)"))
+
+        #expect(applyConfigIndex < startIndex)
+        #expect(applyServingDefaultsIndex < startIndex)
+        #expect(await client.recordedGatewayConfigApplyRequests.count == 1)
+        #expect(await client.recordedServingDefaultsApplyRequests.count == 1)
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+    }
+
+    @Test("gateway config apply failures block server starts and surface local errors")
+    @MainActor
+    func gatewayConfigApplyFailuresBlockServerStartsAndSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.configureErrors(applyGatewayConfig: MenuBarTestError(description: "persist failed"))
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(viewModel.lastError?.contains("Gateway config apply failed") == true)
+        #expect(viewModel.lastError?.contains("persist failed") == true)
+    }
+
+    @Test("serving defaults apply failures block server starts and surface local errors")
+    @MainActor
+    func servingDefaultsApplyFailuresBlockServerStartsAndSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.configureServingDefaultsApplyError(MenuBarTestError(description: "defaults persist failed"))
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(viewModel.lastError?.contains("Serving defaults apply failed") == true)
+        #expect(viewModel.lastError?.contains("defaults persist failed") == true)
+    }
+
+    @Test("snapshot gateway config projection hydrates requested and effective listener state")
+    @MainActor
+    func snapshotGatewayConfigProjectionHydratesRequestedAndEffectiveListenerState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()],
+            gatewayConfig: makeGatewayConfigSummary(
+                listener: makeGatewayConfigListener(
+                    serverSessionID: "server-session-1",
+                    requestedHost: "0.0.0.0",
+                    requestedPort: 18_090,
+                    effectiveHost: "127.0.0.1",
+                    effectivePort: 11_434,
+                    servedModelID: "melix-dev-text",
+                    rateLimitPerMinute: 360,
+                    timeoutSeconds: 75,
+                    source: .operatorOverride,
+                    activeBinding: true,
+                    requiresRestart: true
+                )
+            )
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.host == "0.0.0.0")
+        #expect(session.port == 18_090)
+        #expect(session.effectiveHost == "127.0.0.1")
+        #expect(session.effectivePort == 11_434)
+        #expect(session.modelID == "melix-dev-text")
+        #expect(session.rateLimitPerMinute == 360)
+        #expect(session.timeoutSeconds == 75)
+        #expect(session.gatewayConfigSourceText == "Operator Override")
+        #expect(session.gatewayConfigActiveBinding)
+        #expect(session.gatewayConfigRequiresRestart)
+    }
+
+    @Test("snapshot gateway config projection maps built-in environment config-file and unknown source labels")
+    @MainActor
+    func snapshotGatewayConfigProjectionMapsSourceLabels() async throws {
+        let cases: [(Melix_Controlplane_V1_GatewayConfigSource, String)] = [
+            (.builtInDefaults, "Built-in Defaults"),
+            (.environmentDefaults, "Environment Defaults"),
+            (.configFileImport, "Config File Import"),
+            (.UNRECOGNIZED(99), "Unknown Source"),
+        ]
+
+        for (source, expected) in cases {
+            let client = FakeControlPlaneXPCClient()
+            let snapshot = makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession()],
+                gatewayConfig: makeGatewayConfigSummary(
+                    listener: makeGatewayConfigListener(
+                        serverSessionID: "server-session-1",
+                        requestedHost: "127.0.0.1",
+                        requestedPort: 11_434,
+                        effectiveHost: "127.0.0.1",
+                        effectivePort: 11_434,
+                        servedModelID: "melix-dev-text",
+                        rateLimitPerMinute: 120,
+                        timeoutSeconds: 60,
+                        source: source,
+                        activeBinding: true,
+                        requiresRestart: false
+                    )
+                )
+            )
+            await client.configureSnapshot(snapshot)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+
+            #expect(viewModel.selectedServerSession?.gatewayConfigSourceText == expected)
+        }
+    }
+
+    @Test("snapshot serving defaults projection hydrates requested and effective generation state")
+    @MainActor
+    func snapshotServingDefaultsProjectionHydratesRequestedAndEffectiveGenerationState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()],
+            gatewayConfig: makeGatewayConfigSummary(
+                listener: makeGatewayConfigListener(
+                    serverSessionID: "server-session-1",
+                    requestedHost: "127.0.0.1",
+                    requestedPort: 11_434,
+                    effectiveHost: "127.0.0.1",
+                    effectivePort: 11_434,
+                    servedModelID: "melix-dev-text",
+                    rateLimitPerMinute: 120,
+                    timeoutSeconds: 60,
+                    source: .operatorOverride,
+                    activeBinding: true,
+                    requiresRestart: false
+                )
+            )
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.requestedTemperature = 0.31
+        servingDefaults.requestedTopP = 0.89
+        servingDefaults.requestedMaxTokens = 400
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedDraftModelID = "melix-dev-draft"
+        servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.effectiveTemperature = 0.2
+        servingDefaults.effectiveTopP = 0.88
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 5
+        servingDefaults.effectiveAccelerationMode = .speculativeDecode
+        servingDefaults.effectiveDraftModelID = "melix-dev-draft"
+        servingDefaults.effectiveNumDraftTokens = 6
+        servingDefaults.source = .operatorOverride
+        servingDefaults.modelOverrideApplied = true
+        var projectedSnapshot = snapshot
+        projectedSnapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(projectedSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.31)
+        #expect(session.servingDefaults.topP == 0.89)
+        #expect(session.servingDefaults.maxTokens == 400)
+        #expect(session.servingDefaults.streamIntervalTokens == 2)
+        #expect(session.servingDefaults.maxConcurrentRequests == 5)
+        #expect(session.servingDefaults.accelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.effectiveTemperature == 0.2)
+        #expect(session.servingDefaults.effectiveTopP == 0.88)
+        #expect(session.servingDefaults.effectiveMaxTokens == 512)
+        #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
+        #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
+        #expect(session.servingDefaults.sourceText == "Operator Override")
+        #expect(session.servingDefaults.modelOverrideApplied)
+    }
+
+    @Test("snapshot serving defaults projection keeps local defaults when no summary is available")
+    @MainActor
+    func snapshotServingDefaultsProjectionKeepsLocalDefaultsWhenSummaryIsMissing() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession()]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.servingDefaults.temperature == 0.7)
+        #expect(session.servingDefaults.topP == 1.0)
+        #expect(session.servingDefaults.maxTokens == 256)
+        #expect(session.servingDefaults.streamIntervalTokens == 1)
+        #expect(session.servingDefaults.maxConcurrentRequests == 4)
+        #expect(session.servingDefaults.accelerationMode == "baseline")
+        #expect(session.servingDefaults.numDraftTokens == 0)
+        #expect(session.servingDefaults.sourceText == "Built-in Defaults")
+        #expect(session.servingDefaults.modelOverrideApplied == false)
     }
 
     @Test("lora model selection falls back to the first text model and stays empty without text models")
@@ -89,6 +552,155 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.selectedSurface == .api)
         #expect(viewModel.selectedServerSession?.id == restoredServerSession.id)
+    }
+
+    @Test("persists selected tool section and restores it across restart")
+    @MainActor
+    func persistsSelectedToolSectionAndRestoresAcrossRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tool-section-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+
+        await viewModel.start()
+        viewModel.selectToolSection(.diagnostics)
+
+        let persistedData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedPayload = try #require(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        #expect(persistedPayload["selected_surface"] as? String == DesktopSurface.tools.rawValue)
+        #expect(persistedPayload["selected_tool_section"] as? String == DesktopToolSection.diagnostics.rawValue)
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedToolSection == .diagnostics)
+    }
+
+    @Test("restores models library tool section when persisted state predates selected tool sections")
+    @MainActor
+    func restoresDefaultToolSectionForLegacyOperatorSessionState() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tool-section-legacy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-restored",
+            title: "Restored Server",
+            modelID: "melix-dev-text",
+            lifecycle: .running
+        )
+
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .tools,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let legacyData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let legacyPayload = try #require(
+            JSONSerialization.jsonObject(with: legacyData) as? [String: Any]
+        )
+        var mutatedPayload = legacyPayload
+        mutatedPayload.removeValue(forKey: "selected_tool_section")
+        let mutatedData = try JSONSerialization.data(withJSONObject: mutatedPayload, options: [.sortedKeys])
+        try mutatedData.write(to: melixHome.operatorSessionFileURL, options: [.atomic])
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedToolSection == .modelsLibrary)
+    }
+
+    @Test("persists download queue state and restores it across shell restart")
+    @MainActor
+    func persistsDownloadQueueStateAndRestoresItAcrossShellRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-download-queue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let fixture = MenuBarDownloadFixture(
+            jobID: "model-ops-0042",
+            sourceModel: "melix-dev-text",
+            status: "stalled",
+            stage: "download",
+            pct: 0.5,
+            outputDir: "/tmp/melix-downloads/melix-dev-text",
+            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+            selectedMirror: "https://mirror.example/hf",
+            downloadedBytes: 1024,
+            totalBytes: 2048,
+            resumeUsed: true,
+            resumeFromBytes: 512,
+            retryCount: 1,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [fixture]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let firstViewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore
+        )
+        await firstViewModel.start()
+        firstViewModel.selectToolSection(.downloads)
+        await firstViewModel.refreshDownloadQueueState()
+
+        let persistedData = try Data(contentsOf: melixHome.operatorSessionFileURL)
+        let persistedPayload = try #require(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        let persistedQueue = try #require(persistedPayload["download_queue"] as? [[String: Any]])
+        #expect(persistedQueue.count == 1)
+        #expect(persistedQueue.first?["job_id"] as? String == "model-ops-0042")
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restoredViewModel.start()
+
+        let restoredQueue = try #require(restoredViewModel.downloadQueue.first)
+        #expect(restoredQueue.jobID == "model-ops-0042")
+        #expect(restoredQueue.resumeReady)
+        #expect(restoredQueue.statusText == "Stalled")
     }
 
     @Test("generatesPrimaryAPIKeyForSelectedServerSession and forces api key auth mode")
@@ -454,9 +1066,9 @@ struct RuntimeViewModelTests {
         #expect(await dedupeClient.recordedGatewayAccessApplyRequests.count == 1)
     }
 
-    @Test("chat requires a running server session before sending prompts")
+    @Test("chat requires an interactive server session before sending prompts")
     @MainActor
-    func chatRequiresRunningServerSession() async throws {
+    func chatRequiresInteractiveServerSession() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
@@ -467,8 +1079,68 @@ struct RuntimeViewModelTests {
 
         let actions = await client.recordedActions
         #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError?.contains("Server Session") == true)
+        #expect(viewModel.chatStatusText == "Stopped")
+        #expect(viewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+    }
+
+    @Test("sleeping chat stays interactive while paused chat is blocked")
+    @MainActor
+    func sleepingChatStaysInteractiveWhilePausedChatIsBlocked() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let sleepingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .sleeping,
+                    powerState: .deepSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 240,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+        await client.configureSnapshot(sleepingSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "wake on demand"
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }))
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
+        #expect(viewModel.selectedChatServerSession?.chatWorkspaceNoticeState?.severity == .info)
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .paused,
+                    powerState: .active,
+                    wakeReason: .policyApply,
+                    idleTimerSeconds: 120,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("expected selected chat server session to enter paused state") {
+            viewModel.selectedChatServerSession?.lifecycle == .paused
+        }
+
+        viewModel.chatComposerText = "blocked while paused"
+        let recordedChatCount = await client.recordedActions.filter { $0.hasPrefix("chat:") }.count
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.filter { $0.hasPrefix("chat:") }.count == recordedChatCount)
+        #expect(viewModel.chatStatusText == "Paused")
+        #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
     }
 
     @Test("creating a chat session binds it to the selected server session")
@@ -534,6 +1206,7 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionTemperature(-1)
         viewModel.updateSelectedServerSessionTopP(5)
         viewModel.updateSelectedServerSessionMaxTokens(0)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(0)
         viewModel.updateSelectedServerSessionMaxConcurrentRequests(0)
 
         let configuredServer = try #require(viewModel.selectedServerSession)
@@ -546,16 +1219,251 @@ struct RuntimeViewModelTests {
         #expect(configuredServer.servingDefaults.temperature == 0)
         #expect(configuredServer.servingDefaults.topP == 1)
         #expect(configuredServer.servingDefaults.maxTokens == 1)
+        #expect(configuredServer.servingDefaults.streamIntervalTokens == 1)
         #expect(configuredServer.servingDefaults.maxConcurrentRequests == 1)
 
         await viewModel.startSelectedServerSession()
-        #expect(await client.recordedActions.contains("load:melix-dev-text"))
+        #expect(await client.recordedActions.contains("server.start:\(createdServer.id)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
 
+        let runningServerID = try #require(viewModel.selectedServerSession?.id)
         await viewModel.stopSelectedServerSession()
-        #expect(await client.recordedActions.contains("unload:melix-dev-text"))
+        #expect(await client.recordedActions.contains("server.stop:\(runningServerID)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .stopped)
         #expect(stateChangeCount > 0)
+    }
+
+    @Test("server lifecycle controls and idle policy updates hydrate the selected session")
+    @MainActor
+    func serverLifecycleControlsAndIdlePolicyUpdatesHydrateSelectedSession() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+
+        await viewModel.pauseSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.pause:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .paused)
+        #expect(viewModel.selectedServerSession?.wakeReason == .policyApply)
+
+        await viewModel.resumeSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.resume:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+        #expect(viewModel.selectedServerSession?.wakeReason == .operatorResume)
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .sleeping,
+                    powerState: .lightSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 180,
+                    autoSleepEnabled: false,
+                    lightSleepAfterSeconds: 0,
+                    deepSleepAfterSeconds: 0
+                )
+            ]
+        )
+        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state") {
+            viewModel.selectedServerSession?.lifecycle == .sleeping
+        }
+
+        await viewModel.wakeSelectedServerSession()
+        #expect(await client.recordedActions.contains("server.wake:\(serverSessionID)"))
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+
+        viewModel.updateSelectedServerSessionAutoSleepEnabled(true)
+        viewModel.updateSelectedServerSessionLightSleepAfterSeconds(300)
+        viewModel.updateSelectedServerSessionDeepSleepAfterSeconds(900)
+        await viewModel.applySelectedServerIdlePolicy()
+
+        let idlePolicyRequest = try #require(await client.recordedServerIdlePolicyRequests.last)
+        #expect(idlePolicyRequest.serverSessionID == serverSessionID)
+        #expect(idlePolicyRequest.autoSleepEnabled)
+        #expect(idlePolicyRequest.lightSleepAfterSeconds == 300)
+        #expect(idlePolicyRequest.deepSleepAfterSeconds == 900)
+        #expect(viewModel.selectedServerSession?.autoSleepEnabled == true)
+        #expect(viewModel.selectedServerSession?.lightSleepAfterSeconds == 300)
+        #expect(viewModel.selectedServerSession?.deepSleepAfterSeconds == 900)
+
+        let metricValues = await metrics.snapshot()
+        #expect(metricValues["menu.server_pause_ms"] != nil)
+        #expect(metricValues["menu.server_resume_ms"] != nil)
+        #expect(metricValues["menu.server_wake_ms"] != nil)
+        #expect(metricValues["menu.server_idle_policy_ms"] != nil)
+    }
+
+    @Test("server lifecycle helper entry points no-op without a selected session or explicit id")
+    @MainActor
+    func serverLifecycleHelperEntryPointsNoOpWithoutSelectedSessionOrExplicitID() async throws {
+        let client = EmptySnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.stopSelectedServerSession()
+        await viewModel.pauseSelectedServerSession()
+        await viewModel.resumeSelectedServerSession()
+        await viewModel.wakeSelectedServerSession()
+        await viewModel.applySelectedServerIdlePolicy()
+
+        await viewModel.startServerSession(id: "")
+        await viewModel.stopServerSession(id: "")
+        await viewModel.pauseServerSession(id: "")
+        await viewModel.resumeServerSession(id: "")
+        await viewModel.wakeServerSession(id: "")
+
+        #expect(await client.recordedActions.isEmpty)
+    }
+
+    @Test("server lifecycle and idle policy failures surface local errors")
+    @MainActor
+    func serverLifecycleAndIdlePolicyFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.configureErrors(pauseServer: MenuBarTestError(description: "pause failed"))
+        await viewModel.pauseSelectedServerSession()
+        #expect(viewModel.lastError?.contains("pause failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: MenuBarTestError(description: "resume failed")
+        )
+        await viewModel.resumeSelectedServerSession()
+        #expect(viewModel.lastError?.contains("resume failed") == true)
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .sleeping,
+                    powerState: .lightSleep,
+                    wakeReason: .requestActivity
+                )
+            ]
+        )
+        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state before wake failure") {
+            viewModel.selectedServerSession?.lifecycle == .sleeping
+        }
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: MenuBarTestError(description: "wake failed")
+        )
+        await viewModel.wakeSelectedServerSession()
+        #expect(viewModel.lastError?.contains("wake failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: nil,
+            stopServer: MenuBarTestError(description: "stop failed")
+        )
+        await viewModel.stopSelectedServerSession()
+        #expect(viewModel.lastError?.contains("stop failed") == true)
+
+        await client.configureErrors(
+            pauseServer: nil,
+            resumeServer: nil,
+            wakeServer: nil,
+            stopServer: nil,
+            updateServerIdlePolicy: MenuBarTestError(description: "idle policy failed")
+        )
+        viewModel.updateSelectedServerSessionAutoSleepEnabled(true)
+        viewModel.updateSelectedServerSessionLightSleepAfterSeconds(300)
+        viewModel.updateSelectedServerSessionDeepSleepAfterSeconds(900)
+        await viewModel.applySelectedServerIdlePolicy()
+
+        #expect(viewModel.lastError?.contains("idle policy failed") == true)
+    }
+
+    @Test("chat blocked messages cover starting restored stopped and failed server sessions")
+    @MainActor
+    func chatBlockedMessagesCoverStartingStoppedAndFailedServerSessions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let startingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .loading,
+                    powerState: .active,
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+        await client.configureSnapshot(startingSnapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "starting blocked"
+        await viewModel.submitChatPrompt()
+        #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
+
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-stopping-chat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let stoppingServer = DesktopServerSessionState(
+            id: "server-session-stopping",
+            title: "Stopping Server",
+            modelID: "melix-dev-text",
+            lifecycle: .stopping,
+            powerState: .active
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .chat,
+                selectedServerSessionID: stoppingServer.id,
+                serverSessions: [stoppingServer]
+            )
+        )
+
+        let stoppingClient = FakeControlPlaneXPCClient()
+        let stoppingViewModel = RuntimeViewModel(
+            client: stoppingClient,
+            operatorSessionStore: operatorSessionStore
+        )
+        await stoppingViewModel.start()
+        stoppingViewModel.selectServerSession(id: stoppingServer.id)
+        #expect(stoppingViewModel.selectedServerSession?.lifecycle == .stopped)
+        stoppingViewModel.createChatSession()
+        #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
+        stoppingViewModel.chatComposerText = "stopping blocked"
+        await stoppingViewModel.submitChatPrompt()
+        #expect(stoppingViewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+
+        let failingClient = FakeControlPlaneXPCClient()
+        let failingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .error,
+                    powerState: .stopped
+                )
+            ]
+        )
+        await failingClient.configureSnapshot(failingSnapshot)
+        await failingClient.configureErrors(pauseServer: MenuBarTestError(description: "gpu lost"))
+        let failingViewModel = RuntimeViewModel(client: failingClient)
+        await failingViewModel.start()
+        failingViewModel.createChatSession()
+        await failingViewModel.pauseSelectedServerSession()
+        failingViewModel.chatComposerText = "error blocked"
+        await failingViewModel.submitChatPrompt()
+        #expect(failingViewModel.lastError == "Recover the failed Server Session before sending chat prompts. gpu lost")
     }
 
     @Test("agent integration exports mirror the selected server session and record metrics")
@@ -673,6 +1581,64 @@ struct RuntimeViewModelTests {
         #expect(export.shellSnippet.contains("x-api-key") == false)
         #expect(authReference.contains("configured but disabled"))
         #expect(authReference.contains("desktop-agent, codex"))
+    }
+
+    @Test("persistent session metrics hydrate remembered-session operator state")
+    @MainActor
+    func persistentSessionMetricsHydrateRememberedSessionOperatorState() async throws {
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            gatewayAccess: makeGatewayAccessSummary(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                acceptedApiKeyCount: 1,
+                keyHints: ["desktop-agent"]
+            )
+        )
+        snapshot.metrics.values["persistent_session.active_session_count"] = 3
+        snapshot.metrics.values["persistent_session.remembered_session_count"] = 2
+        snapshot.metrics.values["persistent_session.expired_session_count"] = 1
+        snapshot.metrics.values["persistent_session.retention_ttl_seconds"] = 86_400
+        snapshot.metrics.values["persistent_session.sign_out_latency_ms"] = 14
+
+        let client = SnapshotControlPlaneXPCClient(snapshot: snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.selectedServerSession)
+        #expect(session.activeAuthSessionCount == 3)
+        #expect(session.rememberedAuthSessionCount == 2)
+        #expect(session.expiredRememberedSessionCount == 1)
+        #expect(session.authSessionRetentionSeconds == 86_400)
+        #expect(session.lastAuthSessionSignOutLatencyMs == 14)
+        #expect(session.persistentSessionSummaryText.contains("2 remembered"))
+    }
+
+    @Test("persistent session summary covers active-only and empty session states")
+    func persistentSessionSummaryCoversActiveOnlyAndEmptyStates() {
+        let activeOnly = DesktopServerSessionState(
+            id: "active-only",
+            title: "Active Only",
+            modelID: "melix-dev-text",
+            activeAuthSessionCount: 1,
+            rememberedAuthSessionCount: 0,
+            expiredRememberedSessionCount: 0,
+            authSessionRetentionSeconds: 300
+        )
+        let empty = DesktopServerSessionState(
+            id: "empty",
+            title: "Empty",
+            modelID: "melix-dev-text",
+            activeAuthSessionCount: 0,
+            rememberedAuthSessionCount: 0,
+            expiredRememberedSessionCount: 0,
+            authSessionRetentionSeconds: 60
+        )
+
+        #expect(activeOnly.persistentSessionSummaryText == "1 gateway sessions active. TTL 300s.")
+        #expect(empty.persistentSessionSummaryText == "No remembered gateway sessions. TTL 60s.")
     }
 
     @Test("switching auth mode away from shared access restores local-only trust state")
@@ -855,6 +1821,40 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedChatSession?.id == originalSession.id)
     }
 
+    @Test("chat export sanitizes transcript markdown without mutating stored transcript state")
+    @MainActor
+    func chatExportSanitizesTranscriptMarkdownWithoutMutatingStoredTranscriptState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureChatEvents([
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+            .tokenDelta("<b>assistant</b> [click](javascript:alert(1))"),
+            .completed(
+                finishReason: "stop",
+                assistantText: "<b>assistant</b> [click](javascript:alert(1))",
+                reasoningText: ""
+            ),
+        ])
+
+        await viewModel.start()
+        viewModel.chatComposerText = "<i>Export me</i> file:///tmp/melix"
+        await viewModel.submitChatPrompt()
+
+        let assistantEntry = try #require(viewModel.chatTranscript.first(where: { $0.kind == .assistant }))
+        #expect(assistantEntry.body.contains("<b>assistant</b>"))
+        let exportPath = try #require(viewModel.exportSelectedChatSession())
+        let exported = try String(contentsOfFile: exportPath, encoding: .utf8)
+
+        #expect(exported.contains("<b>") == false)
+        #expect(exported.contains("<i>") == false)
+        #expect(exported.contains("javascript:") == false)
+        #expect(exported.contains("file:///tmp/melix") == false)
+        #expect(exported.contains("assistant click"))
+        #expect(exported.contains("[unsafe link removed]"))
+        #expect(viewModel.selectedChatSession?.transcript.contains(where: { $0.body.contains("<b>assistant</b>") }) == true)
+    }
+
     @Test("guarded server and chat actions no-op safely before hydration")
     @MainActor
     func guardedServerAndChatActionsNoOpSafelyBeforeHydration() async throws {
@@ -920,16 +1920,26 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Unavailable")
 
         let failingClient = FakeControlPlaneXPCClient()
-        await failingClient.configureErrors(load: MenuBarTestError(description: "load failed"))
+        let failingSnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .error,
+                    powerState: .stopped
+                )
+            ]
+        )
+        await failingClient.configureSnapshot(failingSnapshot)
+        await failingClient.configureErrors(pauseServer: MenuBarTestError(description: "pause failed"))
         let failingViewModel = RuntimeViewModel(client: failingClient)
         await failingViewModel.start()
-        failingViewModel.createServerSession()
-        await failingViewModel.startSelectedServerSession()
+        await failingViewModel.pauseSelectedServerSession()
 
         let failingBanner = try #require(failingViewModel.desktopBannerState)
         #expect(failingBanner.severity == .critical)
         #expect(failingBanner.title.contains("Needs Recovery"))
-        #expect(failingBanner.detail.contains("load failed"))
+        #expect(failingBanner.detail.contains("pause failed"))
     }
 
     @Test("critical banner surfaces failed runtime state")
@@ -1034,11 +2044,316 @@ struct RuntimeViewModelTests {
         await viewModel.downloadAudioModel(modelID: "melix-whisper-mlx")
 
         let requests = await client.recordedModelOperationRequests
-        #expect(requests.count == 2)
+        #expect(requests.count == 3)
         #expect(requests[1].operation == "download")
         #expect(requests[1].modelID == "melix-whisper-mlx")
+        #expect(requests[2].operation == "registry_snapshot")
         #expect(viewModel.audioSetupActions.isEmpty)
         #expect(viewModel.lastModelOperation?.operation == "download")
+    }
+
+    @Test("download queue refresh parses registry snapshot rows and surfaces recovery signals")
+    @MainActor
+    func downloadQueueRefreshParsesRegistrySnapshotRowsAndSurfacesRecoverySignals() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0043",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.75,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/hf",
+                            downloadedBytes: 3072,
+                            totalBytes: 4096,
+                            resumeUsed: true,
+                            resumeFromBytes: 1024,
+                            retryCount: 2,
+                            stallDetectionCount: 1,
+                            stallReason: "no_progress_timeout",
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+
+        let queueEntry = try #require(viewModel.downloadQueue.first)
+        #expect(queueEntry.jobID == "model-ops-0043")
+        #expect(queueEntry.resumeReady)
+        #expect(queueEntry.progressText.contains("75%"))
+        #expect(queueEntry.transferDetailText.contains("mirror.example/hf"))
+        #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Download Recovery Available" }))
+        #expect(await client.recordedModelOperationRequests.last?.operation == "registry_snapshot")
+    }
+
+    @Test("download queue entry state formats status progress transfer and activity labels")
+    func downloadQueueEntryStateFormatsStatusProgressTransferAndActivityLabels() {
+        let stalled = makeRuntimeDownloadQueueEntryState(
+            status: "stalled",
+            pct: 0.25,
+            selectedMirror: "https://mirror.example/hf",
+            downloadedBytes: 1024,
+            totalBytes: 4096,
+            resumeUsed: true,
+            resumeFromBytes: 512,
+            retryCount: 2,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+        let running = makeRuntimeDownloadQueueEntryState(status: "running", pct: 0.1, totalBytes: 0)
+        let retrying = makeRuntimeDownloadQueueEntryState(status: "retrying")
+        let completed = makeRuntimeDownloadQueueEntryState(status: "completed")
+        let failed = makeRuntimeDownloadQueueEntryState(status: "failed")
+        let unknown = makeRuntimeDownloadQueueEntryState(status: " ")
+
+        #expect(stalled.statusText == "Stalled")
+        #expect(running.statusText == "Running")
+        #expect(retrying.statusText == "Retrying")
+        #expect(completed.statusText == "Completed")
+        #expect(failed.statusText == "Failed")
+        #expect(unknown.statusText == "Unknown")
+        #expect(stalled.progressText.contains("25%"))
+        #expect(running.progressText == "10%")
+        #expect(stalled.transferDetailText.contains("https://mirror.example/hf"))
+        #expect(stalled.transferDetailText.contains("retries 2"))
+        #expect(stalled.transferDetailText.contains("stall detections 1"))
+        #expect(stalled.transferDetailText.contains("no progress timeout"))
+        #expect(stalled.transferDetailText.contains("resumed from"))
+        #expect(stalled.resumeActionTitle == "Resume Download")
+        #expect(stalled.isActive == false)
+        #expect(running.isActive)
+        #expect(retrying.isActive)
+    }
+
+    @Test("resume download reuses original output directory and mirror before refreshing queue state")
+    @MainActor
+    func resumeDownloadReusesOriginalOutputDirectoryAndMirror() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let fixture = MenuBarDownloadFixture(
+            jobID: "model-ops-0044",
+            sourceModel: "melix-dev-text",
+            status: "failed",
+            stage: "download",
+            pct: 0.5,
+            outputDir: "/tmp/melix-downloads/melix-dev-text",
+            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+            selectedMirror: "https://mirror.example/resume",
+            downloadedBytes: 2048,
+            totalBytes: 4096,
+            resumeUsed: true,
+            resumeFromBytes: 1024,
+            retryCount: 1,
+            stallDetectionCount: 1,
+            stallReason: "no_progress_timeout",
+            resumeReady: true
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(roots: [], downloads: [fixture])
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: fixture.outputPath,
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        await viewModel.resumeDownload(jobID: fixture.jobID)
+
+        let requests = await client.recordedModelOperationRequests
+        let downloadRequest = try #require(requests.first(where: { $0.operation == "download" }))
+        #expect(downloadRequest.outputDir == fixture.outputDir)
+        #expect(downloadRequest.ext["mirror_url"] == fixture.selectedMirror)
+        #expect(requests.filter { $0.operation == "registry_snapshot" }.count == 2)
+    }
+
+    @Test("download queue refresh handles empty catalog targets registry errors and queue ordering")
+    @MainActor
+    func downloadQueueRefreshHandlesEmptyTargetsErrorsAndOrdering() async throws {
+        let emptyClient = FakeControlPlaneXPCClient()
+        await emptyClient.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        let emptyViewModel = RuntimeViewModel(client: emptyClient)
+        await emptyViewModel.refreshDownloadQueueState()
+        #expect(await emptyClient.recordedModelOperationRequests.isEmpty)
+
+        let failingClient = FakeControlPlaneXPCClient()
+        await failingClient.configureErrors(modelOperation: MenuBarTestError(description: "registry snapshot failed"))
+        let failingViewModel = RuntimeViewModel(client: failingClient)
+        await failingViewModel.start()
+        await failingViewModel.refreshDownloadQueueState()
+        #expect(failingViewModel.lastError?.contains("registry snapshot failed") == true)
+
+        let orderingClient = FakeControlPlaneXPCClient()
+        let manifestJSON = """
+        {
+          "jobs": [],
+          "adapters": [],
+          "derived_models": [],
+          "downloads": [
+            {
+              "job_id": "model-ops-0040",
+              "source_model": "melix-dev-text",
+              "status": "running",
+              "stage": "download",
+              "pct": 0.2,
+              "output_dir": "/tmp/melix-downloads/melix-dev-text",
+              "output_path": "/tmp/melix-downloads/melix-dev-text/download.artifact",
+              "partial_path": "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+              "state_path": "/tmp/melix-downloads/melix-dev-text/download.state.json",
+              "selected_mirror": "",
+              "downloaded_bytes": 512,
+              "total_bytes": 4096,
+              "resume_used": false,
+              "resume_from_bytes": 0,
+              "retry_count": 0,
+              "stall_detection_count": 0,
+              "stall_reason": "",
+              "resume_ready": false
+            },
+            {
+              "job_id": "model-ops-0009",
+              "source_model": "melix-dev-text",
+              "status": "failed",
+              "stage": "download",
+              "pct": 0.6,
+              "output_dir": "/tmp/melix-downloads/melix-dev-text",
+              "output_path": "/tmp/melix-downloads/melix-dev-text/download.artifact",
+              "partial_path": "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+              "state_path": "/tmp/melix-downloads/melix-dev-text/download.state.json",
+              "selected_mirror": "https://mirror.example/recoverable",
+              "downloaded_bytes": 2048,
+              "total_bytes": 4096,
+              "resume_used": true,
+              "resume_from_bytes": 1024,
+              "retry_count": 1,
+              "stall_detection_count": 1,
+              "stall_reason": "no_progress_timeout",
+              "resume_ready": true
+            },
+            {
+              "job_id": "model-ops-invalid",
+              "source_model": "",
+              "status": "failed",
+              "stage": "download",
+              "pct": 0.1,
+              "output_dir": "",
+              "output_path": "",
+              "partial_path": "",
+              "state_path": "",
+              "selected_mirror": "",
+              "downloaded_bytes": 0,
+              "total_bytes": 0,
+              "resume_used": false,
+              "resume_from_bytes": 0,
+              "retry_count": 0,
+              "stall_detection_count": 0,
+              "stall_reason": "",
+              "resume_ready": true
+            }
+          ],
+          "model_registry": {
+            "scanned_at_unix_ms": 1712300000000,
+            "roots": []
+          }
+        }
+        """
+        await orderingClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: manifestJSON
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let orderingViewModel = RuntimeViewModel(client: orderingClient)
+        await orderingViewModel.start()
+        await orderingViewModel.refreshDownloadQueueState()
+
+        #expect(orderingViewModel.downloadQueue.count == 2)
+        #expect(orderingViewModel.downloadQueue.first?.jobID == "model-ops-0009")
+        #expect(orderingViewModel.downloadQueue.last?.jobID == "model-ops-0040")
+    }
+
+    @Test("download primary model uses a stable per-model output directory and refreshes queue state")
+    @MainActor
+    func downloadPrimaryModelUsesStablePerModelOutputDirectoryAndRefreshesQueueState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "job-download",
+                            sourceModel: "melix-dev-text",
+                            status: "running",
+                            stage: "download",
+                            pct: 1.0,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://huggingface.co",
+                            downloadedBytes: 4096,
+                            totalBytes: 4096,
+                            resumeReady: false
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.downloadPrimaryModel()
+
+        let requests = await client.recordedModelOperationRequests
+        let downloadRequest = try #require(requests.first(where: { $0.operation == "download" }))
+        let refreshRequest = try #require(requests.last(where: { $0.operation == "registry_snapshot" }))
+
+        #expect(downloadRequest.outputDir.contains("melix-downloads"))
+        #expect(downloadRequest.outputDir.contains("melix-dev-text"))
+        #expect(refreshRequest.operation == "registry_snapshot")
+        #expect(viewModel.downloadQueue.first?.sourceModel == "melix-dev-text")
     }
 
     @Test("load and unload actions dispatch through the client and refresh app state")
@@ -1090,6 +2405,131 @@ struct RuntimeViewModelTests {
         #expect(viewModel.connectionDetailText == "Handshake failed")
         #expect(viewModel.lastError?.contains("Startup failed:") == true)
         #expect(viewModel.lastError?.contains("handshake failed") == true)
+    }
+
+    @Test("start uses packaged startup diagnostics and refreshes update status when available")
+    @MainActor
+    func startUsesPackagedStartupDiagnostics() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureErrors(handshake: MenuBarTestError(description: "handshake failed"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update available: 0.2.0",
+                    detail: "Current 0.1.0 on stable",
+                    isAvailable: true,
+                    checkSucceeded: true
+                ),
+                startupDiagnosticResponse: ProductStartupFailureDiagnostic(
+                    classification: "host_port_conflict",
+                    userMessage: "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.",
+                    detail: "Ready probe: http://127.0.0.1:11434/v1/models"
+                )
+            )
+        )
+
+        await viewModel.start()
+        let foundationSettings = viewModel.desktopFoundationState.settings
+        let hasUpdateRow = foundationSettings.contains { row in
+            row.id == "product-update" && row.value == "Update available: 0.2.0"
+        }
+        let hasUpdateDetailRow = foundationSettings.contains { row in
+            row.id == "product-update-detail" && row.value == "Current 0.1.0 on stable"
+        }
+
+        #expect(viewModel.productUpdateSummary == "Update available: 0.2.0")
+        #expect(viewModel.productUpdateDetail == "Current 0.1.0 on stable")
+        #expect(viewModel.lastError == "Startup failed: port 11434 is already in use. Check /tmp/control-plane.stderr.log and restart Melix.")
+        #expect(viewModel.desktopBannerState?.title == "Operator Attention Required")
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" && $0.isDismissible })
+        #expect(hasUpdateRow)
+        #expect(hasUpdateDetailRow)
+        #expect(await metrics.snapshot()["update.check_success_rate"] == 100)
+        #expect(await metrics.snapshot()["startup.failure_classification_count"] == 1)
+    }
+
+    @Test("update banners are dismissible and persist across restart until the version changes")
+    @MainActor
+    func updateBannersPersistDismissalAcrossRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-update-banner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let initialProvider = StubProductInstallStateProvider(
+            updateStatusResponse: ProductUpdateStatus(
+                summary: "Update available: 0.2.0",
+                detail: "Current 0.1.0 on stable",
+                isAvailable: true,
+                checkSucceeded: true
+            ),
+            startupDiagnosticResponse: nil
+        )
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: initialProvider
+        )
+
+        await viewModel.start()
+
+        let initialBanner = try #require(viewModel.desktopBannerState)
+        #expect(initialBanner.isDismissible)
+        #expect(initialBanner.title == "Update available: 0.2.0")
+
+        viewModel.dismissDesktopBanner()
+        #expect(viewModel.desktopBannerState == nil)
+
+        let restoredViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: initialProvider
+        )
+        await restoredViewModel.start()
+        #expect(restoredViewModel.desktopBannerState == nil)
+
+        let upgradedProvider = StubProductInstallStateProvider(
+            updateStatusResponse: ProductUpdateStatus(
+                summary: "Update available: 0.3.0",
+                detail: "Current 0.1.0 on stable",
+                isAvailable: true,
+                checkSucceeded: true
+            ),
+            startupDiagnosticResponse: nil
+        )
+        let upgradedViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore,
+            productInstallStateProvider: upgradedProvider
+        )
+        await upgradedViewModel.start()
+
+        #expect(upgradedViewModel.desktopBannerState?.title == "Update available: 0.3.0")
+    }
+
+    @Test("critical runtime banners ignore dismiss requests")
+    @MainActor
+    func criticalRuntimeBannersIgnoreDismissRequests() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await client.sendServerStateChanged(state: .serverFailed)
+
+        try await waitForRuntimeViewModelCondition("critical runtime banner should appear") {
+            viewModel.desktopBannerState?.severity == .critical
+        }
+
+        let banner = try #require(viewModel.desktopBannerState)
+        #expect(banner.isDismissible == false)
+        viewModel.dismissDesktopBanner()
+        #expect(viewModel.desktopBannerState?.id == banner.id)
     }
 
     @Test("load and unload surface client failures in app state")
@@ -1242,7 +2682,10 @@ struct RuntimeViewModelTests {
             ttlSeconds: 600,
             estimatedBytes: 512 * 1024 * 1024,
             inflightRequests: 3,
-            memoryPolicy: .memoryResidencyPinned
+            memoryPolicy: .memoryResidencyPinned,
+            memoryBudgetBytes: 768 * 1024 * 1024,
+            memoryHeadroomBytes: 256 * 1024 * 1024,
+            requiredBytes: 896 * 1024 * 1024
         )
 
         let row = makeRuntimeModelRow(guarded)
@@ -1253,7 +2696,11 @@ struct RuntimeViewModelTests {
         #expect(row.residencyText.contains("Pin requested"))
         #expect(row.memoryText.contains("estimated"))
         #expect(row.memoryText.contains("3 inflight"))
-        #expect(row.memoryAlertText == "Memory protection • Memory budget exceeded")
+        #expect(row.memoryAlertText.contains("Memory protection"))
+        #expect(row.memoryAlertText.contains("Memory budget exceeded"))
+        #expect(row.memoryAlertText.contains("budget 768 MB"))
+        #expect(row.memoryAlertText.contains("headroom 256 MB"))
+        #expect(row.memoryAlertText.contains("required 896 MB"))
     }
 
     @Test("runtime model row surfaces adaptive thinking policy")
@@ -1314,6 +2761,35 @@ struct RuntimeViewModelTests {
     @MainActor
     func desktopFoundationDerivesOperatorPanelsFromSnapshotTruth() async throws {
         let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        var surface = Melix_Controlplane_V1_APIOnboardingSurfaceSummary()
+        surface.surfaceID = "openai_compatible"
+        surface.title = "OpenAI-Compatible"
+        surface.status = .shipped
+        surface.endpointIds = ["responses"]
+        var endpoint = Melix_Controlplane_V1_APIReferenceEndpointSummary()
+        endpoint.endpointID = "responses"
+        endpoint.surfaceID = "openai_compatible"
+        endpoint.method = "POST"
+        endpoint.path = "/v1/responses"
+        endpoint.summary = "Run Responses-style generation."
+        endpoint.streaming = true
+        snapshot.apiOnboarding.surfaces = [surface]
+        snapshot.apiOnboarding.endpoints = [endpoint]
+        var queue = Melix_Controlplane_V1_QueueSummary()
+        var decode = Melix_Controlplane_V1_QueueLaneSummary()
+        decode.laneID = "text.decode.interactive"
+        decode.laneClass = "interactive-decode"
+        decode.activeRequests = 1
+        queue.lanes = [decode]
+        snapshot.queues = queue
+        var metrics = Melix_Controlplane_V1_MetricsSummary()
+        metrics.values = ["http.translation_ms": 2.4]
+        snapshot.metrics = metrics
+        await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
@@ -1640,6 +3116,200 @@ struct RuntimeViewModelTests {
         #expect(hasCachePressureMetric)
     }
 
+    @Test("snapshot runtime sessions project typed lifecycle and power metadata into server sessions")
+    @MainActor
+    func snapshotRuntimeSessionsProjectTypedLifecycleAndPowerMetadataIntoServerSessions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    lifecycleState: .sleeping,
+                    powerState: .deepSleep,
+                    wakeReason: .requestActivity,
+                    idleTimerSeconds: 120,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 900
+                )
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let session = try #require(viewModel.serverSessions.first)
+        #expect(session.id == "server-session-1")
+        #expect(session.lifecycle == .sleeping)
+        #expect(session.powerState == .deepSleep)
+        #expect(session.wakeReason == .requestActivity)
+        #expect(session.idleTimerSeconds == 120)
+        #expect(session.autoSleepEnabled)
+        #expect(session.lightSleepAfterSeconds == 300)
+        #expect(session.deepSleepAfterSeconds == 900)
+    }
+
+    @Test("server state changed events update runtime session lifecycle metadata")
+    @MainActor
+    func serverStateChangedEventsUpdateRuntimeSessionLifecycleMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let serverSessionID = viewModel.serverSessions.first?.id ?? "server-session-1"
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: serverSessionID,
+                    lifecycleState: .paused,
+                    powerState: .active,
+                    wakeReason: .policyApply,
+                    idleTimerSeconds: 42,
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 300,
+                    deepSleepAfterSeconds: 1200
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("server runtime session event should project paused state") {
+            viewModel.serverSessions.first?.lifecycle == .paused
+                && viewModel.serverSessions.first?.wakeReason == .policyApply
+        }
+
+        let session = try #require(viewModel.serverSessions.first)
+        let foundation = viewModel.desktopFoundationState
+        #expect(session.lifecycle == .paused)
+        #expect(session.powerState == .active)
+        #expect(session.wakeReason == .policyApply)
+        #expect(session.idleTimerSeconds == 42)
+        #expect(session.autoSleepEnabled)
+        #expect(session.deepSleepAfterSeconds == 1200)
+        #expect(foundation.logs.contains(where: { $0.message.contains("Paused") && $0.message.contains("Active") }))
+    }
+
+    @Test("runtime session fallback and enum mapping cover loading stopped error and unknown states")
+    @MainActor
+    func runtimeSessionFallbackAndEnumMappingCoverLoadingStoppedErrorAndUnknownStates() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runtime-session-fallback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-restored",
+            title: "Restored Server",
+            modelID: "melix-dev-text",
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .server,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(state: .modelWarm)],
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: "detached-runtime-session",
+                    lifecycleState: .loading,
+                    powerState: .lightSleep,
+                    wakeReason: .operatorResume
+                )
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+
+        await viewModel.start()
+
+        let sessionID = try #require(viewModel.serverSessions.first?.id)
+        let hydrated = try #require(viewModel.serverSessions.first)
+        #expect(hydrated.lifecycle == .starting)
+        #expect(hydrated.powerState == .lightSleep)
+        #expect(hydrated.wakeReason == .operatorResume)
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .stopped,
+                    powerState: .stopped,
+                    wakeReason: .toolActivity
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project stopped/tool activity state") {
+            viewModel.serverSessions.first?.lifecycle == .stopped
+                && viewModel.serverSessions.first?.powerState == .stopped
+                && viewModel.serverSessions.first?.wakeReason == .toolActivity
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .error,
+                    powerState: .UNRECOGNIZED(777),
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project error and unavailable power state") {
+            viewModel.serverSessions.first?.lifecycle == .error
+                && viewModel.serverSessions.first?.powerState == .unavailable
+                && viewModel.serverSessions.first?.wakeReason == .initialBoot
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .ready,
+                    powerState: .active,
+                    wakeReason: .UNRECOGNIZED(888)
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should project ready state and unknown wake reason fallback") {
+            viewModel.serverSessions.first?.lifecycle == .running
+                && viewModel.serverSessions.first?.powerState == .active
+                && viewModel.serverSessions.first?.wakeReason == .unspecified
+        }
+
+        await client.sendServerStateChanged(
+            state: .serverReady,
+            runtimeSessions: [
+                makeRuntimeSession(
+                    serverSessionID: sessionID,
+                    lifecycleState: .UNRECOGNIZED(999),
+                    powerState: .active,
+                    wakeReason: .initialBoot
+                )
+            ]
+        )
+
+        try await waitForRuntimeViewModelCondition("runtime session should fall back to unavailable lifecycle for unknown values") {
+            viewModel.serverSessions.first?.lifecycle == .unavailable
+        }
+    }
+
     @Test("request progress events map all operator-facing phase labels")
     @MainActor
     func requestProgressEventsMapAllOperatorFacingPhaseLabels() async throws {
@@ -1753,6 +3423,330 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_settings_ms"] != nil)
     }
 
+    @Test("model settings drafts apply typed controls and inspect effective defaults")
+    @MainActor
+    func modelSettingsDraftsApplyTypedControlsAndInspectEffectiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = makeModelSummary(modelID: "melix-dev-ocr", state: .modelDiscovered)
+        model.kind = "ocr"
+        model.supportedModalities = ["image"]
+        model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        model.settings.ext["melix.generation_config.source"] = "/tmp/melix-dev-ocr/generation_config.json"
+        model.settings.ext["melix.generation_config.temperature"] = "0.12"
+        model.settings.ext["melix.generation_config.top_p"] = "0.9"
+        model.settings.ext["melix.generation_config.max_tokens"] = "320"
+        model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        model.cachePolicy.effectiveMode = .hybrid
+        model.cachePolicy.compatibility = .cacheCompatibilityCompatible
+        model.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
+        model.cachePolicy.effectiveDirectory = "/tmp/melix-dev-ocr/cache"
+        model.cachePolicy.effectiveBlockSizeTokens = 64
+        model.cachePolicy.effectiveCacheMemoryBudgetBytes = 4_096
+        model.cachePolicy.effectiveMultimodalCacheBudgetBytes = 2_048
+        model.cachePolicy.initialCacheBlocks = 4
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsAliasDraft = "Melix Text Turbo"
+        viewModel.modelSettingsTypeOverrideDraft = "mlx-text"
+        viewModel.modelSettingsTTLDraft = "600"
+        viewModel.modelSettingsPinOnLoadDraft = true
+        viewModel.modelSettingsMemoryPolicyDraft = "ttl"
+        viewModel.modelSettingsMemoryBudgetDraft = "32768"
+        viewModel.modelSettingsAccelerationModeDraft = "active_kv_quantized"
+        viewModel.modelSettingsAccelerationProfileIDDraft = "kv-q8"
+        viewModel.modelSettingsCacheModeDraft = "rotating"
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "4096"
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "25"
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "64"
+        viewModel.modelSettingsCacheDirectoryDraft = "/tmp/melix-dev-ocr/cache"
+        viewModel.modelSettingsMultimodalCacheBudgetDraft = "2048"
+        viewModel.modelSettingsAdaptiveThinkingModeDraft = "adaptive"
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "192"
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsOCRSamplingProfileDraft = "ocr-operator"
+        viewModel.modelSettingsOCRTemperatureDraft = "0.05"
+        viewModel.modelSettingsOCRTopPDraft = "0.82"
+        viewModel.modelSettingsOCRMaxTokensDraft = "192"
+
+        await viewModel.applyPrimaryModelSettings()
+        await viewModel.inspectPrimaryModel()
+
+        #expect(await client.recordedActions.contains("settings:melix-dev-ocr"))
+        #expect(viewModel.primaryModel?.alias == "Melix Text Turbo")
+        #expect(viewModel.primaryModel?.typeOverrideText == "mlx-text")
+        #expect(viewModel.primaryModel?.adaptiveThinkingText == "Adaptive • 192 tok")
+        #expect(viewModel.primaryModel?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.typeOverrideText == "mlx-text")
+        #expect(viewModel.selectedModelInfo?.ttlSeconds == 600)
+        #expect(viewModel.selectedModelInfo?.memoryBudgetText == "32 KB")
+        #expect(viewModel.selectedModelInfo?.adaptiveThinkingText == "Adaptive • 192 tok")
+        #expect(viewModel.selectedModelInfo?.toolParserFallbackText == "XML")
+        #expect(viewModel.selectedModelInfo?.cacheModeText == "Hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Compatible")
+        #expect(viewModel.selectedModelInfo?.cacheDirectoryText == "/tmp/melix-dev-ocr/cache")
+        #expect(viewModel.selectedModelInfo?.cacheBlockSizeText == "64 tokens")
+        #expect(viewModel.selectedModelInfo?.cacheBudgetText == "4 KB")
+        #expect(viewModel.selectedModelInfo?.multimodalCacheBudgetText == "2 KB")
+        #expect(viewModel.selectedModelInfo?.initialCacheBlocksText == "4")
+        #expect(viewModel.selectedModelInfo?.ocrSamplingProfileText == "ocr-operator")
+        #expect(viewModel.selectedModelInfo?.ocrTemperatureText == "0.05")
+        #expect(viewModel.selectedModelInfo?.ocrTopPText == "0.82")
+        #expect(viewModel.selectedModelInfo?.ocrMaxTokensText == "192")
+        #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
+    }
+
+    @Test("model settings validation guards invalid drafts resets typed values and no-ops without a primary model")
+    @MainActor
+    func modelSettingsValidationGuardsInvalidDraftsResetsValuesAndNoOpsWithoutPrimaryModel() async throws {
+        let idleClient = FakeControlPlaneXPCClient()
+        let idleViewModel = RuntimeViewModel(client: idleClient)
+        await idleViewModel.applyPrimaryModelSettings()
+        #expect(await idleClient.recordedActions.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsAliasDraft = "Draft Alias"
+        viewModel.modelSettingsTTLDraft = "oops"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "TTL seconds must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsTTLDraft = "120"
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "still-bad"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Adaptive thinking budget must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsAdaptiveThinkingBudgetDraft = "32"
+        viewModel.modelSettingsMemoryBudgetDraft = "bad-budget"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Memory budget bytes must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsMemoryBudgetDraft = "1024"
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "bad-cache-budget"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache memory budget bytes must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheMemoryBudgetDraft = "4096"
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "bad-cache-pct"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache memory budget percent must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheMemoryBudgetPctDraft = "25"
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "bad-block"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Cache block size tokens must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsCacheBlockSizeTokensDraft = "64"
+        viewModel.modelSettingsMultimodalCacheBudgetDraft = "bad-multimodal"
+        await viewModel.applyPrimaryModelSettings()
+
+        #expect(viewModel.lastError == "Multimodal cache budget bytes must be an unsigned integer.")
+        #expect(await client.recordedActions.isEmpty)
+
+        viewModel.modelSettingsAliasDraft = "Mutated Alias"
+        viewModel.modelSettingsTypeOverrideDraft = "mlx-mutated"
+        viewModel.resetPrimaryModelSettingsDrafts()
+
+        #expect(viewModel.modelSettingsAliasDraft == viewModel.primaryModel?.alias)
+        #expect(viewModel.modelSettingsTypeOverrideDraft == viewModel.primaryModel?.typeOverrideText)
+    }
+
+    @Test("model settings drafts normalize unknown residency acceleration and adaptive defaults")
+    @MainActor
+    func modelSettingsDraftsNormalizeUnknownResidencyAccelerationAndAdaptiveDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        model.settings.memoryPolicy = .UNRECOGNIZED(999)
+        model.settings.defaultAccelerationMode = .UNRECOGNIZED(999)
+        model.settings.adaptiveThinking.mode = ""
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.modelSettingsMemoryPolicyDraft == "evictable")
+        #expect(viewModel.modelSettingsAccelerationModeDraft == "baseline")
+        #expect(viewModel.modelSettingsAdaptiveThinkingModeDraft == "off")
+
+        model.settings.memoryPolicy = .memoryResidencyPinned
+        model.residency.policy = .memoryResidencyPinned
+        model.settings.defaultAccelerationMode = .sparsePrefill
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+        await viewModel.refreshDesktopFoundation()
+        viewModel.resetPrimaryModelSettingsDrafts()
+
+        #expect(viewModel.modelSettingsMemoryPolicyDraft == "pinned")
+        #expect(viewModel.modelSettingsAccelerationModeDraft == "sparse_prefill")
+    }
+
+    @Test("cache policy helpers hydrate row text info summaries and cache mode drafts")
+    @MainActor
+    func cachePolicyHelpersHydrateRowTextInfoSummariesAndCacheModeDrafts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var tieredModel = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        tieredModel.settings.cacheMode = .tiered
+        tieredModel.cachePolicy.effectiveMode = .tiered
+        tieredModel.cachePolicy.compatibility = .cacheCompatibilityCompatible
+        tieredModel.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
+        tieredModel.cachePolicy.effectiveDirectory = "/var/melix/cache"
+        tieredModel.cachePolicy.effectiveCacheMemoryBudgetPct = 25
+        tieredModel.cachePolicy.initialCacheBlocks = 4
+
+        var rotatingModel = makeModelSummary(modelID: "melix-dev-rotate", state: .modelWarm)
+        rotatingModel.settings.cacheMode = .rotating
+        rotatingModel.cachePolicy.requestedMode = .rotating
+        rotatingModel.cachePolicy.effectiveMode = .rotating
+        rotatingModel.cachePolicy.compatibility = .cacheCompatibilityLimited
+        rotatingModel.cachePolicy.compatibilityReason = "requested cache mode is not advertised by the worker"
+        rotatingModel.cachePolicy.requestedDirectory = "/tmp/requested-cache"
+        rotatingModel.cachePolicy.effectiveDirectory = "/var/melix/cache"
+        rotatingModel.cachePolicy.requestedBlockSizeTokens = 32
+        rotatingModel.cachePolicy.effectiveBlockSizeTokens = 64
+
+        var hybridModel = makeModelSummary(modelID: "melix-dev-hybrid", state: .modelWarm)
+        hybridModel.kind = "vlm"
+        hybridModel.supportedModalities = ["text", "image"]
+        hybridModel.settings.cacheMode = .hybrid
+        hybridModel.cachePolicy.requestedMode = .hybrid
+        hybridModel.cachePolicy.effectiveMode = .hybrid
+        hybridModel.cachePolicy.compatibility = .cacheCompatibilityDisabled
+        hybridModel.cachePolicy.compatibilityReason = "requested cache policy is disabled by the current worker safety profile"
+        hybridModel.cachePolicy.effectiveDirectory = "/var/melix/cache-vlm"
+        hybridModel.cachePolicy.requestedCacheMemoryBudgetBytes = 8_192
+        hybridModel.cachePolicy.effectiveCacheMemoryBudgetBytes = 16_384
+        hybridModel.cachePolicy.requestedMultimodalCacheBudgetBytes = 2_048
+        hybridModel.cachePolicy.effectiveMultimodalCacheBudgetBytes = 4_096
+
+        var unknownModel = makeModelSummary(modelID: "melix-dev-unknown", state: .modelWarm)
+        unknownModel.settings.cacheMode = .unspecified
+        unknownModel.cachePolicy.effectiveMode = .unspecified
+        unknownModel.cachePolicy.compatibility = .cacheCompatibilityUnknown
+        unknownModel.cachePolicy.compatibilityReason = "worker cache compatibility evidence is unavailable"
+
+        snapshot.models = [tieredModel, rotatingModel, hybridModel, unknownModel]
+        await client.configureSnapshot(snapshot)
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8192
+        info.supportedParsers = ["text", "json"]
+        info.supportedModalities = ["text", "image"]
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = viewModel.desktopFoundationState.models
+        #expect(rows.first(where: { $0.modelID == "melix-dev-text" })?.cachePolicyText == "Compatible • Tiered")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-text" })?.cacheSettingsText == "/var/melix/cache • cache 25%")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-rotate" })?.cachePolicyText == "Limited • Rotating")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-rotate" })?.cacheSettingsText == "/var/melix/cache • block 64")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cachePolicyText == "Disabled • Hybrid")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cacheSettingsText == "/var/melix/cache-vlm • cache 16 KB • multimodal 4 KB")
+        #expect(rows.first(where: { $0.modelID == "melix-dev-unknown" })?.cachePolicyText == "Unknown • Unspecified")
+        #expect(viewModel.modelSettingsCacheModeDraft == "tiered")
+
+        await viewModel.fetchModelInfo(modelID: "melix-dev-rotate")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Limited")
+        #expect(viewModel.selectedModelInfo?.cacheDirectoryText == "/tmp/requested-cache -> /var/melix/cache")
+        #expect(viewModel.selectedModelInfo?.cacheBlockSizeText == "32 -> 64 tokens")
+
+        await client.configureModelInfo({
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "vlm"
+            info.maxContext = 8192
+            info.supportedParsers = ["text", "json"]
+            info.supportedModalities = ["text", "image"]
+            return info
+        }())
+        await viewModel.fetchModelInfo(modelID: "melix-dev-hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheModeText == "Hybrid")
+        #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Disabled")
+        #expect(viewModel.selectedModelInfo?.cacheBudgetText == "8 KB -> 16 KB")
+        #expect(viewModel.selectedModelInfo?.multimodalCacheBudgetText == "2 KB -> 4 KB")
+
+        let rotatingClient = FakeControlPlaneXPCClient()
+        var rotatingSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        rotatingSnapshot.serverState = .serverReady
+        var rotatingPrimary = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        rotatingPrimary.settings.cacheMode = .rotating
+        rotatingSnapshot.models = [rotatingPrimary]
+        await rotatingClient.configureSnapshot(rotatingSnapshot)
+        let rotatingViewModel = RuntimeViewModel(client: rotatingClient)
+        await rotatingViewModel.start()
+        #expect(rotatingViewModel.modelSettingsCacheModeDraft == "rotating")
+
+        let hybridClient = FakeControlPlaneXPCClient()
+        var hybridSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        hybridSnapshot.serverState = .serverReady
+        var hybridPrimary = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        hybridPrimary.settings.cacheMode = .hybrid
+        hybridSnapshot.models = [hybridPrimary]
+        await hybridClient.configureSnapshot(hybridSnapshot)
+        let hybridViewModel = RuntimeViewModel(client: hybridClient)
+        await hybridViewModel.start()
+        #expect(hybridViewModel.modelSettingsCacheModeDraft == "hybrid")
+    }
+
+    @Test("model loads forward configured memory budget bytes to the client")
+    @MainActor
+    func modelLoadsForwardConfiguredMemoryBudgetBytesToTheClient() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-dev-text", state: .modelDiscovered)
+        model.settings.memoryBudgetBytes = 65_536
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.loadModel(modelID: "melix-dev-text")
+
+        #expect(await client.lastLoadMemoryBudgetBytes == 65_536)
+    }
+
+    @Test("fake control-plane client default load helper uses a zero memory budget")
+    func fakeControlPlaneClientDefaultLoadHelperUsesZeroMemoryBudget() async throws {
+        let client = FakeControlPlaneXPCClient()
+
+        _ = try await client.loadModel(modelID: "melix-dev-text")
+
+        #expect(await client.lastLoadMemoryBudgetBytes == 0)
+    }
+
     @Test("model info ops doctor and bench dispatch through the client and populate tool state")
     @MainActor
     func modelInfoOpsDoctorAndBenchPopulateToolState() async throws {
@@ -1837,6 +3831,47 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
     }
 
+    @Test("doctor report maps typed health and findings into runtime state")
+    @MainActor
+    func doctorReportMapsTypedHealthAndFindingsIntoRuntimeState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        var degraded = Melix_Controlplane_V1_DoctorFinding()
+        degraded.code = "model_not_loaded"
+        degraded.severity = .degraded
+        degraded.summary = "Model missing from registry"
+        degraded.detail = "The requested handle was not found."
+
+        var failed = Melix_Controlplane_V1_DoctorFinding()
+        failed.code = "worker_failed"
+        failed.severity = .failed
+        failed.summary = "Worker failed"
+        failed.detail = "Worker state is failed."
+
+        var unknown = Melix_Controlplane_V1_DoctorFinding()
+        unknown.code = "cache_unavailable"
+        unknown.severity = .unspecified
+        unknown.summary = "Cache unavailable"
+        unknown.detail = "The cache report did not contain resident bytes."
+
+        await client.configureDoctorResponse(
+            "# Melix Doctor\n\n- worker_state: warning\n",
+            healthStatus: .warning,
+            findings: [degraded, failed, unknown]
+        )
+
+        await viewModel.start()
+        await viewModel.runDoctor()
+
+        let report = try #require(viewModel.lastDoctorReport)
+        #expect(report.healthStatusText == "Warning")
+        #expect(report.findings.count == 3)
+        #expect(report.findings[0].id == "model_not_loaded")
+        #expect(report.findings[0].severityText == "Degraded")
+        #expect(report.findings[1].severityText == "Failed")
+        #expect(report.findings[2].severityText == "Unknown")
+    }
+
     @Test("benchmark configuration dispatches explicit model suites history refresh and csv export")
     @MainActor
     func benchmarkConfigurationDispatchesExplicitModelSuitesHistoryRefreshAndCSVExport() async throws {
@@ -1900,6 +3935,108 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.bench_export_csv_ms"] != nil)
     }
 
+    @Test("benchmark configuration forwards canonical context lengths batch sizes repeats cache reasoning and structured output controls")
+    @MainActor
+    func benchmarkConfigurationForwardsCanonicalControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.tokens_per_second": 61.20]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
+        viewModel.selectedBenchBatchSizes = [4, 2, 4]
+        viewModel.benchRepeats = "3"
+        viewModel.benchCacheProfile = "partial_prefix"
+        viewModel.benchReasoningMode = "enabled"
+        viewModel.benchStructuredOutputMode = "json_schema"
+
+        await viewModel.runBench()
+
+        let request = try #require(await client.recordedBenchRequests.last)
+        #expect(request.contextLengths == [1024, 4096])
+        #expect(request.batchSizes == [2, 4])
+        #expect(request.repeats == 3)
+        #expect(request.cacheProfile == "partial_prefix")
+        #expect(request.reasoningMode == "enabled")
+        #expect(request.structuredOutputMode == "json_schema")
+        #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.benchmarkMetricCards.count == 3)
+        #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
+    }
+
+    @Test("rich output state sanitization covers doctor bench evaluation previews and local errors")
+    @MainActor
+    func richOutputStateSanitizationCoversDoctorBenchEvaluationPreviewsAndLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await client.configureDoctorResponse("# <b>Doctor</b> [open](file:///tmp/melix)")
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-sanitize/bench-report.md",
+                reportMarkdown: "# <b>Bench</b> [click](javascript:alert(1))",
+                metrics: ["<b>bench.smoke.ttft_ms</b>": 21.10]
+            )
+        )
+        let maliciousExportBundle = makeBenchmarkExportBundleJSON()
+            .replacingOccurrences(
+                of: "What is 2 + 2?",
+                with: "<b>What is 2 + 2?</b> [click](javascript:alert(1))"
+            )
+            .replacingOccurrences(of: "\"Lyon\"", with: "\"<script>alert(1)</script>Lyon\"")
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: maliciousExportBundle)
+        )
+
+        await viewModel.start()
+        await viewModel.runDoctor()
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+
+        #expect(viewModel.lastDoctorReport?.markdown == "# Doctor open")
+        #expect(viewModel.lastBenchReport?.markdown == "# Bench click")
+        #expect(viewModel.lastBenchReport?.metrics.first?.name == "bench.smoke.ttft_ms")
+        let firstPreview = try #require(viewModel.evaluationSamplePreview.first)
+        #expect(firstPreview.question.contains("<b>") == false)
+        #expect(firstPreview.question.contains("javascript:") == false)
+        #expect(firstPreview.question == "What is 2 + 2? click")
+        let secondPreview = try #require(viewModel.evaluationSamplePreview.last)
+        #expect(secondPreview.predicted == "Lyon")
+        #expect(secondPreview.rawResponse == "Lyon")
+
+        await client.configureErrors(bench: MenuBarTestError(description: "<b>boom</b> [click](javascript:alert(1))"))
+        await viewModel.runBench()
+
+        #expect(viewModel.lastError == "boom click")
+        #expect(viewModel.desktopFoundationState.logs.contains(where: { $0.message == "boom click" }))
+    }
+
     @Test("benchmark selection state falls back and benchmark guard rails surface local errors")
     @MainActor
     func benchmarkSelectionStateFallsBackAndGuardRailsSurfaceLocalErrors() async throws {
@@ -1947,6 +4084,51 @@ struct RuntimeViewModelTests {
         let imageBenchRequest = try #require(await imageOnlyClient.recordedBenchRequests.last)
         #expect(imageBenchRequest.modelID == "melix-dev-image")
         #expect(imageOnlyViewModel.lastError == nil)
+    }
+
+    @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
+    @MainActor
+    func benchmarkAndEvaluationControlNormalizationFillsDefaultsAndPreservesToggleState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedBenchContextLengths = []
+        viewModel.selectedBenchBatchSizes = []
+        viewModel.benchRepeats = ""
+        viewModel.benchCacheProfile = ""
+        viewModel.benchReasoningMode = "  enabled  "
+        viewModel.benchStructuredOutputMode = " json_schema "
+        viewModel.evaluationScoringMode = ""
+        viewModel.evaluationCodeExecPolicy = ""
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedBenchContextLengths == [1024, 4096])
+        #expect(viewModel.selectedBenchBatchSizes == [2, 4])
+        #expect(viewModel.benchRepeats == "3")
+        #expect(viewModel.benchCacheProfile == "cold")
+        #expect(viewModel.benchReasoningMode == "enabled")
+        #expect(viewModel.benchStructuredOutputMode == "json_schema")
+        #expect(viewModel.evaluationScoringMode == "multiple_choice_accuracy")
+        #expect(viewModel.evaluationCodeExecPolicy == "sandboxed")
+
+        viewModel.toggleBenchContextLength(1024)
+        #expect(viewModel.selectedBenchContextLengths == [4096])
+        viewModel.toggleBenchContextLength(1024)
+        #expect(viewModel.selectedBenchContextLengths == [1024, 4096])
+
+        viewModel.toggleBenchBatchSize(4)
+        #expect(viewModel.selectedBenchBatchSizes == [2])
+        viewModel.toggleBenchBatchSize(4)
+        #expect(viewModel.selectedBenchBatchSizes == [2, 4])
     }
 
     @Test("benchmark direct repo mode dispatches hf repo ids and infers multimodal suite family")
@@ -2100,6 +4282,241 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "export failed")
     }
 
+    @Test("benchmark matrix configuration dispatches canonical controls history refresh and csv exports")
+    @MainActor
+    func benchmarkMatrixConfigurationDispatchesCanonicalControlsHistoryRefreshAndCSVExports() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        var matrixJob = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        matrixJob.jobID = "matrix-newer"
+        matrixJob.modelID = "melix-dev-text-lora"
+        matrixJob.taskKind = "text-generation"
+        matrixJob.sourceRepo = "databricks/databricks-dolly-15k"
+        matrixJob.suiteIds = ["smoke", "latency"]
+        matrixJob.benchmarkMode = "matrix"
+        matrixJob.status = "completed"
+        matrixJob.outputDir = "/tmp/melix/bench/matrix-runs/matrix-newer"
+        matrixJob.createdAtUnixMs = 1_712_250_000_000
+        matrixJob.updatedAtUnixMs = 1_712_250_000_500
+        var smokeRow = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+        smokeRow.jobID = "matrix-newer"
+        smokeRow.taskKind = "text-generation"
+        smokeRow.sourceRepo = "databricks/databricks-dolly-15k"
+        smokeRow.modelID = "melix-dev-text-lora"
+        smokeRow.suiteID = "smoke"
+        smokeRow.contextLength = 1024
+        smokeRow.generationLength = 128
+        smokeRow.batchSize = 2
+        smokeRow.cacheProfile = "warm"
+        smokeRow.reasoningMode = "enabled"
+        smokeRow.structuredOutputMode = "json_schema"
+        smokeRow.concurrencyLevel = 1
+        smokeRow.repeats = 4
+        smokeRow.requests = 12
+        smokeRow.ttftMeanMs = 21.4
+        smokeRow.requestLatencyMeanMs = 29.1
+        smokeRow.prefillTokensPerSecondMean = 340
+        smokeRow.decodeTokensPerSecondMean = 66
+        smokeRow.throughputRequestsPerSecond = 5.4
+        smokeRow.throughputTokensPerSecond = 284
+        smokeRow.successRate = 1
+        smokeRow.peakMemoryBytesMax = 1_984_000_000
+        smokeRow.queueWaitMeanMs = 1.8
+        smokeRow.queueWaitP95Ms = 2.4
+        smokeRow.createdAtUnixMs = 1_712_250_000_000
+        var latencyRow = smokeRow
+        latencyRow.suiteID = "latency"
+        latencyRow.contextLength = 4096
+        latencyRow.generationLength = 256
+        latencyRow.batchSize = 4
+        latencyRow.concurrencyLevel = 2
+        latencyRow.ttftMeanMs = 31.8
+        latencyRow.requestLatencyMeanMs = 44.7
+        latencyRow.decodeTokensPerSecondMean = 74
+        latencyRow.throughputRequestsPerSecond = 7.6
+        latencyRow.throughputTokensPerSecond = 512
+        await client.configureBenchMatrixResponse(
+            ControlPlaneBenchMatrixResult(job: matrixJob, summaryRows: [smokeRow, latencyRow])
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        viewModel.selectedBenchContextLengths = [4096, 1024, 1024]
+        viewModel.selectedBenchGenerationLengths = [256, 128, 256]
+        viewModel.selectedBenchBatchSizes = [4, 2, 4]
+        viewModel.selectedBenchMatrixCacheProfiles = ["warm", "cold", "warm"]
+        viewModel.selectedBenchMatrixReasoningModes = ["enabled", "off", "enabled"]
+        viewModel.selectedBenchMatrixStructuredOutputModes = ["json_schema", "off", "json_schema"]
+        viewModel.selectedBenchMatrixConcurrencyLevels = [2, 1, 2]
+        viewModel.benchMatrixRepeats = "4"
+        viewModel.selectedBenchmarkMatrixLoadBudgetMode = .requests
+        viewModel.benchMatrixRequests = "12"
+
+        await viewModel.runBenchMatrix()
+
+        let matrixRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(matrixRequest.modelID == "melix-dev-text-lora")
+        #expect(matrixRequest.hfRepoID.isEmpty)
+        #expect(matrixRequest.taskKind == "text-generation")
+        #expect(matrixRequest.suites == ["latency", "smoke"])
+        #expect(matrixRequest.contextLengths == [1024, 4096])
+        #expect(matrixRequest.generationLengths == [128, 256])
+        #expect(matrixRequest.batchSizes == [2, 4])
+        #expect(matrixRequest.cacheProfiles == ["cold", "warm"])
+        #expect(matrixRequest.reasoningModes == ["enabled", "off"])
+        #expect(matrixRequest.structuredOutputModes == ["json_schema", "off"])
+        #expect(matrixRequest.concurrencyLevels == [1, 2])
+        #expect(matrixRequest.repeats == 4)
+        #expect(matrixRequest.requests == 12)
+        #expect(matrixRequest.durationSeconds == 0)
+        #expect(matrixRequest.matrixCellCount == 256)
+        #expect(viewModel.benchmarkMatrixHistory.count == 2)
+        #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.jobID == "matrix-newer")
+        #expect(viewModel.benchmarkMatrixSummaryRows.count == 2)
+        #expect(viewModel.benchmarkMatrixSummaryCards.count == 6)
+        #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
+        #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
+
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+
+        let summaryExport = try #require(viewModel.lastBenchmarkMatrixExport)
+        #expect(summaryExport.formatTitle == "summary.csv")
+        #expect(summaryExport.rowCount == 2)
+        #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
+        let summaryCSV = try String(contentsOfFile: summaryExport.outputPath, encoding: .utf8)
+        #expect(summaryCSV.contains("matrix-newer"))
+
+        await viewModel.exportSelectedBenchmarkMatrixRequestsCSV()
+
+        let requestsExport = try #require(viewModel.lastBenchmarkMatrixExport)
+        #expect(requestsExport.formatTitle == "requests.csv")
+        #expect(requestsExport.rowCount == 2)
+        let requestsCSV = try String(contentsOfFile: requestsExport.outputPath, encoding: .utf8)
+        #expect(requestsCSV.contains("matrix-newer"))
+        #expect(await client.recordedActions.contains("bench.matrix"))
+        #expect(await client.recordedActions.contains("bench.export"))
+        #expect(await metrics.snapshot()["menu.ops_bench_matrix_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_history_refresh_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_export_summary_csv_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.bench_matrix_export_requests_csv_ms"] != nil)
+    }
+
+    @Test("benchmark matrix supports direct repo duration mode and local guard rails")
+    @MainActor
+    func benchmarkMatrixDirectRepoDurationModeAndGuardRails() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        viewModel.benchmarkHFRepoID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedBenchmarkMatrixLoadBudgetMode = .durationSeconds
+        viewModel.benchMatrixDurationSeconds = "60"
+
+        await viewModel.runBenchMatrix()
+
+        let directRepoRequest = try #require(await client.recordedBenchMatrixRequests.last)
+        #expect(directRepoRequest.modelID.isEmpty)
+        #expect(directRepoRequest.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(directRepoRequest.taskKind == "image-text-to-text")
+        #expect(directRepoRequest.requests == 0)
+        #expect(directRepoRequest.durationSeconds == 60)
+
+        let missingRepoClient = FakeControlPlaneXPCClient()
+        let missingRepoViewModel = RuntimeViewModel(client: missingRepoClient)
+        await missingRepoViewModel.start()
+        missingRepoViewModel.selectedBenchmarkPresentationMode = .matrix
+        missingRepoViewModel.selectedBenchmarkTargetMode = .huggingFaceRepo
+        missingRepoViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await missingRepoViewModel.runBenchMatrix()
+        #expect(missingRepoViewModel.lastError == "Enter a Hugging Face repo before running Matrix.")
+
+        let imageClient = FakeControlPlaneXPCClient()
+        await imageClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let imageViewModel = RuntimeViewModel(client: imageClient)
+        await imageViewModel.start()
+        imageViewModel.selectedBenchmarkPresentationMode = .matrix
+        imageViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await imageViewModel.runBenchMatrix()
+        #expect(imageViewModel.lastError == "Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets.")
+
+        let requestsClient = FakeControlPlaneXPCClient()
+        let requestsViewModel = RuntimeViewModel(client: requestsClient)
+        await requestsViewModel.start()
+        requestsViewModel.selectedBenchmarkPresentationMode = .matrix
+        requestsViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        requestsViewModel.selectedBenchmarkMatrixLoadBudgetMode = .requests
+        requestsViewModel.benchMatrixRequests = "0"
+        await requestsViewModel.runBenchMatrix()
+        #expect(requestsViewModel.lastError == "Set a positive requests value before running Matrix.")
+    }
+
+    @Test("benchmark matrix control normalization fills defaults and toggles preserve selections")
+    @MainActor
+    func benchmarkMatrixControlNormalizationFillsDefaultsAndTogglesPreserveSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        viewModel.selectedBenchGenerationLengths = []
+        viewModel.selectedBenchMatrixCacheProfiles = []
+        viewModel.selectedBenchMatrixReasoningModes = []
+        viewModel.selectedBenchMatrixStructuredOutputModes = []
+        viewModel.selectedBenchMatrixConcurrencyLevels = []
+        viewModel.benchMatrixRepeats = ""
+        viewModel.benchMatrixRequests = ""
+        viewModel.benchMatrixDurationSeconds = ""
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedBenchGenerationLengths == [128, 256])
+        #expect(viewModel.selectedBenchMatrixCacheProfiles == ["cold"])
+        #expect(viewModel.selectedBenchMatrixReasoningModes == ["off"])
+        #expect(viewModel.selectedBenchMatrixStructuredOutputModes == ["off"])
+        #expect(viewModel.selectedBenchMatrixConcurrencyLevels == [1, 2])
+        #expect(viewModel.benchMatrixRepeats == "3")
+        #expect(viewModel.benchMatrixRequests == "8")
+        #expect(viewModel.benchMatrixDurationSeconds == "60")
+        #expect(viewModel.benchmarkMatrixCellCount == 16)
+
+        viewModel.toggleBenchGenerationLength(512)
+        #expect(viewModel.selectedBenchGenerationLengths == [128, 256, 512])
+        viewModel.toggleBenchMatrixCacheProfile("warm")
+        #expect(viewModel.selectedBenchMatrixCacheProfiles == ["cold", "warm"])
+        viewModel.toggleBenchMatrixReasoningMode("enabled")
+        #expect(viewModel.selectedBenchMatrixReasoningModes == ["enabled", "off"])
+        viewModel.toggleBenchMatrixStructuredOutputMode("json_schema")
+        #expect(viewModel.selectedBenchMatrixStructuredOutputModes == ["json_schema", "off"])
+        viewModel.toggleBenchMatrixConcurrencyLevel(4)
+        #expect(viewModel.selectedBenchMatrixConcurrencyLevels == [1, 2, 4])
+    }
+
     @Test("evaluation configuration dispatches explicit suites history refresh and exports")
     @MainActor
     func evaluationConfigurationDispatchesExplicitSuitesHistoryRefreshAndExports() async throws {
@@ -2139,13 +4556,13 @@ struct RuntimeViewModelTests {
         #expect(evaluationRequests.allSatisfy { $0.parameters["seed"] == "7" })
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
-        #expect(viewModel.evaluationMetricCards.count == 2)
+        #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
 
         await viewModel.exportSelectedEvaluationSummaryCSV()
         let summaryExport = try #require(viewModel.lastEvaluationExport)
         #expect(summaryExport.formatTitle == "summary.csv")
-        #expect(summaryExport.rowCount == 2)
+        #expect(summaryExport.rowCount == 1)
         #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
 
         await viewModel.exportSelectedEvaluationSamplesCSV()
@@ -2165,6 +4582,47 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.eval_history_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_csv_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_jsonl_ms"] != nil)
+    }
+
+    @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")
+    @MainActor
+    func evaluationConfigurationForwardsCanonicalControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationSampleSize = "12"
+        viewModel.evaluationBatchFactor = "2"
+        viewModel.evaluationFewShot = "4"
+        viewModel.evaluationSeed = "9"
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.evaluationCodeExecPolicy = "sandboxed"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.parameters["few_shot"] == "4")
+        #expect(request.parameters["seed"] == "9")
+        #expect(request.parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(request.parameters["code_exec_policy"] == "sandboxed")
+        #expect(viewModel.evaluationHistory.count == 1)
+        #expect(viewModel.evaluationMetricCards.count == 1)
+        #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
     @Test("evaluation selection state and guard rails cover catalog and direct repo flows")
@@ -2345,6 +4803,76 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.ocrStopSequencesText == "<ocr:end>")
     }
 
+    @Test("fetch model info merges speech voice catalog metadata from the active snapshot")
+    @MainActor
+    func fetchModelInfoMergesSpeechVoiceCatalogMetadataFromActiveSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.supportedTasks = ["speak"]
+        model.supportedModalities = ["text", "audio"]
+        model.settings.alias = "Melix Qwen3 TTS MLX"
+        model.settings.ext["melix.audio.backend_id"] = "mlx_audio.tts"
+        model.settings.ext["melix.audio.family_id"] = "qwen3-tts"
+        model.settings.ext["melix.audio.install_profile"] = "audio-tts"
+        model.settings.ext["melix.audio.languages"] = "zh,en"
+        model.settings.ext["melix.audio.voice_mode"] = "hybrid"
+        model.settings.ext["melix.audio.output_formats"] = "wav"
+        model.settings.ext["melix.audio.supports_instructions"] = "true"
+        model.settings.ext["melix.audio.voice_catalog_summary"] =
+            "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        model.settings.ext["melix.audio.voice_locales"] = "zh,en"
+        model.settings.ext["melix.audio.default_locale"] = "zh"
+        model.settings.ext["melix.audio.packaged_default_locale"] = "zh"
+        model.settings.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
+        model.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+        model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        model.settings.ext["melix.audio.model_state"] = "managed_local"
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "speech"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text", "audio"]
+        info.supportedTasks = ["speak"]
+        info.backendID = "mlx_audio.tts"
+        info.familyID = "qwen3-tts"
+        info.modelPath = "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit"
+        info.modelRevision = "mlx-audio"
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.fetchModelInfo(modelID: "melix-qwen3-tts-mlx")
+
+        #expect(viewModel.selectedModelInfo?.modelID == "melix-qwen3-tts-mlx")
+        #expect(viewModel.selectedModelInfo?.audioInstallProfileText == "audio-tts")
+        #expect(viewModel.selectedModelInfo?.audioLanguagesText == "zh,en")
+        #expect(viewModel.selectedModelInfo?.audioVoiceModeText == "hybrid")
+        #expect(viewModel.selectedModelInfo?.audioOutputFormatsText == "wav")
+        #expect(viewModel.selectedModelInfo?.audioSupportsInstructionsText == "Yes")
+        #expect(viewModel.selectedModelInfo?.audioVoiceLocalesText == "zh,en")
+        #expect(viewModel.selectedModelInfo?.audioDefaultLocaleText == "zh")
+        #expect(viewModel.selectedModelInfo?.audioPackagedDefaultLocaleText == "zh")
+        #expect(viewModel.selectedModelInfo?.audioLocalePolicyText == "request>model_default>packaged_default")
+        #expect(viewModel.selectedModelInfo?.audioRuntimePackStateText == "installed")
+        #expect(viewModel.selectedModelInfo?.audioRuntimePackIDText == "melix-audio-runtime-pack")
+        #expect(viewModel.selectedModelInfo?.audioModelStateText == "managed_local")
+        #expect(
+            viewModel.selectedModelInfo?.audioVoiceCatalogSummaryText
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+    }
+
     @Test("model tool actions no-op when there is no primary model")
     @MainActor
     func modelToolActionsNoopWithoutPrimaryModel() async throws {
@@ -2355,6 +4883,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
         await viewModel.updatePrimaryModelForLatency()
         await viewModel.inspectPrimaryModel()
+        await viewModel.convertPrimaryModel()
         await viewModel.quantizePrimaryModel()
         await viewModel.trainPrimaryModel()
         await viewModel.refreshModelOpsProductState()
@@ -2405,6 +4934,264 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError?.contains("operation failed") == true)
     }
 
+    @Test("registry root add refresh forwards explicit overrides and parses root snapshot state")
+    @MainActor
+    func registryRootAddRefreshForwardsExplicitOverridesAndParsesRootSnapshotState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(
+                            id: "root-a",
+                            path: "/tmp/root-a",
+                            order: 1,
+                            discoveredModelIDs: ["registry-model-a"]
+                        ),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        viewModel.registryRootPathDraft = "/tmp/root-a"
+        await viewModel.addRegistryRoot()
+
+        let request = try #require(await client.recordedModelOperationRequests.last)
+        let root = try #require(viewModel.registryRoots.first)
+
+        #expect(request.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(request.ext["melix.registry_rescan"] == "true")
+        #expect(viewModel.registryHasConfiguredRootOverride)
+        #expect(viewModel.registryConfiguredRootPaths == ["/tmp/root-a"])
+        #expect(viewModel.registryScannedAtText != "Never")
+        #expect(root.rootPath == "/tmp/root-a")
+        #expect(root.statusText == "Accessible")
+        #expect(root.detailText == "1 model")
+        #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
+    }
+
+    @Test("registry root reorder remove and rescan reuse configured root overrides")
+    @MainActor
+    func registryRootReorderRemoveAndRescanReuseConfiguredRootOverrides() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                        MenuBarRegistryRootFixture(id: "root-b", path: "/tmp/root-b", order: 2),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        await viewModel.moveRegistryRootDown(rootID: "root-a")
+        await viewModel.removeRegistryRoot(rootID: "root-b")
+        await viewModel.rescanRegistryRoots()
+
+        let requests = await client.recordedModelOperationRequests.filter { $0.operation == "registry_snapshot" }
+        #expect(requests.count == 4)
+        let refreshRequest = requests[0]
+        let moveRequest = requests[1]
+        let removeRequest = requests[2]
+        let rescanRequest = requests[3]
+
+        #expect(refreshRequest.ext["melix.registry_roots_json"] == nil)
+        #expect(moveRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a"]"#)
+        #expect(moveRequest.ext["melix.registry_rescan"] == "true")
+        #expect(removeRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(removeRequest.ext["melix.registry_rescan"] == "true")
+        #expect(rescanRequest.ext["melix.registry_roots_json"] == #"["/tmp/root-a"]"#)
+        #expect(rescanRequest.ext["melix.registry_rescan"] == "true")
+        #expect(viewModel.registryHasConfiguredRootOverride)
+        #expect(viewModel.registryConfiguredRootPaths == ["/tmp/root-a"])
+    }
+
+    @Test("registry root state formats unavailable status and detail text")
+    @MainActor
+    func registryRootStateFormatsUnavailableStatusAndDetailText() {
+        let inaccessibleWithoutCode = RuntimeRegistryRootState(
+            id: "root-none",
+            rootPath: "/tmp/root-none",
+            rootOrder: 1,
+            accessible: false,
+            errorCode: "",
+            errorMessage: "",
+            discoveredModelIDs: []
+        )
+        let inaccessibleWithCode = RuntimeRegistryRootState(
+            id: "root-denied",
+            rootPath: "/tmp/root-denied",
+            rootOrder: 2,
+            accessible: false,
+            errorCode: "permission_denied",
+            errorMessage: "Sandbox denied access",
+            discoveredModelIDs: ["model-a", "model-b"]
+        )
+
+        #expect(inaccessibleWithoutCode.statusText == "Unavailable")
+        #expect(inaccessibleWithoutCode.detailText == "0 models")
+        #expect(inaccessibleWithCode.statusText == "Permission denied")
+        #expect(inaccessibleWithCode.detailText == "2 models • Sandbox denied access")
+    }
+
+    @Test("registry root summaries cover configured overrides and empty override state")
+    @MainActor
+    func registryRootSummariesCoverConfiguredOverridesAndEmptyOverrideState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let addViewModel = RuntimeViewModel(client: client)
+        await addViewModel.start()
+        await addViewModel.refreshModelOpsProductState()
+        addViewModel.registryRootPathDraft = "/tmp/root-b"
+        await addViewModel.addRegistryRoot()
+        #expect(addViewModel.registryRootSummaryText == "Control-plane override active • 2 roots configured")
+        #expect(addViewModel.canAddRegistryRoot == false)
+
+        let removeViewModel = RuntimeViewModel(client: client)
+        await removeViewModel.start()
+        await removeViewModel.refreshModelOpsProductState()
+        await removeViewModel.removeRegistryRoot(rootID: "root-a")
+        #expect(removeViewModel.registryRootSummaryText == "Control-plane override active • no roots configured")
+    }
+
+    @Test("registry root guard rails no-op for missing models invalid drafts duplicate roots and invalid moves")
+    @MainActor
+    func registryRootGuardRailsNoOpForMissingModelsInvalidDraftsDuplicateRootsAndInvalidMoves() async throws {
+        let imageOnlyClient = FakeControlPlaneXPCClient()
+        var imageOnlySnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        imageOnlySnapshot.serverState = .serverReady
+        imageOnlySnapshot.models = [makeMenuBarImageModelSummary()]
+        await imageOnlyClient.configureSnapshot(imageOnlySnapshot)
+        let imageOnlyViewModel = RuntimeViewModel(client: imageOnlyClient)
+        await imageOnlyViewModel.start()
+        imageOnlyViewModel.registryRootPathDraft = "/tmp/no-text-root"
+        await imageOnlyViewModel.rescanRegistryRoots()
+        await imageOnlyViewModel.addRegistryRoot()
+        await imageOnlyViewModel.removeRegistryRoot(rootID: "missing-root")
+        await imageOnlyViewModel.moveRegistryRootUp(rootID: "missing-root")
+        #expect(await imageOnlyClient.recordedModelOperationRequests.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [
+                        MenuBarRegistryRootFixture(id: "root-a", path: "/tmp/root-a", order: 1),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let initialRequestCount = await client.recordedModelOperationRequests.count
+        viewModel.registryRootPathDraft = "   "
+        await viewModel.addRegistryRoot()
+        viewModel.registryRootPathDraft = "/tmp/root-a"
+        await viewModel.addRegistryRoot()
+        await viewModel.removeRegistryRoot(rootID: "missing-root")
+        await viewModel.moveRegistryRootDown(rootID: "root-a")
+        await viewModel.moveRegistryRootUp(rootID: "missing-root")
+
+        let finalRequestCount = await client.recordedModelOperationRequests.count
+        #expect(initialRequestCount == 1)
+        #expect(finalRequestCount == 1)
+        #expect(viewModel.registryRootPathDraft.isEmpty)
+    }
+
+    @Test("registry snapshot parsing sorts same-order roots and drops invalid rows")
+    @MainActor
+    func registrySnapshotParsingSortsSameOrderRootsAndDropsInvalidRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: #"""
+                {
+                  "operation": "registry_snapshot",
+                  "jobs": [],
+                  "adapters": [],
+                  "derived_models": [],
+                  "model_registry": {
+                    "scanned_at_unix_ms": "1712300000000",
+                    "roots": [
+                      {
+                        "root_path": "/tmp/invalid-root",
+                        "root_order": "9",
+                        "accessible": "yes",
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": []
+                      },
+                      {
+                        "root_id": "root-b",
+                        "root_path": "/tmp/root-b",
+                        "root_order": "7",
+                        "accessible": "yes",
+                        "error_code": "permission_denied",
+                        "error_message": "needs entitlement",
+                        "discovered_model_ids": ["model-b", ""]
+                      },
+                      {
+                        "root_id": "root-a",
+                        "root_path": "/tmp/root-a",
+                        "root_order": "7",
+                        "accessible": false,
+                        "error_code": "",
+                        "error_message": "",
+                        "discovered_model_ids": ["model-a"]
+                      }
+                    ],
+                    "models": []
+                  }
+                }
+                """#
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.registryRoots.map(\.rootPath) == ["/tmp/root-a", "/tmp/root-b"])
+        #expect(viewModel.registryRoots.count == 2)
+        #expect(viewModel.registryRoots[0].statusText == "Unavailable")
+        #expect(viewModel.registryRoots[1].detailText == "1 model • needs entitlement")
+        #expect(viewModel.registryScannedAtText != "Never")
+    }
+
     @Test("quantize action stores typed quantization summary")
     @MainActor
     func quantizeActionStoresTypedQuantizationSummary() async throws {
@@ -2444,6 +5231,74 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastModelOperation?.calibrationSampleCount == 32)
     }
 
+    @Test("convert action stores typed packaging summary")
+    @MainActor
+    func convertActionStoresTypedPackagingSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "convert",
+                  "target_format": "melix_model_bundle",
+                  "compatibility": {
+                    "runtime": "mlx_text",
+                    "serving_compatible": true,
+                    "smoke_test_requested": true,
+                    "smoke_test_passed": true
+                  }
+                }
+                """#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 384,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+
+        #expect(viewModel.lastModelOperation?.operation == "convert")
+        #expect(viewModel.lastModelOperation?.artifactKind == "converted_model_bundle")
+        #expect(viewModel.lastModelOperation?.conversionTargetFormat == "melix_model_bundle")
+        #expect(viewModel.lastModelOperation?.artifactRuntime == "mlx_text")
+        #expect(viewModel.lastModelOperation?.servingCompatible == true)
+        #expect(viewModel.lastModelOperation?.smokeTestRequested == true)
+        #expect(viewModel.lastModelOperation?.smokeTestPassed == true)
+    }
+
+    @Test("convert action tolerates invalid manifest json and keeps artifact fallback state")
+    @MainActor
+    func convertActionToleratesInvalidManifestJSON() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: "{not-json",
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 384,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+
+        #expect(viewModel.lastModelOperation?.operation == "convert")
+        #expect(viewModel.lastModelOperation?.artifactKind == "converted_model_bundle")
+        #expect(viewModel.lastModelOperation?.conversionTargetFormat == "")
+        #expect(viewModel.lastModelOperation?.artifactRuntime == "mlx_text")
+    }
+
     @Test("upload action links the latest quantized artifact when available")
     @MainActor
     func uploadActionLinksLatestQuantizedArtifact() async throws {
@@ -2480,6 +5335,48 @@ struct RuntimeViewModelTests {
         #expect(uploadRequest.ext["artifact_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact")
         #expect(uploadRequest.ext["quantization_manifest_path"] == "/tmp/melix-quantize/model-ops-0001/quantize.artifact/manifest.json")
         #expect(uploadRequest.ext["quant_profile_id"] == "q5")
+        #expect(uploadRequest.ext["target_repo"] == "melix/upload-target")
+    }
+
+    @Test("upload action links the latest converted artifact when available")
+    @MainActor
+    func uploadActionLinksLatestConvertedArtifact() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "convert",
+                outputPath: "/tmp/melix-convert/job-1/convert.artifact",
+                manifestJSON: #"""
+                {
+                  "operation": "convert",
+                  "target_format": "melix_model_bundle",
+                  "compatibility": {
+                    "runtime": "mlx_text",
+                    "serving_compatible": true,
+                    "smoke_test_requested": true,
+                    "smoke_test_passed": true
+                  }
+                }
+                """#,
+                artifactKind: "converted_model_bundle",
+                manifestPath: "/tmp/melix-convert/job-1/convert.artifact/manifest.json",
+                artifactBytes: 512,
+                smokeTestPassed: true
+            ),
+            forNamedOperation: "convert"
+        )
+
+        await viewModel.start()
+        await viewModel.convertPrimaryModel()
+        await viewModel.uploadPrimaryModel()
+
+        let uploadRequest = try #require(await client.recordedModelOperationRequests.last)
+        #expect(uploadRequest.operation == "upload")
+        #expect(uploadRequest.ext["artifact_kind"] == "model")
+        #expect(uploadRequest.ext["artifact_path"] == "/tmp/melix-convert/job-1/convert.artifact")
+        #expect(uploadRequest.ext["artifact_manifest_path"] == "/tmp/melix-convert/job-1/convert.artifact/manifest.json")
+        #expect(uploadRequest.ext["quantization_manifest_path"] == nil)
         #expect(uploadRequest.ext["target_repo"] == "melix/upload-target")
     }
 
@@ -2559,10 +5456,12 @@ struct RuntimeViewModelTests {
             alias: "Melix Warm Cache",
             pinOnLoad: false,
             memoryPolicy: "ttl",
+            diskStreamingMode: "prefer_disk",
             accelerationMode: "accelerated_prefill",
             accelerationProfileID: "prefill-hot"
         )
         #expect(viewModel.primaryModel?.memoryPolicyText == "TTL")
+        #expect(viewModel.primaryModel?.diskStreamingModeText == "Prefer Disk")
         #expect(viewModel.primaryModel?.accelerationModeText == "Accelerated Prefill")
 
         await viewModel.updateModelSettings(
@@ -2570,12 +5469,52 @@ struct RuntimeViewModelTests {
             alias: "Melix Quantized",
             pinOnLoad: false,
             memoryPolicy: "evictable",
+            diskStreamingMode: "disabled",
             accelerationMode: "active_kv_quantized",
             accelerationProfileID: "kv-q8"
         )
         #expect(viewModel.primaryModel?.memoryPolicyText == "Evictable")
+        #expect(viewModel.primaryModel?.diskStreamingModeText == "Disabled")
         #expect(viewModel.primaryModel?.accelerationModeText == "Active KV Quantized")
         #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
+    }
+
+    @Test("model settings drafts map require and unknown disk streaming modes")
+    @MainActor
+    func modelSettingsDraftsMapRequireAndUnknownDiskStreamingModes() async throws {
+        let requireClient = FakeControlPlaneXPCClient()
+        var requireSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        requireSnapshot.serverState = .serverReady
+        var requireModel = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: Melix_Controlplane_V1_ModelState.modelWarm
+        )
+        requireModel.settings.diskStreamingMode = Melix_Controlplane_V1_DiskStreamingMode.diskStreamingRequireDisk
+        requireSnapshot.models = [requireModel]
+        await requireClient.configureSnapshot(requireSnapshot)
+
+        let requireViewModel = RuntimeViewModel(client: requireClient)
+        await requireViewModel.start()
+
+        #expect(requireViewModel.primaryModel?.diskStreamingModeText == "Require Disk")
+        #expect(requireViewModel.modelSettingsDiskStreamingModeDraft == "require_disk")
+
+        let unknownClient = FakeControlPlaneXPCClient()
+        var unknownSnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        unknownSnapshot.serverState = .serverReady
+        var unknownModel = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: Melix_Controlplane_V1_ModelState.modelWarm
+        )
+        unknownModel.settings.diskStreamingMode = Melix_Controlplane_V1_DiskStreamingMode.UNRECOGNIZED(-1)
+        unknownSnapshot.models = [unknownModel]
+        await unknownClient.configureSnapshot(unknownSnapshot)
+
+        let unknownViewModel = RuntimeViewModel(client: unknownClient)
+        await unknownViewModel.start()
+
+        #expect(unknownViewModel.primaryModel?.diskStreamingModeText == "Disabled")
+        #expect(unknownViewModel.modelSettingsDiskStreamingModeDraft == "disabled")
     }
 
     @Test("chat prompt streams assistant reasoning and tool deltas into the transcript")
@@ -2590,16 +5529,29 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasUserEntry = viewModel.chatTranscript.contains { $0.kind == .user && $0.body == "Explain Melix" }
+        let hasAssistantEntry = viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body.contains("Assistant response")
+        }
+        let hasReasoningEntry = viewModel.chatTranscript.contains {
+            $0.kind == .reasoning && $0.body.contains("Reasoning trace")
+        }
+        let hasToolEntry = viewModel.chatTranscript.contains {
+            $0.kind == .tool && $0.body.contains(#""q":"melix""#)
+        }
+
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .user && $0.body == "Explain Melix" }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body.contains("Assistant response") }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body.contains("Reasoning trace") }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .tool && $0.body.contains(#""q":"melix""#) }))
+        #expect(hasUserEntry)
+        #expect(hasAssistantEntry)
+        #expect(hasReasoningEntry)
+        #expect(hasToolEntry)
         #expect(viewModel.chatStatusText.contains("Completed"))
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
         #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_first_delta_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_stream_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_presentation_lag_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.chat_presentation_flush_count"] != nil)
     }
 
     @Test("chat prompt merges repeated deltas into shared transcript entries")
@@ -2636,6 +5588,50 @@ struct RuntimeViewModelTests {
         #expect(toolEntries.first?.body == #"{"q":"melix"}"#)
     }
 
+    @Test("chat prompt smooths bursty deltas while preserving final transcript fidelity")
+    @MainActor
+    func chatPromptSmoothsBurstyDeltasWhilePreservingFinalTranscriptFidelity() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .zero, event: .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0)),
+            .init(delay: .zero, event: .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5)),
+            .init(delay: .zero, event: .tokenDelta("Assistant response")),
+            .init(delay: .milliseconds(80), event: .completed(
+                finishReason: "stop",
+                assistantText: "Assistant response",
+                reasoningText: ""
+            )),
+        ])
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.chatComposerText = "Smooth bursty deltas"
+
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat smoothing should present a partial assistant row") {
+            viewModel.chatTranscript.contains { entry in
+                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != "Assistant response"
+            }
+        }
+
+        let partialAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(partialAssistantEntry.body.isEmpty == false)
+        #expect(partialAssistantEntry.body != "Assistant response")
+        #expect(viewModel.isChatStreaming)
+
+        await submitTask.value
+
+        let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        let metricsSnapshot = await metrics.snapshot()
+        #expect(finalAssistantEntry.body == "Assistant response")
+        #expect(metricsSnapshot["menu.chat_presentation_lag_ms"] != nil)
+        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
+    }
+
     @Test("chat completion can synthesize transcript entries without prior deltas")
     @MainActor
     func chatCompletionSynthesizesTranscriptEntriesWithoutPriorDeltas() async throws {
@@ -2652,8 +5648,15 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .assistant && $0.body == "Assistant final" }))
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .reasoning && $0.body == "Reasoning final" }))
+        let hasAssistantFinal = viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body == "Assistant final"
+        }
+        let hasReasoningFinal = viewModel.chatTranscript.contains {
+            $0.kind == .reasoning && $0.body == "Reasoning final"
+        }
+
+        #expect(hasAssistantFinal)
+        #expect(hasReasoningFinal)
         #expect(viewModel.chatStatusText == "Completed • stop")
     }
 
@@ -2676,11 +5679,15 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasErrorEntry = viewModel.chatTranscript.contains {
+            $0.kind == .error && $0.body == "worker failed"
+        }
+
         #expect(viewModel.lastChatRequestID == "chat-request-1")
         #expect(viewModel.chatStatusText == "Failed • runtime_error")
         #expect(viewModel.lastError == "worker failed")
         #expect(viewModel.isChatStreaming == false)
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body == "worker failed" }))
+        #expect(hasErrorEntry)
     }
 
     @Test("chat transport failures surface local error rows and reset streaming state")
@@ -2695,10 +5702,14 @@ struct RuntimeViewModelTests {
 
         await viewModel.submitChatPrompt()
 
+        let hasTransportErrorEntry = viewModel.chatTranscript.contains {
+            $0.kind == .error && $0.body.contains("chat transport failed")
+        }
+
         #expect(viewModel.chatStatusText == "Failed")
         #expect(viewModel.lastError?.contains("chat transport failed") == true)
         #expect(viewModel.isChatStreaming == false)
-        #expect(viewModel.chatTranscript.contains(where: { $0.kind == .error && $0.body.contains("chat transport failed") }))
+        #expect(hasTransportErrorEntry)
     }
 
     @Test("chat route readiness reflects multimodal model availability from the snapshot")
@@ -2765,6 +5776,244 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedImageJob?.artifacts.first?.storageUri == "/tmp/melix-image-preview.png")
     }
 
+    @Test("image picker filters models by workflow role and keeps separate selections")
+    @MainActor
+    func imagePickerFiltersModelsByWorkflowRoleAndKeepsSeparateSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-kontext-image",
+                        familyID: "kontext-v1",
+                        supportsGeneration: true,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.imageModels(for: .generate).map(\.modelID) == ["melix-kontext-image", "melix-qwen-image"])
+        #expect(viewModel.imageModels(for: .edit).map(\.modelID) == ["melix-fill-image", "melix-kontext-image"])
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-kontext-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-fill-image")
+
+        viewModel.setSelectedImageModelID("melix-qwen-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .edit)
+
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-qwen-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-kontext-image")
+        #expect(viewModel.selectedImageModelID == "melix-qwen-image")
+    }
+
+    @Test("image defaults snapshot hydrates requested and effective control state")
+    @MainActor
+    func imageDefaultsSnapshotHydratesRequestedAndEffectiveState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeMenuBarImageModelSummary(
+                    modelID: "melix-qwen-image",
+                    familyID: "qwenimage-v1",
+                    supportsGeneration: true,
+                    supportsEdit: false
+                ),
+                makeMenuBarImageModelSummary(
+                    modelID: "melix-fill-image",
+                    familyID: "fill-v1",
+                    supportsGeneration: false,
+                    supportsEdit: true
+                ),
+            ]
+        )
+        var defaults = Melix_Controlplane_V1_ImageDefaultsSummary()
+        defaults.requestedGenerateModelID = "melix-qwen-image"
+        defaults.requestedEditModelID = "melix-fill-image"
+        defaults.requestedSize = "1536x1024"
+        defaults.requestedSteps = 40
+        defaults.requestedGuidance = 6.5
+        defaults.requestedStrength = 0.75
+        defaults.requestedNegativePrompt = "grain"
+        defaults.effectiveGenerateModelID = "melix-qwen-image"
+        defaults.effectiveEditModelID = "melix-fill-image"
+        defaults.effectiveSize = "1024x1024"
+        defaults.effectiveSteps = 32
+        defaults.effectiveGuidance = 7
+        defaults.effectiveStrength = 0.6
+        defaults.effectiveNegativePrompt = "grain"
+        defaults.requestTimeoutSeconds = 900
+        defaults.source = .operatorOverride
+        defaults.updatedAtUnixMs = 1_717_171_717_000
+        snapshot.imageDefaults = defaults
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedImageModelID(for: .generate) == "melix-qwen-image")
+        #expect(viewModel.selectedImageModelID(for: .edit) == "melix-fill-image")
+        #expect(viewModel.imageSize == "1536x1024")
+        #expect(viewModel.imageSteps == "40")
+        #expect(viewModel.imageGuidance == "6.5")
+        #expect(viewModel.imageStrength == "0.75")
+        #expect(viewModel.imageNegativePrompt == "grain")
+        #expect(viewModel.imageDefaultsSourceText == "Operator Override")
+        #expect(viewModel.effectiveImageGenerateModelID == "melix-qwen-image")
+        #expect(viewModel.effectiveImageEditModelID == "melix-fill-image")
+        #expect(viewModel.effectiveImageSize == "1024x1024")
+        #expect(viewModel.effectiveImageSteps == "32")
+        #expect(viewModel.effectiveImageGuidance == "7")
+        #expect(viewModel.effectiveImageStrength == "0.6")
+        #expect(viewModel.effectiveImageNegativePrompt == "grain")
+        #expect(viewModel.imageRequestTimeoutSeconds == 900)
+        #expect(viewModel.imageTimeoutPolicyText == "15-minute creative workflow deadline")
+    }
+
+    @Test("image defaults apply forwards typed defaults and projects hydrated summary")
+    @MainActor
+    func imageDefaultsApplyForwardsTypedDefaultsAndProjectsHydratedSummary() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        viewModel.setSelectedImageModelID("melix-qwen-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-fill-image", for: .edit)
+        viewModel.imageSize = "1536x1024"
+        viewModel.imageSteps = "40"
+        viewModel.imageGuidance = "6.25"
+        viewModel.imageStrength = "0.7"
+        viewModel.imageNegativePrompt = "noise"
+
+        await viewModel.applyImageDefaults()
+
+        let request = try #require(await client.recordedImageDefaultsApplyRequests.last)
+        #expect(request.generateModelID == "melix-qwen-image")
+        #expect(request.editModelID == "melix-fill-image")
+        #expect(request.size == "1536x1024")
+        #expect(request.steps == 40)
+        #expect(request.guidance == 6.25)
+        #expect(request.strength == 0.7)
+        #expect(request.negativePrompt == "noise")
+        #expect(viewModel.imageDefaultsSourceText == "Operator Override")
+        #expect(viewModel.effectiveImageGenerateModelID == "melix-qwen-image")
+        #expect(viewModel.effectiveImageEditModelID == "melix-fill-image")
+        #expect(viewModel.effectiveImageSize == "1536x1024")
+        #expect(viewModel.effectiveImageSteps == "40")
+        #expect(viewModel.effectiveImageGuidance == "6.25")
+        #expect(viewModel.effectiveImageStrength == "0.7")
+        #expect(viewModel.effectiveImageNegativePrompt == "noise")
+        #expect(await metrics.snapshot()["desktop.image_defaults_apply_ms"] != nil)
+    }
+
+    @Test("desktop image workspace body evaluates role-aware picker and summary branches")
+    @MainActor
+    func desktopImageWorkspaceBodyEvaluatesRoleAwarePickerAndSummaryBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-kontext-image",
+                        familyID: "kontext-v1",
+                        supportsGeneration: true,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.imagePromptText = "Generate a poster"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .generate)
+        viewModel.setSelectedImageModelID("melix-kontext-image", for: .edit)
+
+        var generateMode = DesktopImageWorkspaceMode.generate
+        var editMode = DesktopImageWorkspaceMode.edit
+        var showsSidebar = true
+        var showsInspector = true
+        let generateWorkspace = DesktopImageWorkspace(
+            viewModel: viewModel,
+            selectedMode: Binding(
+                get: { generateMode },
+                set: { generateMode = $0 }
+            ),
+            showsSidebar: Binding(
+                get: { showsSidebar },
+                set: { showsSidebar = $0 }
+            ),
+            showsInspector: Binding(
+                get: { showsInspector },
+                set: { showsInspector = $0 }
+            )
+        )
+        let editWorkspace = DesktopImageWorkspace(
+            viewModel: viewModel,
+            selectedMode: Binding(
+                get: { editMode },
+                set: { editMode = $0 }
+            ),
+            showsSidebar: Binding(
+                get: { showsSidebar },
+                set: { showsSidebar = $0 }
+            ),
+            showsInspector: Binding(
+                get: { showsInspector },
+                set: { showsInspector = $0 }
+            )
+        )
+
+        let generateBody = generateWorkspace.body
+        let editBody = editWorkspace.body
+
+        #expect(String(describing: type(of: generateBody)).isEmpty == false)
+        #expect(String(describing: type(of: editBody)).isEmpty == false)
+    }
+
     @Test("image generate and edit actions dispatch through the client and update runtime state")
     @MainActor
     func imageActionsDispatchThroughClientAndUpdateRuntimeState() async throws {
@@ -2799,9 +6048,16 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.imagePromptText = "Generate a poster"
+        viewModel.imageSteps = "36"
+        viewModel.imageGuidance = "6.75"
+        viewModel.imageNegativePrompt = "blur"
         await viewModel.submitImageGeneration()
 
+        let generateRequest = try #require(await client.recordedImageGenerateRequests.last)
         #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(generateRequest.steps == 36)
+        #expect(generateRequest.guidance == 6.75)
+        #expect(generateRequest.negativePrompt == "blur")
         #expect(viewModel.imageStatusText == "Completed • image_generate")
         #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-generate" }))
         #expect(await metrics.snapshot()["desktop.image_action_latency_ms"] != nil)
@@ -2809,11 +6065,508 @@ struct RuntimeViewModelTests {
         viewModel.imagePromptText = "Edit the poster"
         viewModel.imageEditSourceURL = "file:///tmp/source.png"
         viewModel.imageEditMaskURL = "file:///tmp/mask.png"
+        viewModel.imageStrength = "0.45"
+        viewModel.imageSteps = "28"
+        viewModel.imageGuidance = "5.5"
+        viewModel.imageNegativePrompt = "washed out"
         await viewModel.submitImageEdit()
 
+        let editRequest = try #require(await client.recordedImageEditRequests.last)
         #expect(await client.recordedActions.contains("image.edit:melix-dev-image"))
+        #expect(editRequest.strength == 0.45)
+        #expect(editRequest.steps == 28)
+        #expect(editRequest.guidance == 5.5)
+        #expect(editRequest.negativePrompt == "washed out")
         #expect(viewModel.imageJobs.contains(where: { $0.jobID == "job-image-edit" }))
         #expect(viewModel.selectedImageJob?.artifacts.contains(where: { $0.storageUri == "/tmp/output.png" }) == true)
+    }
+
+    @Test("image actions use workflow-specific model selections")
+    @MainActor
+    func imageActionsUseWorkflowSpecificModelSelections() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-qwen-image",
+                        familyID: "qwenimage-v1",
+                        supportsGeneration: true,
+                        supportsEdit: false
+                    ),
+                    makeMenuBarImageModelSummary(
+                        modelID: "melix-fill-image",
+                        familyID: "fill-v1",
+                        supportsGeneration: false,
+                        supportsEdit: true
+                    ),
+                ]
+            )
+        )
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-generate",
+                requestID: "req-image-generate",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-generate")]
+            ),
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-edit",
+                requestID: "req-image-edit",
+                operation: "image_edit",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-edit")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Generate a poster"
+        await viewModel.submitImageGeneration()
+
+        viewModel.imagePromptText = "Edit the poster"
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        await viewModel.submitImageEdit()
+
+        #expect(await client.recordedActions.contains("image.generate:melix-qwen-image"))
+        #expect(await client.recordedActions.contains("image.edit:melix-fill-image"))
+    }
+
+    @Test("redo selected image job reconstructs generation parameters from persisted recipe")
+    @MainActor
+    func redoSelectedImageJobReconstructsGenerationRecipe() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = "Redo this cover"
+        recipe.size = "1536x1024"
+        recipe.steps = 48
+        recipe.guidance = 6.25
+        recipe.negativePrompt = "artifacts"
+        recipe.variantCount = 2
+        recipe.responseFormat = "png"
+        recipe.artifactNamespace = "melix.image.demo"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-generate",
+                requestID: "req-image-redo-generate",
+                operation: "image_generate",
+                recipe: recipe
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            generation: makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-generate-2",
+                requestID: "req-image-redo-generate-2",
+                operation: "image_generate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-redo-generate-2")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        await viewModel.redoSelectedImageJob()
+
+        let request = try #require(await client.recordedImageGenerateRequests.last)
+        #expect(request.prompt == "Redo this cover")
+        #expect(request.size == "1536x1024")
+        #expect(request.steps == 48)
+        #expect(request.guidance == 6.25)
+        #expect(request.negativePrompt == "artifacts")
+        #expect(request.n == 2)
+        #expect(request.responseFormat == "png")
+        #expect(request.artifactNamespace == "melix.image.demo")
+    }
+
+    @Test("reiterate preparation seeds iterate state from the selected image job and dispatches iterate edits")
+    @MainActor
+    func prepareReiterateSeedsIterateStateAndDispatchesEdit() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        let generatedArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-iterate-source",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/generated.png"
+        )
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = "Base prompt"
+        recipe.size = "1024x1024"
+        recipe.steps = 36
+        recipe.guidance = 5.5
+        recipe.strength = 0.45
+        recipe.negativePrompt = "noise"
+        recipe.variantCount = 1
+        recipe.responseFormat = "png"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-iterate-source",
+                requestID: "req-image-iterate-source",
+                operation: "image_edit",
+                artifacts: [generatedArtifact],
+                recipe: recipe,
+                timeoutSeconds: 600,
+                sourceArtifactID: "artifact-origin",
+                promptDelta: "make it brighter",
+                editMode: .iterate
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-iterate-dispatch",
+                requestID: "req-image-iterate-dispatch",
+                operation: "image_iterate",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-iterate-dispatch")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.prepareReiterateFromSelectedImageJob()
+
+        #expect(viewModel.imageEditMode == .iterate)
+        #expect(viewModel.imageEditSourceArtifactID == generatedArtifact.artifactID)
+        #expect(viewModel.imageEditSourceURL.isEmpty)
+        #expect(viewModel.imagePromptText.isEmpty)
+        #expect(viewModel.imageSteps == "36")
+        #expect(viewModel.imageGuidance == "5.5")
+        #expect(viewModel.imageStrength == "0.45")
+        #expect(viewModel.imageNegativePrompt == "noise")
+        #expect(viewModel.imageStatusText == "Iterate draft seeded")
+        #expect(viewModel.selectedImageJobTimeoutText == "10-minute deadline")
+
+        viewModel.imagePromptText = "push the contrast further"
+        await viewModel.submitImageEdit()
+
+        let request = try #require(await client.recordedImageEditRequests.last)
+        #expect(request.sourceArtifactID == generatedArtifact.artifactID)
+        #expect(request.imageURL.isEmpty)
+        #expect(request.prompt.isEmpty)
+        #expect(request.promptDelta == "push the contrast further")
+        #expect(request.mode == .iterate)
+        #expect(request.strength == 0.45)
+    }
+
+    @Test("timed out image jobs surface explicit timeout status text")
+    @MainActor
+    func timedOutImageJobsSurfaceExplicitStatusText() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        var timedOutError = Melix_Controlplane_V1_ErrorStatus()
+        timedOutError.code = "deadline_exceeded"
+        timedOutError.message = "Image request exceeded the 600-second creative workflow deadline."
+
+        let timedOutJob = makeMenuBarImageJobSummary(
+            jobID: "job-image-timeout",
+            requestID: "req-image-timeout",
+            operation: "image_generate",
+            state: .imageJobFailed,
+            timeoutSeconds: 600,
+            error: timedOutError
+        )
+        await client.sendImageJobStateChanged(timedOutJob)
+
+        try await waitForRuntimeViewModelCondition("expected timed out image job to appear") {
+            viewModel.selectedImageJob?.jobID == "job-image-timeout"
+        }
+
+        #expect(viewModel.imageStatusText == "Timed Out • image_generate")
+        #expect(viewModel.selectedImageJobTimeoutText == "Timed out • 10-minute deadline")
+    }
+
+    @Test("runtime image edit mode exposes typed identifiers titles and control-plane mapping")
+    func runtimeImageEditModeExposesTypedIdentifiersTitlesAndControlPlaneMapping() {
+        let expectations: [(RuntimeImageEditMode, String, String, ControlPlaneImageEditRequest.Mode)] = [
+            (.edit, "edit", "Edit", .edit),
+            (.variation, "variation", "Variation", .variation),
+            (.iterate, "iterate", "Iterate", .iterate),
+        ]
+
+        for (mode, expectedID, expectedTitle, expectedControlPlaneMode) in expectations {
+            #expect(mode.id == expectedID)
+            #expect(mode.title == expectedTitle)
+            #expect(mode.controlPlaneMode == expectedControlPlaneMode)
+        }
+    }
+
+    @Test("image timeout text falls back to second-based policy text when no job is selected")
+    @MainActor
+    func imageTimeoutTextFallsBackToSecondBasedPolicyTextWhenNoJobIsSelected() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        snapshot.imageDefaults.requestTimeoutSeconds = 75
+        snapshot.imageDefaults.source = .operatorOverride
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.selectedImageJob == nil)
+        #expect(viewModel.imageTimeoutPolicyText == "75-second creative workflow deadline")
+        #expect(viewModel.selectedImageJobTimeoutText == "75-second creative workflow deadline")
+    }
+
+    @Test("image source artifact summary resolves matching artifacts and raw fallback text")
+    @MainActor
+    func imageSourceArtifactSummaryResolvesMatchingArtifactsAndRawFallbackText() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        var sourceArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-source-summary",
+            role: .imageArtifactGenerated,
+            storageURI: "/tmp/generated-source.png"
+        )
+        sourceArtifact.artifactID = "artifact-source-summary"
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-source-summary",
+                requestID: "req-image-source-summary",
+                operation: "image_edit",
+                artifacts: [sourceArtifact]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imageEditSourceArtifactID = "artifact-source-summary"
+        #expect(viewModel.imageEditSourceArtifactSummaryText == "artifact-source-summary • /tmp/generated-source.png")
+
+        viewModel.imageEditSourceArtifactID = "artifact-missing"
+        #expect(viewModel.imageEditSourceArtifactSummaryText == "artifact-missing")
+
+        viewModel.imageEditSourceArtifactID = "   "
+        #expect(viewModel.imageEditSourceArtifactSummaryText == nil)
+    }
+
+    @Test("image edit validation enforces source artifact prompt delta and strength bounds")
+    @MainActor
+    func imageEditValidationEnforcesSourceArtifactPromptDeltaAndStrengthBounds() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeMenuBarImageModelSummary()]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.imagePromptText = "Edit the scene"
+        viewModel.imageStrength = "0.5"
+        viewModel.imageEditMode = .variation
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("source artifact") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.imageEditMode = .iterate
+        viewModel.imageEditSourceArtifactID = "artifact-source"
+        viewModel.imageEditSourceURL = ""
+        viewModel.imagePromptText = "   "
+        viewModel.imageStrength = "0.5"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.lastError?.contains("prompt delta") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.imageEditMode = .edit
+        viewModel.imageEditSourceArtifactID = ""
+        viewModel.imageEditSourceURL = "file:///tmp/source.png"
+        viewModel.imagePromptText = "Adjust the contrast"
+        viewModel.imageStrength = "1.25"
+
+        await viewModel.submitImageEdit()
+        #expect(viewModel.lastError?.contains("between 0 and 1") == true)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+    }
+
+    @Test("redo selected image edit reconstructs direct and fallback lineage branches across edit modes")
+    @MainActor
+    func redoSelectedImageEditReconstructsDirectAndFallbackLineageBranchesAcrossEditModes() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+
+        var editRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        editRecipe.prompt = "Replace the sky"
+        var editSourceArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-redo-edit",
+            role: .imageArtifactEditSource,
+            storageURI: "/tmp/edit-source.png"
+        )
+        editSourceArtifact.artifactID = "artifact-edit-source"
+        var editMaskArtifact = makeMenuBarImageArtifact(
+            jobID: "job-image-redo-edit",
+            role: .imageArtifactMask,
+            storageURI: "/tmp/edit-mask.png"
+        )
+        editMaskArtifact.artifactID = "artifact-edit-mask"
+
+        var variationRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        variationRecipe.prompt = "Keep the composition"
+        variationRecipe.sourceImageUri = "file:///tmp/direct-variation-source.png"
+        variationRecipe.maskUri = "file:///tmp/direct-variation-mask.png"
+        variationRecipe.size = "2048x1024"
+
+        var iterateRecipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        iterateRecipe.prompt = "Make it warmer"
+        iterateRecipe.maskUri = "file:///tmp/direct-iterate-mask.png"
+
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-edit",
+                requestID: "req-image-redo-edit",
+                operation: "image_edit",
+                artifacts: [editSourceArtifact, editMaskArtifact],
+                recipe: editRecipe,
+                editMode: .edit
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-variation",
+                requestID: "req-image-redo-variation",
+                operation: "image_edit",
+                recipe: variationRecipe,
+                editMode: .variation
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-iterate",
+                requestID: "req-image-redo-iterate",
+                operation: "image_edit",
+                recipe: iterateRecipe,
+                sourceArtifactID: "artifact-iterate-source",
+                promptDelta: "   ",
+                editMode: .iterate
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureImageResponses(
+            edit: makeMenuBarImageJobSummary(
+                jobID: "job-image-redo-edit-dispatched",
+                requestID: "req-image-redo-edit-dispatched",
+                operation: "image_edit",
+                artifacts: [makeMenuBarImageArtifact(jobID: "job-image-redo-edit-dispatched")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        viewModel.selectImageJob(jobID: "job-image-redo-edit")
+        await viewModel.redoSelectedImageJob()
+        let editRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(editRequest.mode == .edit)
+        #expect(editRequest.imageURL == "/tmp/edit-source.png")
+        #expect(editRequest.maskURL == "/tmp/edit-mask.png")
+        #expect(editRequest.prompt == "Replace the sky")
+        #expect(editRequest.sourceArtifactID.isEmpty)
+        #expect(editRequest.strength == 1)
+        #expect(editRequest.size == "1024x1024")
+        #expect(editRequest.responseFormat == "png")
+
+        viewModel.selectImageJob(jobID: "job-image-redo-variation")
+        await viewModel.redoSelectedImageJob()
+        let variationRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(variationRequest.mode == .variation)
+        #expect(variationRequest.imageURL == "file:///tmp/direct-variation-source.png")
+        #expect(variationRequest.maskURL == "file:///tmp/direct-variation-mask.png")
+        #expect(variationRequest.prompt == "Keep the composition")
+        #expect(variationRequest.size == "2048x1024")
+
+        viewModel.selectImageJob(jobID: "job-image-redo-iterate")
+        await viewModel.redoSelectedImageJob()
+        let iterateRequest = try #require(await client.recordedImageEditRequests.last)
+        #expect(iterateRequest.mode == .iterate)
+        #expect(iterateRequest.sourceArtifactID == "artifact-iterate-source")
+        #expect(iterateRequest.imageURL.isEmpty)
+        #expect(iterateRequest.maskURL == "file:///tmp/direct-iterate-mask.png")
+        #expect(iterateRequest.prompt.isEmpty)
+        #expect(iterateRequest.promptDelta == "Make it warmer")
+    }
+
+    @Test("redo and reiterate no-op branches preserve state and image generation load failures surface local errors")
+    @MainActor
+    func redoAndReiterateNoOpBranchesPreserveStateAndImageGenerationLoadFailuresSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeMenuBarImageModelSummary()]
+        )
+        snapshot.imageJobs = [
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-running-no-redo",
+                requestID: "req-image-running-no-redo",
+                operation: "image_edit",
+                state: .imageJobRunning
+            ),
+            makeMenuBarImageJobSummary(
+                jobID: "job-image-no-generated-artifact",
+                requestID: "req-image-no-generated-artifact",
+                operation: "image_edit",
+                artifacts: [
+                    makeMenuBarImageArtifact(
+                        jobID: "job-image-no-generated-artifact",
+                        role: .imageArtifactEditSource,
+                        storageURI: "/tmp/source-only.png"
+                    )
+                ]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        await client.configureErrors(
+            imageGenerate: NSError(
+                domain: "MenuBarTests",
+                code: 17,
+                userInfo: [NSLocalizedDescriptionKey: "synthetic generate failure"]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectImageJob(jobID: "job-image-running-no-redo")
+        await viewModel.redoSelectedImageJob()
+        #expect(await client.recordedImageGenerateRequests.isEmpty)
+        #expect(await client.recordedImageEditRequests.isEmpty)
+
+        viewModel.selectImageJob(jobID: "job-image-no-generated-artifact")
+        viewModel.imageEditMode = .edit
+        let priorMode = viewModel.imageEditMode
+        let priorArtifactID = viewModel.imageEditSourceArtifactID
+        viewModel.prepareReiterateFromSelectedImageJob()
+        #expect(viewModel.imageEditMode == priorMode)
+        #expect(viewModel.imageEditSourceArtifactID == priorArtifactID)
+
+        viewModel.imagePromptText = "Draw a failure case"
+        await viewModel.submitImageGeneration()
+        #expect(await client.recordedActions.contains("image.generate:melix-dev-image"))
+        #expect(viewModel.imageStatusText == "Failed")
+        #expect(viewModel.lastError?.contains("synthetic generate failure") == true)
     }
 
     @Test("image cancel action dispatches through the client and records cancel latency")
@@ -3355,15 +7108,44 @@ private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
 private func makeSnapshot(
     serverState: Melix_Controlplane_V1_ServerState,
     models: [Melix_Controlplane_V1_ModelSummary],
-    gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
+    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+    gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil,
+    gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = serverState
     snapshot.models = models
+    snapshot.runtimeSessions = runtimeSessions
     if let gatewayAccess {
         snapshot.gatewayAccess = gatewayAccess
     }
+    if let gatewayConfig {
+        snapshot.gatewayConfig = gatewayConfig
+    }
     return snapshot
+}
+
+private func makeRuntimeSession(
+    serverSessionID: String = "server-session-1",
+    lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .ready,
+    powerState: Melix_Controlplane_V1_ServerSessionPowerState = .active,
+    wakeReason: Melix_Controlplane_V1_ServerWakeReason = .initialBoot,
+    idleTimerSeconds: UInt32 = 0,
+    autoSleepEnabled: Bool = false,
+    lightSleepAfterSeconds: UInt32 = 300,
+    deepSleepAfterSeconds: UInt32 = 1800
+) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+    runtimeSession.serverSessionID = serverSessionID
+    runtimeSession.lifecycleState = lifecycleState
+    runtimeSession.powerState = powerState
+    runtimeSession.wakeReason = wakeReason
+    runtimeSession.idleTimerSeconds = idleTimerSeconds
+    runtimeSession.autoSleepEnabled = autoSleepEnabled
+    runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
+    runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
+    runtimeSession.updatedAtUnixMs = 1_717_171_717
+    return runtimeSession
 }
 
 private func makeGatewayAccessSummary(
@@ -3388,6 +7170,43 @@ private func makeGatewayAccessSummary(
     return summary
 }
 
+private func makeGatewayConfigSummary(
+    listener: Melix_Controlplane_V1_GatewayListenerConfigSummary
+) -> Melix_Controlplane_V1_GatewayConfigSummary {
+    var summary = Melix_Controlplane_V1_GatewayConfigSummary()
+    summary.listeners = [listener]
+    return summary
+}
+
+private func makeGatewayConfigListener(
+    serverSessionID: String,
+    requestedHost: String,
+    requestedPort: UInt32,
+    effectiveHost: String,
+    effectivePort: UInt32,
+    servedModelID: String,
+    rateLimitPerMinute: UInt32,
+    timeoutSeconds: UInt32,
+    source: Melix_Controlplane_V1_GatewayConfigSource,
+    activeBinding: Bool,
+    requiresRestart: Bool
+) -> Melix_Controlplane_V1_GatewayListenerConfigSummary {
+    var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+    listener.serverSessionID = serverSessionID
+    listener.requestedHost = requestedHost
+    listener.requestedPort = requestedPort
+    listener.effectiveHost = effectiveHost
+    listener.effectivePort = effectivePort
+    listener.servedModelID = servedModelID
+    listener.rateLimitPerMinute = rateLimitPerMinute
+    listener.timeoutSeconds = timeoutSeconds
+    listener.source = source
+    listener.activeBinding = activeBinding
+    listener.requiresRestart = requiresRestart
+    listener.updatedAtUnixMs = 1_717_171_717_000
+    return listener
+}
+
 private func makeModelSummary(
     modelID: String = "melix-dev-text",
     state: Melix_Controlplane_V1_ModelState,
@@ -3398,6 +7217,9 @@ private func makeModelSummary(
     estimatedBytes: UInt64 = 0,
     inflightRequests: UInt64 = 0,
     memoryPolicy: Melix_Controlplane_V1_MemoryResidencyPolicy = .memoryResidencyEvictable,
+    memoryBudgetBytes: UInt64 = 0,
+    memoryHeadroomBytes: UInt64 = 0,
+    requiredBytes: UInt64 = 0,
     adaptiveThinkingMode: String = "",
     adaptiveThinkingBudgetTokens: UInt32 = 0
 ) -> Melix_Controlplane_V1_ModelSummary {
@@ -3420,6 +7242,9 @@ private func makeModelSummary(
     model.residency.ttlSeconds = ttlSeconds
     model.residency.policy = memoryPolicy
     model.residency.transitionReason = transitionReason
+    model.residency.memoryBudgetBytes = memoryBudgetBytes
+    model.residency.memoryHeadroomBytes = memoryHeadroomBytes
+    model.residency.requiredBytes = requiredBytes
     return model
 }
 
@@ -3447,10 +7272,13 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         actionTitle: "action",
         maxContext: 8192,
         alias: "Melix Dev Text",
+        typeOverrideText: "",
         memoryPolicyText: "Evictable",
+        diskStreamingModeText: "Disabled",
         adaptiveThinkingText: "Adaptive • 192 tok",
         accelerationModeText: "Baseline",
         accelerationProfileID: "",
+        toolParserFallbackText: "Off",
         residencyText: "Warm • Evictable",
         memoryText: "No live footprint reported",
         memoryAlertText: ""
@@ -3497,6 +7325,42 @@ private func makeNamedModelOperationResult(
         result.artifact.runtime = "mlx_text"
     }
     return result
+}
+
+private func makeRuntimeDownloadQueueEntryState(
+    status: String,
+    pct: Double = 0.5,
+    outputDir: String = "/tmp/melix-downloads/melix-dev-text",
+    selectedMirror: String = "",
+    downloadedBytes: Int = 1024,
+    totalBytes: Int = 2048,
+    resumeUsed: Bool = false,
+    resumeFromBytes: Int = 0,
+    retryCount: Int = 0,
+    stallDetectionCount: Int = 0,
+    stallReason: String = "",
+    resumeReady: Bool = false
+) -> RuntimeDownloadQueueEntryState {
+    RuntimeDownloadQueueEntryState(
+        jobID: "model-ops-state",
+        sourceModel: "melix-dev-text",
+        status: status,
+        stage: "download",
+        pct: pct,
+        outputDir: outputDir,
+        outputPath: "\(outputDir)/download.artifact",
+        partialPath: "\(outputDir)/download.artifact.partial",
+        statePath: "\(outputDir)/download.state.json",
+        selectedMirror: selectedMirror,
+        downloadedBytes: downloadedBytes,
+        totalBytes: totalBytes,
+        resumeUsed: resumeUsed,
+        resumeFromBytes: resumeFromBytes,
+        retryCount: retryCount,
+        stallDetectionCount: stallDetectionCount,
+        stallReason: stallReason,
+        resumeReady: resumeReady
+    )
 }
 
 private func makeRegistrySnapshotManifest(

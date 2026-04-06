@@ -108,6 +108,171 @@ def build_phase6_vision_metrics_report(
     }
 
 
+def build_phase16_video_metrics_report(
+    *,
+    local_path: dict[str, Any],
+    remote_url: dict[str, Any],
+    bounded_window: dict[str, Any],
+    routing: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "video.local_path_success": bool(local_path.get("success")),
+        "video.remote_url_success": bool(remote_url.get("success")),
+        "video.bounded_window_success": bool(bounded_window.get("success")),
+        "video.routing.text_protection_success": bool(routing.get("text_protection_success")),
+    }
+    passed_checks = sum(1 for value in checks.values() if value)
+    total_checks = len(checks)
+
+    metrics = {
+        "video.integration_success_rate": _success_rate(passed_checks, total_checks),
+        "video.local_path_success_rate": _success_rate(
+            int(checks["video.local_path_success"]), 1
+        ),
+        "video.remote_url_success_rate": _success_rate(
+            int(checks["video.remote_url_success"]), 1
+        ),
+        "video.bounded_window_success_rate": _success_rate(
+            int(checks["video.bounded_window_success"]), 1
+        ),
+        "video.routing.text_protection_success_rate": _success_rate(
+            int(checks["video.routing.text_protection_success"]), 1
+        ),
+        "video.local_path.request_latency_ms": _rounded_float(
+            local_path.get("request_latency_ms")
+        ),
+        "video.remote_url.request_latency_ms": _rounded_float(
+            remote_url.get("request_latency_ms")
+        ),
+        "video.bounded_window.request_latency_ms": _rounded_float(
+            bounded_window.get("request_latency_ms")
+        ),
+        "video.routing.video_request_latency_ms": _rounded_float(
+            routing.get("video_request_latency_ms")
+        ),
+        "video.routing.text_request_latency_ms": _rounded_float(
+            routing.get("text_request_latency_ms")
+        ),
+        "vision.video_first_token_ms": _rounded_float(
+            bounded_window.get("video_first_token_ms")
+        ),
+        "vision.preprocess_latency_ms": _rounded_float(
+            bounded_window.get("preprocess_latency_ms")
+        ),
+        "vision.video_frame_count": _rounded_float(bounded_window.get("video_frame_count")),
+        "vision.video_frame_budget": _rounded_float(
+            bounded_window.get("video_frame_budget")
+        ),
+        "vision.video_window_ms": _rounded_float(bounded_window.get("video_window_ms")),
+        "vision.temp_media_artifact_count": _rounded_float(
+            bounded_window.get("temp_media_artifact_count")
+        ),
+        "vision.temp_media_artifact_bytes": _rounded_float(
+            bounded_window.get("temp_media_artifact_bytes")
+        ),
+        "vision.temp_media_cleanup_latency_ms": _rounded_float(
+            bounded_window.get("temp_media_cleanup_latency_ms")
+        ),
+        "vision.temp_media_cleanup_failure_count": _rounded_float(
+            bounded_window.get("temp_media_cleanup_failure_count")
+        ),
+        "scheduler.text_ttft_under_multimodal_ms": _rounded_float(
+            routing.get("scheduler_text_ttft_under_multimodal_ms")
+        ),
+        "scheduler.multimodal_queue_delay_ms": _rounded_float(
+            routing.get("scheduler_multimodal_queue_delay_ms")
+        ),
+    }
+
+    return {
+        "checks": checks,
+        "metrics": metrics,
+        "local_path": local_path,
+        "remote_url": remote_url,
+        "bounded_window": bounded_window,
+        "routing": routing,
+    }
+
+
+def build_phase17_speech_metrics_report(
+    *,
+    whisper: dict[str, Any],
+    parakeet: dict[str, Any],
+    kokoro: dict[str, Any],
+    qwen3_tts: dict[str, Any],
+) -> dict[str, Any]:
+    checks = {
+        "speech.transcription.whisper_success": bool(whisper.get("success")),
+        "speech.transcription.parakeet_success": bool(parakeet.get("success")),
+        "speech.synthesis.kokoro_success": bool(kokoro.get("success")),
+        "speech.synthesis.qwen3_tts_success": bool(qwen3_tts.get("success")),
+        "speech.synthesis.qwen3_tts_locale_resolution_success": bool(
+            qwen3_tts.get("locale_resolution_success")
+        ),
+        "speech.synthesis.qwen3_tts_instruction_path_success": bool(
+            qwen3_tts.get("instruction_path_success")
+        ),
+    }
+    passed_checks = sum(1 for value in checks.values() if value)
+    total_checks = len(checks)
+
+    metrics = {
+        "speech.integration_success_rate": _success_rate(passed_checks, total_checks),
+        "speech.transcription.whisper.request_latency_ms": _rounded_float(
+            whisper.get("request_latency_ms")
+        ),
+        "speech.transcription.parakeet.request_latency_ms": _rounded_float(
+            parakeet.get("request_latency_ms")
+        ),
+        "speech.transcription.whisper.duration_seconds": _rounded_float(
+            whisper.get("duration_seconds")
+        ),
+        "speech.transcription.parakeet.duration_seconds": _rounded_float(
+            parakeet.get("duration_seconds")
+        ),
+        "speech.transcription.whisper.preprocess_latency_ms": _rounded_float(
+            whisper.get("preprocess_latency_ms")
+        ),
+        "speech.transcription.parakeet.preprocess_latency_ms": _rounded_float(
+            parakeet.get("preprocess_latency_ms")
+        ),
+        "speech.transcription.whisper.chunk_count": _rounded_float(
+            whisper.get("chunk_count")
+        ),
+        "speech.transcription.parakeet.chunk_count": _rounded_float(
+            parakeet.get("chunk_count")
+        ),
+        "speech.synthesis.kokoro.request_latency_ms": _rounded_float(
+            kokoro.get("request_latency_ms")
+        ),
+        "speech.synthesis.qwen3_tts.request_latency_ms": _rounded_float(
+            qwen3_tts.get("request_latency_ms")
+        ),
+        "speech.synthesis.kokoro.output_bytes": _rounded_float(
+            kokoro.get("output_bytes")
+        ),
+        "speech.synthesis.qwen3_tts.output_bytes": _rounded_float(
+            qwen3_tts.get("output_bytes")
+        ),
+        "speech.synthesis.qwen3_tts.voice_fallback_count": _rounded_float(
+            qwen3_tts.get("voice_fallback_count")
+        ),
+        "speech.synthesis.qwen3_tts.locale_header_success_rate": _success_rate(
+            int(bool(qwen3_tts.get("locale_resolution_success"))),
+            1,
+        ),
+    }
+
+    return {
+        "checks": checks,
+        "metrics": metrics,
+        "whisper": whisper,
+        "parakeet": parakeet,
+        "kokoro": kokoro,
+        "qwen3_tts": qwen3_tts,
+    }
+
+
 def build_phase8_metrics_report(
     *,
     cold_boot_to_ready_ms: float | None = None,
@@ -115,6 +280,7 @@ def build_phase8_metrics_report(
     operator: dict[str, Any],
     release_gate_report: dict[str, Any],
     runtime_core: dict[str, Any] | None = None,
+    closure_audit: dict[str, Any] | None = None,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     active_policy = policy or load_release_gate_policy()
@@ -128,6 +294,10 @@ def build_phase8_metrics_report(
     )
     audio = dict(release_gate_report.get("audio", {}))
     audio_metrics = dict(audio.get("metrics", {}))
+    m9 = dict(release_gate_report.get("m9", {}))
+    m9_summary = dict(m9.get("summary", {}))
+    closure_audit_evidence = dict(closure_audit or {})
+    closure_audit_metrics = dict(closure_audit_evidence.get("metrics", {}))
 
     metrics = {
         "desktop.cold_boot_to_ready_ms": round(
@@ -306,6 +476,34 @@ def build_phase8_metrics_report(
             float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
+        "release_gate.m9_required_probe_count": round(
+            float(m9_summary.get("required_probe_count", 0.0)),
+            2,
+        ),
+        "release_gate.m9_missing_probe_count": round(
+            float(m9_summary.get("missing_probe_count", 0.0)),
+            2,
+        ),
+        "release_gate.m9_failed_threshold_count": round(
+            float(m9_summary.get("failed_threshold_count", 0.0)),
+            2,
+        ),
+        "closure_audit.blocker_count": round(
+            float(closure_audit_metrics.get("closure_audit.blocker_count", 0.0)),
+            2,
+        ),
+        "closure_audit.accepted_risk_count": round(
+            float(closure_audit_metrics.get("closure_audit.accepted_risk_count", 0.0)),
+            2,
+        ),
+        "closure_audit.evidence_gap_count": round(
+            float(closure_audit_metrics.get("closure_audit.evidence_gap_count", 0.0)),
+            2,
+        ),
+        "closure_audit.deferred_work_count": round(
+            float(closure_audit_metrics.get("closure_audit.deferred_work_count", 0.0)),
+            2,
+        ),
     }
 
     return {
@@ -317,6 +515,8 @@ def build_phase8_metrics_report(
         "runtime_core": runtime_core_evidence,
         "audio": audio,
         "operator": operator,
+        "m9": m9,
+        "closure_audit": closure_audit_evidence,
         "release_gate": release_gate_report,
     }
 
@@ -357,6 +557,7 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         _recovery_sane(report.get("recovery", {}), policy),
         _audio_sane(report.get("audio", {}), policy),
         _runtime_core_sane(report.get("runtime_core", {}), policy),
+        _m9_sane(report.get("m9", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
     return round((passed / len(sections)) * 100.0, 2)
@@ -468,3 +669,12 @@ def _runtime_core_sane(runtime_core: dict[str, Any], policy: dict[str, Any]) -> 
     if not isinstance(runtime_core, dict):
         return False
     return not _evaluate_section_metrics(runtime_core, policy.get("runtime_core", {}))
+
+
+def _m9_sane(m9: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(m9, dict):
+        return False
+    from worker.productization.release_gates import evaluate_m9_release_evidence
+
+    failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
+    return not failures

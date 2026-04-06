@@ -9,11 +9,27 @@ service MaintenanceService {
   rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
   rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
   rpc RunBench(RunBenchRequest) returns (stream RunBenchEvent);
+  rpc RunBenchMatrix(RunBenchMatrixRequest) returns (RunBenchMatrixResponse);
   rpc RunEvaluation(RunEvaluationRequest) returns (RunEvaluationResponse);
   rpc ExportResults(ExportResultsRequest) returns (ExportResultsResponse);
   rpc SubmitResults(SubmitResultsRequest) returns (SubmitResultsResponse);
   rpc SearchHubModels(SearchHubModelsRequest) returns (SearchHubModelsResponse);
   rpc GetHubModelCard(GetHubModelCardRequest) returns (GetHubModelCardResponse);
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_WARNING = 2;
+  HEALTH_STATUS_DEGRADED = 3;
+  HEALTH_STATUS_FAILED = 4;
+}
+
+message DoctorFinding {
+  string code = 1;
+  HealthStatus severity = 2;
+  string summary = 3;
+  string detail = 4;
 }
 
 message ConvertModelRequest {
@@ -96,6 +112,12 @@ message GetModelInfoResponse {
   repeated string supported_parsers = 5;
   repeated string supported_modalities = 6;
   repeated string supported_tasks = 7;
+  string backend_id = 8;
+  string family_id = 9;
+  string model_path = 10;
+  string model_revision = 11;
+  string default_workflow_role = 12;
+  string detected_identity_source = 13;
 }
 
 message RunDoctorRequest {
@@ -108,6 +130,8 @@ message RunDoctorResponse {
   bool ok = 1;
   ErrorStatus error = 2;
   string report_markdown = 3;
+  HealthStatus health_status = 4;
+  repeated DoctorFinding findings = 5;
 }
 
 message RunBenchRequest {
@@ -116,6 +140,13 @@ message RunBenchRequest {
   map<string, string> parameters = 3;
   string task_kind = 4;
   string source_repo = 5;
+  repeated uint32 context_lengths = 6;
+  uint32 generation_length = 7;
+  repeated uint32 batch_sizes = 8;
+  uint32 repeats = 9;
+  string cache_profile = 10;
+  string reasoning_mode = 11;
+  string structured_output_mode = 12;
 }
 
 message RunBenchEvent {
@@ -151,6 +182,74 @@ message BenchFailed {
   ErrorStatus error = 1;
 }
 
+message RunBenchMatrixRequest {
+  string model_handle = 1;
+  string task_kind = 2;
+  string source_repo = 3;
+  repeated string suite_ids = 4;
+  repeated uint32 context_lengths = 5;
+  repeated uint32 generation_lengths = 6;
+  repeated uint32 batch_sizes = 7;
+  repeated string cache_profiles = 8;
+  repeated string reasoning_modes = 9;
+  repeated string structured_output_modes = 10;
+  repeated uint32 concurrency_levels = 11;
+  uint32 repeats = 12;
+  uint32 requests = 13;
+  uint32 duration_seconds = 14;
+  bool allow_large_matrix = 15;
+}
+
+message BenchmarkMatrixJobSummary {
+  string schema_version = 1;
+  string job_id = 2;
+  string model_id = 3;
+  string task_kind = 4;
+  string source_repo = 5;
+  repeated string suite_ids = 6;
+  string benchmark_mode = 7;
+  string status = 8;
+  string output_dir = 9;
+  int64 created_at_unix_ms = 10;
+  int64 updated_at_unix_ms = 11;
+}
+
+message BenchmarkMatrixSummaryRow {
+  string job_id = 1;
+  string task_kind = 2;
+  string source_repo = 3;
+  string model_id = 4;
+  string suite_id = 5;
+  uint32 context_length = 6;
+  uint32 generation_length = 7;
+  uint32 batch_size = 8;
+  string cache_profile = 9;
+  string reasoning_mode = 10;
+  string structured_output_mode = 11;
+  uint32 concurrency_level = 12;
+  uint32 repeats = 13;
+  uint32 requests = 14;
+  uint32 duration_seconds = 15;
+  double ttft_mean_ms = 16;
+  double ttft_std_ms = 17;
+  double request_latency_mean_ms = 18;
+  double request_latency_std_ms = 19;
+  double prefill_tokens_per_second_mean = 20;
+  double decode_tokens_per_second_mean = 21;
+  double throughput_requests_per_second = 22;
+  double throughput_tokens_per_second = 23;
+  double success_rate = 24;
+  uint64 peak_memory_bytes_max = 25;
+  double queue_wait_mean_ms = 26;
+  double queue_wait_p95_ms = 27;
+  int64 created_at_unix_ms = 28;
+}
+
+message RunBenchMatrixResponse {
+  BenchmarkMatrixJobSummary job = 1;
+  repeated BenchmarkMatrixSummaryRow summary_rows = 2;
+}
+
 message RunEvaluationRequest {
   string model_handle = 1;
   string suite_id = 2;
@@ -160,6 +259,10 @@ message RunEvaluationRequest {
   map<string, string> parameters = 6;
   string task_kind = 7;
   string source_repo = 8;
+  uint32 few_shot = 9;
+  uint64 seed = 10;
+  string scoring_mode = 11;
+  string code_exec_policy = 12;
 }
 
 message EvaluationMetricValue {

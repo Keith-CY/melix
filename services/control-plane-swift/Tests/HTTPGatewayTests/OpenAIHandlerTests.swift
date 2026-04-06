@@ -297,6 +297,349 @@ struct OpenAIHandlerTests {
         #expect(authorized.statusCode == 200)
     }
 
+    @Test("gateway auth sessions can be created reused and revoked")
+    func gatewayAuthSessionsCanBeCreatedReusedAndRevoked() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let modelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejectedResponse.body)
+        let error = try #require(rejectedPayload["error"] as? [String: Any])
+        let sessionState = try #require(error["session_state"] as? [String: Any])
+
+        #expect(createResponse.statusCode == 200)
+        #expect(modelsResponse.statusCode == 200)
+        #expect(inspectResponse.statusCode == 200)
+        #expect(signOutResponse.statusCode == 200)
+        #expect(rejectedResponse.statusCode == 401)
+        #expect(error["code"] as? String == "revoked_session")
+        #expect(sessionState["state"] as? String == "revoked")
+        #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
+    }
+
+    @Test("gateway auth session responses sanitize rich output in encoded and manual json payloads")
+    func gatewayAuthSessionResponsesSanitizeRichOutputAcrossResponsePaths() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-sanitize-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let maliciousKeyID = "<b>codex</b> [click](javascript:alert(1)) file:///tmp/melix"
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: maliciousKeyID, label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let createSession = try #require(createPayload["session"] as? [String: Any])
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        #expect(signOutResponse.statusCode == 200)
+
+        let rejectedResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejectedResponse.body)
+        let rejectedError = try #require(rejectedPayload["error"] as? [String: Any])
+        let rejectedSessionState = try #require(rejectedError["session_state"] as? [String: Any])
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(createSession["key_id"] as? String == "codex click [unsafe link removed]")
+        #expect(rejectedSessionState["key_id"] as? String == "codex click [unsafe link removed]")
+        #expect(await metricsStore.value(forKey: "sanitized_output.enforcement_count") >= 2)
+        #expect(await metricsStore.value(forKey: "sanitized_output.blocked_html_fragment_count") >= 2)
+        #expect(await metricsStore.value(forKey: "sanitized_output.unsafe_uri_rejection_count") >= 2)
+    }
+
+    @Test("gateway auth session routes reject missing unsupported and unavailable session flows")
+    func gatewayAuthSessionRoutesRejectMissingUnsupportedAndUnavailableSessionFlows() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-errors-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let sessionStore = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 1_000 }
+        )
+        let sessionAwareHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: sessionStore
+        )
+
+        let missingCurrentSession = try await sessionAwareHandler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let missingCurrentPayload = try await jsonPayload(from: missingCurrentSession.body)
+        let missingCurrentError = try #require(missingCurrentPayload["error"] as? [String: Any])
+
+        let missingSessionOnModels = try await sessionAwareHandler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-melix-session": "melix_sess_missing"],
+                body: Data()
+            )
+        )
+        let missingSessionPayload = try await jsonPayload(from: missingSessionOnModels.body)
+        let missingSessionError = try #require(missingSessionPayload["error"] as? [String: Any])
+        let missingSessionState = try #require(missingSessionError["session_state"] as? [String: Any])
+
+        let localTrustHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: .localTrust,
+            persistentAuthSessionStore: sessionStore
+        )
+        let unsupportedCreateResponse = try await localTrustHandler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: ["content-type": "application/json"],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let unsupportedCreatePayload = try await jsonPayload(from: unsupportedCreateResponse.body)
+        let unsupportedCreateError = try #require(unsupportedCreatePayload["error"] as? [String: Any])
+
+        let unavailableHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            )
+        )
+        let unavailableCreateResponse = try await unavailableHandler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let unavailableCreatePayload = try await jsonPayload(from: unavailableCreateResponse.body)
+        let unavailableCreateError = try #require(unavailableCreatePayload["error"] as? [String: Any])
+
+        #expect(missingCurrentSession.statusCode == 401)
+        #expect(missingCurrentError["code"] as? String == "missing_session")
+        #expect(missingSessionOnModels.statusCode == 401)
+        #expect(missingSessionError["code"] as? String == "missing_session")
+        #expect(missingSessionState["state"] as? String == "missing")
+        #expect(unsupportedCreateResponse.statusCode == 403)
+        #expect(unsupportedCreateError["code"] as? String == "auth_session_requires_configured_gateway_auth")
+        #expect(unavailableCreateResponse.statusCode == 503)
+        #expect(unavailableCreateError["code"] as? String == "auth_session_unavailable")
+    }
+
+    @Test("expired gateway auth sessions return structured session metadata")
+    func expiredGatewayAuthSessionsReturnStructuredSessionMetadata() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-auth-expired-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let clock = TestNowUnixMSSequence([1_000, 1_000, 5_000, 5_000, 5_000])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 1,
+                nowUnixMs: { clock.next() }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("{\"remember_me\":true}".data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let expiredResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let expiredPayload = try await jsonPayload(from: expiredResponse.body)
+        let error = try #require(expiredPayload["error"] as? [String: Any])
+        let sessionState = try #require(error["session_state"] as? [String: Any])
+
+        #expect(expiredResponse.statusCode == 401)
+        #expect(error["code"] as? String == "expired_session")
+        #expect(sessionState["state"] as? String == "expired")
+    }
+
     @Test("POST /v1/chat/completions translates into a worker generate request")
     func postChatCompletionsTranslatesAndStreams() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -877,6 +1220,127 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"invalid_argument\""))
         #expect(payload.contains("\"message\":\"input_image.url or input_image.data is required.\""))
         #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions records video frame metrics for VLM requests")
+    func postChatCompletionsRecordsVideoFrameMetricsForVLMRequests() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let runtimeStats = {
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "vlm"
+            response.stats.lastPreprocessLatencyMs = 24
+            response.stats.lastPreprocessPeakMemoryBytes = 32_768
+            response.stats.lastFirstTokenLatencyMs = 11
+            response.stats.lastVideoEffectiveFrameCount = 6
+            response.stats.lastVideoRequestedFrameBudget = 6
+            response.stats.lastVideoWindowMs = 4_000
+            response.stats.lastTempMediaArtifactCount = 2
+            response.stats.lastTempMediaArtifactBytes = 2_048
+            response.stats.lastTempMediaCleanupLatencyMs = 4
+            response.stats.lastTempMediaCleanupFailureCount = 1
+            return response
+        }()
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-http-vlm-video", seq: 1, text: "video"),
+                makeCompletedEvent(
+                    requestID: "req-http-vlm-video",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "video"
+                ),
+            ],
+            loadModelHandle: "melix-dev-vlm::python",
+            runtimeStatsResponseOverride: runtimeStats
+        )
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                schedulerReadModel: schedulerReadModel,
+                metricsStore: metricsStore
+            ),
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-vlm-video" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Summarize the clip." },
+                    {
+                      "type": "input_video",
+                      "input_video": {
+                        "data": "dmlkZW8gZml4dHVyZQ==",
+                        "format": "mp4",
+                        "filename": "clip.mp4",
+                        "frame_budget": 6,
+                        "start_ms": 1000,
+                        "end_ms": 5000
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await vlmClient.lastGenerateRequest)
+        let metrics = await metricsStore.snapshot()
+        let queueSummary = await schedulerReadModel.snapshot()
+        let lane = try #require(
+            queueSummary.lanes.first(where: { $0.laneID == "multimodal.vision.background" })
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(request.messages[0].parts.count == 2)
+        #expect(request.messages[0].parts[1].videoBytes == Data("video fixture".utf8))
+        #expect(request.messages[0].parts[1].media.frameBudget == 6)
+        #expect(request.messages[0].parts[1].media.startMs == 1_000)
+        #expect(request.messages[0].parts[1].media.endMs == 5_000)
+        #expect(lane.activeRequests == 0)
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 24)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 32_768)
+        #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
+        #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
+        #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2_048)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
     }
 
     @Test("chat completions translator preserves recovery metadata on worker requests")
@@ -1474,6 +1938,76 @@ struct OpenAIHandlerTests {
         #expect(request.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
         #expect(request.execution.ext["melix.ocr.prompt_source"] == "request")
         #expect(request.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
+    @Test("POST /v1/chat/completions applies gateway serving defaults when request and model omit sampling")
+    func postChatCompletionsAppliesGatewayServingDefaults() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.temperature = 0.37
+        defaults.topP = 0.91
+        defaults.maxTokens = 448
+        defaults.streamIntervalTokens = 4
+        defaults.maxConcurrentRequests = 6
+        defaults.concurrentProcessingEnabled = true
+        defaults.prefillBatchSize = 3
+        defaults.completionBatchSize = 2
+        try await servingDefaultsStore.apply(command: defaults)
+
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-serving-defaults", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-serving-defaults" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.sampling.temperature == 0.37)
+        #expect(request.sampling.topP == 0.91)
+        #expect(request.sampling.maxOutputTokens == 448)
+        #expect(request.execution.ext["melix.stream.interval_tokens"] == "4")
+        #expect(request.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+        #expect(request.execution.ext["melix.gateway.concurrent_processing"] == "true")
+        #expect(request.execution.ext["melix.gateway.prefill_batch_size"] == "3")
+        #expect(request.execution.ext["melix.gateway.completion_batch_size"] == "2")
     }
 
     @Test("responses requests preserve harmony metadata while keeping standard stream frames")
@@ -2427,6 +2961,77 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.seconds_processed_per_second", default: 0] > 0)
     }
 
+    @Test("POST /v1/audio/transcriptions lazy-loads managed mlx-audio models")
+    func postAudioTranscriptionsLazyLoadsManagedMLXAudioModels() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setTranscribeResponse({
+            var response = Melix_Worker_V1_TranscribeResponse()
+            response.text = "lazy loaded whisper"
+            response.language = "en"
+            response.durationSeconds = 0.5
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-lazy-transcribe-\(UUID().uuidString)", isDirectory: true)
+        let managedModelPath = appSupportDirectory
+            .appendingPathComponent("managed/whisper", isDirectory: true)
+            .path
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-stt"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-whisper-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/whisper-large-v3-turbo-asr-fp16",
+            localModelPath: managedModelPath
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxWhisperModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-whisper-mlx",
+              "audio_base64": "aGVsbG8gYXVkaW8=",
+              "format": "wav"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/transcriptions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let loadRequest = try #require(await audioClient.lastLoadModelRequest)
+        let request = try #require(await audioClient.lastTranscribeRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-whisper-mlx")
+        #expect(loadRequest.model.modelPath == managedModelPath)
+        #expect(loadRequest.model.revision == "mlx-audio")
+        #expect(request.modelHandle == "melix-whisper-mlx::python")
+        #expect(payload.contains("\"model\":\"melix-whisper-mlx\""))
+        #expect(payload.contains("\"text\":\"lazy loaded whisper\""))
+    }
+
     @Test("POST /v1/audio/transcriptions records background-lane and runtime probe metrics")
     func postAudioTranscriptionsRecordsIsolationAndProbeMetrics() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -2625,8 +3230,8 @@ struct OpenAIHandlerTests {
         #expect(thrownFailurePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("POST /v1/audio/transcriptions returns 409 and 503 for unavailable routes")
-    func postAudioTranscriptionsReturns409And503ForUnavailableRoutes() async throws {
+    @Test("POST /v1/audio/transcriptions returns 503 for missing compatible routes and unavailable workers")
+    func postAudioTranscriptionsReturns503ForMissingCompatibleRoutesAndUnavailableWorkers() async throws {
         let unloadedHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()]),
             requestCoordinator: RequestCoordinator(
@@ -2652,8 +3257,8 @@ struct OpenAIHandlerTests {
         )
         let unloadedPayload = try await collectBody(unloadedResponse.body)
 
-        #expect(unloadedResponse.statusCode == 409)
-        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+        #expect(unloadedResponse.statusCode == 503)
+        #expect(unloadedPayload.contains("\"code\":\"worker_unavailable\""))
 
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTranscriptionModel()])
         _ = await catalog.loadModel(id: "melix-dev-transcribe", dispatchHandle: "melix-dev-transcribe::python")
@@ -2774,9 +3379,240 @@ struct OpenAIHandlerTests {
         #expect(request.voice == "alloy")
         #expect(request.format == "wav")
         #expect(request.instructions == "Use a calm voice.")
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "und")
+        #expect(response.headers["x-melix-audio-locale-source"] == "model_default")
+        #expect(response.headers["x-melix-audio-locale-policy"] == "request>model_default>packaged_default")
+        #expect(response.headers["x-melix-audio-model-default-locale"] == "und")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "und")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "und")
         #expect(payload == Data("VOICE=alloy\nFORMAT=wav\nTEXT=hello speech".utf8))
         #expect(metrics.values["audio.speech_request_latency_ms", default: -1] >= 0)
         #expect(metrics.values["audio.speech_output_bytes", default: 0] == 40)
+    }
+
+    @Test("POST /v1/audio/speech normalizes requested locales and exposes hydrated speech headers")
+    func postAudioSpeechNormalizesRequestedLocalesAndExposesHydratedSpeechHeaders() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("qwen-voice".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-locale-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-qwen3-tts-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Qwen3-TTS-4B-Instruct-2507-4bit",
+            localModelPath: appSupportDirectory
+                .appendingPathComponent("managed/qwen3-tts", isDirectory: true)
+                .path
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.mlxQwen3TTSModel()])
+        _ = await catalog.loadModel(id: "melix-qwen3-tts-mlx", dispatchHandle: "melix-qwen3-tts-mlx::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-qwen3-tts-mlx",
+              "input": "hello speech",
+              "format": "wav",
+              "locale": "en_US"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let request = try #require(await audioClient.lastSpeakRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.modelHandle == "melix-qwen3-tts-mlx::python")
+        #expect(response.headers["x-melix-audio-requested-locale"] == "en-us")
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "en")
+        #expect(response.headers["x-melix-audio-locale-source"] == "request")
+        #expect(response.headers["x-melix-audio-locale-policy"] == "request>model_default>packaged_default")
+        #expect(response.headers["x-melix-audio-model-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "zh,en")
+        #expect(response.headers["x-melix-audio-install-profile"] == "audio-tts")
+        #expect(response.headers["x-melix-audio-runtime-pack-state"] == "installed")
+        #expect(response.headers["x-melix-audio-runtime-pack-id"] == "melix-audio-runtime-pack")
+        #expect(response.headers["x-melix-audio-model-state"] == "managed_local")
+        #expect(payload == Data("qwen-voice".utf8))
+    }
+
+    @Test("POST /v1/audio/speech returns model_not_ready for unknown models and preserves requested locale normalization")
+    func postAudioSpeechReturnsModelNotReadyForUnknownModels() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedPhaseFiveWorkerClient()
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "missing-speech-model",
+              "input": "hello speech",
+              "locale": "en_US"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_not_ready\""))
+    }
+
+    @Test("POST /v1/audio/speech falls back to packaged default locales and language metadata")
+    func postAudioSpeechFallsBackToPackagedDefaultLocalesAndLanguageMetadata() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("packaged-default".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        var packagedDefaultModel = ModelCatalog.devSpeechModel()
+        packagedDefaultModel.modelID = "melix-speech-packaged-default"
+        packagedDefaultModel.settings.ext["melix.audio.voice_locales"] = ""
+        packagedDefaultModel.settings.ext["melix.audio.languages"] = "en_US,en-us,zh"
+        packagedDefaultModel.settings.ext["melix.audio.default_locale"] = ""
+        packagedDefaultModel.settings.ext["melix.audio.packaged_default_locale"] = "zh"
+        packagedDefaultModel.settings.ext["melix.audio.locale_policy"] = "request>model_default>packaged_default"
+
+        let catalog = ModelCatalog(seedModels: [packagedDefaultModel])
+        _ = await catalog.loadModel(
+            id: "melix-speech-packaged-default",
+            dispatchHandle: "melix-speech-packaged-default::python"
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-speech-packaged-default",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["x-melix-audio-resolved-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-locale-source"] == "packaged_default")
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == "zh")
+        #expect(response.headers["x-melix-audio-supported-locales"] == "en-us,zh")
+        #expect(payload == Data("packaged-default".utf8))
+    }
+
+    @Test("POST /v1/audio/speech omits locale headers when no locale metadata is advertised")
+    func postAudioSpeechOmitsLocaleHeadersWhenNoLocaleMetadataIsAdvertised() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("no-locale-metadata".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        var noLocaleModel = ModelCatalog.devSpeechModel()
+        noLocaleModel.modelID = "melix-speech-no-locale"
+        noLocaleModel.settings.ext["melix.audio.voice_locales"] = ""
+        noLocaleModel.settings.ext["melix.audio.languages"] = ""
+        noLocaleModel.settings.ext["melix.audio.default_locale"] = ""
+        noLocaleModel.settings.ext["melix.audio.packaged_default_locale"] = ""
+        noLocaleModel.settings.ext["melix.audio.locale_policy"] = ""
+
+        let catalog = ModelCatalog(seedModels: [noLocaleModel])
+        _ = await catalog.loadModel(id: "melix-speech-no-locale", dispatchHandle: "melix-speech-no-locale::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient
+            )
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-speech-no-locale",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["x-melix-audio-requested-locale"] == nil)
+        #expect(response.headers["x-melix-audio-resolved-locale"] == nil)
+        #expect(response.headers["x-melix-audio-locale-source"] == nil)
+        #expect(response.headers["x-melix-audio-model-default-locale"] == nil)
+        #expect(response.headers["x-melix-audio-packaged-default-locale"] == nil)
+        #expect(response.headers["x-melix-audio-supported-locales"] == nil)
+        #expect(payload == Data("no-locale-metadata".utf8))
     }
 
     @Test("POST /v1/audio/speech records background-lane and runtime probe metrics")
@@ -2893,6 +3729,75 @@ struct OpenAIHandlerTests {
         #expect(payload == Data("mp3-bytes".utf8))
     }
 
+    @Test("POST /v1/audio/speech lazy-loads managed mlx-audio models")
+    func postAudioSpeechLazyLoadsManagedMLXAudioModels() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakResponse({
+            var response = Melix_Worker_V1_SpeakResponse()
+            response.audioBytes = Data("lazy-loaded-kokoro".utf8)
+            response.format = "wav"
+            return response
+        }())
+
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-lazy-speech-\(UUID().uuidString)", isDirectory: true)
+        let managedModelPath = appSupportDirectory
+            .appendingPathComponent("managed/kokoro", isDirectory: true)
+            .path
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-kokoro-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Kokoro-82M-bf16",
+            localModelPath: managedModelPath
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let loadRequest = try #require(await audioClient.lastLoadModelRequest)
+        let request = try #require(await audioClient.lastSpeakRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-kokoro-mlx")
+        #expect(loadRequest.model.modelPath == managedModelPath)
+        #expect(loadRequest.model.revision == "mlx-audio")
+        #expect(request.modelHandle == "melix-kokoro-mlx::python")
+        #expect(response.headers["x-melix-audio-model-state"] == "managed_local")
+        #expect(payload == Data("lazy-loaded-kokoro".utf8))
+    }
+
     @Test("POST /v1/audio/speech rejects formats unsupported by the selected model")
     func postAudioSpeechRejectsFormatsUnsupportedByTheSelectedModel() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -2932,6 +3837,66 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"invalid_argument\""))
         #expect(payload.contains("does not support format"))
+        #expect(await audioClient.lastSpeakRequest == nil)
+    }
+
+    @Test("POST /v1/audio/speech rejects unsupported explicit locales")
+    func postAudioSpeechRejectsUnsupportedExplicitLocales() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let appSupportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-audio-unsupported-locale-\(UUID().uuidString)", isDirectory: true)
+        let assetManager = AudioAssetManager(appSupportDirectory: appSupportDirectory)
+        try assetManager.recordRuntimePackInstall(
+            packID: "melix-audio-runtime-pack",
+            version: "0.3.0",
+            profiles: ["audio-tts"]
+        )
+        try assetManager.recordManagedModel(
+            modelID: "melix-kokoro-mlx",
+            revision: "mlx-audio",
+            sourceModelPath: "mlx-community/Kokoro-82M-bf16",
+            localModelPath: appSupportDirectory
+                .appendingPathComponent("managed/kokoro", isDirectory: true)
+                .path
+        )
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.mlxKokoroModel()])
+        _ = await catalog.loadModel(id: "melix-kokoro-mlx", dispatchHandle: "melix-kokoro-mlx::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: audioClient,
+                modelCatalog: catalog
+            ),
+            audioAssetManager: assetManager
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-kokoro-mlx",
+              "input": "hello speech",
+              "format": "wav",
+              "locale": "fr-FR"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("does not advertise locale fr-fr"))
+        #expect(payload.contains("Supported locales: en"))
         #expect(await audioClient.lastSpeakRequest == nil)
     }
 
@@ -2988,8 +3953,8 @@ struct OpenAIHandlerTests {
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("POST /v1/audio/speech returns 409 and 503 for unavailable routes")
-    func postAudioSpeechReturns409And503ForUnavailableRoutes() async throws {
+    @Test("POST /v1/audio/speech returns 503 for missing compatible routes and unavailable workers")
+    func postAudioSpeechReturns503ForMissingCompatibleRoutesAndUnavailableWorkers() async throws {
         let unloadedHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()]),
             requestCoordinator: RequestCoordinator(
@@ -3015,8 +3980,8 @@ struct OpenAIHandlerTests {
         )
         let unloadedPayload = try await collectBody(unloadedResponse.body)
 
-        #expect(unloadedResponse.statusCode == 409)
-        #expect(unloadedPayload.contains("\"code\":\"model_not_ready\""))
+        #expect(unloadedResponse.statusCode == 503)
+        #expect(unloadedPayload.contains("\"code\":\"worker_unavailable\""))
 
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()])
         _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
@@ -3169,6 +4134,10 @@ struct OpenAIHandlerTests {
         #expect(request.artifactNamespace == "tests")
         #expect(payload.contains("\"job_id\":\"image-generate-1::image-generate\""))
         #expect(payload.contains("\"operation\":\"image_generate\""))
+        #expect(payload.contains("\"request_timeout_seconds\":1800"))
+        #expect(payload.contains("\"recipe\":{"))
+        #expect(payload.contains("\"prompt\":\"red fox in snow\""))
+        #expect(payload.contains("\"artifact_namespace\":\"tests\""))
         #expect(payload.contains("\"b64_json\":\"Z2VuZXJhdGVkLWltYWdl\""))
         #expect(job.state == .imageJobCompleted)
         #expect(job.lane == "image.generate.background")
@@ -3270,6 +4239,206 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["images.peak_memory_bytes", default: -1] == 98304)
     }
 
+    @Test("POST /v1/images/edits resolves iterate requests from source_artifact_id")
+    func postImageEditsResolveIterateRequestsFromSourceArtifactID() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("iterated-image".utf8)]
+            response.job.requestID = "image-edit-iterate"
+            response.job.jobID = "image-edit-iterate::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_iterate"
+            response.job.state = .imageJobCompleted
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.promptDelta = "make the colors warmer"
+            response.job.editMode = .iterate
+            var generated = makeWorkerArtifact(
+                jobID: "image-edit-iterate::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 256
+        sourceArtifact.height = 256
+        sourceArtifact.byteLength = 64
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-source",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-iterate",
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "prompt_delta": "make the colors warmer",
+              "edit_mode": "iterate",
+              "strength": 0.7,
+              "size": "256x256",
+              "response_format": "png",
+              "n": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await imageClient.lastImageEditRequest)
+        let job = try #require(await imageJobReadModel.job(requestID: "image-edit-iterate"))
+
+        #expect(response.statusCode == 200)
+        #expect(request.image.isEmpty)
+        #expect(request.imageUri == "file:///tmp/source-origin.png")
+        #expect(request.sourceArtifactID == "artifact-source")
+        #expect(request.prompt == "make the colors warmer")
+        #expect(request.promptDelta == "make the colors warmer")
+        #expect(request.editMode == .iterate)
+        #expect(request.ext["melix.image.source_job_id"] == "job-source")
+        #expect(payload.contains("\"operation\":\"image_iterate\""))
+        #expect(payload.contains("\"source_artifact_id\":\"artifact-source\""))
+        #expect(payload.contains("\"source_job_id\":\"job-source\""))
+        #expect(payload.contains("\"prompt_delta\":\"make the colors warmer\""))
+        #expect(payload.contains("\"edit_mode\":\"iterate\""))
+        #expect(payload.contains("\"request_timeout_seconds\":1800"))
+        #expect(payload.contains("\"source_image_uri\":\""))
+        #expect(payload.contains("\"parent_artifact_id\":\"artifact-source\""))
+        #expect(job.operation == "image_iterate")
+        #expect(job.sourceArtifactID == "artifact-source")
+        #expect(job.sourceJobID == "job-source")
+        #expect(job.promptDelta == "make the colors warmer")
+        #expect(job.editMode == .iterate)
+    }
+
+    @Test("POST /v1/images/edits includes variation lineage payload fields")
+    func postImageEditsIncludeVariationLineagePayloadFields() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.images = [Data("variation-image".utf8)]
+            response.job.requestID = "image-edit-variation"
+            response.job.jobID = "image-edit-variation::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_variation"
+            response.job.state = .imageJobCompleted
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.editMode = .variation
+            var generated = makeWorkerArtifact(
+                jobID: "image-edit-variation::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "variation-output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 256
+        sourceArtifact.height = 256
+        sourceArtifact.byteLength = 64
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-image-source-variation",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-edit-variation",
+              "model": "melix-dev-image",
+              "prompt": "keep composition",
+              "source_artifact_id": "artifact-source",
+              "edit_mode": "variation",
+              "strength": 0.7,
+              "size": "256x256",
+              "response_format": "png",
+              "n": 1
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"operation\":\"image_variation\""))
+        #expect(payload.contains("\"source_artifact_id\":\"artifact-source\""))
+        #expect(payload.contains("\"edit_mode\":\"variation\""))
+        #expect(payload.contains("\"parent_artifact_id\":\"artifact-source\""))
+    }
+
     @Test("image endpoints validate payloads and return 409 and 503 when routing is unavailable")
     func imageEndpointsValidatePayloadsAndReturnUnavailableResponses() async throws {
         let invalidHandler = OpenAIHandler(
@@ -3349,6 +4518,95 @@ struct OpenAIHandlerTests {
 
         #expect(unavailableResponse.statusCode == 503)
         #expect(unavailablePayload.contains("\"code\":\"worker_unavailable\""))
+    }
+
+    @Test("image edit endpoints validate variation and iterate lineage inputs")
+    func imageEditEndpointsValidateVariationAndIterateLineageInputs() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: ScriptedPhaseFiveWorkerClient(),
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: ImageJobReadModel()
+        )
+
+        let missingSourceBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "keep composition",
+              "edit_mode": "variation"
+            }
+            """.data(using: .utf8)
+        )
+        let missingSourceResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: missingSourceBody)
+        )
+        let missingSourcePayload = try await collectBody(missingSourceResponse.body)
+
+        let invalidPromptDeltaBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "replace the sky",
+              "image_base64": "U09VUkNF",
+              "prompt_delta": "make it warmer"
+            }
+            """.data(using: .utf8)
+        )
+        let invalidPromptDeltaResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: invalidPromptDeltaBody)
+        )
+        let invalidPromptDeltaPayload = try await collectBody(invalidPromptDeltaResponse.body)
+
+        let missingIterateDeltaBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "edit_mode": "iterate"
+            }
+            """.data(using: .utf8)
+        )
+        let missingIterateDeltaResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: missingIterateDeltaBody)
+        )
+        let missingIterateDeltaPayload = try await collectBody(missingIterateDeltaResponse.body)
+
+        let mixedSourceInputsBody = try #require(
+            """
+            {
+              "model": "melix-dev-image",
+              "prompt": "",
+              "source_artifact_id": "artifact-source",
+              "image_url": "file:///tmp/source.png",
+              "prompt_delta": "make it warmer",
+              "edit_mode": "iterate"
+            }
+            """.data(using: .utf8)
+        )
+        let mixedSourceInputsResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: mixedSourceInputsBody)
+        )
+        let mixedSourceInputsPayload = try await collectBody(mixedSourceInputsResponse.body)
+
+        #expect(missingSourceResponse.statusCode == 400)
+        #expect(missingSourcePayload.contains("source_artifact_id is required"))
+        #expect(invalidPromptDeltaResponse.statusCode == 400)
+        #expect(invalidPromptDeltaPayload.contains("prompt_delta is only supported"))
+        #expect(missingIterateDeltaResponse.statusCode == 400)
+        #expect(missingIterateDeltaPayload.contains("prompt_delta is required"))
+        #expect(mixedSourceInputsResponse.statusCode == 400)
+        #expect(mixedSourceInputsPayload.contains("source_artifact_id cannot be combined"))
     }
 
     @Test("image generation returns resource_exhausted when the background queue is saturated")
@@ -3805,7 +5063,7 @@ struct OpenAIHandlerTests {
         let runningJob = try #require(await imageJobReadModel.job(requestID: "image-generate-running"))
 
         #expect(runningResponse.statusCode == 200)
-        #expect(runningPayload.contains("\"state\":\"running\""))
+        #expect(runningPayload.contains("\"state\":\"failed\""))
         #expect(runningPayload.contains("\"role\":\"preview\""))
         #expect(runningJob.state == .imageJobFailed)
         #expect(runningJob.error.code == "runtime_error")
@@ -3876,8 +5134,7 @@ struct OpenAIHandlerTests {
         #expect(urlResponse.statusCode == 200)
         #expect(urlRequest.image.isEmpty)
         #expect(urlRequest.imageUri == "file:///tmp/source.png")
-        #expect(urlPayload.contains("\"state\":\"queued\""))
-        #expect(urlPayload.contains("\"role\":\"input\""))
+        #expect(urlPayload.contains("\"state\":\"failed\""))
         #expect(urlPayload.contains("\"role\":\"unspecified\""))
         #expect(urlJob.state == .imageJobFailed)
         #expect(urlJob.error.code == "runtime_error")
@@ -4035,6 +5292,184 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
         #expect(failedJob.state == .imageJobFailed)
         #expect(failedJob.error.code == "worker_unavailable")
+    }
+
+    @Test("image generate returns deadline_exceeded when the worker exceeds the creative timeout")
+    func imageGenerateReturnsDeadlineExceededWhenWorkerTimesOut() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setThrownFailure(
+            WorkerClientError.requestFailed(code: "DEADLINE_EXCEEDED", message: "image generate timed out")
+        )
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel,
+            environment: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+        )
+
+        let body = try #require(
+            """
+            {
+              "id": "image-generate-timeout",
+              "model": "melix-dev-image",
+              "prompt": "timeout"
+            }
+            """.data(using: .utf8)
+        )
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let failedJob = try #require(await imageJobReadModel.job(requestID: "image-generate-timeout"))
+
+        #expect(response.statusCode == 504)
+        #expect(payload.contains("\"code\":\"deadline_exceeded\""))
+        #expect(payload.contains("600-second creative workflow deadline"))
+        #expect(failedJob.state == .imageJobFailed)
+        #expect(failedJob.error.code == "deadline_exceeded")
+        #expect(failedJob.progress.stage == "timed_out")
+        #expect(failedJob.timeoutSeconds == 600)
+        #expect(failedJob.recipe.prompt == "timeout")
+    }
+
+    @Test("image endpoints fall back to request mapped jobs when worker job identifiers drift")
+    func imageEndpointsFallBackToRequestMappedJobsWhenWorkerJobIdentifiersDrift() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        var generateResponse = Melix_Worker_V1_ImageGenerateResponse()
+        generateResponse.images = [Data("generate".utf8)]
+        generateResponse.job.requestID = "image-generate-fallback"
+        generateResponse.job.jobID = "worker-generate-fallback"
+        generateResponse.job.modelHandle = "melix-dev-image::python"
+        generateResponse.job.operation = "image_generate"
+        generateResponse.job.state = .imageJobCompleted
+        generateResponse.job.artifacts = [makeWorkerArtifact(jobID: "worker-generate-fallback", role: .imageArtifactGenerated)]
+        await imageClient.setImageGenerateResponse(generateResponse)
+
+        var editResponse = Melix_Worker_V1_ImageEditResponse()
+        editResponse.images = [Data("edit".utf8)]
+        editResponse.job.requestID = "image-edit-fallback"
+        editResponse.job.jobID = "worker-edit-fallback"
+        editResponse.job.modelHandle = "melix-dev-image::python"
+        editResponse.job.operation = "image_edit"
+        editResponse.job.state = .imageJobCompleted
+        editResponse.job.artifacts = [makeWorkerArtifact(jobID: "worker-edit-fallback", role: .imageArtifactGenerated)]
+        await imageClient.setImageEditResponse(editResponse)
+
+        let imageJobReadModel = ImageJobReadModel()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let generateBody = try #require(
+            """
+            {
+              "id": "image-generate-fallback",
+              "model": "melix-dev-image",
+              "prompt": "fallback generate"
+            }
+            """.data(using: .utf8)
+        )
+        let generateHTTPResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: generateBody)
+        )
+        let generatePayload = try await collectBody(generateHTTPResponse.body)
+
+        let editBody = try #require(
+            """
+            {
+              "id": "image-edit-fallback",
+              "model": "melix-dev-image",
+              "prompt": "fallback edit",
+              "image_url": "file:///tmp/source.png"
+            }
+            """.data(using: .utf8)
+        )
+        let editHTTPResponse = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: editBody)
+        )
+        let editPayload = try await collectBody(editHTTPResponse.body)
+
+        #expect(generateHTTPResponse.statusCode == 200)
+        #expect(generatePayload.contains("\"job_id\":\"image-generate-fallback::image-generate\""))
+        #expect(editHTTPResponse.statusCode == 200)
+        #expect(editPayload.contains("\"job_id\":\"image-edit-fallback::image-edit\""))
+    }
+
+    @Test("image generation maps resource exhausted cancelled empty default and generic worker failures")
+    func imageGenerationMapsResourceExhaustedCancelledEmptyDefaultAndGenericWorkerFailures() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+
+        let cases: [(String, Error, Int, String, String)] = [
+            ("image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), 503, "resource_exhausted", "queue full"),
+            ("image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), 409, "cancelled", "operator stop"),
+            ("image-generate-empty-code", WorkerClientError.requestFailed(code: "", message: ""), 503, "worker_unavailable", "worker_unavailable"),
+            ("image-generate-invalid-argument", WorkerClientError.requestFailed(code: "invalid_argument", message: "bad image request"), 400, "invalid_argument", "bad image request"),
+            ("image-generate-generic", NSError(domain: "OpenAIHandlerTests", code: 17, userInfo: [NSLocalizedDescriptionKey: "generic failure"]), 503, "worker_unavailable", "worker_unavailable"),
+        ]
+
+        for (requestID, failure, expectedStatusCode, expectedCode, expectedFragment) in cases {
+            let imageClient = ScriptedPhaseFiveWorkerClient()
+            await imageClient.setThrownFailure(failure)
+            let imageJobReadModel = ImageJobReadModel()
+            let handler = OpenAIHandler(
+                modelCatalog: catalog,
+                requestCoordinator: RequestCoordinator(
+                    workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                    abortRegistry: AbortRegistry()
+                ),
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: textClient,
+                    pythonCompatibilityClient: imageClient,
+                    modelCatalog: catalog
+                ),
+                imageJobReadModel: imageJobReadModel
+            )
+
+            let body = try #require(
+                """
+                {
+                  "id": "\(requestID)",
+                  "model": "melix-dev-image",
+                  "prompt": "map this worker failure"
+                }
+                """.data(using: .utf8)
+            )
+            let response = try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+            )
+            let payload = try await collectBody(response.body)
+
+            #expect(response.statusCode == expectedStatusCode)
+            #expect(payload.contains("\"\(expectedCode)\""))
+            #expect(payload.contains(expectedFragment))
+        }
     }
 
     @Test("GET /health reports route readiness and model counts")
@@ -4726,6 +6161,75 @@ struct OpenAIHandlerTests {
         #expect(try await coordinator.cancel(requestID: "req-duplicate"))
     }
 
+    @Test("chat completions can resume a disconnected request via resume_request_id")
+    func chatCompletionsCanResumeADisconnectedRequestViaResumeRequestID() async throws {
+        let workerClient = BlockingOpenAIWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 0.01,
+                disconnectGracePeriod: 0.1
+            )
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: coordinator,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-resume" }),
+            sseWriter: SSEStreamWriter(
+                now: { Date(timeIntervalSince1970: 123) },
+                lifecyclePolicy: ConnectionLifecyclePolicy(
+                    keepaliveInterval: 0.01,
+                    disconnectGracePeriod: 0.1
+                )
+            )
+        )
+
+        let firstBody = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let first = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: firstBody)
+        )
+        let firstChunk = try await collectFirstStreamChunk(first.body)
+
+        let secondBody = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "resume_request_id": "req-http-resume",
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let second = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: secondBody)
+        )
+        await workerClient.emitToken(requestID: "req-http-resume", text: "resumed")
+        await workerClient.finish(requestID: "req-http-resume", assistantText: "resumed")
+        let secondPayload = try await collectBody(second.body)
+
+        #expect(first.statusCode == 200)
+        #expect(firstChunk.contains(": keepalive"))
+        #expect(second.statusCode == 200)
+        #expect(secondPayload.contains("\"content\":\"resumed\""))
+        #expect(secondPayload.contains("data: [DONE]"))
+        #expect(await workerClient.generatedRequestIDs == ["req-http-resume"])
+    }
+
     @Test("handler applies workflow-aware shaping and records shaping metrics")
     func handlerAppliesWorkflowAwareShapingAndRecordsMetrics() async throws {
         let workerClient = ScriptedWorkerClient(events: [
@@ -4844,6 +6348,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let runtimeCacheResidentBytes: UInt64
     private let runtimeKVCacheBytes: UInt64
     private let runtimeStatsFailure: Error?
+    private let runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
 
@@ -4855,7 +6360,8 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         runtimeModelResidentBytes: UInt64 = 0,
         runtimeCacheResidentBytes: UInt64 = 0,
         runtimeKVCacheBytes: UInt64 = 0,
-        runtimeStatsFailure: Error? = nil
+        runtimeStatsFailure: Error? = nil,
+        runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil
     ) {
         self.events = events
         self.loadModelHandle = loadModelHandle
@@ -4865,6 +6371,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         self.runtimeCacheResidentBytes = runtimeCacheResidentBytes
         self.runtimeKVCacheBytes = runtimeKVCacheBytes
         self.runtimeStatsFailure = runtimeStatsFailure
+        self.runtimeStatsResponseOverride = runtimeStatsResponseOverride
     }
 
     func canDispatchRequests() async -> Bool {
@@ -4903,6 +6410,9 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         if let runtimeStatsFailure {
             throw runtimeStatsFailure
         }
+        if let runtimeStatsResponseOverride {
+            return runtimeStatsResponseOverride
+        }
         var response = Melix_Worker_V1_GetRuntimeStatsResponse()
         response.stats.residentBytes = runtimeResidentBytes
         response.stats.modelResidentBytes = runtimeModelResidentBytes
@@ -4921,6 +6431,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
     private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
     private(set) var lastSpeakRequest: Melix_Worker_V1_SpeakRequest?
+    private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
     private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
     private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
     private var embedResponse = Melix_Worker_V1_EmbedResponse()
@@ -4983,6 +6494,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        lastLoadModelRequest = request
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = "\(request.model.modelID)::python"
@@ -5379,6 +6891,7 @@ private actor UnavailableWorkerClient: WorkerRoutingClient {
 
 private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
     private(set) var generatedRequestIDs: [String] = []
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
 
     func canDispatchRequests() async -> Bool {
         true
@@ -5388,11 +6901,15 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         generatedRequestIDs.append(request.execution.id.requestID)
-        return AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { _ in }
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuations[requestID] = continuation
+        }
     }
 
     func abort(requestID: String) async throws -> Bool {
-        true
+        continuations.removeValue(forKey: requestID)?.finish()
+        return true
     }
 
     func loadModel(
@@ -5402,6 +6919,30 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
+    }
+
+    func emitToken(requestID: String, text: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.tokenDelta = Melix_Worker_V1_TokenDelta()
+        event.tokenDelta.text = text
+        continuation.yield(event)
+    }
+
+    func finish(requestID: String, assistantText: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.completed = Melix_Worker_V1_Completed()
+        event.completed.finishReason = "stop"
+        event.completed.assistantText = assistantText
+        continuation.yield(event)
+        continuation.finish()
     }
 }
 
@@ -5446,6 +6987,17 @@ private func collectBodyData(_ body: HTTPBody) async throws -> Data {
     }
 }
 
+private func collectFirstStreamChunk(_ body: HTTPBody) async throws -> String {
+    switch body {
+    case .data(let data):
+        return try #require(String(data: data, encoding: .utf8))
+    case .stream(let stream):
+        var iterator = stream.makeAsyncIterator()
+        let chunk = try #require(await iterator.next())
+        return try #require(String(data: chunk, encoding: .utf8))
+    }
+}
+
 private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String, errorMessage: String) {
     let data = try await collectBodyData(body)
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -5453,4 +7005,27 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
     let code = try #require(error["code"] as? String)
     let message = try #require(error["message"] as? String)
     return (code, message)
+}
+
+private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
+    let data = try await collectBodyData(body)
+    return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private final class TestNowUnixMSSequence: @unchecked Sendable {
+    private var values: [Int64]
+    private let lock = NSLock()
+
+    init(_ values: [Int64]) {
+        self.values = values
+    }
+
+    func next() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        if values.isEmpty {
+            return 0
+        }
+        return values.removeFirst()
+    }
 }

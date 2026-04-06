@@ -318,6 +318,7 @@ def test_audio_speech_endpoint_returns_audio_bytes() -> None:
                     "input": "hello speech",
                     "voice": "alloy",
                     "format": "wav",
+                    "locale": "en_US",
                 }
             ).encode("utf-8"),
             headers={"content-type": "application/json"},
@@ -326,9 +327,23 @@ def test_audio_speech_endpoint_returns_audio_bytes() -> None:
         with urllib.request.urlopen(request, timeout=10) as response:
             payload = response.read()
             content_type = response.headers.get("content-type")
+            requested_locale = response.headers.get("x-melix-audio-requested-locale")
+            resolved_locale = response.headers.get("x-melix-audio-resolved-locale")
+            locale_source = response.headers.get("x-melix-audio-locale-source")
+            locale_policy = response.headers.get("x-melix-audio-locale-policy")
+            model_default_locale = response.headers.get("x-melix-audio-model-default-locale")
+            packaged_default_locale = response.headers.get("x-melix-audio-packaged-default-locale")
+            supported_locales = response.headers.get("x-melix-audio-supported-locales")
 
         assert response.status == 200
         assert content_type == "audio/wav"
+        assert requested_locale == "en-us"
+        assert resolved_locale == "en-us"
+        assert locale_source == "request"
+        assert locale_policy == "request>model_default>packaged_default"
+        assert model_default_locale == "und"
+        assert packaged_default_locale == "und"
+        assert supported_locales == "und"
         assert payload == b"VOICE=alloy\nFORMAT=wav\nTEXT=hello speech"
     finally:
         stack.stop()
@@ -340,10 +355,40 @@ def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
         for row in build_family_support_matrix()["families"]
     }
 
+    assert rows[("text", "llama")]["live_path"]["status"] == "verified"
+    assert rows[("text", "mistral4")]["live_path"]["status"] == "verified"
+    assert rows[("text", "qwen3moe")]["live_path"]["status"] == "verified"
+    assert rows[("text", "deepseek-mla")]["live_path"]["status"] == "verified"
+    assert rows[("text", "nemotron-h")]["live_path"]["status"] == "verified"
+    assert rows[("text", "mixtral")]["live_path"]["status"] == "contract_only"
+    assert rows[("transcription", "whisper")]["live_path"]["status"] == "verified"
+    assert rows[("transcription", "whisper")]["contract"]["backend_id"] == "mlx_audio.stt"
+    assert rows[("transcription", "whisper")]["contract"]["languages"] == ["auto"]
+    assert rows[("transcription", "parakeet")]["live_path"]["status"] == "verified"
+    assert rows[("transcription", "parakeet")]["contract"]["backend_id"] == "mlx_audio.stt"
+    assert rows[("transcription", "parakeet")]["contract"]["languages"] == ["auto"]
+    assert rows[("speech", "kokoro")]["live_path"]["status"] == "verified"
+    assert rows[("speech", "kokoro")]["contract"]["backend_id"] == "mlx_audio.tts"
+    assert rows[("speech", "kokoro")]["contract"]["voice_mode"] == "named"
+    assert rows[("speech", "kokoro")]["contract"]["voice_locales"] == ["en"]
+    assert rows[("speech", "kokoro")]["contract"]["default_locale"] == "en"
+    assert rows[("speech", "kokoro")]["contract"]["packaged_default_locale"] == "en"
+    assert rows[("speech", "kokoro")]["contract"]["locale_policy"] == "request>model_default>packaged_default"
+    assert rows[("speech", "qwen3-tts")]["live_path"]["status"] == "verified"
+    assert rows[("speech", "qwen3-tts")]["contract"]["backend_id"] == "mlx_audio.tts"
+    assert rows[("speech", "qwen3-tts")]["contract"]["voice_mode"] == "hybrid"
+    assert rows[("speech", "qwen3-tts")]["contract"]["supports_instructions"] is True
+    assert rows[("speech", "qwen3-tts")]["contract"]["voice_locales"] == ["zh", "en"]
+    assert rows[("speech", "qwen3-tts")]["contract"]["default_locale"] == "zh"
+    assert rows[("speech", "qwen3-tts")]["contract"]["packaged_default_locale"] == "zh"
+    assert rows[("speech", "qwen3-tts")]["contract"]["locale_policy"] == "request>model_default>packaged_default"
     assert rows[("embedding", "bge-m3")]["live_path"]["status"] == "verified"
     assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "basic")]["live_path"]["status"] == "contract_only"
+    assert rows[("image", "qwenimage-v1")]["live_path"]["status"] == "verified"
+    assert rows[("image", "fill-v1")]["live_path"]["status"] == "verified"
+    assert rows[("image", "fibo-v1")]["live_path"]["status"] == "contract_only"
 
     repo_root = Path(__file__).resolve().parents[2]
     bge_stack = LiveMelixStack(

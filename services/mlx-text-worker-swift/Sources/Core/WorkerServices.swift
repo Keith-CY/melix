@@ -78,7 +78,9 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         do {
             let loaded = try await registry.loadModel(
                 request.model,
-                memoryBudgetBytes: request.memoryBudgetBytes
+                memoryBudgetBytes: request.memoryBudgetBytes,
+                pinOnLoad: request.pinOnLoad,
+                diskStreamingMode: request.diskStreamingMode
             )
             metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
             metrics.set("swift_text.peak_resident_bytes", value: Int(clamping: loaded.estimatedResidentBytes))
@@ -88,6 +90,24 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             response.ok = true
             response.modelHandle = loaded.handle
             response.estimatedResidentBytes = loaded.estimatedResidentBytes
+            response.resolvedCapabilities = await registry.capabilities()
+            response.residency = loaded.residency
+            return response
+        } catch let WorkerRuntimeRegistryError.diskStreamingUnsupported(requestedMode, modelID) {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = false
+            response.error = makeErrorStatus(
+                code: "disk_streaming_unsupported",
+                message: "The selected runtime does not support disk-streaming mode.",
+                details: [
+                    "requested_mode": requestedMode.rawValue.description,
+                    "model_id": modelID,
+                ]
+            )
             response.resolvedCapabilities = await registry.capabilities()
             return response
         } catch let WorkerRuntimeRegistryError.memoryBudgetExceeded(
@@ -555,6 +575,24 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         var response = Melix_Worker_V1_RunDoctorResponse()
         response.ok = false
         response.error = makeUnimplementedStatus("RunDoctor is handled by the Python worker family.")
+        return response
+    }
+
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        response.job.jobID = request.modelHandle.isEmpty ? "swift-text-unimplemented" : request.modelHandle
+        response.job.modelID = request.modelHandle
+        response.job.taskKind = request.taskKind
+        response.job.sourceRepo = request.sourceRepo
+        response.job.suiteIds = request.suiteIds
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "failed"
         return response
     }
 

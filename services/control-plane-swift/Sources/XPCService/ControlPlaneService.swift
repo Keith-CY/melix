@@ -127,6 +127,16 @@ private enum BenchmarkTaskKind: String {
     }
 }
 
+private enum ServingSessionPreparation {
+    case ready(publishStateChanged: Bool)
+    case blocked(code: String, message: String)
+}
+
+private enum ValidatedServerSessionTarget {
+    case success(String)
+    case failure(Melix_Controlplane_V1_ControlPlaneResponse)
+}
+
 public actor ControlPlaneService {
     public let serverVersion: String
     private let daemonInstanceID: String
@@ -138,6 +148,7 @@ public actor ControlPlaneService {
     private let schedulerReadModel: SchedulerReadModel
     private let cacheMetadataStore: CacheMetadataStore
     private let sessionGraphStore: SessionGraphStore
+    private let serverSessionRuntimeStore: ServerSessionRuntimeStore
     private let imageJobReadModel: ImageJobReadModel
     private let imageJobAdmissionController: any ImageJobAdmissionControlling
     private let workerRegistry: WorkerRegistry?
@@ -146,6 +157,14 @@ public actor ControlPlaneService {
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
+    private let gatewayConfigStore: GatewayConfigStore
+    private let gatewayServingDefaultsStore: GatewayServingDefaultsStore
+    private let imageDefaultsStore: ImageDefaultsStore
+    private let gatewayRuntimeBinding: GatewayRuntimeBinding
+    private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let gatewaySupportsSpeculativeDefaults: Bool
+    private let toolingSettingsSnapshotSource: ToolingSettingsSnapshotSource
+    private let apiOnboardingSnapshotSource: APIOnboardingSnapshotSource
 
     public init(
         serverVersion: String = "0.1.0",
@@ -158,6 +177,7 @@ public actor ControlPlaneService {
         schedulerReadModel: SchedulerReadModel? = nil,
         cacheMetadataStore: CacheMetadataStore = CacheMetadataStore(),
         sessionGraphStore: SessionGraphStore = SessionGraphStore(),
+        serverSessionRuntimeStore: ServerSessionRuntimeStore = ServerSessionRuntimeStore(),
         imageJobReadModel: ImageJobReadModel? = nil,
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         workerRegistry: WorkerRegistry? = nil,
@@ -165,8 +185,16 @@ public actor ControlPlaneService {
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
+        gatewayConfigStore: GatewayConfigStore? = nil,
+        gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
+        imageDefaultsStore: ImageDefaultsStore? = nil,
+        gatewayRuntimeBinding: GatewayRuntimeBinding = GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
-        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil
+        gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
+        persistentAuthSessionStore: PersistentAuthSessionStore? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        launchArguments: [String] = CommandLine.arguments,
+        gatewaySupportsSpeculativeDefaults: Bool? = nil
     ) {
         let resolvedSchedulerReadModel = schedulerReadModel ?? SchedulerReadModel(
             metricsStore: metricsStore,
@@ -192,6 +220,7 @@ public actor ControlPlaneService {
         self.enginePool = enginePool
         self.cacheMetadataStore = cacheMetadataStore
         self.sessionGraphStore = sessionGraphStore
+        self.serverSessionRuntimeStore = serverSessionRuntimeStore
         self.imageJobReadModel = resolvedImageJobReadModel
         self.imageJobAdmissionController = resolvedImageJobAdmissionController
         self.workerRegistry = workerRegistry
@@ -211,6 +240,18 @@ public actor ControlPlaneService {
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
+        self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore()
+        self.gatewayServingDefaultsStore = gatewayServingDefaultsStore ?? GatewayServingDefaultsStore()
+        self.imageDefaultsStore = imageDefaultsStore ?? ImageDefaultsStore()
+        self.gatewayRuntimeBinding = gatewayRuntimeBinding
+        self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.gatewaySupportsSpeculativeDefaults = gatewaySupportsSpeculativeDefaults
+            ?? Self.resolveGatewaySpeculativeDefaultsSupport(environment: environment)
+        self.toolingSettingsSnapshotSource = ToolingSettingsSnapshotSource(
+            environment: environment,
+            launchArguments: launchArguments
+        )
+        self.apiOnboardingSnapshotSource = APIOnboardingSnapshotSource()
     }
 
     public func handshake(
@@ -226,6 +267,7 @@ public actor ControlPlaneService {
             "metrics",
             "cache-metadata",
             "session-graph",
+            "server-session-runtime",
             "image-jobs",
             "audio-assets",
         ]
@@ -274,6 +316,31 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailable
         }
 
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked:
+            throw ControlPlaneChatExecutionError.unavailable
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
+
+        if let resumeRequestID = request.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !resumeRequestID.isEmpty {
+            let execution: CoordinatedChatExecution
+            do {
+                execution = try await requestCoordinator.resumeChatCompletion(requestID: resumeRequestID)
+            } catch {
+                throw ControlPlaneChatExecutionError.unavailable
+            }
+            return ControlPlaneChatExecution(
+                requestID: execution.requestID,
+                modelID: execution.modelID,
+                stream: mappedChatStream(from: execution.stream),
+                lifecycle: execution.lifecycle
+            )
+        }
+
         let normalized = try chatTranslator.normalize(
             OpenAIChatCompletionsRequest(
                 model: request.modelID,
@@ -297,18 +364,24 @@ public actor ControlPlaneService {
         } catch {
             throw ControlPlaneChatExecutionError.unavailable
         }
-        let modelToolParser: ToolParserSelection? = if let model = await modelCatalog.model(id: normalized.model) {
-            ToolParserSelection(modelSettings: model.settings)
+        let resolvedModel = await modelCatalog.model(id: normalized.model)
+        let modelToolParser: ToolParserSelection? = if let resolvedModel {
+            ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            try ModelChatTemplatePolicy(modelSettings: model.settings)
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
+            try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelOCRPolicy: OCRExecutionPolicy? = if let model = await modelCatalog.model(id: normalized.model) {
-            OCRExecutionPolicy(modelSettings: model.settings)
+        let modelOCRPolicy: OCRExecutionPolicy? = if let resolvedModel {
+            OCRExecutionPolicy(modelSettings: resolvedModel.settings)
+        } else {
+            nil
+        }
+        let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
+            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
@@ -318,14 +391,29 @@ public actor ControlPlaneService {
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
+                serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+            ),
             mcpToolCatalog: mcpToolCatalog
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)
 
-        let stream = AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
+        return ControlPlaneChatExecution(
+            requestID: execution.requestID,
+            modelID: execution.modelID,
+            stream: mappedChatStream(from: execution.stream),
+            lifecycle: execution.lifecycle
+        )
+    }
+
+    private func mappedChatStream(
+        from stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    ) -> AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> {
+        AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
             let forwardTask = Task {
                 do {
-                    for try await event in execution.stream {
+                    for try await event in stream {
                         guard let mapped = ControlPlaneChatStreamEvent(executeEvent: event) else {
                             continue
                         }
@@ -341,12 +429,6 @@ public actor ControlPlaneService {
                 forwardTask.cancel()
             }
         }
-
-        return ControlPlaneChatExecution(
-            requestID: execution.requestID,
-            modelID: execution.modelID,
-            stream: stream
-        )
     }
 
     public func unsubscribe(_ subscriptionID: String) async {
@@ -358,12 +440,30 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_ServerCommand
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         switch command.kind {
+        case .start(let start):
+            return await handleStartServer(request: request, command: start)
+        case .stop(let stop):
+            return await handleStopServer(request: request, command: stop)
+        case .restart(let restart):
+            return await handleRestartServer(request: request, command: restart)
         case .getSnapshot:
             var reply = Melix_Controlplane_V1_ServerReply()
             reply.snapshot = await buildSnapshot()
             return okResponse(for: request, server: reply)
         case .applyGatewayAccess(let apply):
             return await handleApplyGatewayAccess(request: request, command: apply)
+        case .applyGatewayConfig(let apply):
+            return await handleApplyGatewayConfig(request: request, command: apply)
+        case .applyServingDefaults(let apply):
+            return await handleApplyServingDefaults(request: request, command: apply)
+        case .pause(let pause):
+            return await handlePauseServer(request: request, command: pause)
+        case .resume(let resume):
+            return await handleResumeServer(request: request, command: resume)
+        case .wake(let wake):
+            return await handleWakeServer(request: request, command: wake)
+        case .setIdlePolicy(let policy):
+            return await handleSetServerIdlePolicy(request: request, command: policy)
         default:
             return errorResponse(
                 for: request,
@@ -392,7 +492,11 @@ public actor ControlPlaneService {
                workerRegistry != nil {
                 await publishModelStateChanged(loading)
             }
-            let outcome = await handleModelLoad(modelID: load.modelID, reason: "operator_load")
+            let outcome = await handleModelLoad(
+                modelID: load.modelID,
+                reason: "operator_load",
+                requestedMemoryBudgetBytes: load.memoryBudgetBytes
+            )
             let model = outcome.model
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
@@ -561,6 +665,8 @@ public actor ControlPlaneService {
             return await handleGetHubModelCard(request: request, command: getHubModelCard)
         case .runBench(let runBench):
             return await handleRunBench(request: request, command: runBench)
+        case .runBenchMatrix(let runBenchMatrix):
+            return await handleRunBenchMatrix(request: request, command: runBenchMatrix)
         case .runEvaluation(let runEvaluation):
             return await handleRunEvaluation(request: request, command: runEvaluation)
         case .cancelRequest(let cancelRequest):
@@ -612,10 +718,41 @@ public actor ControlPlaneService {
 
             var reply = Melix_Controlplane_V1_OpsReply()
             reply.reportMarkdown = workerResponse.reportMarkdown
+            reply.doctor.markdown = workerResponse.reportMarkdown
+            reply.doctor.healthStatus = Self.doctorHealthStatus(from: workerResponse.healthStatus)
+            reply.doctor.findings = workerResponse.findings.map(Self.doctorFinding(from:))
             return okResponse(for: request, ops: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Doctor worker request failed: \(error)")
         }
+    }
+
+    private static func doctorHealthStatus(
+        from status: Melix_Worker_V1_HealthStatus
+    ) -> Melix_Controlplane_V1_DoctorHealthStatus {
+        switch status {
+        case .healthy:
+            return .healthy
+        case .warning:
+            return .warning
+        case .degraded:
+            return .degraded
+        case .failed:
+            return .failed
+        case .unspecified, .UNRECOGNIZED:
+            return .unspecified
+        }
+    }
+
+    private static func doctorFinding(
+        from finding: Melix_Worker_V1_DoctorFinding
+    ) -> Melix_Controlplane_V1_DoctorFinding {
+        var reply = Melix_Controlplane_V1_DoctorFinding()
+        reply.code = finding.code
+        reply.severity = doctorHealthStatus(from: finding.severity)
+        reply.summary = finding.summary
+        reply.detail = finding.detail
+        return reply
     }
 
     private func handleSearchHubModels(
@@ -728,6 +865,41 @@ public actor ControlPlaneService {
                 message: "No loaded benchmark target is available for \(modelLabel)."
             )
         }
+        let requestedSuites = Array(command.suites)
+        guard requestedSuites.isEmpty == false else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "At least one benchmark suite is required."
+            )
+        }
+
+        let normalizedContextLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.contextLengths)
+        guard normalizedContextLengths.isEmpty == false else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "At least one benchmark context length is required."
+            )
+        }
+
+        guard command.repeats >= 1 else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark repeats must be at least 1."
+            )
+        }
+
+        guard command.cacheProfile.isEmpty || ControlPlaneBenchRequest.validCacheProfiles.contains(command.cacheProfile) else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark cache profile must be one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+            )
+        }
+
+        let normalizedBatchSizes = ControlPlaneBenchRequest.normalizedBenchValues(command.batchSizes)
         let modelHandle: String
         do {
             modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
@@ -740,10 +912,16 @@ public actor ControlPlaneService {
         }
 
         var workerRequest = Melix_Worker_V1_RunBenchRequest()
-        let requestedSuites = command.suites.isEmpty ? ["smoke", "latency"] : Array(command.suites)
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
+        workerRequest.contextLengths = normalizedContextLengths
+        workerRequest.generationLength = command.generationLength
+        workerRequest.batchSizes = normalizedBatchSizes
+        workerRequest.repeats = command.repeats
+        workerRequest.cacheProfile = command.cacheProfile
+        workerRequest.reasoningMode = command.reasoningMode
+        workerRequest.structuredOutputMode = command.structuredOutputMode
         workerRequest.taskKind = benchmarkTaskKind(for: benchmarkModel)
         workerRequest.sourceRepo = benchmarkSourceRepo(for: benchmarkModel)
 
@@ -835,6 +1013,159 @@ public actor ControlPlaneService {
         }
     }
 
+    private func handleRunBenchMatrix(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RunBenchMatrix
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonModelOperations) as? any ModelOperationsWorkerClientProtocol
+        else {
+            return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
+        }
+
+        let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let benchmarkModel: Melix_Controlplane_V1_ModelSummary
+        do {
+            benchmarkModel = try await resolvedBenchmarkModel(
+                preferredModelID: requestedModelID,
+                hfRepoID: requestedHFRepoID,
+                workerClient: workerClient
+            )
+        } catch let error as BenchmarkTargetResolutionError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            return errorResponse(for: request, code: "not_found", message: "Benchmark target resolution failed: \(error)")
+        }
+
+        let suites = Array(Set(command.suiteIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+        let contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.contextLengths)
+        let generationLengths = ControlPlaneBenchRequest.normalizedBenchValues(command.generationLengths)
+        let batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(command.batchSizes)
+        let cacheProfiles = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.cacheProfiles)
+        let reasoningModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.reasoningModes)
+        let structuredOutputModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(command.structuredOutputModes)
+        let concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(command.concurrencyLevels)
+
+        guard suites.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark suite is required.")
+        }
+        guard contextLengths.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark context length is required.")
+        }
+        guard generationLengths.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark generation length is required.")
+        }
+        guard batchSizes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark batch size is required.")
+        }
+        guard cacheProfiles.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark cache profile is required.")
+        }
+        guard reasoningModes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark reasoning mode is required.")
+        }
+        guard structuredOutputModes.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark structured output mode is required.")
+        }
+        guard concurrencyLevels.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "At least one matrix benchmark concurrency level is required.")
+        }
+        let loadBudgetCount = [command.requests > 0, command.durationSeconds > 0].filter(\.self).count
+        guard loadBudgetCount == 1 else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Exactly one of requests or duration_seconds must be set for matrix benchmarks."
+            )
+        }
+        for cacheProfile in cacheProfiles where ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) == false {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Benchmark cache profile must be one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", "))."
+            )
+        }
+
+        let taskKind = benchmarkTaskKind(for: benchmarkModel)
+        let supportedTaskKinds = Set([
+            BenchmarkTaskKind.textGeneration.rawValue,
+            BenchmarkTaskKind.imageToText.rawValue,
+            BenchmarkTaskKind.imageTextToText.rawValue,
+        ])
+        guard supportedTaskKinds.contains(taskKind) else {
+            return errorResponse(
+                for: request,
+                code: "unsupported_task_family",
+                message: "Benchmark matrix supports only text-generation, image-to-text, and image-text-to-text targets."
+            )
+        }
+
+        let normalizedRequest = ControlPlaneBenchMatrixRequest(
+            modelID: benchmarkModel.modelID,
+            hfRepoID: requestedHFRepoID,
+            taskKind: taskKind,
+            suites: suites,
+            contextLengths: contextLengths,
+            generationLengths: generationLengths,
+            batchSizes: batchSizes,
+            cacheProfiles: cacheProfiles,
+            reasoningModes: reasoningModes,
+            structuredOutputModes: structuredOutputModes,
+            concurrencyLevels: concurrencyLevels,
+            repeats: command.repeats,
+            requests: command.requests,
+            durationSeconds: command.durationSeconds,
+            allowLargeMatrix: command.allowLargeMatrix
+        )
+        guard normalizedRequest.allowLargeMatrix || normalizedRequest.matrixCellCount <= ControlPlaneBenchMatrixRequest.maxMatrixCellCount else {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Matrix benchmark expands to \(normalizedRequest.matrixCellCount) cells; pass allow_large_matrix to continue."
+            )
+        }
+
+        let modelHandle: String
+        do {
+            modelHandle = try await benchmarkModelHandle(for: benchmarkModel)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "not_found",
+                message: "No loaded benchmark target is available for \(benchmarkModel.modelID)."
+            )
+        }
+
+        var workerRequest = Melix_Worker_V1_RunBenchMatrixRequest()
+        workerRequest.modelHandle = modelHandle
+        workerRequest.taskKind = taskKind
+        workerRequest.sourceRepo = benchmarkSourceRepo(for: benchmarkModel)
+        workerRequest.suiteIds = normalizedRequest.suites
+        workerRequest.contextLengths = normalizedRequest.contextLengths
+        workerRequest.generationLengths = normalizedRequest.generationLengths
+        workerRequest.batchSizes = normalizedRequest.batchSizes
+        workerRequest.cacheProfiles = normalizedRequest.cacheProfiles
+        workerRequest.reasoningModes = normalizedRequest.reasoningModes
+        workerRequest.structuredOutputModes = normalizedRequest.structuredOutputModes
+        workerRequest.concurrencyLevels = normalizedRequest.concurrencyLevels
+        workerRequest.repeats = normalizedRequest.repeats
+        workerRequest.requests = normalizedRequest.requests
+        workerRequest.durationSeconds = normalizedRequest.durationSeconds
+        workerRequest.allowLargeMatrix = normalizedRequest.allowLargeMatrix
+
+        do {
+            let workerResponse = try await workerClient.runBenchMatrix(request: workerRequest)
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.benchmarkMatrixJob = makeBenchmarkMatrixJobSummary(from: workerResponse.job)
+            reply.benchmarkMatrixSummaryRows = workerResponse.summaryRows.map(makeBenchmarkMatrixSummaryRow)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Matrix benchmark worker request failed: \(error)")
+        }
+    }
+
     private func handleRunEvaluation(
         request: Melix_Controlplane_V1_ControlPlaneRequest,
         command: Melix_Controlplane_V1_RunEvaluation
@@ -887,6 +1218,10 @@ public actor ControlPlaneService {
         workerRequest.suiteID = command.suiteID
         workerRequest.datasetID = command.datasetID
         workerRequest.sampleSize = command.sampleSize
+        workerRequest.fewShot = command.fewShot
+        workerRequest.seed = command.seed
+        workerRequest.scoringMode = command.scoringMode
+        workerRequest.codeExecPolicy = command.codeExecPolicy
         workerRequest.parameters = command.parameters
         workerRequest.taskKind = taskKind
         workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)
@@ -984,6 +1319,8 @@ public actor ControlPlaneService {
             return await handleGenerateImage(request: request, command: generate)
         case .edit(let edit):
             return await handleEditImage(request: request, command: edit)
+        case .applyDefaults(let applyDefaults):
+            return await handleApplyImageDefaults(request: request, command: applyDefaults)
         default:
             return errorResponse(
                 for: request,
@@ -995,22 +1332,67 @@ public actor ControlPlaneService {
 
     private func buildSnapshot() async -> Melix_Controlplane_V1_ServerSnapshot {
         let models = hydratedModels(await modelCatalog.listModels())
+        let runtimeSessions = await serverSessionRuntimeStore.snapshot(
+            hasActiveRequests: await schedulerReadModel.hasActiveRequests()
+        )
+        let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
+        let fallbackServedModelID = defaultServedModelID(from: models)
+        let gatewayConfigSummary = await gatewayConfigStore.summary(
+            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackServedModelID: fallbackServedModelID
+        )
+        let servingDefaultsSummary = await gatewayServingDefaultsStore.summary(
+            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            servedModelIDs: Dictionary(
+                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.serverSessionID, $0.servedModelID) }
+            ),
+            modelSettingsByModelID: Dictionary(
+                uniqueKeysWithValues: models.map { ($0.modelID, $0.settings) }
+            )
+        )
+        await metricsStore.set(
+            Double(servingDefaultsSummary.sessions.filter(\.modelOverrideApplied).count),
+            forKey: "gateway.generation_default_merge_count"
+        )
         let metrics = await metricsStore.snapshot()
         let queues = await schedulerReadModel.snapshot()
         let cache = await cacheMetadataStore.cacheSummary()
         let sessions = await sessionGraphStore.sessionSummaries()
         let imageJobs = await imageJobReadModel.snapshot()
-        let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
+        let imageDefaultsSummary = await imageDefaultsStore.summary(models: models)
+        let toolingSettingsSummary = toolingSettingsSnapshotSource.summary(
+            models: models,
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayConfigStorePath: await gatewayConfigStore.storePath(),
+            gatewayServingDefaultsStorePath: await gatewayServingDefaultsStore.storePath(),
+            imageDefaultsStorePath: await imageDefaultsStore.storePath()
+        )
+        let apiOnboardingSummary = apiOnboardingSnapshotSource.summary()
         return snapshotBuilder.build(
             models: models,
             metrics: metrics,
             queues: queues,
             cache: cache,
             sessions: sessions,
+            runtimeSessions: runtimeSessions,
             imageJobs: imageJobs,
             mcpTools: mcpToolCatalog.summary(),
-            gatewayAccess: gatewayAccessSummary
+            gatewayAccess: gatewayAccessSummary,
+            gatewayConfig: gatewayConfigSummary,
+            servingDefaults: servingDefaultsSummary,
+            toolingSettings: toolingSettingsSummary,
+            apiOnboarding: apiOnboardingSummary,
+            imageDefaults: imageDefaultsSummary
         )
+    }
+
+    private func defaultServedModelID(
+        from models: [Melix_Controlplane_V1_ModelSummary]
+    ) -> String {
+        models.first(where: { $0.kind == "text" || $0.features.contains("chat") })?.modelID
+            ?? models.first?.modelID
+            ?? ""
     }
 
     private func handleApplyGatewayAccess(
@@ -1037,6 +1419,9 @@ public actor ControlPlaneService {
             with: policy,
             serverSessionID: appliedPolicyServerSessionID(policy: policy, command: command)
         )
+        if let persistentAuthSessionStore {
+            try? await persistentAuthSessionStore.reconcile(with: appliedPolicy)
+        }
         await metricsStore.set(appliedPolicy.metricModeCode, forKey: "gateway.auth_mode_code")
         await metricsStore.set(Double(appliedPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
         await metricsStore.set(appliedPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
@@ -1045,10 +1430,292 @@ public actor ControlPlaneService {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "gateway.api_key_apply_ms"
         )
+        _ = await serverSessionRuntimeStore.noteGatewayAccessApplied(serverSessionID: command.serverSessionID)
 
         var reply = Melix_Controlplane_V1_ServerReply()
         reply.snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            reply.snapshot.serverState,
+            runtimeSessions: reply.snapshot.runtimeSessions,
+            source: "server_runtime"
+        )
         return okResponse(for: request, server: reply)
+    }
+
+    private func handleApplyGatewayConfig(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyGatewayConfig
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Target server session does not match gateway config payload."
+            )
+        }
+
+        do {
+            try await gatewayConfigStore.apply(command: command)
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "gateway.config_apply_ms"
+            )
+            let requiresRestart = command.serverSessionID == gatewayRuntimeBinding.activeServerSessionID
+                && (command.host != gatewayRuntimeBinding.host || command.port != gatewayRuntimeBinding.port)
+            await metricsStore.set(requiresRestart ? 1 : 0, forKey: "gateway.config_requires_restart_count")
+
+            var reply = Melix_Controlplane_V1_ServerReply()
+            reply.snapshot = await buildSnapshot()
+            await publishServerStateChanged(
+                reply.snapshot.serverState,
+                runtimeSessions: reply.snapshot.runtimeSessions,
+                source: "server_runtime"
+            )
+            return okResponse(for: request, server: reply)
+        } catch let error as GatewayConfigValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            await metricsStore.increment("gateway.config_persist_failures")
+            return errorResponse(
+                for: request,
+                code: "gateway_config_persist_failed",
+                message: "Gateway config persistence failed: \(error)"
+            )
+        }
+    }
+
+    private func handleApplyServingDefaults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyServingDefaults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "Target server session does not match serving defaults payload."
+            )
+        }
+
+        do {
+            try await validateServingDefaults(command: command)
+            try await gatewayServingDefaultsStore.apply(command: command)
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "gateway.serving_defaults_apply_ms"
+            )
+            if normalizedServingDefaultsAccelerationMode(command.accelerationMode) == .speculativeDecode {
+                await metricsStore.set(
+                    Date().timeIntervalSince(startedAt) * 1000,
+                    forKey: "gateway.speculative_config_apply_ms"
+                )
+            }
+            var reply = Melix_Controlplane_V1_ServerReply()
+            reply.snapshot = await buildSnapshot()
+            await publishServerStateChanged(
+                reply.snapshot.serverState,
+                runtimeSessions: reply.snapshot.runtimeSessions,
+                source: "server_runtime"
+            )
+            return okResponse(for: request, server: reply)
+        } catch let error as ServingDefaultsValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            await metricsStore.increment("gateway.serving_defaults_persist_failures")
+            return errorResponse(
+                for: request,
+                code: "serving_defaults_persist_failed",
+                message: "Serving defaults persistence failed: \(error)"
+            )
+        }
+    }
+
+    private func handleApplyImageDefaults(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ApplyImageDefaults
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+
+        do {
+            try await imageDefaultsStore.apply(command: command, models: await modelCatalog.listModels())
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "images.defaults_apply_latency_ms"
+            )
+            var imageReply = Melix_Controlplane_V1_ImageReply()
+            imageReply.imageDefaults = await imageDefaultsStore.summary(models: await modelCatalog.listModels())
+            return okResponse(for: request, image: imageReply)
+        } catch let error as ImageDefaultsValidationError {
+            return errorResponse(for: request, code: error.code, message: error.message)
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "image_defaults_persist_failed",
+                message: "Image defaults persistence failed: \(error)"
+            )
+        }
+    }
+
+    private func validateServingDefaults(
+        command: Melix_Controlplane_V1_ApplyServingDefaults
+    ) async throws {
+        let accelerationMode = normalizedServingDefaultsAccelerationMode(command.accelerationMode)
+        guard accelerationMode == .baseline || accelerationMode == .speculativeDecode else {
+            throw ServingDefaultsValidationError.invalidAccelerationMode
+        }
+        guard accelerationMode == .speculativeDecode else {
+            return
+        }
+        guard gatewaySupportsSpeculativeDefaults else {
+            throw ServingDefaultsValidationError.speculativeBackendUnsupported
+        }
+
+        let draftModelID = command.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !draftModelID.isEmpty else {
+            throw ServingDefaultsValidationError.missingDraftModelID
+        }
+        guard command.numDraftTokens > 0 else {
+            throw ServingDefaultsValidationError.invalidNumDraftTokens
+        }
+
+        let gatewayConfigSummary = await gatewayConfigStore.summary(
+            serverSessionIDs: [command.serverSessionID],
+            runtimeBinding: gatewayRuntimeBinding,
+            fallbackServedModelID: ModelCatalog.devTextModel().modelID
+        )
+        let servedModelID = gatewayConfigSummary.listeners.first(where: { $0.serverSessionID == command.serverSessionID })?.servedModelID
+            ?? ModelCatalog.devTextModel().modelID
+
+        guard let servedModel = await modelCatalog.model(id: servedModelID), modelSupportsSpeculativeDefaults(servedModel) else {
+            throw ServingDefaultsValidationError.speculativeServedModelUnsupported
+        }
+        guard let draftModel = await modelCatalog.model(id: draftModelID), modelSupportsSpeculativeDefaults(draftModel) else {
+            throw ServingDefaultsValidationError.speculativeDraftModelUnsupported
+        }
+    }
+
+    private func handleStartServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_StartServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_start_ms",
+            countKey: "control_plane.server_start_count",
+            actionDescription: "start"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.startServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handlePauseServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_PauseServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_pause_ms",
+            countKey: "control_plane.server_pause_count",
+            actionDescription: "pause",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.pauseServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleResumeServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_ResumeServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_resume_ms",
+            countKey: "control_plane.server_resume_count",
+            actionDescription: "resume"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.resumeServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleWakeServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_WakeServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_wake_ms",
+            countKey: "control_plane.server_wake_count",
+            actionDescription: "wake"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.wakeServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleStopServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_StopServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_stop_ms",
+            countKey: "control_plane.server_stop_count",
+            actionDescription: "stop",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.stopServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleRestartServer(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RestartServer
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_restart_ms",
+            countKey: "control_plane.server_restart_count",
+            actionDescription: "restart",
+            requiresQuiescence: true
+        ) { serverSessionID in
+            _ = await serverSessionRuntimeStore.stopServerSession(serverSessionID: serverSessionID)
+            return await serverSessionRuntimeStore.startServerSession(serverSessionID: serverSessionID)
+        }
+    }
+
+    private func handleSetServerIdlePolicy(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_SetServerIdlePolicy
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        if command.deepSleepAfterSeconds > 0,
+           command.lightSleepAfterSeconds > 0,
+           command.deepSleepAfterSeconds < command.lightSleepAfterSeconds {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "deep_sleep_after_seconds must be greater than or equal to light_sleep_after_seconds."
+            )
+        }
+        return await handleServerLifecycleMutation(
+            request: request,
+            requestedServerSessionID: command.serverSessionID,
+            metricKey: "control_plane.server_idle_policy_ms",
+            countKey: "control_plane.server_idle_policy_count",
+            actionDescription: "update idle policy"
+        ) { serverSessionID in
+            await serverSessionRuntimeStore.updateIdlePolicy(
+                serverSessionID: serverSessionID,
+                autoSleepEnabled: command.autoSleepEnabled,
+                lightSleepAfterSeconds: command.lightSleepAfterSeconds,
+                deepSleepAfterSeconds: command.deepSleepAfterSeconds
+            )
+        }
     }
 
     private func appliedPolicyServerSessionID(
@@ -1063,34 +1730,78 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_GenerateImage
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+        let models = await modelCatalog.listModels()
+        let imageDefaults = await imageDefaultsStore.resolvedDefaults(models: models)
+        let resolvedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.generateModelID
+            : command.modelID
+        let resolvedSize = command.size.isEmpty ? imageDefaults.size : command.size
+        let resolvedSteps = command.steps == 0 ? imageDefaults.steps : command.steps
+        let resolvedGuidance = command.guidance == 0 ? imageDefaults.guidance : command.guidance
+        let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.negativePrompt
+            : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestTimeoutSeconds = imageDefaults.requestTimeoutSeconds
+
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked(let code, let message):
+            return errorResponse(for: request, code: code, message: message)
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
+        guard resolvedModelID.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Image generate model is required.")
+        }
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
         guard
             let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
         else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
 
-        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-generate"
 
         var workerRequest = Melix_Worker_V1_ImageGenerateRequest()
         workerRequest.id.requestID = request.requestID
         workerRequest.modelHandle = modelHandle
         workerRequest.prompt = command.prompt
-        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.size = resolvedSize.isEmpty ? "1024x1024" : resolvedSize
         workerRequest.n = command.n == 0 ? 1 : command.n
         workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
         workerRequest.artifactNamespace = command.artifactNamespace
+        workerRequest.ext = imageRequestExt(
+            steps: resolvedSteps,
+            guidance: resolvedGuidance,
+            negativePrompt: resolvedNegativePrompt,
+            strength: nil
+        )
 
         await imageJobReadModel.recordQueued(
             requestID: request.requestID,
             jobID: jobID,
-            modelID: command.modelID,
+            modelID: resolvedModelID,
             operation: "image_generate",
-            lane: routeKind.defaultSchedulingLane
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: command.prompt,
+                size: workerRequest.size,
+                steps: resolvedSteps,
+                guidance: resolvedGuidance,
+                strength: nil,
+                negativePrompt: resolvedNegativePrompt,
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: workerRequest.artifactNamespace,
+                sourceImageURI: "",
+                maskURI: ""
+            ),
+            timeoutSeconds: requestTimeoutSeconds
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -1156,23 +1867,32 @@ public actor ControlPlaneService {
                 )
             }
 
+            let queuedReplyJob = await imageJobReadModel.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel.job(requestID: request.requestID)
+            }
+            let replyJob = persistedReplyJob ?? controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            reply.job = replyJob
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
             return okResponse(for: request, image: reply)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: requestTimeoutSeconds)
             await imageJobReadModel.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: request.requestID,
                 phase: .requestFailed,
                 workerID: routeKind.workerSourceID
             )
-            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+            return errorResponse(for: request, code: failure.code, message: failure.message)
         }
     }
 
@@ -1180,42 +1900,163 @@ public actor ControlPlaneService {
         request: Melix_Controlplane_V1_ControlPlaneRequest,
         command: Melix_Controlplane_V1_EditImage
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
-        guard !command.image.isEmpty || !command.imageUri.isEmpty else {
+        let resolvedEditMode = resolvedImageEditMode(command.editMode)
+        let sourceArtifactID = command.sourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptDelta = command.promptDelta.trimmingCharacters(in: .whitespacesAndNewlines)
+        let models = await modelCatalog.listModels()
+        let imageDefaults = await imageDefaultsStore.resolvedDefaults(models: models)
+        let resolvedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.editModelID
+            : command.modelID
+        let resolvedStrength = command.strength == 0 ? imageDefaults.strength : command.strength
+        let resolvedSize = command.size.isEmpty ? imageDefaults.size : command.size
+        let resolvedSteps = command.steps == 0 ? imageDefaults.steps : command.steps
+        let resolvedGuidance = command.guidance == 0 ? imageDefaults.guidance : command.guidance
+        let resolvedNegativePrompt = command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? imageDefaults.negativePrompt
+            : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestTimeoutSeconds = imageDefaults.requestTimeoutSeconds
+
+        guard !command.image.isEmpty || !command.imageUri.isEmpty || !sourceArtifactID.isEmpty else {
+            if resolvedEditMode == .variation || resolvedEditMode == .iterate {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "source_artifact_id is required for variation and iterate image requests."
+                )
+            }
             return errorResponse(for: request, code: "invalid_argument", message: "Image edit source is required.")
         }
         let startedAt = Date()
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: command.modelID) else {
+        switch await prepareDefaultServerSessionForServingActivity() {
+        case .blocked(let code, let message):
+            return errorResponse(for: request, code: code, message: message)
+        case .ready(let publishStateChanged):
+            if publishStateChanged {
+                await publishCurrentServerState(source: "server_runtime")
+            }
+        }
+        guard resolvedModelID.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Image edit model is required.")
+        }
+        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
         guard
             let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: command.modelID) as? any NonTextInferenceWorkerClientProtocol
+            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
         else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
 
-        let routeKind = await workerRegistry.route(forModelID: command.modelID) ?? .pythonImage
+        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-edit"
+        if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "source_artifact_id is required for variation and iterate image requests."
+            )
+        }
+        if resolvedEditMode != .iterate && promptDelta.isEmpty == false {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "prompt_delta is only supported for iterate image requests."
+            )
+        }
+        if resolvedEditMode == .iterate && promptDelta.isEmpty {
+            return errorResponse(
+                for: request,
+                code: "invalid_argument",
+                message: "prompt_delta is required for iterate image requests."
+            )
+        }
+
+        let resolvedImageData = command.image
+        var resolvedImageURI = command.imageUri
+        var sourceJobID = ""
+        if sourceArtifactID.isEmpty == false {
+            if command.image.isEmpty == false || command.imageUri.isEmpty == false {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "source_artifact_id cannot be combined with image or image_uri."
+                )
+            }
+            guard let sourceArtifact = await imageJobReadModel.artifact(artifactID: sourceArtifactID) else {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Unknown source_artifact_id for image edit."
+                )
+            }
+            guard sourceArtifact.storageUri.isEmpty == false else {
+                return errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Resolved source artifact does not expose a storage URI."
+                )
+            }
+            resolvedImageURI = sourceArtifact.storageUri
+            sourceJobID = sourceArtifact.jobID
+        }
+
+        let resolvedPrompt = resolvedEditPrompt(
+            prompt: command.prompt,
+            promptDelta: promptDelta,
+            mode: resolvedEditMode
+        )
 
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = request.requestID
         workerRequest.modelHandle = modelHandle
-        workerRequest.prompt = command.prompt
-        workerRequest.image = command.image
-        workerRequest.imageUri = command.imageUri
+        workerRequest.prompt = resolvedPrompt
+        workerRequest.image = resolvedImageData
+        workerRequest.imageUri = resolvedImageURI
         workerRequest.mask = command.mask
         workerRequest.maskUri = command.maskUri
-        workerRequest.strength = command.strength == 0 ? 1 : command.strength
-        workerRequest.size = command.size.isEmpty ? "1024x1024" : command.size
+        workerRequest.sourceArtifactID = sourceArtifactID
+        workerRequest.promptDelta = promptDelta
+        workerRequest.editMode = workerImageEditMode(resolvedEditMode)
+        workerRequest.strength = resolvedStrength == 0 ? 1 : resolvedStrength
+        workerRequest.size = resolvedSize.isEmpty ? "1024x1024" : resolvedSize
         workerRequest.n = command.n == 0 ? 1 : command.n
         workerRequest.responseFormat = command.responseFormat.isEmpty ? "png" : command.responseFormat
+        workerRequest.ext = imageRequestExt(
+            steps: resolvedSteps,
+            guidance: resolvedGuidance,
+            negativePrompt: resolvedNegativePrompt,
+            strength: resolvedStrength
+        )
+        if sourceJobID.isEmpty == false {
+            workerRequest.ext["melix.image.source_job_id"] = sourceJobID
+        }
 
         await imageJobReadModel.recordQueued(
             requestID: request.requestID,
             jobID: jobID,
-            modelID: command.modelID,
-            operation: "image_edit",
-            lane: routeKind.defaultSchedulingLane
+            modelID: resolvedModelID,
+            operation: imageEditOperationName(for: resolvedEditMode),
+            lane: routeKind.defaultSchedulingLane,
+            recipe: imageJobRecipe(
+                prompt: resolvedPrompt,
+                size: workerRequest.size,
+                steps: resolvedSteps,
+                guidance: resolvedGuidance,
+                strength: workerRequest.strength,
+                negativePrompt: resolvedNegativePrompt,
+                variantCount: workerRequest.n,
+                responseFormat: workerRequest.responseFormat,
+                artifactNamespace: "",
+                sourceImageURI: resolvedImageURI,
+                maskURI: workerRequest.maskUri
+            ),
+            timeoutSeconds: requestTimeoutSeconds,
+            sourceArtifactID: sourceArtifactID,
+            sourceJobID: sourceJobID,
+            promptDelta: promptDelta,
+            editMode: resolvedEditMode
         )
         do {
             try await imageJobAdmissionController.acquire(
@@ -1281,23 +2122,32 @@ public actor ControlPlaneService {
                 )
             }
 
+            let queuedReplyJob = await imageJobReadModel.job(jobID: resolvedJobID)
+            let persistedReplyJob: Melix_Controlplane_V1_ImageJobSummary?
+            if let queuedReplyJob {
+                persistedReplyJob = queuedReplyJob
+            } else {
+                persistedReplyJob = await imageJobReadModel.job(requestID: request.requestID)
+            }
+            let replyJob = persistedReplyJob ?? controlPlaneImageJob(from: workerResponse.job, modelID: resolvedModelID)
             var reply = Melix_Controlplane_V1_ImageReply()
-            reply.job = controlPlaneImageJob(from: workerResponse.job, modelID: command.modelID)
+            reply.job = replyJob
             if reply.job.jobID.isEmpty {
                 reply.job.jobID = resolvedJobID
             }
             return okResponse(for: request, image: reply)
         } catch {
+            let failure = imageWorkerFailure(error: error, timeoutSeconds: requestTimeoutSeconds)
             await imageJobReadModel.recordFailed(
                 jobID: jobID,
-                error: controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+                error: failure
             )
             await imageJobAdmissionController.finish(
                 requestID: request.requestID,
                 phase: .requestFailed,
                 workerID: routeKind.workerSourceID
             )
-            return errorResponse(for: request, code: "unavailable", message: "Image worker request failed: \(error)")
+            return errorResponse(for: request, code: failure.code, message: failure.message)
         }
     }
 
@@ -1419,6 +2269,13 @@ public actor ControlPlaneService {
             reply.info.maxContext = workerResponse.maxContext
             reply.info.supportedParsers = workerResponse.supportedParsers
             reply.info.supportedModalities = workerResponse.supportedModalities
+            reply.info.supportedTasks = workerResponse.supportedTasks
+            reply.info.backendID = workerResponse.backendID
+            reply.info.familyID = workerResponse.familyID
+            reply.info.modelPath = workerResponse.modelPath
+            reply.info.modelRevision = workerResponse.modelRevision
+            reply.info.defaultWorkflowRole = workerResponse.defaultWorkflowRole
+            reply.info.detectedIdentitySource = workerResponse.detectedIdentitySource
             return okResponse(for: request, model: reply)
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Model info worker request failed: \(error)")
@@ -1453,6 +2310,14 @@ public actor ControlPlaneService {
         }
         if let quantProfile = normalizedWorkerQuantProfile(for: command) {
             workerRequest.quantProfile = quantProfile
+        }
+        var registryRootOverride = RegistrySnapshotSync.requestedRoots(from: workerRequest.ext)
+        if command.operation == "registry_snapshot",
+           registryRootOverride == nil,
+           let configuredRoots = await modelCatalog.configuredRegistryRootOverride(),
+           let encodedRoots = RegistrySnapshotSync.encodedRegistryRoots(configuredRoots) {
+            registryRootOverride = configuredRoots
+            workerRequest.ext["melix.registry_roots_json"] = encodedRoots
         }
 
         do {
@@ -1511,6 +2376,14 @@ public actor ControlPlaneService {
                 return response
             }
 
+            if command.operation == "registry_snapshot" {
+                _ = await RegistrySnapshotSync.applyManifestJSON(
+                    operation.manifestJson,
+                    modelCatalog: modelCatalog,
+                    reason: "operator_registry_snapshot",
+                    configuredRootPaths: registryRootOverride
+                )
+            }
             if command.operation == "activate_adapter" {
                 await registerActivatedDerivedModel(from: operation.manifestJson)
             }
@@ -1694,17 +2567,63 @@ public actor ControlPlaneService {
             case "type_override":
                 settings.typeOverride = value
             case "ttl_seconds":
-                if let ttl = UInt32(value) {
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.ttlSeconds = 0
+                } else if let ttl = UInt32(value) {
                     settings.ttlSeconds = ttl
                 }
             case "pin_on_load":
                 settings.pinOnLoad = parseBool(value)
             case "memory_policy":
                 settings.memoryPolicy = memoryPolicy(for: value)
+            case "disk_streaming_mode":
+                settings.diskStreamingMode = diskStreamingMode(for: value)
             case "default_acceleration_mode":
                 settings.defaultAccelerationMode = accelerationMode(for: value)
             case "acceleration_profile_id":
                 settings.accelerationProfileID = value
+            case "adaptive_thinking_mode":
+                settings.adaptiveThinking.mode = value
+            case "adaptive_thinking_budget_tokens":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.adaptiveThinking.budgetTokens = 0
+                } else if let budgetTokens = UInt32(value) {
+                    settings.adaptiveThinking.budgetTokens = budgetTokens
+                }
+            case "memory_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.memoryBudgetBytes = 0
+                } else if let memoryBudgetBytes = UInt64(value) {
+                    settings.memoryBudgetBytes = memoryBudgetBytes
+                }
+            case "cache_mode":
+                settings.cacheMode = cacheMode(for: value)
+            case "cache_memory_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheMemoryBudgetBytes = 0
+                } else if let cacheMemoryBudgetBytes = UInt64(value) {
+                    settings.cacheMemoryBudgetBytes = cacheMemoryBudgetBytes
+                }
+            case "cache_memory_budget_pct":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheMemoryBudgetPct = 0
+                } else if let cacheMemoryBudgetPct = UInt32(value) {
+                    settings.cacheMemoryBudgetPct = cacheMemoryBudgetPct
+                }
+            case "cache_block_size_tokens":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.cacheBlockSizeTokens = 0
+                } else if let cacheBlockSizeTokens = UInt32(value) {
+                    settings.cacheBlockSizeTokens = cacheBlockSizeTokens
+                }
+            case "cache_directory":
+                settings.cacheDirectory = value
+            case "multimodal_cache_budget_bytes":
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    settings.multimodalCacheBudgetBytes = 0
+                } else if let multimodalCacheBudgetBytes = UInt64(value) {
+                    settings.multimodalCacheBudgetBytes = multimodalCacheBudgetBytes
+                }
             default:
                 settings.ext[key] = value
             }
@@ -1717,6 +2636,24 @@ public actor ControlPlaneService {
             return true
         default:
             return false
+        }
+    }
+
+    private func cacheMode(for rawValue: String) -> Melix_Controlplane_V1_CacheMode {
+        switch rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        {
+        case "rotating":
+            return .rotating
+        case "hybrid":
+            return .hybrid
+        case "tiered", "default":
+            return .tiered
+        default:
+            return .unspecified
         }
     }
 
@@ -2010,7 +2947,61 @@ public actor ControlPlaneService {
         summary.outputDir = outputDir
         summary.taskKind = taskKind
         summary.sourceRepo = sourceRepo
+        summary.benchmarkMode = "standard"
         return summary
+    }
+
+    private func makeBenchmarkMatrixJobSummary(
+        from workerSummary: Melix_Worker_V1_BenchmarkMatrixJobSummary
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixJobSummary {
+        var summary = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        summary.schemaVersion = workerSummary.schemaVersion
+        summary.jobID = workerSummary.jobID
+        summary.modelID = workerSummary.modelID
+        summary.taskKind = workerSummary.taskKind
+        summary.sourceRepo = workerSummary.sourceRepo
+        summary.suiteIds = workerSummary.suiteIds
+        summary.benchmarkMode = workerSummary.benchmarkMode
+        summary.status = workerSummary.status
+        summary.outputDir = workerSummary.outputDir
+        summary.createdAtUnixMs = workerSummary.createdAtUnixMs
+        summary.updatedAtUnixMs = workerSummary.updatedAtUnixMs
+        return summary
+    }
+
+    private func makeBenchmarkMatrixSummaryRow(
+        from workerRow: Melix_Worker_V1_BenchmarkMatrixSummaryRow
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixSummaryRow {
+        var row = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = workerRow.jobID
+        row.taskKind = workerRow.taskKind
+        row.sourceRepo = workerRow.sourceRepo
+        row.modelID = workerRow.modelID
+        row.suiteID = workerRow.suiteID
+        row.contextLength = workerRow.contextLength
+        row.generationLength = workerRow.generationLength
+        row.batchSize = workerRow.batchSize
+        row.cacheProfile = workerRow.cacheProfile
+        row.reasoningMode = workerRow.reasoningMode
+        row.structuredOutputMode = workerRow.structuredOutputMode
+        row.concurrencyLevel = workerRow.concurrencyLevel
+        row.repeats = workerRow.repeats
+        row.requests = workerRow.requests
+        row.durationSeconds = workerRow.durationSeconds
+        row.ttftMeanMs = workerRow.ttftMeanMs
+        row.ttftStdMs = workerRow.ttftStdMs
+        row.requestLatencyMeanMs = workerRow.requestLatencyMeanMs
+        row.requestLatencyStdMs = workerRow.requestLatencyStdMs
+        row.prefillTokensPerSecondMean = workerRow.prefillTokensPerSecondMean
+        row.decodeTokensPerSecondMean = workerRow.decodeTokensPerSecondMean
+        row.throughputRequestsPerSecond = workerRow.throughputRequestsPerSecond
+        row.throughputTokensPerSecond = workerRow.throughputTokensPerSecond
+        row.successRate = workerRow.successRate
+        row.peakMemoryBytesMax = workerRow.peakMemoryBytesMax
+        row.queueWaitMeanMs = workerRow.queueWaitMeanMs
+        row.queueWaitP95Ms = workerRow.queueWaitP95Ms
+        row.createdAtUnixMs = workerRow.createdAtUnixMs
+        return row
     }
 
     private func makeBenchmarkResultSummaries(
@@ -2237,6 +3228,32 @@ public actor ControlPlaneService {
         }
     }
 
+    private func diskStreamingMode(for rawValue: String) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "prefer_disk", "prefer-disk", "prefer":
+            return .diskStreamingPreferDisk
+        case "require_disk", "require-disk", "require":
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
+    private func controlPlaneDiskStreamingMode(
+        for mode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
     private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
         switch rawValue.lowercased() {
         case "speculative_decode":
@@ -2250,6 +3267,33 @@ public actor ControlPlaneService {
         default:
             return .baseline
         }
+    }
+
+    private func normalizedServingDefaultsAccelerationMode(
+        _ mode: Melix_Controlplane_V1_AccelerationMode
+    ) -> Melix_Controlplane_V1_AccelerationMode {
+        switch mode {
+        case .speculativeDecode:
+            return .speculativeDecode
+        case .baseline, .unspecified:
+            return .baseline
+        default:
+            return mode
+        }
+    }
+
+    private func modelSupportsSpeculativeDefaults(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+    }
+
+    private static func resolveGatewaySpeculativeDefaultsSupport(
+        environment: [String: String]
+    ) -> Bool {
+        (environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] ?? "swift")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "deterministic"
     }
 
     private func makeErrorStatus(
@@ -2279,6 +3323,7 @@ public actor ControlPlaneService {
         ref.sha256 = artifact.sha256
         ref.variantIndex = artifact.variantIndex
         ref.ext = artifact.ext
+        ref.parentArtifactID = artifact.parentArtifactID
         return ref
     }
 
@@ -2302,7 +3347,146 @@ public actor ControlPlaneService {
         job.cancelable = workerJob.cancelable
         job.createdAtUnixMs = workerJob.createdAtUnixMs
         job.updatedAtUnixMs = workerJob.updatedAtUnixMs
+        job.sourceArtifactID = workerJob.sourceArtifactID
+        job.sourceJobID = workerJob.sourceJobID
+        job.promptDelta = workerJob.promptDelta
+        job.editMode = Melix_Controlplane_V1_ImageEditMode(rawValue: workerJob.editMode.rawValue) ?? .unspecified
         return job
+    }
+
+    private func resolvedImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Controlplane_V1_ImageEditMode {
+        switch mode {
+        case .edit, .variation, .iterate:
+            return mode
+        case .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func workerImageEditMode(
+        _ mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> Melix_Worker_V1_ImageEditMode {
+        switch mode {
+        case .variation:
+            return .variation
+        case .iterate:
+            return .iterate
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return .edit
+        }
+    }
+
+    private func imageEditOperationName(
+        for mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        switch mode {
+        case .variation:
+            return "image_variation"
+        case .iterate:
+            return "image_iterate"
+        case .edit, .unspecified, .UNRECOGNIZED:
+            return "image_edit"
+        }
+    }
+
+    private func resolvedEditPrompt(
+        prompt: String,
+        promptDelta: String,
+        mode: Melix_Controlplane_V1_ImageEditMode
+    ) -> String {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mode == .iterate && trimmedPrompt.isEmpty {
+            return promptDelta
+        }
+        return prompt
+    }
+
+    private func imageRequestExt(
+        steps: UInt32,
+        guidance: Float,
+        negativePrompt: String,
+        strength: Float?
+    ) -> [String: String] {
+        var ext: [String: String] = [:]
+        if steps > 0 {
+            ext["melix.image.steps"] = String(steps)
+        }
+        if guidance > 0 {
+            ext["melix.image.guidance"] = String(guidance)
+        }
+        let trimmedNegativePrompt = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedNegativePrompt.isEmpty == false {
+            ext["melix.image.negative_prompt"] = trimmedNegativePrompt
+        }
+        if let strength, strength > 0 {
+            ext["melix.image.strength"] = String(strength)
+        }
+        return ext
+    }
+
+    private func imageJobRecipe(
+        prompt: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float?,
+        negativePrompt: String,
+        variantCount: UInt32,
+        responseFormat: String,
+        artifactNamespace: String,
+        sourceImageURI: String,
+        maskURI: String
+    ) -> Melix_Controlplane_V1_ImageJobRecipeSummary {
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = prompt
+        recipe.size = size
+        recipe.steps = steps
+        recipe.guidance = guidance
+        recipe.strength = strength ?? 0
+        recipe.negativePrompt = negativePrompt
+        recipe.variantCount = variantCount
+        recipe.responseFormat = responseFormat
+        recipe.artifactNamespace = artifactNamespace
+        recipe.sourceImageUri = sourceImageURI
+        recipe.maskUri = maskURI
+        return recipe
+    }
+
+    private func imageWorkerFailure(
+        error: Error,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        guard let workerError = error as? WorkerClientError else {
+            return controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+        }
+        switch workerError {
+        case .unavailable:
+            return controlPlaneError(code: "unavailable", message: "Image worker request failed: \(error)")
+        case let .requestFailed(code, message):
+            let normalizedCode = normalizedBridgeErrorCode(code)
+            switch normalizedCode {
+            case "deadline_exceeded":
+                return controlPlaneError(
+                    code: "deadline_exceeded",
+                    message: "Image request exceeded the \(timeoutSeconds)-second creative workflow deadline."
+                )
+            case "cancelled":
+                return controlPlaneError(code: "cancelled", message: message.isEmpty ? "Image request was cancelled." : message)
+            case "":
+                return controlPlaneError(code: "unavailable", message: message.isEmpty ? "Image worker request failed." : message)
+            default:
+                return controlPlaneError(code: normalizedCode, message: message.isEmpty ? "Image worker request failed." : message)
+            }
+        }
+    }
+
+    private func normalizedBridgeErrorCode(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
     }
 
     private func controlPlaneError(from workerError: Melix_Worker_V1_ErrorStatus) -> Melix_Controlplane_V1_ErrorStatus {
@@ -2450,14 +3634,43 @@ public actor ControlPlaneService {
 
     private func handleModelLoad(
         modelID: String,
-        reason: String
+        reason: String,
+        requestedMemoryBudgetBytes: UInt64 = 0
     ) async -> ModelLoadOutcome {
-        let preparedModelSpec = await modelCatalog.model(id: modelID).flatMap(BootstrapWorkerPreparation.modelSpec(for:))
-        let hydratedPreparedModelSpec = hydratedModel(await modelCatalog.model(id: modelID))
-            .flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let catalogModel = await modelCatalog.model(id: modelID)
+        let hydratedCatalogModel = hydratedModel(catalogModel)
+        let preparedModelSpec = catalogModel.flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let hydratedPreparedModelSpec = hydratedCatalogModel.flatMap(BootstrapWorkerPreparation.modelSpec(for:))
+        let fallbackPreparedModelSpec = hydratedPreparedModelSpec ?? preparedModelSpec
+        let effectiveMemoryBudgetBytes = resolvedMemoryBudgetBytes(
+            requestedMemoryBudgetBytes: requestedMemoryBudgetBytes,
+            model: hydratedCatalogModel ?? catalogModel
+        )
+        let requestedDiskStreamingMode = fallbackPreparedModelSpec.map {
+            controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
+        } ?? .diskStreamingDisabled
         guard let workerRegistry,
               let modelSpec = hydratedPreparedModelSpec ?? preparedModelSpec,
               let workerClient = await workerRegistry.client(forModelID: modelID) else {
+            if requestedDiskStreamingMode == .diskStreamingPreferDisk
+                || requestedDiskStreamingMode == .diskStreamingRequireDisk {
+                _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                    requestedMode: requestedDiskStreamingMode,
+                    effectiveMode: .diskStreamingDisabled
+                )
+                let failedModel = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: "\(reason)_disk_streaming_unsupported"
+                ) ?? Melix_Controlplane_V1_ModelSummary()
+                var error = Melix_Controlplane_V1_ErrorStatus()
+                error.code = "disk_streaming_unsupported"
+                error.message = "The selected runtime does not support disk-streaming mode."
+                error.details = [
+                    "model_id": modelID,
+                    "requested_mode": requestedDiskStreamingMode.rawValue.description,
+                ]
+                return ModelLoadOutcome(model: hydrate(failedModel), error: error)
+            }
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: "\(modelID)::local",
@@ -2468,21 +3681,40 @@ public actor ControlPlaneService {
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
         workerRequest.model = modelSpec
-        workerRequest.memoryBudgetBytes = 0
+        workerRequest.memoryBudgetBytes = effectiveMemoryBudgetBytes
         workerRequest.pinOnLoad = false
         workerRequest.warmupAfterLoad = false
+        workerRequest.diskStreamingMode = modelSpec.settings.diskStreamingMode
 
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
             guard response.ok, !response.modelHandle.isEmpty else {
                 let explicitError = response.error.code.isEmpty ? nil : makeErrorStatus(from: response.error)
                 let failureReason = explicitError.map { "\(reason)_\(sanitizeTransitionReasonComponent($0.code))" } ?? "\(reason)_failed"
+                let memoryBudgetEvidence = memoryBudgetEvidence(from: response.error)
+                if let memoryBudgetEvidence {
+                    await recordMemoryBudgetMetrics(
+                        memoryBudgetEvidence,
+                        metricsPrefix: "control_plane.model_load"
+                    )
+                }
+                _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                    requestedMode: requestedDiskStreamingMode,
+                    effectiveMode: .diskStreamingDisabled
+                )
                 let model = await modelCatalog.recordLoadFailed(
                     id: modelID,
-                    reason: failureReason
+                    reason: failureReason,
+                    memoryBudgetEvidence: memoryBudgetEvidence
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
+            _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                requestedMode: requestedDiskStreamingMode,
+                effectiveMode: response.hasResidency
+                    ? controlPlaneDiskStreamingMode(for: response.residency.effectiveDiskStreamingMode)
+                    : .diskStreamingDisabled
+            )
             let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: response.modelHandle,
@@ -2492,12 +3724,53 @@ public actor ControlPlaneService {
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         } catch {
+            _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
+                requestedMode: requestedDiskStreamingMode,
+                effectiveMode: .diskStreamingDisabled
+            )
             let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(reason)_failed"
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         }
+    }
+
+    private func resolvedMemoryBudgetBytes(
+        requestedMemoryBudgetBytes: UInt64,
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) -> UInt64 {
+        if requestedMemoryBudgetBytes > 0 {
+            return requestedMemoryBudgetBytes
+        }
+        return model?.settings.memoryBudgetBytes ?? 0
+    }
+
+    private func memoryBudgetEvidence(
+        from workerError: Melix_Worker_V1_ErrorStatus
+    ) -> ModelCatalog.MemoryBudgetEvidence? {
+        guard workerError.code == "memory_budget_exceeded" || workerError.code == "unsafe_load_rejected" else {
+            return nil
+        }
+        let budgetBytes = UInt64(workerError.details["budget_bytes"] ?? "") ?? 0
+        let headroomBytes = UInt64(workerError.details["headroom_bytes"] ?? "") ?? 0
+        let requiredBytes = UInt64(workerError.details["required_bytes"] ?? "") ?? 0
+        let evidence = ModelCatalog.MemoryBudgetEvidence(
+            memoryBudgetBytes: budgetBytes,
+            memoryHeadroomBytes: headroomBytes,
+            requiredBytes: requiredBytes
+        )
+        return evidence.isEmpty ? nil : evidence
+    }
+
+    private func recordMemoryBudgetMetrics(
+        _ evidence: ModelCatalog.MemoryBudgetEvidence,
+        metricsPrefix: String
+    ) async {
+        await metricsStore.increment("\(metricsPrefix)_rejection_count")
+        await metricsStore.set(Double(evidence.memoryBudgetBytes), forKey: "\(metricsPrefix)_last_budget_bytes")
+        await metricsStore.set(Double(evidence.memoryHeadroomBytes), forKey: "\(metricsPrefix)_last_headroom_bytes")
+        await metricsStore.set(Double(evidence.requiredBytes), forKey: "\(metricsPrefix)_last_required_bytes")
     }
 
     private func sanitizeTransitionReasonComponent(_ rawCode: String) -> String {
@@ -2630,12 +3903,143 @@ public actor ControlPlaneService {
         }
     }
 
+    private func prepareDefaultServerSessionForServingActivity() async -> ServingSessionPreparation {
+        let runtimeSessions = await serverSessionRuntimeStore.snapshot(
+            hasActiveRequests: await schedulerReadModel.hasActiveRequests()
+        )
+        let defaultSession = runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        }) ?? runtimeSessions.first ?? ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 0)
+
+        switch defaultSession.lifecycleState {
+        case .paused:
+            return .blocked(
+                code: "server_paused",
+                message: "The selected server session is paused. Resume it before serving requests."
+            )
+        case .stopped:
+            return .blocked(
+                code: "server_stopped",
+                message: "The selected server session is stopped. Start it before serving requests."
+            )
+        case .error:
+            return .blocked(
+                code: "server_failed",
+                message: "The selected server session is in a failed state."
+            )
+        case .sleeping:
+            _ = await serverSessionRuntimeStore.noteRequestActivity(
+                serverSessionID: defaultSession.serverSessionID,
+                wakeReason: .requestActivity
+            )
+            return .ready(publishStateChanged: true)
+        default:
+            _ = await serverSessionRuntimeStore.noteRequestActivity(
+                serverSessionID: defaultSession.serverSessionID,
+                wakeReason: .requestActivity
+            )
+            return .ready(publishStateChanged: false)
+        }
+    }
+
+    private func publishCurrentServerState(source: String) async {
+        let snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            snapshot.serverState,
+            runtimeSessions: snapshot.runtimeSessions,
+            source: source
+        )
+    }
+
+    private func handleServerLifecycleMutation(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        requestedServerSessionID: String,
+        metricKey: String,
+        countKey: String,
+        actionDescription: String,
+        requiresQuiescence: Bool = false,
+        source: String = "server_runtime",
+        mutate: (String) async -> [Melix_Controlplane_V1_ServerSessionRuntimeState]
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let startedAt = Date()
+        let resolvedServerSessionID: String
+        switch validatedServerSessionID(
+            request: request,
+            requestedServerSessionID: requestedServerSessionID
+        ) {
+        case .success(let serverSessionID):
+            resolvedServerSessionID = serverSessionID
+        case .failure(let response):
+            return response
+        }
+
+        if requiresQuiescence, await schedulerReadModel.hasActiveRequests() {
+            return errorResponse(
+                for: request,
+                code: "conflict",
+                message: "Cannot \(actionDescription) the server session while requests are active."
+            )
+        }
+
+        _ = await mutate(resolvedServerSessionID)
+        await metricsStore.increment(countKey)
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: metricKey
+        )
+
+        var reply = Melix_Controlplane_V1_ServerReply()
+        reply.snapshot = await buildSnapshot()
+        await publishServerStateChanged(
+            reply.snapshot.serverState,
+            runtimeSessions: reply.snapshot.runtimeSessions,
+            source: source
+        )
+        return okResponse(for: request, server: reply)
+    }
+
+    private func validatedServerSessionID(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        requestedServerSessionID: String
+    ) -> ValidatedServerSessionTarget {
+        let targetID = request.targetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payloadID = requestedServerSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !targetID.isEmpty, !payloadID.isEmpty, targetID != payloadID {
+            return .failure(
+                errorResponse(
+                    for: request,
+                    code: "invalid_argument",
+                    message: "Target server session does not match the command payload."
+                )
+            )
+        }
+        let resolvedServerSessionID = payloadID.isEmpty ? targetID : payloadID
+        let normalizedServerSessionID = resolvedServerSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : resolvedServerSessionID
+        return .success(normalizedServerSessionID)
+    }
+
     private func publishSessionStateChanged(_ session: Melix_Controlplane_V1_SessionState) async {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "session.state_changed"
         event.source = "session_graph"
         event.sessionState = Melix_Controlplane_V1_SessionStateChanged()
         event.sessionState.state = session
+        await eventHub.publish(event)
+    }
+
+    private func publishServerStateChanged(
+        _ state: Melix_Controlplane_V1_ServerState,
+        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState],
+        source: String
+    ) async {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "server.state_changed"
+        event.source = source
+        event.serverState = Melix_Controlplane_V1_ServerStateChanged()
+        event.serverState.state = state
+        event.serverState.runtimeSessions = runtimeSessions
         await eventHub.publish(event)
     }
 

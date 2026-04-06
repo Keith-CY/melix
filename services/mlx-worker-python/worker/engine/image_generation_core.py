@@ -37,6 +37,14 @@ class ImageGenerationCore:
                 code="invalid_argument",
                 message="Loaded model does not support image generation.",
             )
+        if _supports_image_generation(loaded_model.spec) is False:
+            return self._failed_response(
+                request=request,
+                job_id=job_id,
+                created_at_unix_ms=created_at_unix_ms,
+                code="invalid_argument",
+                message=f"Image model {loaded_model.spec.model_id} does not support generation workflows.",
+            )
 
         state = self._registry.start_request(request_id, runtime_kind="image")
         try:
@@ -141,3 +149,23 @@ class ImageGenerationCore:
                 updated_at_unix_ms=updated_at_unix_ms,
             ),
         )
+
+
+def _supports_image_generation(model_spec: common_pb2.ModelSpec) -> bool:
+    ext = model_spec.ext
+    raw = ext.get("melix.image.supports_generation", "").strip().lower()
+    if raw in {"true", "1", "yes", "on"}:
+        return True
+    if raw in {"false", "0", "no", "off"}:
+        return False
+    supported_tasks = {
+        part.strip()
+        for part in ext.get("melix.capability.supported_tasks", "").split(",")
+        if part.strip()
+    }
+    if "image_generate" in supported_tasks:
+        return True
+    task_kind = ext.get("melix.image.task_kind", "").strip().lower()
+    if task_kind == "image-text-to-image":
+        return False
+    return True

@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 public struct DesktopDashboardCard: Identifiable, Equatable, Sendable {
@@ -60,10 +61,12 @@ public struct DesktopLogEntry: Identifiable, Equatable, Sendable {
     public let level: String
 
     public init(kind: String, message: String, detail: String, level: String) {
-        self.id = "\(kind)-\(message)-\(detail)-\(level)"
+        let sanitizedMessage = RichOutputSanitizer.sanitized(message)
+        let sanitizedDetail = RichOutputSanitizer.sanitized(detail)
+        self.id = "\(kind)-\(sanitizedMessage)-\(sanitizedDetail)-\(level)"
         self.kind = kind
-        self.message = message
-        self.detail = detail
+        self.message = sanitizedMessage
+        self.detail = sanitizedDetail
         self.level = level
     }
 }
@@ -82,17 +85,57 @@ public struct DesktopMetricRow: Identifiable, Equatable, Sendable {
 
 public struct DesktopAPIReferenceRow: Identifiable, Equatable, Sendable {
     public let id: String
+    public let surfaceID: String
+    public let surfaceTitle: String
     public let method: String
     public let path: String
     public let summary: String
     public let streaming: Bool
 
-    public init(method: String, path: String, summary: String, streaming: Bool) {
-        self.id = "\(method) \(path)"
+    public init(
+        id: String,
+        surfaceID: String,
+        surfaceTitle: String,
+        method: String,
+        path: String,
+        summary: String,
+        streaming: Bool
+    ) {
+        self.id = id
+        self.surfaceID = surfaceID
+        self.surfaceTitle = surfaceTitle
         self.method = method
         self.path = path
         self.summary = summary
         self.streaming = streaming
+    }
+}
+
+public struct DesktopAPISurfaceRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let summary: String
+    public let statusText: String
+    public let compatibilityNote: String
+    public let endpointIDs: [String]
+    public let shipped: Bool
+
+    public init(
+        id: String,
+        title: String,
+        summary: String,
+        statusText: String,
+        compatibilityNote: String,
+        endpointIDs: [String],
+        shipped: Bool
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.statusText = statusText
+        self.compatibilityNote = compatibilityNote
+        self.endpointIDs = endpointIDs
+        self.shipped = shipped
     }
 }
 
@@ -104,6 +147,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
     public let settings: [DesktopKeyValueRow]
     public let logs: [DesktopLogEntry]
     public let benchMetrics: [DesktopMetricRow]
+    public let apiSurfaces: [DesktopAPISurfaceRow]
     public let apiReference: [DesktopAPIReferenceRow]
 
     public static func build(
@@ -116,9 +160,16 @@ public struct DesktopFoundationState: Equatable, Sendable {
         serverVersion: String,
         daemonInstanceID: String,
         features: [String],
+        productUpdateSummary: String?,
+        productUpdateDetail: String?,
         lastError: String?,
         recentEvents: [DesktopLogEntry]
     ) -> DesktopFoundationState {
+        let apiSurfaces = resolvedAPISurfaces(from: snapshot.apiOnboarding)
+        let apiReference = resolvedAPIReference(
+            from: snapshot.apiOnboarding,
+            surfaces: apiSurfaces
+        )
         let loadedModels = snapshot.models.filter { model in
             switch model.state {
             case .modelWarm, .modelPinned:
@@ -235,7 +286,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
                 )
             }
 
-        let settings = [
+        var settings = [
             DesktopKeyValueRow(id: "protocol", key: "Protocol", value: protocolVersion),
             DesktopKeyValueRow(id: "server-version", key: "Server Version", value: serverVersion),
             DesktopKeyValueRow(id: "daemon-id", key: "Daemon Instance", value: daemonInstanceID.isEmpty ? "unknown" : daemonInstanceID),
@@ -243,8 +294,92 @@ public struct DesktopFoundationState: Equatable, Sendable {
             DesktopKeyValueRow(id: "connection", key: "Connection", value: connectionStateText),
             DesktopKeyValueRow(id: "stream", key: "Event Stream", value: connectionDetailText),
             DesktopKeyValueRow(id: "socket", key: "Control Plane", value: "local XPC"),
-            DesktopKeyValueRow(id: "api-surface", key: "API Surface", value: "text phase-4 foundation"),
+            DesktopKeyValueRow(
+                id: "api-surface",
+                key: "API Surface",
+                value: apiSurfaces.isEmpty ? "not published" : "\(apiSurfaces.count) published surfaces"
+            ),
         ]
+        if let productUpdateSummary, productUpdateSummary.isEmpty == false {
+            settings.append(
+                DesktopKeyValueRow(id: "product-update", key: "Update", value: productUpdateSummary)
+            )
+            if let productUpdateDetail, productUpdateDetail.isEmpty == false {
+                settings.append(
+                    DesktopKeyValueRow(id: "product-update-detail", key: "Update Detail", value: productUpdateDetail)
+                )
+            }
+        }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "embedding-model",
+                key: "Embedding Model",
+                value: snapshot.toolingSettings.embedding.modelID.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.embedding.modelID
+            )
+        )
+        if snapshot.toolingSettings.embedding.modelID.isEmpty == false {
+            settings.append(
+                DesktopKeyValueRow(
+                    id: "embedding-preload",
+                    key: "Embedding Preload",
+                    value: embeddingToolingDetail(snapshot.toolingSettings.embedding)
+                )
+            )
+        }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "tool-parser-modes",
+                key: "Built-in Tool Parsers",
+                value: snapshot.toolingSettings.builtinToolParserModes.isEmpty
+                    ? "none"
+                    : snapshot.toolingSettings.builtinToolParserModes.joined(separator: ", ")
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-default-parser",
+                key: "MCP Default Parser",
+                value: snapshot.toolingSettings.mcpDefaultParserMode.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.mcpDefaultParserMode
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-config-path",
+                key: "MCP Config",
+                value: snapshot.toolingSettings.mcpConfigPath.isEmpty
+                    ? "not configured"
+                    : snapshot.toolingSettings.mcpConfigPath
+            )
+        )
+        settings.append(
+            DesktopKeyValueRow(
+                id: "mcp-summary",
+                key: "MCP Summary",
+                value: "\(snapshot.toolingSettings.mcpEnabledSourceCount) enabled sources • \(snapshot.toolingSettings.mcpResolvedToolCount) tools"
+            )
+        )
+        for configPath in snapshot.toolingSettings.configPaths {
+            settings.append(
+                DesktopKeyValueRow(
+                    id: "config-path-\(configPath.pathID)",
+                    key: toolingConfigPathLabel(configPath.pathID),
+                    value: configPath.path
+                )
+            )
+        }
+        settings.append(
+            DesktopKeyValueRow(
+                id: "boot-arguments",
+                key: "Boot Arguments",
+                value: snapshot.toolingSettings.additionalArguments.isEmpty
+                    ? "none"
+                    : snapshot.toolingSettings.additionalArguments.joined(separator: " ")
+            )
+        )
 
         let benchMetrics = snapshot.metrics.values
             .sorted { $0.key < $1.key }
@@ -281,7 +416,8 @@ public struct DesktopFoundationState: Equatable, Sendable {
             settings: settings,
             logs: Array(logs.prefix(40)),
             benchMetrics: benchMetrics,
-            apiReference: APIReferenceCatalog.phaseFourFoundation
+            apiSurfaces: apiSurfaces,
+            apiReference: apiReference
         )
     }
 }
@@ -321,39 +457,120 @@ private func formatTransitionReason(_ reason: String) -> String {
     return String(first).uppercased() + separatorNormalized.dropFirst()
 }
 
-enum APIReferenceCatalog {
-    static let phaseFourFoundation: [DesktopAPIReferenceRow] = [
-        DesktopAPIReferenceRow(
-            method: "GET",
-            path: "/v1/models",
-            summary: "List local models and their runtime state.",
-            streaming: false
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/chat/completions",
-            summary: "OpenAI-style chat completions over the shared text runtime.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/completions",
-            summary: "Prompt-style completions mapped onto the same text runtime.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/responses",
-            summary: "Responses-style text execution with reasoning and tool deltas.",
-            streaming: true
-        ),
-        DesktopAPIReferenceRow(
-            method: "POST",
-            path: "/v1/messages",
-            summary: "Message-oriented execution over the Phase 4 text surface.",
-            streaming: true
-        ),
-    ]
+private func embeddingToolingDetail(
+    _ summary: Melix_Controlplane_V1_EmbeddingToolingSummary
+) -> String {
+    var parts: [String] = []
+    parts.append(modelStateText(summary.modelState))
+    parts.append(summary.preloaded ? "preloaded" : "not preloaded")
+    if !summary.familyID.isEmpty || !summary.backendID.isEmpty {
+        let identity = [summary.familyID, summary.backendID]
+            .filter { !$0.isEmpty }
+            .joined(separator: " / ")
+        if !identity.isEmpty {
+            parts.append(identity)
+        }
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func modelStateText(
+    _ state: Melix_Controlplane_V1_ModelState
+) -> String {
+    switch state {
+    case .modelDiscovered:
+        return "Discovered"
+    case .modelWarm:
+        return "Warm"
+    case .modelPinned:
+        return "Pinned"
+    case .modelLoading:
+        return "Loading"
+    case .modelEvicting:
+        return "Evicting"
+    case .modelUnloaded:
+        return "Unloaded"
+    case .modelFailed:
+        return "Failed"
+    default:
+        return "Unknown"
+    }
+}
+
+private func toolingConfigPathLabel(_ pathID: String) -> String {
+    switch pathID {
+    case "gateway_config_store_path":
+        return "Gateway Config Store"
+    case "gateway_serving_defaults_store_path":
+        return "Serving Defaults Store"
+    case "control_plane_metrics_path":
+        return "Control Plane Metrics"
+    default:
+        return pathID.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+private func resolvedAPISurfaces(
+    from summary: Melix_Controlplane_V1_APIOnboardingSummary
+) -> [DesktopAPISurfaceRow] {
+    summary.surfaces.map { surface in
+        let shipped = surface.status == .shipped
+        return DesktopAPISurfaceRow(
+            id: surface.surfaceID,
+            title: surface.title,
+            summary: surface.summary,
+            statusText: apiSurfaceStatusText(surface.status),
+            compatibilityNote: surface.compatibilityNote,
+            endpointIDs: surface.endpointIds,
+            shipped: shipped
+        )
+    }
+}
+
+private func resolvedAPIReference(
+    from summary: Melix_Controlplane_V1_APIOnboardingSummary,
+    surfaces: [DesktopAPISurfaceRow]
+) -> [DesktopAPIReferenceRow] {
+    let surfacesByID = Dictionary(uniqueKeysWithValues: surfaces.map { ($0.id, $0) })
+    let surfaceOrder = Dictionary(uniqueKeysWithValues: surfaces.enumerated().map { ($1.id, $0) })
+
+    return summary.endpoints
+        .sorted { lhs, rhs in
+            let lhsOrder = surfaceOrder[lhs.surfaceID] ?? .max
+            let rhsOrder = surfaceOrder[rhs.surfaceID] ?? .max
+            if lhsOrder != rhsOrder {
+                return lhsOrder < rhsOrder
+            }
+            if lhs.method != rhs.method {
+                return lhs.method < rhs.method
+            }
+            return lhs.path < rhs.path
+        }
+        .map { endpoint in
+            let surfaceTitle = surfacesByID[endpoint.surfaceID]?.title ?? endpoint.surfaceID
+            return DesktopAPIReferenceRow(
+                id: endpoint.endpointID,
+                surfaceID: endpoint.surfaceID,
+                surfaceTitle: surfaceTitle,
+                method: endpoint.method,
+                path: endpoint.path,
+                summary: endpoint.summary,
+                streaming: endpoint.streaming
+            )
+        }
+}
+
+private func apiSurfaceStatusText(
+    _ status: Melix_Controlplane_V1_APIOnboardingSurfaceStatus
+) -> String {
+    switch status {
+    case .shipped:
+        return "Shipped"
+    case .compatibilityOnly:
+        return "Compatibility Only"
+    default:
+        return "Unknown"
+    }
 }
 
 private func formatDouble(_ value: Double) -> String {

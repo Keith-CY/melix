@@ -8,6 +8,13 @@ from pathlib import Path
 import re
 from typing import Any
 
+from worker.productization.startup_signals import (
+    default_update_channel_path,
+    read_product_version,
+    resolve_http_port,
+)
+from worker.productization.packaging_targets import build_packaging_target_metadata
+
 
 @dataclass(frozen=True)
 class LocalProductLayout:
@@ -38,6 +45,9 @@ class LocalProductLayout:
     control_plane_stderr_path: Path
     environment_script_path: Path
     install_manifest_path: Path
+    update_channel_path: Path
+    product_version: str
+    requested_http_port: int
     http_port: int
 
 
@@ -61,6 +71,9 @@ def build_local_product_layout(
     launch_agents_dir: str | Path | None = None,
     http_port: int = 11434,
     service_instance_name: str = "",
+    prefer_available_http_port: bool = False,
+    product_version: str = "",
+    update_channel_path: str | Path | None = None,
 ) -> LocalProductLayout:
     resolved_repo_root = Path(repo_root).expanduser().resolve()
     resolved_home_dir = Path(home_dir or Path.home()).expanduser().resolve()
@@ -71,6 +84,16 @@ def build_local_product_layout(
     )
 
     normalized_instance_name = _normalize_service_instance_name(service_instance_name)
+    resolved_http_port = resolve_http_port(
+        http_port,
+        prefer_available_http_port=prefer_available_http_port,
+    )
+    resolved_product_version = product_version or _resolve_product_version(resolved_repo_root)
+    resolved_update_channel_path = (
+        Path(update_channel_path).expanduser().resolve()
+        if update_channel_path is not None
+        else default_update_channel_path(resolved_repo_root)
+    )
     if normalized_instance_name:
         app_support_dir = (
             resolved_home_dir
@@ -117,7 +140,10 @@ def build_local_product_layout(
         control_plane_stderr_path=logs_dir / "control-plane.stderr.log",
         environment_script_path=environment_script_path,
         install_manifest_path=app_support_dir / "install-manifest.json",
-        http_port=http_port,
+        update_channel_path=resolved_update_channel_path,
+        product_version=resolved_product_version,
+        requested_http_port=http_port,
+        http_port=resolved_http_port,
     )
 
 
@@ -283,8 +309,14 @@ def write_local_product_artifacts(
         plist_paths[spec.label] = str(spec.plist_path)
 
     layout.environment_script_path.write_text(render_environment_script(layout))
+    target_metadata = build_packaging_target_metadata(
+        "launch_agents_checkout",
+        product_version=layout.product_version,
+        update_channel_path=layout.update_channel_path,
+        service_instance_name=layout.service_instance_name,
+    )
     manifest = {
-        "service_instance_name": layout.service_instance_name,
+        **target_metadata,
         "repo_root": str(layout.repo_root),
         "app_support_dir": str(layout.app_support_dir),
         "runtime_dir": str(layout.runtime_dir),
@@ -296,8 +328,16 @@ def write_local_product_artifacts(
         "launch_agents_dir": str(layout.launch_agents_dir),
         "environment_script_path": str(layout.environment_script_path),
         "install_manifest_path": str(layout.install_manifest_path),
+        "requested_http_port": layout.requested_http_port,
         "http_port": layout.http_port,
+        "http_port_auto_selected": layout.requested_http_port != layout.http_port,
         "ready_probe_url": f"http://127.0.0.1:{layout.http_port}/v1/models",
+        "control_plane_stdout_path": str(layout.control_plane_stdout_path),
+        "control_plane_stderr_path": str(layout.control_plane_stderr_path),
+        "swift_text_worker_stdout_path": str(layout.swift_text_worker_stdout_path),
+        "swift_text_worker_stderr_path": str(layout.swift_text_worker_stderr_path),
+        "python_worker_stdout_path": str(layout.python_worker_stdout_path),
+        "python_worker_stderr_path": str(layout.python_worker_stderr_path),
         "plists": plist_paths,
         "bootstrap_commands": [
             f'launchctl bootstrap gui/{os.getuid()} "{spec.plist_path}"'
@@ -313,7 +353,18 @@ def write_local_product_artifacts(
 
 
 def render_environment_script(layout: LocalProductLayout) -> str:
+    target_metadata = build_packaging_target_metadata(
+        "launch_agents_checkout",
+        product_version=layout.product_version,
+        update_channel_path=layout.update_channel_path,
+        service_instance_name=layout.service_instance_name,
+    )
     exports = {
+        "MELIX_LOGICAL_PRODUCT_ID": str(target_metadata["logical_product_identity"]),
+        "MELIX_PACKAGING_TARGET_ID": str(target_metadata["packaging_target_id"]),
+        "MELIX_PACKAGING_KIND": str(target_metadata["packaging_kind"]),
+        "MELIX_PRODUCT_VERSION": str(layout.product_version),
+        "MELIX_UPDATE_CHANNEL_PATH": str(layout.update_channel_path),
         "MELIX_APP_SUPPORT_DIR": str(layout.app_support_dir),
         "MELIX_RUNTIME_DIR": str(layout.runtime_dir),
         "MELIX_MANAGED_MODEL_ROOT": str(layout.managed_models_dir),
@@ -338,3 +389,10 @@ def render_environment_script(layout: LocalProductLayout) -> str:
 def _normalize_service_instance_name(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9-]+", "-", value.strip().lower()).strip("-")
     return normalized
+
+
+def _resolve_product_version(repo_root: Path) -> str:
+    try:
+        return read_product_version(repo_root)
+    except (FileNotFoundError, ValueError):
+        return "0.1.0"

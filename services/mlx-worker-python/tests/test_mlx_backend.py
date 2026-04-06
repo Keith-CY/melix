@@ -370,3 +370,46 @@ def test_runtime_wraps_plain_string_backend_tokens() -> None:
 def test_worker_model_catalog_uses_environment_override_for_dev_text_model() -> None:
     model = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
     assert model.model_path == "mlx-community/test-model"
+
+
+def test_worker_model_catalog_dev_text_model_preserves_explicit_route_override() -> None:
+    model = WorkerModelCatalog.dev_text_model(
+        environment={
+            "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
+            "MELIX_DEV_TEXT_ROUTE_KIND": "custom_text_route",
+        }
+    )
+
+    assert model.ext["melix.capability.route_kind"] == "custom_text_route"
+
+
+def test_worker_model_catalog_and_runtime_expose_text_family_metadata() -> None:
+    model = WorkerModelCatalog.dev_text_model(
+        environment={
+            "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
+            "MELIX_DEV_TEXT_MODEL_PATH": "models/qwen3-moe-128e",
+        }
+    )
+    runtime = MLXTextRuntime(
+        backend=AutoMLXBackend(
+            load_fn=lambda *_args, **_kwargs: (object(), FakeTokenizer()),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            sampler_factory=lambda **kwargs: "unused",
+        )
+    )
+
+    loaded = runtime.load_model(model)
+
+    assert model.ext["text_backend_id"] == "mlx_lm"
+    assert model.ext["text_family_id"] == "qwen3moe"
+    assert model.ext["melix.capability.route_kind"] == "python_text_compatibility"
+    assert model.ext["melix.capability.supported_parsers"] == "text,qwen"
+    assert model.ext["tool_parser_mode"] == "qwen"
+    assert loaded["text_backend_id"] == "mlx_lm"
+    assert loaded["text_family_id"] == "qwen3moe"
+    assert loaded["model_architecture"] == "qwen3_moe"
+    assert loaded["text_attention_profile"] == "gqa"
+    assert loaded["text_rope_profile"] == "yarn_interleaved"
+    assert loaded["text_moe_enabled"] == "true"
+    assert loaded["text_moe_expert_count"] == "128"
+    assert loaded["text_moe_gate_dequant"] == "true"

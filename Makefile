@@ -3,10 +3,11 @@ UV_CACHE_DIR := $(ROOT)/.uv-cache
 SWIFT_HOME := $(ROOT)/.swift-home
 CLANG_MODULE_CACHE_PATH := $(ROOT)/.build/ModuleCache.noindex
 
-.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-install-smoke phase8-release-gate phase8-metrics
+.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
+PHASE17_METRICS_ARGS ?=
 PHASE8_INSTALL_SMOKE_ARGS ?=
 PHASE8_RELEASE_GATE_ARGS ?=
 PHASE8_METRICS_ARGS ?=
@@ -80,3 +81,7 @@ phase8-release-gate:
 phase8-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_metrics_report.py $(PHASE8_METRICS_ARGS)
+
+phase17-metrics:
+	mkdir -p "$(UV_CACHE_DIR)"
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/m17_speech_runtime_smoke.py $(PHASE17_METRICS_ARGS)

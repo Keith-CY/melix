@@ -32,6 +32,7 @@ message LoadModelRequest {
   uint64 memory_budget_bytes = 2;
   bool pin_on_load = 3;
   bool warmup_after_load = 4;
+  DiskStreamingMode disk_streaming_mode = 5;
 }
 
 message LoadModelResponse {
@@ -98,6 +99,13 @@ message RuntimeStats {
   uint64 last_audio_backend_unavailable_count = 31;
   uint64 last_voice_fallback_count = 32;
   uint64 last_language_fallback_count = 33;
+  uint64 last_video_effective_frame_count = 34;
+  uint64 last_video_requested_frame_budget = 35;
+  uint64 last_video_window_ms = 36;
+  uint64 last_temp_media_artifact_count = 37;
+  uint64 last_temp_media_artifact_bytes = 38;
+  double last_temp_media_cleanup_latency_ms = 39;
+  uint64 last_temp_media_cleanup_failure_count = 40;
 }
 
 message GetRuntimeStatsRequest {}

@@ -77,28 +77,209 @@ public enum DesktopServerSessionLifecycle: String, Codable, Sendable {
     case draft = "Draft"
     case starting = "Starting"
     case running = "Running"
+    case paused = "Paused"
+    case sleeping = "Sleeping"
     case stopping = "Stopping"
     case stopped = "Stopped"
     case error = "Error"
     case unavailable = "Unavailable"
 }
 
+public enum DesktopServerPowerState: String, Codable, Sendable {
+    case active = "Active"
+    case lightSleep = "Light Sleep"
+    case deepSleep = "Deep Sleep"
+    case stopped = "Stopped"
+    case unavailable = "Unavailable"
+}
+
+public enum DesktopServerWakeReason: String, Codable, Sendable {
+    case unspecified = "Unspecified"
+    case initialBoot = "Initial Boot"
+    case operatorResume = "Operator Resume"
+    case requestActivity = "Request Activity"
+    case toolActivity = "Tool Activity"
+    case policyApply = "Policy Apply"
+}
+
 public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
+    public var streamIntervalTokens: Int
     public var maxConcurrentRequests: Int
+    public var concurrentProcessingEnabled: Bool
+    public var prefillBatchSize: Int
+    public var completionBatchSize: Int
+    public var accelerationMode: String
+    public var draftModelID: String
+    public var numDraftTokens: Int
+    public var effectiveTemperature: Double
+    public var effectiveTopP: Double
+    public var effectiveMaxTokens: Int
+    public var effectiveStreamIntervalTokens: Int
+    public var effectiveMaxConcurrentRequests: Int
+    public var effectiveConcurrentProcessingEnabled: Bool
+    public var effectivePrefillBatchSize: Int
+    public var effectiveCompletionBatchSize: Int
+    public var effectiveAccelerationMode: String
+    public var effectiveDraftModelID: String
+    public var effectiveNumDraftTokens: Int
+    public var sourceText: String
+    public var modelOverrideApplied: Bool
+    public var updatedAtUnixMS: Int64
 
     public init(
         temperature: Double = 0.7,
         topP: Double = 1.0,
-        maxTokens: Int = 1024,
-        maxConcurrentRequests: Int = 4
+        maxTokens: Int = 256,
+        streamIntervalTokens: Int = 1,
+        maxConcurrentRequests: Int = 4,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: Int = 2,
+        completionBatchSize: Int = 2,
+        accelerationMode: String = "baseline",
+        draftModelID: String = "",
+        numDraftTokens: Int = 0,
+        effectiveTemperature: Double? = nil,
+        effectiveTopP: Double? = nil,
+        effectiveMaxTokens: Int? = nil,
+        effectiveStreamIntervalTokens: Int? = nil,
+        effectiveMaxConcurrentRequests: Int? = nil,
+        effectiveConcurrentProcessingEnabled: Bool? = nil,
+        effectivePrefillBatchSize: Int? = nil,
+        effectiveCompletionBatchSize: Int? = nil,
+        effectiveAccelerationMode: String? = nil,
+        effectiveDraftModelID: String? = nil,
+        effectiveNumDraftTokens: Int? = nil,
+        sourceText: String = "Built-in Defaults",
+        modelOverrideApplied: Bool = false,
+        updatedAtUnixMS: Int64 = 0
     ) {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.streamIntervalTokens = streamIntervalTokens
         self.maxConcurrentRequests = maxConcurrentRequests
+        self.concurrentProcessingEnabled = concurrentProcessingEnabled
+        self.prefillBatchSize = prefillBatchSize
+        self.completionBatchSize = completionBatchSize
+        self.accelerationMode = accelerationMode
+        self.draftModelID = draftModelID
+        self.numDraftTokens = numDraftTokens
+        self.effectiveTemperature = effectiveTemperature ?? temperature
+        self.effectiveTopP = effectiveTopP ?? topP
+        self.effectiveMaxTokens = effectiveMaxTokens ?? maxTokens
+        self.effectiveStreamIntervalTokens = effectiveStreamIntervalTokens ?? streamIntervalTokens
+        self.effectiveMaxConcurrentRequests = effectiveMaxConcurrentRequests ?? maxConcurrentRequests
+        self.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled ?? concurrentProcessingEnabled
+        self.effectivePrefillBatchSize = effectivePrefillBatchSize ?? prefillBatchSize
+        self.effectiveCompletionBatchSize = effectiveCompletionBatchSize ?? completionBatchSize
+        self.effectiveAccelerationMode = effectiveAccelerationMode ?? accelerationMode
+        self.effectiveDraftModelID = effectiveDraftModelID ?? draftModelID
+        self.effectiveNumDraftTokens = effectiveNumDraftTokens ?? numDraftTokens
+        self.sourceText = sourceText
+        self.modelOverrideApplied = modelOverrideApplied
+        self.updatedAtUnixMS = updatedAtUnixMS
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case temperature
+        case topP = "top_p"
+        case maxTokens = "max_tokens"
+        case streamIntervalTokens = "stream_interval_tokens"
+        case maxConcurrentRequests = "max_concurrent_requests"
+        case concurrentProcessingEnabled = "concurrent_processing_enabled"
+        case prefillBatchSize = "prefill_batch_size"
+        case completionBatchSize = "completion_batch_size"
+        case accelerationMode = "acceleration_mode"
+        case draftModelID = "draft_model_id"
+        case numDraftTokens = "num_draft_tokens"
+        case effectiveTemperature = "effective_temperature"
+        case effectiveTopP = "effective_top_p"
+        case effectiveMaxTokens = "effective_max_tokens"
+        case effectiveStreamIntervalTokens = "effective_stream_interval_tokens"
+        case effectiveMaxConcurrentRequests = "effective_max_concurrent_requests"
+        case effectiveConcurrentProcessingEnabled = "effective_concurrent_processing_enabled"
+        case effectivePrefillBatchSize = "effective_prefill_batch_size"
+        case effectiveCompletionBatchSize = "effective_completion_batch_size"
+        case effectiveAccelerationMode = "effective_acceleration_mode"
+        case effectiveDraftModelID = "effective_draft_model_id"
+        case effectiveNumDraftTokens = "effective_num_draft_tokens"
+        case sourceText = "source_text"
+        case modelOverrideApplied = "model_override_applied"
+        case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7
+        let topP = try container.decodeIfPresent(Double.self, forKey: .topP) ?? 1.0
+        let maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
+        let streamIntervalTokens = try container.decodeIfPresent(Int.self, forKey: .streamIntervalTokens) ?? 1
+        let maxConcurrentRequests = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentRequests) ?? 4
+        let concurrentProcessingEnabled = try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true
+        let prefillBatchSize = try container.decodeIfPresent(Int.self, forKey: .prefillBatchSize) ?? 2
+        let completionBatchSize = try container.decodeIfPresent(Int.self, forKey: .completionBatchSize) ?? 2
+        let accelerationMode = try container.decodeIfPresent(String.self, forKey: .accelerationMode) ?? "baseline"
+        let draftModelID = try container.decodeIfPresent(String.self, forKey: .draftModelID) ?? ""
+        let numDraftTokens = try container.decodeIfPresent(Int.self, forKey: .numDraftTokens) ?? 0
+        self.init(
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens,
+            effectiveTemperature: try container.decodeIfPresent(Double.self, forKey: .effectiveTemperature),
+            effectiveTopP: try container.decodeIfPresent(Double.self, forKey: .effectiveTopP),
+            effectiveMaxTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxTokens),
+            effectiveStreamIntervalTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveStreamIntervalTokens),
+            effectiveMaxConcurrentRequests: try container.decodeIfPresent(Int.self, forKey: .effectiveMaxConcurrentRequests),
+            effectiveConcurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .effectiveConcurrentProcessingEnabled),
+            effectivePrefillBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectivePrefillBatchSize),
+            effectiveCompletionBatchSize: try container.decodeIfPresent(Int.self, forKey: .effectiveCompletionBatchSize),
+            effectiveAccelerationMode: try container.decodeIfPresent(String.self, forKey: .effectiveAccelerationMode),
+            effectiveDraftModelID: try container.decodeIfPresent(String.self, forKey: .effectiveDraftModelID),
+            effectiveNumDraftTokens: try container.decodeIfPresent(Int.self, forKey: .effectiveNumDraftTokens),
+            sourceText: try container.decodeIfPresent(String.self, forKey: .sourceText) ?? "Built-in Defaults",
+            modelOverrideApplied: try container.decodeIfPresent(Bool.self, forKey: .modelOverrideApplied) ?? false,
+            updatedAtUnixMS: try container.decodeIfPresent(Int64.self, forKey: .updatedAtUnixMS) ?? 0
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(temperature, forKey: .temperature)
+        try container.encode(topP, forKey: .topP)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(streamIntervalTokens, forKey: .streamIntervalTokens)
+        try container.encode(maxConcurrentRequests, forKey: .maxConcurrentRequests)
+        try container.encode(concurrentProcessingEnabled, forKey: .concurrentProcessingEnabled)
+        try container.encode(prefillBatchSize, forKey: .prefillBatchSize)
+        try container.encode(completionBatchSize, forKey: .completionBatchSize)
+        try container.encode(accelerationMode, forKey: .accelerationMode)
+        try container.encode(draftModelID, forKey: .draftModelID)
+        try container.encode(numDraftTokens, forKey: .numDraftTokens)
+        try container.encode(effectiveTemperature, forKey: .effectiveTemperature)
+        try container.encode(effectiveTopP, forKey: .effectiveTopP)
+        try container.encode(effectiveMaxTokens, forKey: .effectiveMaxTokens)
+        try container.encode(effectiveStreamIntervalTokens, forKey: .effectiveStreamIntervalTokens)
+        try container.encode(effectiveMaxConcurrentRequests, forKey: .effectiveMaxConcurrentRequests)
+        try container.encode(effectiveConcurrentProcessingEnabled, forKey: .effectiveConcurrentProcessingEnabled)
+        try container.encode(effectivePrefillBatchSize, forKey: .effectivePrefillBatchSize)
+        try container.encode(effectiveCompletionBatchSize, forKey: .effectiveCompletionBatchSize)
+        try container.encode(effectiveAccelerationMode, forKey: .effectiveAccelerationMode)
+        try container.encode(effectiveDraftModelID, forKey: .effectiveDraftModelID)
+        try container.encode(effectiveNumDraftTokens, forKey: .effectiveNumDraftTokens)
+        try container.encode(sourceText, forKey: .sourceText)
+        try container.encode(modelOverrideApplied, forKey: .modelOverrideApplied)
+        try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)
     }
 }
 
@@ -108,6 +289,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var modelID: String
     public var host: String
     public var port: Int
+    public var effectiveHost: String
+    public var effectivePort: Int
+    public var gatewayConfigSourceText: String
+    public var gatewayConfigActiveBinding: Bool
+    public var gatewayConfigRequiresRestart: Bool
     public var authMode: DesktopServerAuthMode
     public var authTokenHint: String
     public var sharedAccessState: DesktopSharedAccessState
@@ -117,8 +303,21 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var timeoutSeconds: Int
     public var servingDefaults: DesktopServerServingDefaultsState
     public var lifecycle: DesktopServerSessionLifecycle
+    public var powerState: DesktopServerPowerState
+    public var wakeReason: DesktopServerWakeReason
+    public var idleTimerSeconds: Int
+    public var autoSleepEnabled: Bool
+    public var lightSleepAfterSeconds: Int
+    public var deepSleepAfterSeconds: Int
+    public var requestedDiskStreamingModeText: String?
+    public var effectiveDiskStreamingModeText: String?
     public var lastError: String
     public var lastKnownModelStateText: String
+    public var activeAuthSessionCount: Int
+    public var rememberedAuthSessionCount: Int
+    public var expiredRememberedSessionCount: Int
+    public var authSessionRetentionSeconds: Int
+    public var lastAuthSessionSignOutLatencyMs: Double
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -128,6 +327,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         modelID: String,
         host: String = "127.0.0.1",
         port: Int = 8080,
+        effectiveHost: String? = nil,
+        effectivePort: Int? = nil,
+        gatewayConfigSourceText: String = "Built-in Defaults",
+        gatewayConfigActiveBinding: Bool = false,
+        gatewayConfigRequiresRestart: Bool = false,
         authMode: DesktopServerAuthMode = .none,
         authTokenHint: String = "",
         sharedAccessState: DesktopSharedAccessState = .localOnly,
@@ -137,8 +341,21 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         timeoutSeconds: Int = 120,
         servingDefaults: DesktopServerServingDefaultsState = DesktopServerServingDefaultsState(),
         lifecycle: DesktopServerSessionLifecycle = .draft,
+        powerState: DesktopServerPowerState = .unavailable,
+        wakeReason: DesktopServerWakeReason = .unspecified,
+        idleTimerSeconds: Int = 0,
+        autoSleepEnabled: Bool = false,
+        lightSleepAfterSeconds: Int = 0,
+        deepSleepAfterSeconds: Int = 0,
+        requestedDiskStreamingModeText: String? = nil,
+        effectiveDiskStreamingModeText: String? = nil,
         lastError: String = "",
         lastKnownModelStateText: String = "",
+        activeAuthSessionCount: Int = 0,
+        rememberedAuthSessionCount: Int = 0,
+        expiredRememberedSessionCount: Int = 0,
+        authSessionRetentionSeconds: Int = 0,
+        lastAuthSessionSignOutLatencyMs: Double = 0,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -147,6 +364,11 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.modelID = modelID
         self.host = host
         self.port = port
+        self.effectiveHost = effectiveHost ?? host
+        self.effectivePort = effectivePort ?? port
+        self.gatewayConfigSourceText = gatewayConfigSourceText
+        self.gatewayConfigActiveBinding = gatewayConfigActiveBinding
+        self.gatewayConfigRequiresRestart = gatewayConfigRequiresRestart
         self.authMode = authMode
         self.authTokenHint = authTokenHint
         self.sharedAccessState = sharedAccessState
@@ -156,14 +378,31 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.timeoutSeconds = timeoutSeconds
         self.servingDefaults = servingDefaults
         self.lifecycle = lifecycle
+        self.powerState = powerState
+        self.wakeReason = wakeReason
+        self.idleTimerSeconds = idleTimerSeconds
+        self.autoSleepEnabled = autoSleepEnabled
+        self.lightSleepAfterSeconds = lightSleepAfterSeconds
+        self.deepSleepAfterSeconds = deepSleepAfterSeconds
+        self.requestedDiskStreamingModeText = requestedDiskStreamingModeText
+        self.effectiveDiskStreamingModeText = effectiveDiskStreamingModeText
         self.lastError = lastError
         self.lastKnownModelStateText = lastKnownModelStateText
+        self.activeAuthSessionCount = activeAuthSessionCount
+        self.rememberedAuthSessionCount = rememberedAuthSessionCount
+        self.expiredRememberedSessionCount = expiredRememberedSessionCount
+        self.authSessionRetentionSeconds = authSessionRetentionSeconds
+        self.lastAuthSessionSignOutLatencyMs = lastAuthSessionSignOutLatencyMs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     public var baseURL: String {
         "http://\(host):\(port)/v1"
+    }
+
+    public var effectiveBaseURL: String {
+        "http://\(effectiveHost):\(effectivePort)/v1"
     }
 
     public var integrationAuthValue: String {
@@ -201,8 +440,141 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         "\(host):\(port)"
     }
 
+    public var effectiveListenerLabel: String {
+        "\(effectiveHost):\(effectivePort)"
+    }
+
     public var isRunning: Bool {
         lifecycle == .running
+    }
+
+    public var persistentSessionSummaryText: String {
+        let retentionText = authSessionRetentionSeconds > 0 ? " TTL \(authSessionRetentionSeconds)s." : ""
+        if rememberedAuthSessionCount > 0 {
+            let expiredText = expiredRememberedSessionCount > 0
+                ? " \(expiredRememberedSessionCount) expired pruned."
+                : ""
+            return "\(rememberedAuthSessionCount) remembered sessions active, \(activeAuthSessionCount) total active.\(expiredText)\(retentionText)"
+        }
+        if activeAuthSessionCount > 0 {
+            return "\(activeAuthSessionCount) gateway sessions active.\(retentionText)"
+        }
+        return "No remembered gateway sessions.\(retentionText)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case modelID = "model_id"
+        case host
+        case port
+        case effectiveHost = "effective_host"
+        case effectivePort = "effective_port"
+        case gatewayConfigSourceText = "gateway_config_source_text"
+        case gatewayConfigActiveBinding = "gateway_config_active_binding"
+        case gatewayConfigRequiresRestart = "gateway_config_requires_restart"
+        case authMode = "auth_mode"
+        case authTokenHint = "auth_token_hint"
+        case sharedAccessState = "shared_access_state"
+        case accessKeyCount = "access_key_count"
+        case accessKeyHints = "access_key_hints"
+        case rateLimitPerMinute = "rate_limit_per_minute"
+        case timeoutSeconds = "timeout_seconds"
+        case servingDefaults = "serving_defaults"
+        case lifecycle
+        case powerState = "power_state"
+        case wakeReason = "wake_reason"
+        case idleTimerSeconds = "idle_timer_seconds"
+        case autoSleepEnabled = "auto_sleep_enabled"
+        case lightSleepAfterSeconds = "light_sleep_after_seconds"
+        case deepSleepAfterSeconds = "deep_sleep_after_seconds"
+        case lastError = "last_error"
+        case lastKnownModelStateText = "last_known_model_state_text"
+        case activeAuthSessionCount = "active_auth_session_count"
+        case rememberedAuthSessionCount = "remembered_auth_session_count"
+        case expiredRememberedSessionCount = "expired_remembered_session_count"
+        case authSessionRetentionSeconds = "auth_session_retention_seconds"
+        case lastAuthSessionSignOutLatencyMs = "last_auth_session_sign_out_latency_ms"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? "127.0.0.1"
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        effectiveHost = try container.decodeIfPresent(String.self, forKey: .effectiveHost) ?? host
+        effectivePort = try container.decodeIfPresent(Int.self, forKey: .effectivePort) ?? port
+        gatewayConfigSourceText = try container.decodeIfPresent(String.self, forKey: .gatewayConfigSourceText)
+            ?? "Built-in Defaults"
+        gatewayConfigActiveBinding = try container.decodeIfPresent(Bool.self, forKey: .gatewayConfigActiveBinding) ?? false
+        gatewayConfigRequiresRestart = try container.decodeIfPresent(Bool.self, forKey: .gatewayConfigRequiresRestart) ?? false
+        authMode = try container.decodeIfPresent(DesktopServerAuthMode.self, forKey: .authMode) ?? .none
+        authTokenHint = try container.decodeIfPresent(String.self, forKey: .authTokenHint) ?? ""
+        sharedAccessState = try container.decodeIfPresent(DesktopSharedAccessState.self, forKey: .sharedAccessState) ?? .localOnly
+        accessKeyCount = try container.decodeIfPresent(Int.self, forKey: .accessKeyCount) ?? 0
+        accessKeyHints = try container.decodeIfPresent([String].self, forKey: .accessKeyHints) ?? []
+        rateLimitPerMinute = try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120
+        timeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120
+        servingDefaults = try container.decodeIfPresent(DesktopServerServingDefaultsState.self, forKey: .servingDefaults)
+            ?? DesktopServerServingDefaultsState()
+        lifecycle = try container.decodeIfPresent(DesktopServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft
+        powerState = try container.decodeIfPresent(DesktopServerPowerState.self, forKey: .powerState) ?? .unavailable
+        wakeReason = try container.decodeIfPresent(DesktopServerWakeReason.self, forKey: .wakeReason) ?? .unspecified
+        idleTimerSeconds = try container.decodeIfPresent(Int.self, forKey: .idleTimerSeconds) ?? 0
+        autoSleepEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoSleepEnabled) ?? false
+        lightSleepAfterSeconds = try container.decodeIfPresent(Int.self, forKey: .lightSleepAfterSeconds) ?? 0
+        deepSleepAfterSeconds = try container.decodeIfPresent(Int.self, forKey: .deepSleepAfterSeconds) ?? 0
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError) ?? ""
+        lastKnownModelStateText = try container.decodeIfPresent(String.self, forKey: .lastKnownModelStateText) ?? ""
+        activeAuthSessionCount = try container.decodeIfPresent(Int.self, forKey: .activeAuthSessionCount) ?? 0
+        rememberedAuthSessionCount = try container.decodeIfPresent(Int.self, forKey: .rememberedAuthSessionCount) ?? 0
+        expiredRememberedSessionCount = try container.decodeIfPresent(Int.self, forKey: .expiredRememberedSessionCount) ?? 0
+        authSessionRetentionSeconds = try container.decodeIfPresent(Int.self, forKey: .authSessionRetentionSeconds) ?? 0
+        lastAuthSessionSignOutLatencyMs = try container.decodeIfPresent(Double.self, forKey: .lastAuthSessionSignOutLatencyMs) ?? 0
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(modelID, forKey: .modelID)
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
+        try container.encode(effectiveHost, forKey: .effectiveHost)
+        try container.encode(effectivePort, forKey: .effectivePort)
+        try container.encode(gatewayConfigSourceText, forKey: .gatewayConfigSourceText)
+        try container.encode(gatewayConfigActiveBinding, forKey: .gatewayConfigActiveBinding)
+        try container.encode(gatewayConfigRequiresRestart, forKey: .gatewayConfigRequiresRestart)
+        try container.encode(authMode, forKey: .authMode)
+        try container.encode(authTokenHint, forKey: .authTokenHint)
+        try container.encode(sharedAccessState, forKey: .sharedAccessState)
+        try container.encode(accessKeyCount, forKey: .accessKeyCount)
+        try container.encode(accessKeyHints, forKey: .accessKeyHints)
+        try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
+        try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+        try container.encode(servingDefaults, forKey: .servingDefaults)
+        try container.encode(lifecycle, forKey: .lifecycle)
+        try container.encode(powerState, forKey: .powerState)
+        try container.encode(wakeReason, forKey: .wakeReason)
+        try container.encode(idleTimerSeconds, forKey: .idleTimerSeconds)
+        try container.encode(autoSleepEnabled, forKey: .autoSleepEnabled)
+        try container.encode(lightSleepAfterSeconds, forKey: .lightSleepAfterSeconds)
+        try container.encode(deepSleepAfterSeconds, forKey: .deepSleepAfterSeconds)
+        try container.encode(lastError, forKey: .lastError)
+        try container.encode(lastKnownModelStateText, forKey: .lastKnownModelStateText)
+        try container.encode(activeAuthSessionCount, forKey: .activeAuthSessionCount)
+        try container.encode(rememberedAuthSessionCount, forKey: .rememberedAuthSessionCount)
+        try container.encode(expiredRememberedSessionCount, forKey: .expiredRememberedSessionCount)
+        try container.encode(authSessionRetentionSeconds, forKey: .authSessionRetentionSeconds)
+        try container.encode(lastAuthSessionSignOutLatencyMs, forKey: .lastAuthSessionSignOutLatencyMs)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
@@ -257,18 +629,218 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
 }
 
 public enum DesktopBannerSeverity: Sendable {
+    case info
     case warning
     case critical
 }
 
 public struct DesktopBannerState: Equatable, Sendable {
+    public let id: String
     public let title: String
     public let detail: String
     public let severity: DesktopBannerSeverity
+    public let isDismissible: Bool
 
-    public init(title: String, detail: String, severity: DesktopBannerSeverity) {
+    public init(
+        id: String = "",
+        title: String,
+        detail: String,
+        severity: DesktopBannerSeverity,
+        isDismissible: Bool = false
+    ) {
+        self.id = id.isEmpty ? Self.defaultID(title: title, detail: detail, severity: severity) : id
         self.title = title
         self.detail = detail
         self.severity = severity
+        self.isDismissible = isDismissible
+    }
+
+    private static func defaultID(
+        title: String,
+        detail: String,
+        severity: DesktopBannerSeverity
+    ) -> String {
+        let severityKey: String = switch severity {
+        case .info:
+            "info"
+        case .warning:
+            "warning"
+        case .critical:
+            "critical"
+        }
+        return "\(severityKey)-\(title)-\(detail)"
+    }
+}
+
+public extension DesktopServerSessionState {
+    var isInteractiveReady: Bool {
+        lifecycle == .running || lifecycle == .sleeping
+    }
+
+    var retainsGatewayAccessConfiguration: Bool {
+        switch lifecycle {
+        case .starting, .running, .paused, .sleeping:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canStart: Bool {
+        switch lifecycle {
+        case .draft, .stopped, .error, .unavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canPause: Bool {
+        lifecycle == .running
+    }
+
+    var canResume: Bool {
+        lifecycle == .paused
+    }
+
+    var canWake: Bool {
+        lifecycle == .sleeping
+    }
+
+    var canStop: Bool {
+        switch lifecycle {
+        case .starting, .running, .paused, .sleeping, .error:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var lifecycleSummaryText: String {
+        "\(lifecycle.rawValue) • \(powerState.rawValue)"
+    }
+
+    var idlePolicySummaryText: String {
+        guard autoSleepEnabled else {
+            return "Auto sleep disabled."
+        }
+
+        let lightSummary = lightSleepAfterSeconds > 0 ? "light after \(lightSleepAfterSeconds)s" : "light sleep threshold unset"
+        let deepSummary = deepSleepAfterSeconds > 0 ? "deep after \(deepSleepAfterSeconds)s" : "deep sleep threshold unset"
+        return "Auto sleep enabled • \(lightSummary) • \(deepSummary)"
+    }
+
+    var runtimeDetailText: String {
+        let idleSummary = idleTimerSeconds > 0 ? "Idle \(idleTimerSeconds)s" : "Idle timer idle"
+        var parts = [
+            lifecycleSummaryText,
+            "Wake \(wakeReason.rawValue)",
+            idleSummary,
+        ]
+        if let requestedDiskStreamingModeText, !requestedDiskStreamingModeText.isEmpty,
+           let effectiveDiskStreamingModeText, !effectiveDiskStreamingModeText.isEmpty {
+            parts.append("Disk \(requestedDiskStreamingModeText) -> \(effectiveDiskStreamingModeText)")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    var lifecycleBannerState: DesktopBannerState? {
+        switch lifecycle {
+        case .draft:
+            return nil
+        case .starting:
+            return DesktopBannerState(
+                title: "\(title) Is Starting",
+                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the session reaches Running.",
+                severity: .info
+            )
+        case .running:
+            return nil
+        case .paused:
+            return DesktopBannerState(
+                title: "\(title) Is Paused",
+                detail: "Resume the session to accept prompts and API requests. \(idlePolicySummaryText)",
+                severity: .warning
+            )
+        case .sleeping:
+            return DesktopBannerState(
+                title: "\(title) Is Sleeping",
+                detail: "\(powerState.rawValue) mode is active. The next request can wake the session automatically, or you can wake it manually now.",
+                severity: .info
+            )
+        case .stopping:
+            return DesktopBannerState(
+                title: "\(title) Is Stopping",
+                detail: "Melix is draining the session and closing \(listenerLabel).",
+                severity: .info
+            )
+        case .stopped:
+            return DesktopBannerState(
+                title: "\(title) Is Stopped",
+                detail: "Start the session to serve \(modelID) at \(listenerLabel).",
+                severity: .warning
+            )
+        case .error:
+            return DesktopBannerState(
+                title: "\(title) Needs Recovery",
+                detail: lastError.isEmpty ? "The session entered an error state." : lastError,
+                severity: .critical
+            )
+        case .unavailable:
+            return DesktopBannerState(
+                title: "\(title) Is Unavailable",
+                detail: "Bind the session to an available text model before serving requests.",
+                severity: .warning
+            )
+        }
+    }
+
+    var chatWorkspaceNoticeState: DesktopBannerState? {
+        switch lifecycle {
+        case .running:
+            return nil
+        case .sleeping:
+            return DesktopBannerState(
+                title: "\(title) Will Wake On Demand",
+                detail: "You can send the next prompt immediately. Melix will wake the session from \(powerState.rawValue.lowercased()) first.",
+                severity: .info
+            )
+        case .paused:
+            return DesktopBannerState(
+                title: "\(title) Is Paused",
+                detail: "Resume the bound server session before sending prompts from this chat.",
+                severity: .warning
+            )
+        case .starting:
+            return DesktopBannerState(
+                title: "\(title) Is Starting",
+                detail: "Chat stays read-only until the server session finishes booting.",
+                severity: .info
+            )
+        case .stopping:
+            return DesktopBannerState(
+                title: "\(title) Is Stopping",
+                detail: "This chat stays read-only while the bound server session drains.",
+                severity: .warning
+            )
+        case .stopped:
+            return DesktopBannerState(
+                title: "\(title) Is Stopped",
+                detail: "Start the bound server session before sending prompts from this chat.",
+                severity: .warning
+            )
+        case .error:
+            return DesktopBannerState(
+                title: "\(title) Needs Recovery",
+                detail: lastError.isEmpty ? "The bound server session failed." : lastError,
+                severity: .critical
+            )
+        case .draft, .unavailable:
+            return DesktopBannerState(
+                title: "No Active Server Session",
+                detail: "Choose a valid server session and start it before sending prompts from this chat.",
+                severity: .warning
+            )
+        }
     }
 }

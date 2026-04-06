@@ -3,10 +3,17 @@ import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 enum RegistrySnapshotSync {
+    private struct ParsedRegistrySnapshot {
+        let roots: [ModelCatalog.RegistryRootState]
+        let models: [Melix_Controlplane_V1_ModelSummary]
+        let scannedAtUnixMs: Int64
+    }
+
     static func syncModelsIfAvailable(
         modelCatalog: ModelCatalog,
         workerRegistry: WorkerRegistry?,
-        metricsStore: MetricsStore
+        metricsStore: MetricsStore,
+        rescan: Bool = false
     ) async {
         guard
             let workerRegistry,
@@ -20,15 +27,23 @@ enum RegistrySnapshotSync {
         workerRequest.sourceModel = await sourceModelID(for: modelCatalog)
         workerRequest.generateManifest = true
         workerRequest.ext["operation"] = "registry_snapshot"
+        let configuredRoots = await modelCatalog.configuredRegistryRootOverride()
+        if let configuredRoots,
+           let encodedRoots = encodedRegistryRoots(configuredRoots) {
+            workerRequest.ext["melix.registry_roots_json"] = encodedRoots
+        }
+        if rescan {
+            workerRequest.ext["melix.registry_rescan"] = "true"
+        }
 
         do {
             let stream = try await workerClient.convertModel(request: workerRequest)
-            var discoveredModels: [Melix_Controlplane_V1_ModelSummary]?
+            var manifestJSON: String?
 
             for try await event in stream {
                 switch event.payload {
                 case .manifest(let manifest):
-                    discoveredModels = modelSummaries(from: manifest.manifestJson)
+                    manifestJSON = manifest.manifestJson
                 case .failed:
                     return
                 default:
@@ -36,17 +51,27 @@ enum RegistrySnapshotSync {
                 }
             }
 
-            guard let discoveredModels else {
+            guard
+                let manifestJSON,
+                await applyManifestJSON(
+                    manifestJSON,
+                    modelCatalog: modelCatalog,
+                    reason: "worker_registry_sync",
+                    configuredRootPaths: configuredRoots
+                )
+            else {
                 return
             }
 
-            await modelCatalog.syncRegistryModels(discoveredModels, reason: "worker_registry_sync")
+            let discoveredCount = await modelCatalog.listModels().filter {
+                $0.settings.ext["melix.registry_root_id"]?.isEmpty == false
+            }.count
             await metricsStore.set(
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "registry.reload_latency_ms"
             )
             await metricsStore.set(
-                Double(discoveredModels.count),
+                Double(discoveredCount),
                 forKey: "registry.discovered_model_count"
             )
         } catch {
@@ -76,7 +101,53 @@ enum RegistrySnapshotSync {
         return "melix-dev-text"
     }
 
-    private static func modelSummaries(from manifestJSON: String) -> [Melix_Controlplane_V1_ModelSummary]? {
+    static func requestedRoots(from metadata: [String: String]) -> [String]? {
+        if
+            let rawJSON = metadata["melix.registry_roots_json"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            rawJSON.isEmpty == false,
+            let data = rawJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [Any]
+        {
+            let roots = payload.compactMap { element -> String? in
+                let value = String(describing: element).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+            return roots
+        }
+
+        if
+            let legacy = metadata["melix.registry_roots"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            legacy.isEmpty == false
+        {
+            let roots = legacy
+                .split(separator: ":")
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { $0.isEmpty == false }
+            return roots
+        }
+
+        return nil
+    }
+
+    static func applyManifestJSON(
+        _ manifestJSON: String,
+        modelCatalog: ModelCatalog,
+        reason: String,
+        configuredRootPaths: [String]? = nil
+    ) async -> Bool {
+        guard let snapshot = parsedRegistrySnapshot(from: manifestJSON) else {
+            return false
+        }
+        await modelCatalog.syncRegistryModels(snapshot.models, reason: reason)
+        await modelCatalog.recordRegistrySnapshot(
+            roots: snapshot.roots,
+            scannedAtUnixMs: snapshot.scannedAtUnixMs,
+            configuredRootPaths: configuredRootPaths
+        )
+        return true
+    }
+
+    private static func parsedRegistrySnapshot(from manifestJSON: String) -> ParsedRegistrySnapshot? {
         guard
             let data = manifestJSON.data(using: .utf8),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -86,7 +157,45 @@ enum RegistrySnapshotSync {
             return nil
         }
 
-        return modelPayloads.compactMap(modelSummary(from:))
+        let scannedAtUnixMs = int64Value(from: registryPayload["scanned_at_unix_ms"])
+        let roots = (registryPayload["roots"] as? [[String: Any]] ?? [])
+            .enumerated()
+            .compactMap { index, payload in
+                rootState(from: payload, fallbackOrder: index + 1)
+            }
+        let models = modelPayloads.compactMap(modelSummary(from:))
+        return ParsedRegistrySnapshot(
+            roots: roots,
+            models: models,
+            scannedAtUnixMs: scannedAtUnixMs
+        )
+    }
+
+    private static func rootState(
+        from payload: [String: Any],
+        fallbackOrder: Int
+    ) -> ModelCatalog.RegistryRootState? {
+        let rootID = String(describing: payload["root_id"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rootPath = String(describing: payload["root_path"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rootID.isEmpty == false, rootPath.isEmpty == false else {
+            return nil
+        }
+        let discoveredModelIDs = (payload["discovered_model_ids"] as? [Any] ?? [])
+            .compactMap { element in
+                let value = String(describing: element).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        return ModelCatalog.RegistryRootState(
+            rootID: rootID,
+            rootPath: rootPath,
+            rootOrder: Int(uint32Value(from: payload["root_order"])) == 0 ? fallbackOrder : Int(uint32Value(from: payload["root_order"])),
+            accessible: boolValue(from: payload["accessible"]),
+            errorCode: String(describing: payload["error_code"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            errorMessage: String(describing: payload["error_message"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            discoveredModelIDs: discoveredModelIDs
+        )
     }
 
     private static func modelSummary(
@@ -148,6 +257,31 @@ enum RegistrySnapshotSync {
             return number.uint32Value
         }
         return UInt32(String(describing: value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private static func int64Value(from value: Any?) -> Int64 {
+        if let number = value as? NSNumber {
+            return number.int64Value
+        }
+        return Int64(String(describing: value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private static func boolValue(from value: Any?) -> Bool {
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        let normalized = String(describing: value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["1", "true", "yes", "on"].contains(normalized)
+    }
+
+    static func encodedRegistryRoots(_ roots: [String]) -> String? {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: roots,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        ) else {
+            return nil
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func capabilityClass(

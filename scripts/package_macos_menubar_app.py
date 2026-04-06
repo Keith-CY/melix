@@ -53,6 +53,8 @@ def main() -> int:
     parser.add_argument("--app-name", default="Melix")
     parser.add_argument("--bundle-id", default="io.melix.menubar.preview")
     parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--packaging-target-id", default="macos_app_bundle_preview")
+    parser.add_argument("--update-channel-path", default="")
     parser.add_argument("--archive-path", default="")
     parser.add_argument("--python-runtime-root", default="")
     parser.add_argument("--python-site-packages-path", default="")
@@ -82,6 +84,8 @@ def main() -> int:
         app_name=args.app_name,
         bundle_id=args.bundle_id,
         version=args.version,
+        packaging_target_id=args.packaging_target_id,
+        update_channel_path=args.update_channel_path or None,
     )
     if args.archive_path:
         manifest["archive_path"] = str(

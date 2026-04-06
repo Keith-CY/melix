@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
+from pathlib import Path
 from threading import Event
+from typing import Callable
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -18,6 +21,13 @@ class VisionProbeSnapshot:
     preprocess_input_bytes: int
     preprocess_peak_memory_bytes: int
     first_token_latency_ms: float
+    video_effective_frame_count: int = 0
+    video_requested_frame_budget: int = 0
+    video_window_ms: int = 0
+    temp_media_artifact_count: int = 0
+    temp_media_artifact_bytes: int = 0
+    temp_media_cleanup_latency_ms: float = 0.0
+    temp_media_cleanup_failure_count: int = 0
     cache_identity: str = ""
     cache_scope_id: str = ""
     cache_hit: bool = False
@@ -58,7 +68,13 @@ class VisionPrefillSession:
 class DeterministicVLMRuntime:
     runtime_name = "deterministic-vlm"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        temp_root: Path | str | None = None,
+        temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+    ) -> None:
+        self._temp_root = Path(temp_root) if temp_root is not None else None
+        self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
         self._cache_entries: dict[str, VisionCacheEntry] = {}
         self._decode_sessions: dict[str, VisionPrefillSession] = {}
@@ -100,6 +116,9 @@ class DeterministicVLMRuntime:
             preprocess_input_bytes=prepared.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
             first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared.effective_video_frame_count,
+            video_requested_frame_budget=prepared.requested_video_frame_budget,
+            video_window_ms=prepared.effective_video_window_ms,
             cache_identity=cache_identity,
             cache_scope_id=scope_id,
             cache_hit=cache_identity in self._cache_entries,
@@ -176,6 +195,9 @@ class DeterministicVLMRuntime:
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
             first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
             cache_identity=cache_identity,
             cache_scope_id=scope_id,
             cache_hit=cache_hit,
@@ -204,6 +226,9 @@ class DeterministicVLMRuntime:
                 if session.cache_hit
                 else max(0.0, session.prepared_request.preprocess_latency_ms / 2.0)
             ),
+            video_effective_frame_count=session.prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=session.prepared_request.requested_video_frame_budget,
+            video_window_ms=session.prepared_request.effective_video_window_ms,
             cache_identity=session.cache_identity,
             cache_scope_id=session.scope_id,
             cache_hit=session.cache_hit,
@@ -258,28 +283,46 @@ class DeterministicVLMRuntime:
                 if cache_hit
                 else max(0.0, prepared_request.preprocess_latency_ms / 2.0)
             ),
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
             cache_identity=cache_identity,
             cache_scope_id=scope_id,
             cache_hit=cache_hit,
         )
-        sleep_if_configured("vlm")
-        if cancel_event.is_set():
-            return
-        tool_call_event = self._tool_call_event(
-            prepared_request,
-            loaded_model,
-            execution_ext,
+        temp_media_session = self._temp_media_session_factory(
+            temp_root=self._temp_root,
+            prefix="melix-vlm-",
         )
-        if tool_call_event is not None:
-            yield tool_call_event
+        self._stage_temp_media(prepared_request, temp_media_session)
+        try:
+            sleep_if_configured("vlm")
             if cancel_event.is_set():
                 return
-        yield RuntimeTokenEvent(
-            text=response,
-            prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
-            completion_tokens=max(1, len(response.split())),
-            finish_reason="stop",
-        )
+            tool_call_event = self._tool_call_event(
+                prepared_request,
+                loaded_model,
+                execution_ext,
+            )
+            if tool_call_event is not None:
+                yield tool_call_event
+                if cancel_event.is_set():
+                    return
+            yield RuntimeTokenEvent(
+                text=response,
+                prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
+                completion_tokens=max(1, len(response.split())),
+                finish_reason="stop",
+            )
+        finally:
+            cleanup_report = temp_media_session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
@@ -434,6 +477,29 @@ class DeterministicVLMRuntime:
     @staticmethod
     def _response_text(prepared_request: PreparedVisionRequest) -> str:
         prompt_text = prepared_request.prompt_text or "Describe the image."
+        if prepared_request.videos and not prepared_request.images:
+            if len(prepared_request.videos) == 1:
+                video = prepared_request.videos[0]
+                policy = prepared_request.video_frame_policies[0]
+                return (
+                    f"Video content: {video.filename}\n"
+                    f"Frame policy: {policy.sampling_strategy} {policy.effective_frame_count} frame(s)"
+                    f" from {policy.clip_start_ms}ms to {policy.clip_end_ms}ms\n"
+                    f"Prompt: {prompt_text}"
+                )
+
+            video_lines = [
+                (
+                    f"Video {index + 1}: {video.filename} "
+                    f"[frames={policy.effective_frame_count};start_ms={policy.clip_start_ms};end_ms={policy.clip_end_ms}]"
+                )
+                for index, (video, policy) in enumerate(
+                    zip(prepared_request.videos, prepared_request.video_frame_policies, strict=False)
+                )
+            ]
+            video_lines.append(f"Prompt: {prompt_text}")
+            return "\n".join(video_lines)
+
         if len(prepared_request.images) == 1:
             return f"Image content: {prepared_request.images[0].decoded_text()}\nPrompt: {prompt_text}"
 
@@ -441,8 +507,37 @@ class DeterministicVLMRuntime:
             f"Image {index + 1} content: {image.decoded_text()}"
             for index, image in enumerate(prepared_request.images)
         ]
+        for index, (video, policy) in enumerate(
+            zip(prepared_request.videos, prepared_request.video_frame_policies, strict=False)
+        ):
+            image_lines.append(
+                f"Video {index + 1}: {video.filename} "
+                f"[frames={policy.effective_frame_count};start_ms={policy.clip_start_ms};end_ms={policy.clip_end_ms}]"
+            )
         image_lines.append(f"Prompt: {prompt_text}")
         return "\n".join(image_lines)
+
+    @staticmethod
+    def _stage_temp_media(
+        prepared_request: PreparedVisionRequest,
+        temp_media_session: TempMediaSession,
+    ) -> None:
+        for index, image in enumerate(prepared_request.images):
+            suffix = DeterministicVLMRuntime._media_suffix(image.filename, image.format)
+            temp_media_session.write_bytes(f"image-{index}.{suffix}", image.bytes_data)
+        for index, video in enumerate(prepared_request.videos):
+            if not video.bytes_data:
+                continue
+            suffix = DeterministicVLMRuntime._media_suffix(video.filename, video.format)
+            temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
+
+    @staticmethod
+    def _media_suffix(filename: str, format_name: str) -> str:
+        if format_name:
+            return format_name
+        if "." in filename:
+            return filename.rsplit(".", 1)[-1]
+        return "bin"
 
     def _tool_call_event(
         self,

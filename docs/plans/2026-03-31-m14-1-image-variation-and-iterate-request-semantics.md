@@ -23,6 +23,18 @@ Define the request and artifact semantics for image variations and iterate flows
 - Variation semantics should make strength and prompt-delta behavior explicit.
 - Artifact lineage should remain visible to both runtime and desktop consumers.
 
+## Executable Slices
+
+### Slice 1: Typed Variation And Iterate Contract
+
+- add typed image edit mode fields for `edit`, `variation`, and `iterate`
+- allow edit requests to reference a prior image artifact by stable `source_artifact_id`
+- preserve `source_artifact_id`, resolved parent job identity, and `prompt_delta` lineage through
+  worker artifact metadata and control-plane image job summaries
+- keep existing raw `image` and `image_uri` edit flows backward compatible
+
+Status: completed on 2026-04-06.
+
 ## Verification
 
 - `make proto`

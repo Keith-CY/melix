@@ -3,6 +3,7 @@ import MelixWorkerProtocol
 
 public enum WorkerClientError: Error, Equatable {
     case unavailable
+    case requestFailed(code: String, message: String)
 }
 
 public struct WorkerMemoryEvidence: Equatable, Sendable {
@@ -141,6 +142,10 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
         request: Melix_Worker_V1_RunBenchRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error>
 
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse
+
     func runEvaluation(
         request: Melix_Worker_V1_RunEvaluationRequest
     ) async throws -> Melix_Worker_V1_RunEvaluationResponse
@@ -152,6 +157,15 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
     func submitResults(
         request: Melix_Worker_V1_SubmitResultsRequest
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse
+}
+
+public extension ModelOperationsWorkerClientProtocol {
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
 }
 
 public struct NullWorkerClient: WorkerRoutingClient {

@@ -27,6 +27,12 @@ public actor ImageJobReadModel {
         operation: String,
         lane: String,
         promptDigest: String = "",
+        recipe: Melix_Controlplane_V1_ImageJobRecipeSummary = Melix_Controlplane_V1_ImageJobRecipeSummary(),
+        timeoutSeconds: UInt32 = 0,
+        sourceArtifactID: String = "",
+        sourceJobID: String = "",
+        promptDelta: String = "",
+        editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified,
         cancelable: Bool = true
     ) async {
         let timestamp = unixMilliseconds()
@@ -39,6 +45,12 @@ public actor ImageJobReadModel {
         job.lane = lane
         job.cancelable = cancelable
         job.promptDigest = promptDigest
+        job.recipe = recipe
+        job.timeoutSeconds = timeoutSeconds
+        job.sourceArtifactID = sourceArtifactID
+        job.sourceJobID = sourceJobID
+        job.promptDelta = promptDelta
+        job.editMode = editMode
         if job.createdAtUnixMs == 0 {
             job.createdAtUnixMs = timestamp
         }
@@ -98,7 +110,7 @@ public actor ImageJobReadModel {
         job.state = .imageJobFailed
         job.cancelable = false
         job.error = error
-        job.progress.stage = "failed"
+        job.progress.stage = error.code == "deadline_exceeded" ? "timed_out" : "failed"
         job.updatedAtUnixMs = unixMilliseconds()
         jobsByID[jobID] = job
         await publish(job)
@@ -138,6 +150,15 @@ public actor ImageJobReadModel {
             return nil
         }
         return jobsByID[jobID]
+    }
+
+    public func artifact(artifactID: String) -> Melix_Controlplane_V1_ImageArtifactRef? {
+        for job in jobsByID.values {
+            if let artifact = job.artifacts.first(where: { $0.artifactID == artifactID }) {
+                return artifact
+            }
+        }
+        return nil
     }
 
     private func publish(_ job: Melix_Controlplane_V1_ImageJobSummary) async {

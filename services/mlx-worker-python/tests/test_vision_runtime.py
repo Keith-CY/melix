@@ -206,6 +206,271 @@ def test_generate_streams_vlm_response_from_image_only_prompt(tmp_path: Path) ->
     assert completed.assistant_text == token_text
 
 
+def test_prepare_vision_request_accepts_video_only_inputs_and_exposes_frame_policy() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Summarize the clip."),
+                    common_pb2.MessagePart(
+                        video_bytes=b"video fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="video/mp4",
+                            format="mp4",
+                            filename="clip.mp4",
+                            duration_ms=10_000,
+                            frame_budget=6,
+                            start_ms=1_000,
+                            end_ms=5_000,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert request.prompt_text == "Summarize the clip."
+    assert request.images == []
+    assert len(request.videos) == 1
+    assert request.videos[0].filename == "clip.mp4"
+    assert request.videos[0].frame_budget == 6
+    assert len(request.videos[0].sha256_hex) == 64
+    assert len(request.video_frame_policies) == 1
+    assert request.video_frame_policies[0].sampling_strategy == "uniform_sample"
+    assert request.video_frame_policies[0].requested_frame_budget == 6
+    assert request.video_frame_policies[0].effective_frame_count == 6
+    assert request.video_frame_policies[0].clip_start_ms == 1_000
+    assert request.video_frame_policies[0].clip_end_ms == 5_000
+    assert request.video_frame_policies[0].clip_duration_ms == 4_000
+    assert request.preprocess_input_bytes == len(b"video fixture")
+    assert request.preprocess_peak_memory_bytes == len(b"video fixture")
+    assert request.effective_video_frame_count == 6
+    assert request.requested_video_frame_budget == 6
+    assert request.effective_video_window_ms == 4_000
+    assert len(request.multimodal_hash_hex) == 64
+
+
+def test_prepare_vision_request_uses_duration_when_video_end_is_missing() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        video_bytes=b"duration-only fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="video/mp4",
+                            format="mp4",
+                            filename="duration-only.mp4",
+                            duration_ms=12_000,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert request.contains_video is True
+    assert request.video_frame_policies[0].clip_end_ms == 12_000
+    assert request.video_frame_policies[0].clip_duration_ms == 12_000
+    assert request.video_frame_policies[0].effective_frame_count == 4
+    assert request.effective_video_frame_count == 4
+    assert request.effective_video_window_ms == 12_000
+
+
+def test_prepare_vision_request_defaults_video_frame_budget_when_window_is_unknown() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        video_bytes=b"unknown-window fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="video/mp4",
+                            format="mp4",
+                            filename="unknown-window.mp4",
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert request.contains_video is True
+    assert request.video_frame_policies[0].clip_end_ms == 0
+    assert request.video_frame_policies[0].clip_duration_ms == 0
+    assert request.video_frame_policies[0].effective_frame_count == 8
+    assert request.effective_video_frame_count == 8
+    assert request.effective_video_window_ms == 0
+
+
+def test_prepare_vision_request_rejects_requests_without_image_or_video() -> None:
+    with pytest.raises(MultimodalPreprocessError, match="No image or video input provided."):
+        prepare_vision_request(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Only text is not multimodal.")],
+                )
+            ]
+        )
+
+
+def test_generate_streams_vlm_response_from_video_only_prompt() -> None:
+    runtime_service, inference_service, _ = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="vlm-video-only"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Summarize the clip."),
+                    common_pb2.MessagePart(
+                        video_bytes=b"video fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            mime_type="video/mp4",
+                            format="mp4",
+                            filename="clip.mp4",
+                            frame_budget=6,
+                            start_ms=1_000,
+                            end_ms=5_000,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+
+    assert token_text == (
+        "Video content: clip.mp4\n"
+        "Frame policy: uniform_sample 6 frame(s) from 1000ms to 5000ms\n"
+        "Prompt: Summarize the clip."
+    )
+    assert completed.assistant_text == token_text
+    assert stats.last_probe_kind == "vlm"
+    assert stats.last_video_effective_frame_count == 6
+    assert stats.last_video_requested_frame_budget == 6
+    assert stats.last_video_window_ms == 4_000
+
+
+def test_deterministic_vlm_runtime_formats_multi_video_prompts() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Compare the two clips."),
+                    common_pb2.MessagePart(
+                        video_bytes=b"first video fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            format="mp4",
+                            filename="first.mp4",
+                            frame_budget=4,
+                            start_ms=0,
+                            end_ms=2_000,
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        video_bytes=b"second video fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            format="mp4",
+                            filename="second.mp4",
+                            frame_budget=3,
+                            start_ms=500,
+                            end_ms=3_500,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    response_text = DeterministicVLMRuntime._response_text(request)
+
+    assert response_text == (
+        "Video 1: first.mp4 [frames=4;start_ms=0;end_ms=2000]\n"
+        "Video 2: second.mp4 [frames=3;start_ms=500;end_ms=3500]\n"
+        "Prompt: Compare the two clips."
+    )
+
+
+def test_deterministic_vlm_runtime_formats_mixed_image_and_video_prompts() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe both media items."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"mixed image fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="mixed-1.png",
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        image_bytes=b"second image fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="mixed-2.png",
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        video_bytes=b"mixed video fixture",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            format="mp4",
+                            filename="mixed.mp4",
+                            frame_budget=5,
+                            start_ms=250,
+                            end_ms=2_250,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    response_text = DeterministicVLMRuntime._response_text(request)
+
+    assert response_text == (
+        "Image 1 content: mixed image fixture\n"
+        "Image 2 content: second image fixture\n"
+        "Video 1: mixed.mp4 [frames=5;start_ms=250;end_ms=2250]\n"
+        "Prompt: Describe both media items."
+    )
+
+
 def test_vlm_runtime_load_model_exposes_family_capabilities() -> None:
     runtime = DeterministicVLMRuntime()
 
@@ -233,6 +498,38 @@ def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None
 
     assert family_config.max_images_per_prompt == 1
     assert family_config.supports_tool_calls is False
+
+
+def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(
+                        video_bytes=b"video-one",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="one.mp4",
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        video_bytes=b"video-two",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="two.mp4",
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="supports at most 1 video input"):
+        family_config.shape_request(request)
 
 
 def test_generate_streams_vlm_response_uses_family_specific_image_only_prompt_default() -> None:
@@ -957,6 +1254,10 @@ def test_ocr_and_vlm_runtimes_expose_probe_snapshots_after_cancelled_generation(
     vlm_probe = vlm_runtime.last_probe_snapshot()
     assert vlm_probe.preprocess_input_bytes == len(b"cancelled vision input")
     assert vlm_probe.first_token_latency_ms >= 0.0
+    assert vlm_probe.temp_media_artifact_count == 1
+    assert vlm_probe.temp_media_artifact_bytes == len(b"cancelled vision input")
+    assert vlm_probe.temp_media_cleanup_latency_ms >= 0.0
+    assert vlm_probe.temp_media_cleanup_failure_count == 0
 
 
 def test_ocr_runtime_render_prompt_accepts_chat_template_kwargs() -> None:

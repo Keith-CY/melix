@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 public enum ChatRequestTranslationError: Error, Equatable {
@@ -179,6 +180,14 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let temperature: Double
     public let topP: Double
     public let maxTokens: UInt32
+    public let streamIntervalTokens: UInt32
+    public let maxConcurrentRequests: UInt32
+    public let concurrentProcessingEnabled: Bool
+    public let prefillBatchSize: UInt32
+    public let completionBatchSize: UInt32
+    public let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+    public let draftModelID: String
+    public let numDraftTokens: UInt32
     public let sessionID: String?
     public let branchID: String?
     public let parentRequestID: String?
@@ -345,6 +354,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
+    public let resumeRequestID: String?
     public let stopSequences: [String]?
     public let sessionID: String?
     public let branchID: String?
@@ -367,6 +377,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case temperature
         case topP = "top_p"
         case maxTokens = "max_tokens"
+        case resumeRequestID = "resume_request_id"
         case stop
         case stopSequences = "stop_sequences"
         case sessionID = "session_id"
@@ -391,6 +402,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
+        resumeRequestID: String? = nil,
         stopSequences: [String]? = nil,
         sessionID: String? = nil,
         branchID: String? = nil,
@@ -412,6 +424,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.resumeRequestID = resumeRequestID
         self.stopSequences = stopSequences
         self.sessionID = sessionID
         self.branchID = branchID
@@ -436,6 +449,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
         self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
+        self.resumeRequestID = try container.decodeIfPresent(String.self, forKey: .resumeRequestID)
         self.stopSequences = try Self.decodeStopSequences(from: container)
         self.sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
         self.branchID = try container.decodeIfPresent(String.self, forKey: .branchID)
@@ -460,6 +474,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(temperature, forKey: .temperature)
         try container.encodeIfPresent(topP, forKey: .topP)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(resumeRequestID, forKey: .resumeRequestID)
         try encodeStopSequences(into: &container)
         try container.encodeIfPresent(sessionID, forKey: .sessionID)
         try container.encodeIfPresent(branchID, forKey: .branchID)
@@ -1513,6 +1528,8 @@ public struct ChatRequestTranslator: Sendable {
         modelToolParser: ToolParserSelection? = nil,
         modelChatTemplatePolicy: ModelChatTemplatePolicy? = nil,
         modelOCRPolicy: OCRExecutionPolicy? = nil,
+        modelSamplingPolicy: ModelSamplingPolicy? = nil,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
@@ -1521,6 +1538,8 @@ public struct ChatRequestTranslator: Sendable {
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: gatewayServingDefaults,
             mcpToolCatalog: mcpToolCatalog
         )
 
@@ -1666,6 +1685,17 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.stream = shapedRequest.stream
         generateRequest.returnUsage = shapedRequest.includeUsage
         generateRequest.execution.ext["melix.stream.include_usage"] = shapedRequest.includeUsage ? "true" : "false"
+        generateRequest.execution.ext["melix.stream.interval_tokens"] = String(shapedRequest.streamIntervalTokens)
+        generateRequest.execution.ext["melix.gateway.max_concurrent_requests"] = String(shapedRequest.maxConcurrentRequests)
+        generateRequest.execution.ext["melix.gateway.max_concurrent_sequences"] = String(shapedRequest.maxConcurrentRequests)
+        generateRequest.execution.ext["melix.gateway.concurrent_processing"] = shapedRequest.concurrentProcessingEnabled ? "true" : "false"
+        generateRequest.execution.ext["melix.gateway.prefill_batch_size"] = String(shapedRequest.prefillBatchSize)
+        generateRequest.execution.ext["melix.gateway.completion_batch_size"] = String(shapedRequest.completionBatchSize)
+        generateRequest.execution.ext["melix.gateway.acceleration_mode"] = gatewayAccelerationModeRawValue(shapedRequest.accelerationMode)
+        generateRequest.execution.ext["melix.gateway.num_draft_tokens"] = String(shapedRequest.numDraftTokens)
+        if !shapedRequest.draftModelID.isEmpty {
+            generateRequest.execution.ext["melix.gateway.draft_model_id"] = shapedRequest.draftModelID
+        }
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
@@ -1680,5 +1710,16 @@ public struct ChatRequestTranslator: Sendable {
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )
+    }
+}
+
+private func gatewayAccelerationModeRawValue(
+    _ mode: Melix_Controlplane_V1_AccelerationMode
+) -> String {
+    switch mode {
+    case .speculativeDecode:
+        return "speculative_decode"
+    default:
+        return "baseline"
     }
 }

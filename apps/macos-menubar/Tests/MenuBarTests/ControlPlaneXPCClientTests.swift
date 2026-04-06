@@ -51,6 +51,51 @@ struct ControlPlaneXPCClientTests {
         #expect(snapshot.queues.lanes.contains(where: { $0.laneID == "text.decode.interactive" }))
     }
 
+    @Test("local client mutates server lifecycle and idle policy through control-plane execute")
+    func localClientMutatesServerLifecycleAndIdlePolicy() async throws {
+        let service = ControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+        let initialSnapshot = try await client.serverSnapshot()
+        let serverSessionID = try #require(initialSnapshot.runtimeSessions.first?.serverSessionID)
+
+        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: serverSessionID)
+        let pausedSession = try #require(
+            pausedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(pausedSession.lifecycleState == .paused)
+
+        let idlePolicySnapshot = try await client.updateServerIdlePolicy(
+            serverSessionID: serverSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 300,
+            deepSleepAfterSeconds: 900
+        )
+        let idlePolicySession = try #require(
+            idlePolicySnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(idlePolicySession.autoSleepEnabled)
+        #expect(idlePolicySession.lightSleepAfterSeconds == 300)
+        #expect(idlePolicySession.deepSleepAfterSeconds == 900)
+
+        let resumedSnapshot = try await client.resumeServerSession(serverSessionID: serverSessionID)
+        let resumedSession = try #require(
+            resumedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(resumedSession.lifecycleState == .ready)
+
+        let stoppedSnapshot = try await client.stopServerSession(serverSessionID: serverSessionID)
+        let stoppedSession = try #require(
+            stoppedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(stoppedSession.lifecycleState == .stopped)
+
+        let startedSnapshot = try await client.startServerSession(serverSessionID: serverSessionID)
+        let startedSession = try #require(
+            startedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+        )
+        #expect(startedSession.lifecycleState == .ready)
+    }
+
     @Test("local client bridges subscription streams and unsubscribes on termination")
     func localClientBridgesSubscriptionStreams() async {
         let service = StreamingExecuteControlPlaneService()
@@ -270,6 +315,103 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default bench matrix helper reports an unimplemented error")
+    func protocolDefaultBenchMatrixHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.runBenchMatrix(
+                ControlPlaneBenchMatrixRequest(
+                    modelID: "melix-dev-text",
+                    suites: ["smoke"],
+                    contextLengths: [1024],
+                    generationLengths: [128],
+                    batchSizes: [2],
+                    cacheProfiles: ["cold"],
+                    reasoningModes: ["enabled"],
+                    structuredOutputModes: ["plain_text"],
+                    concurrencyLevels: [1],
+                    requests: 8
+                )
+            )
+            Issue.record("Expected the protocol default runBenchMatrix implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Bench matrix is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
+    @Test("protocol default serving defaults helper reports an unimplemented error")
+    func protocolDefaultServingDefaultsHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.applyServerSessionServingDefaults(
+                serverSessionID: "server-session-1",
+                temperature: 0.7,
+                topP: 1.0,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 2,
+                completionBatchSize: 2,
+                accelerationMode: .baseline,
+                draftModelID: "",
+                numDraftTokens: 0
+            )
+            Issue.record("Expected the protocol default applyServerSessionServingDefaults implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Serving defaults apply is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
+    @Test("protocol default image defaults helper reports an unimplemented error")
+    func protocolDefaultImageDefaultsHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.applyImageDefaults(
+                ControlPlaneImageDefaultsRequest(
+                    generateModelID: "melix-dev-image",
+                    editModelID: "melix-dev-image",
+                    size: "1024x1024",
+                    steps: 28,
+                    guidance: 7.5,
+                    strength: 0.8,
+                    negativePrompt: "noise"
+                )
+            )
+            Issue.record("Expected the protocol default applyImageDefaults implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Image defaults apply is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
+    @Test("protocol default load helper forwards to the legacy load entry point")
+    func protocolDefaultLoadHelperForwardsToLegacyLoadEntryPoint() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        _ = try await client.loadModel(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+
+        #expect(await client.lastLoadModelID == "melix-dev-text")
+        #expect(await client.loadCallCount == 1)
+    }
+
     @Test("local client builds quantize requests with a typed quant profile")
     func localClientBuildsQuantizeRequestsWithTypedQuantProfile() async throws {
         let service = RecordingExecuteControlPlaneService()
@@ -295,6 +437,32 @@ struct ControlPlaneXPCClientTests {
         #expect(request.model.runOperation.quantProfile.kvQuant == "q4")
     }
 
+    @Test("local client builds model load requests with explicit memory budgets")
+    func localClientBuildsModelLoadRequestsWithExplicitMemoryBudgets() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.loadModel(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.commandType == "model.load")
+        #expect(request.model.load.modelID == "melix-dev-text")
+        #expect(request.model.load.memoryBudgetBytes == 65_536)
+    }
+
+    @Test("local client builds model load requests with zero memory budgets by default")
+    func localClientBuildsModelLoadRequestsWithZeroMemoryBudgetsByDefault() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await client.loadModel(modelID: "melix-dev-text")
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.commandType == "model.load")
+        #expect(request.model.load.modelID == "melix-dev-text")
+        #expect(request.model.load.memoryBudgetBytes == 0)
+    }
+
     @Test("local client runs doctor and bench through control-plane execute")
     func localClientRunsDoctorAndBench() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-xpc-bench.md").path
@@ -305,6 +473,7 @@ struct ControlPlaneXPCClientTests {
             var response = Melix_Worker_V1_RunDoctorResponse()
             response.ok = true
             response.reportMarkdown = "# Melix Doctor\n"
+            response.healthStatus = .healthy
             return response
         }())
         await modelOpsClient.setBenchEvents([
@@ -340,12 +509,88 @@ struct ControlPlaneXPCClientTests {
         let client = LocalControlPlaneXPCClient(service: service)
 
         let doctor = try await client.runDoctor()
-        let bench = try await client.runBench()
+        let bench = try await client.runBench(
+            ControlPlaneBenchRequest(
+                suites: ["smoke"],
+                contextLengths: [1024]
+            )
+        )
 
-        #expect(doctor.contains("Melix Doctor"))
+        #expect(doctor.markdown.contains("Melix Doctor"))
+        #expect(doctor.healthStatus == .healthy)
         #expect(bench.reportPath == reportPath)
         #expect(bench.reportMarkdown.contains("Melix Bench"))
         #expect(bench.metrics["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("local client runs bench matrix through control-plane execute")
+    func localClientRunsBenchMatrix() async throws {
+        let modelOpsClient = XPCScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse({
+            var response = Melix_Worker_V1_RunBenchMatrixResponse()
+            response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+            response.job.jobID = "bench-matrix-456"
+            response.job.modelID = "melix-dev-text"
+            response.job.taskKind = "text-generation"
+            response.job.sourceRepo = "melix-dev-text"
+            response.job.suiteIds = ["smoke"]
+            response.job.benchmarkMode = "matrix"
+            response.job.status = "completed"
+            response.job.outputDir = "/tmp/melix/bench/matrix-runs/bench-matrix-456"
+            response.job.createdAtUnixMs = 1712200000000
+            response.job.updatedAtUnixMs = 1712200005000
+
+            var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+            row.jobID = "bench-matrix-456"
+            row.taskKind = "text-generation"
+            row.sourceRepo = "melix-dev-text"
+            row.modelID = "melix-dev-text"
+            row.suiteID = "smoke"
+            row.contextLength = 1024
+            row.generationLength = 128
+            row.batchSize = 2
+            row.cacheProfile = "cold"
+            row.reasoningMode = "enabled"
+            row.structuredOutputMode = "plain_text"
+            row.concurrencyLevel = 1
+            row.repeats = 2
+            row.requests = 8
+            row.ttftMeanMs = 24.45
+            response.summaryRows = [row]
+            return response
+        }())
+        let textClient = XPCScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let result = try await client.runBenchMatrix(
+            ControlPlaneBenchMatrixRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [1024],
+                generationLengths: [128],
+                batchSizes: [2],
+                cacheProfiles: ["cold"],
+                reasoningModes: ["enabled"],
+                structuredOutputModes: ["plain_text"],
+                concurrencyLevels: [1],
+                repeats: 2,
+                requests: 8
+            )
+        )
+        let forwarded = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(forwarded.modelHandle == "melix-dev-text")
+        #expect(forwarded.contextLengths == [1024])
+        #expect(result.job.jobID == "bench-matrix-456")
+        #expect(result.summaryRows.count == 1)
+        #expect(result.summaryRows[0].ttftMeanMs == 24.45)
     }
 
     @Test("local client submits image generation through control-plane execute")
@@ -379,6 +624,9 @@ struct ControlPlaneXPCClientTests {
                 modelID: "melix-dev-image",
                 prompt: "Render a sunrise",
                 size: "512x512",
+                steps: 36,
+                guidance: 6.25,
+                negativePrompt: "blur",
                 n: 2
             )
         )
@@ -387,9 +635,13 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.modelHandle == "melix-dev-image::python")
         #expect(forwardedRequest.prompt == "Render a sunrise")
         #expect(forwardedRequest.size == "512x512")
+        #expect(forwardedRequest.ext["melix.image.steps"] == "36")
+        #expect(forwardedRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "blur")
         #expect(forwardedRequest.n == 2)
-        #expect(job.jobID == "menubar-image-generate::image-generate")
-        #expect(job.state == .imageJobCompleted)
+        #expect(job.jobID.hasPrefix("menubar-image-generate-"))
+        #expect(job.jobID.hasSuffix("::image-generate"))
+        #expect(job.state == .imageJobRunning)
     }
 
     @Test("local client submits image edits through control-plane execute")
@@ -424,7 +676,10 @@ struct ControlPlaneXPCClientTests {
                 prompt: "Change the clouds",
                 imageURL: "file:///tmp/source.png",
                 maskURL: "file:///tmp/mask.png",
-                strength: 0.4
+                strength: 0.4,
+                steps: 22,
+                guidance: 5.5,
+                negativePrompt: "washed out"
             )
         )
         let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
@@ -434,8 +689,63 @@ struct ControlPlaneXPCClientTests {
         #expect(forwardedRequest.imageUri == "file:///tmp/source.png")
         #expect(forwardedRequest.maskUri == "file:///tmp/mask.png")
         #expect(forwardedRequest.strength == 0.4)
-        #expect(job.jobID == "menubar-image-edit::image-edit")
+        #expect(forwardedRequest.ext["melix.image.steps"] == "22")
+        #expect(forwardedRequest.ext["melix.image.guidance"] == "5.5")
+        #expect(forwardedRequest.ext["melix.image.negative_prompt"] == "washed out")
+        #expect(job.jobID.hasPrefix("menubar-image-edit-"))
+        #expect(job.jobID.hasSuffix("::image-edit"))
         #expect(job.operation == "image_edit")
+    }
+
+    @Test("applyImageDefaults builds image.apply_defaults request")
+    func applyImageDefaultsBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.image = Melix_Controlplane_V1_ImageReply()
+        response.image.imageDefaults = Melix_Controlplane_V1_ImageDefaultsSummary()
+        response.image.imageDefaults.requestedGenerateModelID = "melix-qwen-image"
+        response.image.imageDefaults.requestedEditModelID = "melix-fill-image"
+        response.image.imageDefaults.requestedSize = "1536x1024"
+        response.image.imageDefaults.requestedSteps = 40
+        response.image.imageDefaults.requestedGuidance = 6.25
+        response.image.imageDefaults.requestedStrength = 0.7
+        response.image.imageDefaults.requestedNegativePrompt = "noise"
+        response.image.imageDefaults.effectiveGenerateModelID = "melix-qwen-image"
+        response.image.imageDefaults.effectiveEditModelID = "melix-fill-image"
+        response.image.imageDefaults.effectiveSize = "1536x1024"
+        response.image.imageDefaults.effectiveSteps = 40
+        response.image.imageDefaults.effectiveGuidance = 6.25
+        response.image.imageDefaults.effectiveStrength = 0.7
+        response.image.imageDefaults.effectiveNegativePrompt = "noise"
+        response.image.imageDefaults.source = .operatorOverride
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let summary = try await client.applyImageDefaults(
+            ControlPlaneImageDefaultsRequest(
+                generateModelID: "melix-qwen-image",
+                editModelID: "melix-fill-image",
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            )
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID.hasPrefix("menubar-image-defaults-"))
+        #expect(request.commandType == "image.apply_defaults")
+        #expect(request.image.applyDefaults.generateModelID == "melix-qwen-image")
+        #expect(request.image.applyDefaults.editModelID == "melix-fill-image")
+        #expect(request.image.applyDefaults.size == "1536x1024")
+        #expect(request.image.applyDefaults.steps == 40)
+        #expect(request.image.applyDefaults.guidance == 6.25)
+        #expect(request.image.applyDefaults.strength == 0.7)
+        #expect(request.image.applyDefaults.negativePrompt == "noise")
+        #expect(summary.effectiveGenerateModelID == "melix-qwen-image")
+        #expect(summary.effectiveEditModelID == "melix-fill-image")
     }
 
     @Test("local client cancels requests through control-plane execute")
@@ -493,6 +803,109 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayAccess.mode == .none)
         #expect(request.server.applyGatewayAccess.sharedAccessEnabled == false)
         #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
+    }
+
+    @Test("applyServerSessionGatewayConfig builds server.apply_gateway_config request")
+    func applyServerSessionGatewayConfigBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.server = Melix_Controlplane_V1_ServerReply()
+        response.server.snapshot.serverState = .serverReady
+        var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+        listener.serverSessionID = "server-session-123"
+        listener.requestedHost = "0.0.0.0"
+        listener.requestedPort = 18080
+        listener.effectiveHost = "127.0.0.1"
+        listener.effectivePort = 11_434
+        listener.servedModelID = "melix-dev-text"
+        listener.rateLimitPerMinute = 240
+        listener.timeoutSeconds = 90
+        listener.source = .operatorOverride
+        listener.activeBinding = true
+        listener.requiresRestart = true
+        response.server.snapshot.gatewayConfig.listeners = [listener]
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let snapshot = try await client.applyServerSessionGatewayConfig(
+            serverSessionID: "server-session-123",
+            host: "0.0.0.0",
+            port: 18080,
+            servedModelID: "melix-dev-text",
+            rateLimitPerMinute: 240,
+            timeoutSeconds: 90
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-apply-gateway-config-server-session-123")
+        #expect(request.commandType == "server.apply_gateway_config")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyGatewayConfig.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayConfig.host == "0.0.0.0")
+        #expect(request.server.applyGatewayConfig.port == 18_080)
+        #expect(request.server.applyGatewayConfig.servedModelID == "melix-dev-text")
+        #expect(request.server.applyGatewayConfig.rateLimitPerMinute == 240)
+        #expect(request.server.applyGatewayConfig.timeoutSeconds == 90)
+        #expect(snapshot.gatewayConfig.listeners.first?.effectiveHost == "127.0.0.1")
+        #expect(snapshot.gatewayConfig.listeners.first?.requiresRestart == true)
+    }
+
+    @Test("applyServerSessionServingDefaults builds server.apply_serving_defaults request")
+    func applyServerSessionServingDefaultsBuildsTypedRequest() async throws {
+        let service = RecordingExecuteControlPlaneService()
+        var response = Melix_Controlplane_V1_ControlPlaneResponse()
+        response.ok = true
+        response.server = Melix_Controlplane_V1_ServerReply()
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-123"
+        servingDefaults.requestedTemperature = 0.33
+        servingDefaults.requestedTopP = 0.92
+        servingDefaults.requestedMaxTokens = 384
+        servingDefaults.requestedStreamIntervalTokens = 3
+        servingDefaults.requestedMaxConcurrentRequests = 5
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 3
+        servingDefaults.requestedCompletionBatchSize = 2
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedDraftModelID = "melix-dev-draft"
+        servingDefaults.requestedNumDraftTokens = 6
+        response.server.snapshot.servingDefaults.sessions = [servingDefaults]
+        await service.setExecuteResponse(response)
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        let snapshot = try await client.applyServerSessionServingDefaults(
+            serverSessionID: "server-session-123",
+            temperature: 0.33,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 3,
+            maxConcurrentRequests: 5,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6
+        )
+        let request = try #require(await service.lastExecuteRequest)
+
+        #expect(request.requestID == "menubar-apply-serving-defaults-server-session-123")
+        #expect(request.commandType == "server.apply_serving_defaults")
+        #expect(request.targetID == "server-session-123")
+        #expect(request.server.applyServingDefaults.serverSessionID == "server-session-123")
+        #expect(request.server.applyServingDefaults.temperature == 0.33)
+        #expect(request.server.applyServingDefaults.topP == 0.92)
+        #expect(request.server.applyServingDefaults.maxTokens == 384)
+        #expect(request.server.applyServingDefaults.streamIntervalTokens == 3)
+        #expect(request.server.applyServingDefaults.maxConcurrentRequests == 5)
+        #expect(request.server.applyServingDefaults.concurrentProcessingEnabled == true)
+        #expect(request.server.applyServingDefaults.prefillBatchSize == 3)
+        #expect(request.server.applyServingDefaults.completionBatchSize == 2)
+        #expect(request.server.applyServingDefaults.accelerationMode == .speculativeDecode)
+        #expect(request.server.applyServingDefaults.draftModelID == "melix-dev-draft")
+        #expect(request.server.applyServingDefaults.numDraftTokens == 6)
+        #expect(snapshot.servingDefaults.sessions.first?.requestedTemperature == 0.33)
     }
 
     @Test("runBench builds ops.run_bench request with explicit model suites and parameters")
@@ -797,6 +1210,9 @@ struct ControlPlaneXPCClientTests {
 }
 
 private actor DefaultingControlPlaneXPCClient: ControlPlaneXPCClient {
+    private(set) var lastLoadModelID: String?
+    private(set) var loadCallCount = 0
+
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
         Melix_Controlplane_V1_HandshakeResponse()
     }
@@ -824,7 +1240,8 @@ private actor DefaultingControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
-        _ = modelID
+        lastLoadModelID = modelID
+        loadCallCount += 1
         return Melix_Controlplane_V1_ModelSummary()
     }
 
@@ -1276,6 +1693,8 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
     private var convertEvents: [Melix_Worker_V1_ConvertModelEvent] = []
     private var doctorResponse = Melix_Worker_V1_RunDoctorResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
+    private var benchMatrixResponse = Melix_Worker_V1_RunBenchMatrixResponse()
+    private(set) var lastBenchMatrixRequest: Melix_Worker_V1_RunBenchMatrixRequest?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
         infoResponse = response
@@ -1291,6 +1710,10 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
 
     func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
         benchEvents = events
+    }
+
+    func setBenchMatrixResponse(_ response: Melix_Worker_V1_RunBenchMatrixResponse) {
+        benchMatrixResponse = response
     }
 
     func canDispatchRequests() async -> Bool {
@@ -1368,6 +1791,13 @@ private actor XPCScriptedModelOperationsWorkerClient: WorkerRoutingClient, Model
             }
             continuation.finish()
         }
+    }
+
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        lastBenchMatrixRequest = request
+        return benchMatrixResponse
     }
 
     func runEvaluation(

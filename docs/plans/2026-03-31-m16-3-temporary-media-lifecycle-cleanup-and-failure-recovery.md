@@ -26,8 +26,21 @@ Control the lifecycle of temporary media artifacts created during video preproce
 
 - `make py-test`
 - `make integration-test`
+- focused Python worker tests for temporary-media lifecycle, registry projection, and VLM runtime
+  cleanup branches
+- focused Swift HTTP gateway tests for OCR and VLM cleanup metrics
+- focused integration tests for success and cancelled-generate cleanup paths
 
 ## Acceptance
 
 - Temporary media artifacts are cleaned up deterministically across terminal states.
 - Cleanup failures are surfaced through stable state and test coverage.
+
+## Status
+
+Completed. Melix now owns one explicit temporary-media session helper for multimodal analysis
+artifacts, deterministic and MLX-backed VLM runtimes stage inline assets through that helper, the
+worker runtime registry publishes cleanup counters through `RuntimeStats`, and the Swift control
+plane projects cleanup evidence through OCR and VLM metrics. Focused worker, control-plane, and
+integration coverage now proves success, cleanup-failure, and cancellation paths with changed-line
+coverage at or above the repository gate for the touched executable scope.

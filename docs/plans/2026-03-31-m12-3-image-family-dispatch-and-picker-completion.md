@@ -4,6 +4,10 @@
 
 Complete image-family dispatch and picker visibility for the supported creative model families.
 
+Status: completed. Image-family detection is now repository-owned across the Python worker,
+control-plane catalog sync, the family support matrix, and the Window UI picker, with role-aware
+generation-versus-edit filtering and typed request validation for unsupported workflows.
+
 ## Scope
 
 - add class-based dispatch for supported image families
@@ -28,6 +32,9 @@ Complete image-family dispatch and picker visibility for the supported creative 
 - `make py-test`
 - `make swift-test`
 - `make integration-test`
+- `PYTHONPATH=services/mlx-worker-python uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_image_family_adapters.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_image_runtime.py services/mlx-worker-python/tests/test_acceptance_metrics.py services/mlx-worker-python/tests/test_runtime_service.py tests/integration/test_image_endpoints.py tests/integration/test_non_text_endpoints.py::test_family_support_matrix_tracks_live_verified_family_overrides -q`
+- `swift test --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests'`
+- `swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests`
 
 ## Acceptance
 

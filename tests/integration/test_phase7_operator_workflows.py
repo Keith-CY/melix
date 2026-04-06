@@ -42,6 +42,36 @@ def _abort_with_retry(socket_path: Path, request_id: str, *, timeout_seconds: fl
     return False
 
 
+def _rebuild_redo_edit_request(
+    job: dict[str, object],
+    *,
+    request_id: str,
+) -> dict[str, object]:
+    recipe = job["recipe"]
+    assert isinstance(recipe, dict)
+    payload: dict[str, object] = {
+        "id": request_id,
+        "model": job["model_id"],
+        "prompt": recipe["prompt"],
+        "size": recipe["size"],
+        "n": recipe["variant_count"],
+        "response_format": recipe["response_format"],
+    }
+    strength = recipe.get("strength")
+    if isinstance(strength, (int, float)) and strength > 0:
+        payload["strength"] = strength
+    edit_mode = job.get("edit_mode")
+    if isinstance(edit_mode, str) and edit_mode:
+        payload["edit_mode"] = edit_mode
+    source_artifact_id = job.get("source_artifact_id")
+    if isinstance(source_artifact_id, str) and source_artifact_id:
+        payload["source_artifact_id"] = source_artifact_id
+    prompt_delta = job.get("prompt_delta")
+    if isinstance(prompt_delta, str) and prompt_delta:
+        payload["prompt_delta"] = prompt_delta
+    return payload
+
+
 def test_phase7_operator_smoke_records_image_metrics_and_text_interference() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
@@ -189,5 +219,144 @@ def test_phase7_image_cancel_smoke_returns_cancelled_conflict() -> None:
         payload = result["payload"]
         assert payload["error"]["code"] == "cancelled"
         assert payload["error"]["message"]
+    finally:
+        stack.stop()
+
+
+def test_phase7_image_generate_timeout_returns_deadline_exceeded() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={
+            "MELIX_DETERMINISTIC_IMAGE_DELAY_MS": "1500",
+            "MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "1",
+        },
+    )
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-image"])
+
+        status, payload = _post_json(
+            stack.image_generations_url(),
+            {
+                "id": "phase7-image-timeout",
+                "model": "melix-dev-image",
+                "prompt": "timeout this image job",
+                "size": "256x256",
+                "n": 1,
+                "response_format": "png",
+            },
+            timeout=20.0,
+        )
+
+        assert status == 504
+        assert payload["error"]["code"] == "deadline_exceeded"
+        assert "1-second creative workflow deadline" in payload["error"]["message"]
+
+    finally:
+        stack.stop()
+
+
+def test_phase7_image_iteration_smoke_records_lineage_and_redo_evidence() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-image"])
+
+        generate_status, generate_payload = _post_json(
+            stack.image_generations_url(),
+            {
+                "id": "phase7-image-iterate-source",
+                "model": "melix-dev-image",
+                "prompt": "paint a neon fox",
+                "size": "256x256",
+                "n": 1,
+                "response_format": "png",
+                "artifact_namespace": "phase7-iteration",
+            },
+            timeout=20.0,
+        )
+
+        assert generate_status == 200
+        source_job = generate_payload["job"]
+        source_artifact = generate_payload["data"][0]["artifact"]
+        assert source_job["request_timeout_seconds"] == 1800
+        assert source_job["recipe"]["artifact_namespace"] == "phase7-iteration"
+        assert source_artifact["parent_artifact_id"] == ""
+
+        variation_status, variation_payload = _post_json(
+            stack.image_edits_url(),
+            {
+                "id": "phase7-image-variation",
+                "model": "melix-dev-image",
+                "prompt": "keep composition",
+                "source_artifact_id": source_artifact["artifact_id"],
+                "edit_mode": "variation",
+                "strength": 0.65,
+                "size": "256x256",
+                "n": 1,
+                "response_format": "png",
+            },
+            timeout=20.0,
+        )
+
+        assert variation_status == 200
+        variation_job = variation_payload["job"]
+        variation_artifact = variation_payload["data"][0]["artifact"]
+        assert variation_job["operation"] == "image_variation"
+        assert variation_job["source_artifact_id"] == source_artifact["artifact_id"]
+        assert variation_job["source_job_id"] == source_job["job_id"]
+        assert variation_job["prompt_delta"] == ""
+        assert variation_job["edit_mode"] == "variation"
+        assert variation_job["request_timeout_seconds"] == 1800
+        assert variation_job["recipe"]["prompt"] == "keep composition"
+        assert variation_job["recipe"]["source_image_uri"]
+        assert variation_job["recipe"]["source_image_uri"].endswith("/output-0.png")
+        assert variation_artifact["parent_artifact_id"] == source_artifact["artifact_id"]
+
+        iterate_status, iterate_payload = _post_json(
+            stack.image_edits_url(),
+            {
+                "id": "phase7-image-iterate",
+                "model": "melix-dev-image",
+                "prompt": "",
+                "source_artifact_id": variation_artifact["artifact_id"],
+                "prompt_delta": "make the colors warmer",
+                "edit_mode": "iterate",
+                "strength": 0.65,
+                "size": "256x256",
+                "n": 1,
+                "response_format": "png",
+            },
+            timeout=20.0,
+        )
+
+        assert iterate_status == 200
+        iterate_job = iterate_payload["job"]
+        iterate_artifact = iterate_payload["data"][0]["artifact"]
+        assert iterate_job["operation"] == "image_iterate"
+        assert iterate_job["source_artifact_id"] == variation_artifact["artifact_id"]
+        assert iterate_job["source_job_id"] == variation_job["job_id"]
+        assert iterate_job["prompt_delta"] == "make the colors warmer"
+        assert iterate_job["edit_mode"] == "iterate"
+        assert iterate_job["request_timeout_seconds"] == 1800
+        assert iterate_job["recipe"]["prompt"] == "make the colors warmer"
+        assert iterate_artifact["parent_artifact_id"] == variation_artifact["artifact_id"]
+
+        redo_status, redo_payload = _post_json(
+            stack.image_edits_url(),
+            _rebuild_redo_edit_request(iterate_job, request_id="phase7-image-redo"),
+            timeout=20.0,
+        )
+
+        assert redo_status == 200
+        redo_job = redo_payload["job"]
+        redo_artifact = redo_payload["data"][0]["artifact"]
+        assert redo_job["operation"] == "image_iterate"
+        assert redo_job["source_artifact_id"] == iterate_job["source_artifact_id"]
+        assert redo_job["source_job_id"] == iterate_job["source_job_id"]
+        assert redo_job["prompt_delta"] == iterate_job["prompt_delta"]
+        assert redo_job["edit_mode"] == "iterate"
+        assert redo_job["recipe"] == iterate_job["recipe"]
+        assert redo_artifact["parent_artifact_id"] == iterate_job["source_artifact_id"]
     finally:
         stack.stop()

@@ -1,5 +1,13 @@
 # M8.3 HuggingFace Search, Pagination, And Cards
 
+## Status
+
+Completed on 2026-04-04. Melix now exposes repository-owned Hugging Face search, pagination, and
+model-card inspection through the worker-maintenance and control-plane model-operations path,
+normalizes discovery metadata before operator consumption, and records the changed-line coverage
+evidence for the touched Swift, Python, and protocol scope in the backend-foundations
+implementation plan.
+
 ## Goal
 
 Add productized HuggingFace discovery with search, pagination, and model-card inspection for MLX-relevant artifacts.

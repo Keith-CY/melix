@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 
 import grpc
@@ -45,7 +46,10 @@ def main() -> None:
             "search-hub-models",
             "get-hub-model-card",
             "run-bench",
+            "run-bench-matrix",
             "run-evaluation",
+            "export-results",
+            "submit-results",
         ],
     )
     parser.add_argument("--socket-path", required=True)
@@ -110,11 +114,21 @@ def main() -> None:
             elif args.command == "image-generate":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.ImageGenerateRequest.FromString(request_bytes)
-                emit_message(stub.ImageGenerate(request).SerializeToString())
+                emit_message(
+                    stub.ImageGenerate(
+                        request,
+                        timeout=image_request_timeout_seconds(),
+                    ).SerializeToString()
+                )
             elif args.command == "image-edit":
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.ImageEditRequest.FromString(request_bytes)
-                emit_message(stub.ImageEdit(request).SerializeToString())
+                emit_message(
+                    stub.ImageEdit(
+                        request,
+                        timeout=image_request_timeout_seconds(),
+                    ).SerializeToString()
+                )
             elif args.command == "get-model-info":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.GetModelInfoRequest.FromString(request_bytes)
@@ -141,10 +155,22 @@ def main() -> None:
                 request = maintenance_pb2.RunBenchRequest.FromString(request_bytes)
                 for event in stub.RunBench(request):
                     emit_message(event.SerializeToString())
+            elif args.command == "run-bench-matrix":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.RunBenchMatrixRequest.FromString(request_bytes)
+                emit_message(stub.RunBenchMatrix(request).SerializeToString())
             elif args.command == "run-evaluation":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.RunEvaluationRequest.FromString(request_bytes)
                 emit_message(stub.RunEvaluation(request).SerializeToString())
+            elif args.command == "export-results":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.ExportResultsRequest.FromString(request_bytes)
+                emit_message(stub.ExportResults(request).SerializeToString())
+            elif args.command == "submit-results":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.SubmitResultsRequest.FromString(request_bytes)
+                emit_message(stub.SubmitResults(request).SerializeToString())
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.AbortRequest.FromString(request_bytes)
@@ -163,6 +189,18 @@ def emit_message(message: bytes) -> None:
 
 def emit_error(code: str, message: str) -> None:
     print(json.dumps({"kind": "error", "code": code, "message": message}), flush=True)
+
+
+def image_request_timeout_seconds(environment: dict[str, str] | None = None) -> float:
+    env = environment or os.environ
+    raw_value = env.get("MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS", "").strip()
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        parsed = 0
+    if parsed <= 0:
+        parsed = 1800
+    return float(parsed)
 
 
 if __name__ == "__main__":

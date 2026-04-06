@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import shutil
@@ -7,6 +8,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from worker.productization.packaging_targets import build_packaging_target_metadata
+from worker.productization.startup_signals import default_update_channel_path
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,7 @@ class MacOSAppBundleLayout:
     bundled_repo_root_path: Path
     bundled_wait_script_path: Path
     embedded_env_script_path: Path
+    packaging_target_manifest_path: Path
 
 
 def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Melix") -> MacOSAppBundleLayout:
@@ -48,6 +53,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         bundled_repo_root_path=resources_path / "repo",
         bundled_wait_script_path=resources_path / "repo/scripts/wait_for_worker_ready.py",
         embedded_env_script_path=resources_path / "melix-product-env.sh",
+        packaging_target_manifest_path=resources_path / "packaging-target-manifest.json",
     )
 
 
@@ -80,12 +86,25 @@ def render_info_plist(*, app_name: str, bundle_id: str, version: str) -> bytes:
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
 
 
-def render_portable_environment_script(app_support_name: str = "Melix") -> str:
+def render_portable_environment_script(
+    *,
+    product_version: str,
+    update_channel_path: str | Path,
+    logical_product_identity: str,
+    packaging_target_id: str,
+    packaging_kind: str,
+    app_support_name: str = "Melix",
+) -> str:
     return "\n".join(
         [
             "#!/usr/bin/env bash",
             "set -euo pipefail",
             "",
+            f'export MELIX_LOGICAL_PRODUCT_ID="{logical_product_identity}"',
+            f'export MELIX_PACKAGING_TARGET_ID="{packaging_target_id}"',
+            f'export MELIX_PACKAGING_KIND="{packaging_kind}"',
+            f'export MELIX_PRODUCT_VERSION="{product_version}"',
+            f'export MELIX_UPDATE_CHANNEL_PATH="{Path(update_channel_path).expanduser().resolve()}"',
             f'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/{app_support_name}"',
             'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"',
             'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"',
@@ -158,12 +177,19 @@ def write_unsigned_macos_app_bundle(
     app_name: str = "Melix",
     bundle_id: str = "io.melix.menubar.preview",
     version: str = "0.1.0",
+    packaging_target_id: str = "macos_app_bundle_preview",
+    update_channel_path: str | Path | None = None,
 ) -> dict[str, str]:
     repo_root_path = Path(repo_root).expanduser().resolve()
     executable = Path(executable_path).expanduser().resolve()
     swift_worker_executable = Path(swift_text_worker_executable_path).expanduser().resolve()
     python_runtime = Path(python_runtime_root).expanduser().resolve()
     python_site_packages = Path(python_site_packages_path).expanduser().resolve()
+    resolved_update_channel_path = (
+        Path(update_channel_path).expanduser().resolve()
+        if update_channel_path is not None
+        else default_update_channel_path(repo_root_path)
+    )
 
     if not executable.is_file():
         raise FileNotFoundError(f"Missing menubar executable: {executable}")
@@ -175,6 +201,12 @@ def write_unsigned_macos_app_bundle(
         raise FileNotFoundError(f"Missing Python site-packages: {python_site_packages}")
 
     layout = build_macos_app_bundle_layout(output_path, app_name=app_name)
+    target_metadata = build_packaging_target_metadata(
+        packaging_target_id,
+        product_version=version,
+        update_channel_path=resolved_update_channel_path,
+        bundle_id=bundle_id,
+    )
     if layout.app_path.exists():
         shutil.rmtree(layout.app_path)
 
@@ -189,10 +221,20 @@ def write_unsigned_macos_app_bundle(
     _copy_repo_subset(repo_root_path, layout.bundled_repo_root_path)
 
     layout.embedded_env_script_path.write_text(
-        render_portable_environment_script(),
+        render_portable_environment_script(
+            product_version=version,
+            update_channel_path=resolved_update_channel_path,
+            logical_product_identity=str(target_metadata["logical_product_identity"]),
+            packaging_target_id=str(target_metadata["packaging_target_id"]),
+            packaging_kind=str(target_metadata["packaging_kind"]),
+        ),
         encoding="utf-8",
     )
     os.chmod(layout.embedded_env_script_path, 0o755)
+    layout.packaging_target_manifest_path.write_text(
+        json.dumps(target_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     layout.plist_path.write_bytes(
         render_info_plist(app_name=app_name, bundle_id=bundle_id, version=version)
@@ -228,8 +270,13 @@ def write_unsigned_macos_app_bundle(
         "bundled_repo_root_path": str(layout.bundled_repo_root_path),
         "plist_path": str(layout.plist_path),
         "embedded_env_script_path": str(layout.embedded_env_script_path),
+        "packaging_target_manifest_path": str(layout.packaging_target_manifest_path),
         "bundle_id": bundle_id,
         "version": version,
+        "packaging_target_id": str(target_metadata["packaging_target_id"]),
+        "packaging_kind": str(target_metadata["packaging_kind"]),
+        "logical_product_identity": str(target_metadata["logical_product_identity"]),
+        "update_channel_path": str(target_metadata["update_channel_path"]),
     }
 
 

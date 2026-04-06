@@ -11,7 +11,9 @@ struct DesktopWorkspaceShellView: View {
 
         VStack(spacing: 0) {
             if let banner = viewModel.desktopBannerState {
-                DesktopShellBannerView(banner: banner)
+                DesktopShellBannerView(banner: banner) {
+                    viewModel.dismissDesktopBanner(id: banner.id)
+                }
             }
 
             DesktopShellHeaderView(viewModel: viewModel)
@@ -49,10 +51,11 @@ struct DesktopWorkspaceShellView: View {
 
 private struct DesktopShellBannerView: View {
     let banner: DesktopBannerState
+    let dismiss: @MainActor () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: banner.severity == .critical ? "exclamationmark.triangle.fill" : "exclamationmark.circle.fill")
+            Image(systemName: bannerSymbolName)
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 4) {
                 Text(banner.title)
@@ -63,10 +66,39 @@ private struct DesktopShellBannerView: View {
                     .foregroundStyle(.white.opacity(0.9))
             }
             Spacer()
+            if banner.isDismissible {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(banner.severity == .critical ? Color.red : Color.orange)
+        .background(bannerBackgroundColor)
+    }
+
+    private var bannerSymbolName: String {
+        switch banner.severity {
+        case .info:
+            return "moon.stars.fill"
+        case .warning:
+            return "exclamationmark.circle.fill"
+        case .critical:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var bannerBackgroundColor: Color {
+        switch banner.severity {
+        case .info:
+            return Color.blue
+        case .warning:
+            return Color.orange
+        case .critical:
+            return Color.red
+        }
     }
 }
 
@@ -113,6 +145,53 @@ private struct DesktopShellHeaderView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+}
+
+struct DesktopInlineNoticeCardView: View {
+    let notice: DesktopBannerState
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbolName)
+                .foregroundStyle(accentColor)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice.title)
+                    .font(.headline)
+                Text(notice.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(accentColor.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private var accentColor: Color {
+        switch notice.severity {
+        case .info:
+            return .blue
+        case .warning:
+            return .orange
+        case .critical:
+            return .red
+        }
+    }
+
+    private var symbolName: String {
+        switch notice.severity {
+        case .info:
+            return "moon.stars.fill"
+        case .warning:
+            return "pause.circle.fill"
+        case .critical:
+            return "exclamationmark.triangle.fill"
         }
     }
 }
@@ -383,9 +462,9 @@ private struct DesktopServerSessionSidebar: View {
                                         Text(session.title)
                                             .font(.headline)
                                         Spacer()
-                                        Text(session.lifecycle.rawValue)
+                                        Text(session.lifecycleSummaryText)
                                             .font(.caption)
-                                            .foregroundStyle(session.isRunning ? .green : .secondary)
+                                            .foregroundStyle(session.isInteractiveReady ? .green : .secondary)
                                     }
                                     Text("\(session.modelID) • \(session.listenerLabel)")
                                         .font(.caption)
@@ -418,6 +497,11 @@ private struct DesktopServerSessionEditor: View {
     @Binding var showsInspector: Bool
     @Binding var showsAdvanced: Bool
 
+    private let servingAccelerationModeOptions = [
+        ("Baseline", "baseline"),
+        ("Speculative Decode", "speculative_decode"),
+    ]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -436,6 +520,10 @@ private struct DesktopServerSessionEditor: View {
                 if let session = viewModel.selectedServerSession {
                     Text("Choose model, configure listener, then start the server session.")
                         .foregroundStyle(.secondary)
+
+                    if let notice = session.lifecycleBannerState {
+                        DesktopInlineNoticeCardView(notice: notice)
+                    }
 
                     GroupBox("Basic Configuration") {
                         VStack(alignment: .leading, spacing: 12) {
@@ -496,6 +584,21 @@ private struct DesktopServerSessionEditor: View {
                                 )
                                 .textFieldStyle(.roundedBorder)
                             }
+
+                            HStack {
+                                Button("Apply Gateway Config") {
+                                    Task { await viewModel.applySelectedServerGatewayConfig() }
+                                }
+                                .buttonStyle(.bordered)
+
+                                Text(
+                                    session.gatewayConfigRequiresRestart
+                                        ? "Requested listener differs from the active binding. Restart required."
+                                        : "Listener config source: \(session.gatewayConfigSourceText)"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -529,7 +632,7 @@ private struct DesktopServerSessionEditor: View {
                                     TextField(
                                         "Max tokens",
                                         value: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.maxTokens ?? 1024 },
+                                            get: { viewModel.selectedServerSession?.servingDefaults.maxTokens ?? 256 },
                                             set: { viewModel.updateSelectedServerSessionMaxTokens($0) }
                                         ),
                                         format: .number
@@ -537,7 +640,19 @@ private struct DesktopServerSessionEditor: View {
                                     .textFieldStyle(.roundedBorder)
 
                                     TextField(
-                                        "Max concurrent",
+                                        "Stream interval",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens ?? 1 },
+                                            set: { viewModel.updateSelectedServerSessionStreamIntervalTokens($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
+                                HStack {
+                                    TextField(
+                                        "Max concurrent sequences",
                                         value: Binding(
                                             get: { viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests ?? 4 },
                                             set: { viewModel.updateSelectedServerSessionMaxConcurrentRequests($0) }
@@ -546,22 +661,164 @@ private struct DesktopServerSessionEditor: View {
                                     )
                                     .textFieldStyle(.roundedBorder)
                                 }
+
+                                Toggle(
+                                    "Concurrent processing",
+                                    isOn: Binding(
+                                        get: { viewModel.selectedServerSession?.servingDefaults.concurrentProcessingEnabled ?? true },
+                                        set: { viewModel.updateSelectedServerSessionConcurrentProcessingEnabled($0) }
+                                    )
+                                )
+
+                                HStack {
+                                    TextField(
+                                        "Prefill batch size",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.prefillBatchSize ?? 2 },
+                                            set: { viewModel.updateSelectedServerSessionPrefillBatchSize($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+
+                                    TextField(
+                                        "Completion batch size",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.completionBatchSize ?? 2 },
+                                            set: { viewModel.updateSelectedServerSessionCompletionBatchSize($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
+                                Picker(
+                                    "Acceleration",
+                                    selection: Binding(
+                                        get: { viewModel.selectedServerSession?.servingDefaults.accelerationMode ?? "baseline" },
+                                        set: { viewModel.updateSelectedServerSessionAccelerationMode($0) }
+                                    )
+                                ) {
+                                    ForEach(servingAccelerationModeOptions, id: \.1) { option in
+                                        Text(option.0).tag(option.1)
+                                    }
+                                }
+
+                                HStack {
+                                    TextField(
+                                        "Draft model id",
+                                        text: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.draftModelID ?? "" },
+                                            set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
+                                        )
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+
+                                    TextField(
+                                        "Num draft tokens",
+                                        value: Binding(
+                                            get: { viewModel.selectedServerSession?.servingDefaults.numDraftTokens ?? 0 },
+                                            set: { viewModel.updateSelectedServerSessionNumDraftTokens($0) }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                }
+
+                                HStack {
+                                    Button("Apply Serving Defaults", action: viewModel.applySelectedServerServingDefaultsFromUI)
+                                    .buttonStyle(.bordered)
+
+                                    let servingDefaults = session.servingDefaults
+                                    Text(
+                                        "Source: \(servingDefaults.sourceText) • Effective temp \(servingDefaults.effectiveTemperature, format: .number.precision(.fractionLength(2))) • top_p \(servingDefaults.effectiveTopP, format: .number.precision(.fractionLength(2))) • max \(servingDefaults.effectiveMaxTokens) • stream \(servingDefaults.effectiveStreamIntervalTokens) • concurrent \(servingDefaults.effectiveConcurrentProcessingEnabled ? "on" : "off") • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize) • accel \(servingDefaults.effectiveAccelerationMode)\(servingDefaults.effectiveDraftModelID.isEmpty ? "" : " • draft \(servingDefaults.effectiveDraftModelID)")\(servingDefaults.effectiveNumDraftTokens > 0 ? " • draft tokens \(servingDefaults.effectiveNumDraftTokens)" : "")\(servingDefaults.modelOverrideApplied ? " • model override applied" : "")"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
                             }
                             .padding(.top, 12)
                         }
                     }
 
-                    HStack {
-                        Button("Start") {
-                            Task { await viewModel.startSelectedServerSession() }
-                        }
-                        .buttonStyle(.borderedProminent)
+                    GroupBox("Lifecycle Controls") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(session.runtimeDetailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
 
-                        Button("Stop") {
-                            Task { await viewModel.stopSelectedServerSession() }
+                            HStack {
+                                Button("Start") {
+                                    Task { await viewModel.startSelectedServerSession() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(session.canStart == false)
+
+                                Button("Pause") {
+                                    Task { await viewModel.pauseSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canPause == false)
+
+                                Button("Resume") {
+                                    Task { await viewModel.resumeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canResume == false)
+
+                                Button("Wake") {
+                                    Task { await viewModel.wakeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canWake == false)
+
+                                Button("Stop") {
+                                    Task { await viewModel.stopSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canStop == false)
+                            }
+
+                            Toggle(
+                                "Auto Sleep",
+                                isOn: Binding(
+                                    get: { viewModel.selectedServerSession?.autoSleepEnabled ?? false },
+                                    set: { viewModel.updateSelectedServerSessionAutoSleepEnabled($0) }
+                                )
+                            )
+
+                            HStack {
+                                TextField(
+                                    "Light sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.lightSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionLightSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                TextField(
+                                    "Deep sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.deepSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionDeepSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                Button("Apply Idle Policy") {
+                                    Task { await viewModel.applySelectedServerIdlePolicy() }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Text(session.idlePolicySummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.selectedServerSession?.isRunning != true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
                     ContentUnavailableView(
@@ -589,9 +846,12 @@ private struct DesktopServerSessionInspector: View {
             if let session = viewModel.selectedServerSession {
                 GroupBox("Status") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(session.lifecycle.rawValue)
+                        Text(session.lifecycleSummaryText)
                             .font(.headline)
                         Text(session.lastKnownModelStateText.isEmpty ? session.modelID : "\(session.modelID) • \(session.lastKnownModelStateText)")
+                            .foregroundStyle(.secondary)
+                        Text(session.runtimeDetailText)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -599,11 +859,20 @@ private struct DesktopServerSessionInspector: View {
 
                 GroupBox("Listener") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(session.baseURL)
+                        Text("Requested: \(session.baseURL)")
                             .font(.body.monospaced())
+                        Text("Effective: \(session.effectiveBaseURL)")
+                            .font(.body.monospaced())
+                        Text(
+                            session.gatewayConfigRequiresRestart
+                                ? "\(session.gatewayConfigSourceText) • restart required to move the live listener"
+                                : session.gatewayConfigSourceText
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         HStack {
                             Button("Copy URL") {
-                                copyToPasteboard(session.baseURL)
+                                copyToPasteboard(session.effectiveBaseURL)
                             }
                         }
                     }
@@ -611,6 +880,17 @@ private struct DesktopServerSessionInspector: View {
                 }
 
                 DesktopServerGatewayAccessSummaryView(session: session)
+
+                GroupBox("Power Policy") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(session.idlePolicySummaryText)
+                            .font(.headline)
+                        Text("Wake reason: \(session.wakeReason.rawValue)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
 
@@ -741,7 +1021,7 @@ private struct DesktopToolsWorkspaceView: View {
     }
 }
 
-private struct DesktopDownloadsToolSectionView: View {
+struct DesktopDownloadsToolSectionView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
@@ -781,6 +1061,11 @@ private struct DesktopDownloadsToolSectionView: View {
             }
 
             HStack {
+                Button("Convert Model") {
+                    Task { await viewModel.convertPrimaryModel() }
+                }
+                .buttonStyle(.bordered)
+
                 Button("Download Model") {
                     Task { await viewModel.downloadPrimaryModel() }
                 }
@@ -792,11 +1077,81 @@ private struct DesktopDownloadsToolSectionView: View {
                 .buttonStyle(.bordered)
             }
 
+            GroupBox("Download Queue") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Registry-backed queue state survives shell restart and can resume partial transfers.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Refresh Queue") {
+                            Task { await viewModel.refreshDownloadQueueState() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if viewModel.downloadQueue.isEmpty {
+                        Text("No downloads recorded yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.downloadQueue) { entry in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.sourceModel)
+                                            .font(.headline)
+                                        Text(entry.statusText)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(entry.resumeReady ? .orange : .secondary)
+                                    }
+                                    Spacer()
+                                    if entry.resumeReady {
+                                        Button(entry.resumeActionTitle) {
+                                            Task { await viewModel.resumeDownload(jobID: entry.jobID) }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                    }
+                                }
+
+                                Text(entry.progressText)
+                                    .font(.caption.monospacedDigit())
+                                if entry.transferDetailText.isEmpty == false {
+                                    Text(entry.transferDetailText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if entry.outputDir.isEmpty == false {
+                                    Text(entry.outputDir)
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let operation = viewModel.lastModelOperation {
                 GroupBox("Recent Transfer") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(operation.operation) • \(operation.modelID)")
                             .font(.headline)
+                        if !operation.targetRepo.isEmpty {
+                            Text("target repo \(operation.targetRepo)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.sourceArtifactKind.isEmpty {
+                            Text("source artifact \(operation.sourceArtifactKind)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.conversionTargetFormat.isEmpty {
+                            Text("target format \(operation.conversionTargetFormat)")
+                                .foregroundStyle(.secondary)
+                        }
                         Text(operation.outputPath)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1075,6 +1430,22 @@ struct DesktopDiagnosticsToolSectionView: View {
         await viewModel.exportSelectedBenchmarkCSV()
     }
 
+    func runBenchmarkMatrix() async {
+        await viewModel.runBenchMatrix()
+    }
+
+    func refreshBenchmarkMatrixResults() async {
+        await viewModel.refreshBenchmarkHistory()
+    }
+
+    func exportBenchmarkMatrixSummaryCSV() async {
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+    }
+
+    func exportBenchmarkMatrixRequestsCSV() async {
+        await viewModel.exportSelectedBenchmarkMatrixRequestsCSV()
+    }
+
     func runEvaluation() async {
         await viewModel.runEvaluation()
     }
@@ -1107,6 +1478,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         viewModel.selectBenchmarkHistory(jobID: jobID)
     }
 
+    func selectBenchmarkMatrixHistory(jobID: String) {
+        viewModel.selectBenchmarkMatrixHistory(jobID: jobID)
+    }
+
     func toggleEvaluationSuiteSelection(_ suiteID: String) {
         viewModel.toggleEvaluationSuite(suiteID)
     }
@@ -1116,7 +1491,7 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func refreshDiagnosticsHistoryIfNeeded() async {
-        if viewModel.benchmarkHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
+        if viewModel.benchmarkHistory.isEmpty && viewModel.benchmarkMatrixHistory.isEmpty && viewModel.evaluationHistory.isEmpty {
             await viewModel.refreshBenchmarkHistory()
         }
     }
@@ -1139,6 +1514,22 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func startExportBenchmarkCSVTask() {
         Task { await exportBenchmarkCSV() }
+    }
+
+    private func startBenchmarkMatrixTask() {
+        Task { await runBenchmarkMatrix() }
+    }
+
+    private func startRefreshBenchmarkMatrixResultsTask() {
+        Task { await refreshBenchmarkMatrixResults() }
+    }
+
+    private func startExportBenchmarkMatrixSummaryCSVTask() {
+        Task { await exportBenchmarkMatrixSummaryCSV() }
+    }
+
+    private func startExportBenchmarkMatrixRequestsCSVTask() {
+        Task { await exportBenchmarkMatrixRequestsCSV() }
     }
 
     private func startEvaluationTask() {
@@ -1172,16 +1563,31 @@ struct DesktopDiagnosticsToolSectionView: View {
                     HStack {
                         Button("Inspect", action: startInspectTask)
                         Button("Doctor", action: startDoctorTask)
-                        Button("Run Benchmark", action: startBenchmarkTask)
-                            .disabled(
-                                (
-                                    viewModel.selectedBenchmarkTargetMode == .catalogModel
-                                    && viewModel.benchmarkModels.isEmpty
-                                ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
-                            )
-                        Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
-                        Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
-                            .disabled(viewModel.benchmarkHistory.isEmpty)
+                        if viewModel.selectedBenchmarkPresentationMode == .standard {
+                            Button("Run Benchmark", action: startBenchmarkTask)
+                                .disabled(
+                                    (
+                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
+                                        && viewModel.benchmarkModels.isEmpty
+                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                                )
+                            Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
+                            Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
+                                .disabled(viewModel.benchmarkHistory.isEmpty)
+                        } else {
+                            Button("Run Matrix", action: startBenchmarkMatrixTask)
+                                .disabled(
+                                    (
+                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
+                                        && viewModel.benchmarkModels.isEmpty
+                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+                                )
+                            Button("Refresh Matrix", action: startRefreshBenchmarkMatrixResultsTask)
+                            Button("Export Matrix Summary", action: startExportBenchmarkMatrixSummaryCSVTask)
+                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                            Button("Export Matrix Requests", action: startExportBenchmarkMatrixRequestsCSVTask)
+                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                        }
                     }
                     HStack {
                         Button("Run Evaluation", action: startEvaluationTask)
@@ -1206,19 +1612,25 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if let info = viewModel.selectedModelInfo {
                 GroupBox("Model Info") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(info.modelID) • \(info.modelKind)")
-                            .font(.headline)
-                        Text("max context \(info.maxContext)")
-                        Text("parsers: \(info.supportedParsers.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopModelInfoSummaryView(info: info)
                 }
             }
 
             GroupBox("Benchmark Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
+                    Picker(
+                        "Benchmark Mode",
+                        selection: Binding(
+                            get: { viewModel.selectedBenchmarkPresentationMode },
+                            set: { viewModel.selectedBenchmarkPresentationMode = $0 }
+                        )
+                    ) {
+                        ForEach(RuntimeBenchmarkPresentationMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
                     Picker(
                         "Benchmark Target",
                         selection: Binding(
@@ -1299,30 +1711,404 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
                     }
 
-                    HStack(spacing: 16) {
-                        TextField(
-                            "Sample Size",
-                            text: Binding(
-                                get: { viewModel.benchmarkSampleSize },
-                                set: { viewModel.benchmarkSampleSize = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        TextField(
-                            "Batch Factor",
-                            text: Binding(
-                                get: { viewModel.benchmarkBatchFactor },
-                                set: { viewModel.benchmarkBatchFactor = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
+                    Divider()
 
-                    if let export = viewModel.lastBenchmarkCSVExport {
-                        Text("CSV exported: \(export.rowCount) rows • \(export.outputPath)")
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Performance Controls")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Context Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
+                                        Button {
+                                            viewModel.toggleBenchContextLength(contextLength)
+                                        } label: {
+                                            Text("\(contextLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchContextLengths.contains(contextLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Batch Sizes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
+                                        Button {
+                                            viewModel.toggleBenchBatchSize(batchSize)
+                                        } label: {
+                                            Text("\(batchSize)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchBatchSizes.contains(batchSize)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Sample Size",
+                                text: Binding(
+                                    get: { viewModel.benchmarkSampleSize },
+                                    set: { viewModel.benchmarkSampleSize = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Batch Factor",
+                                text: Binding(
+                                    get: { viewModel.benchmarkBatchFactor },
+                                    set: { viewModel.benchmarkBatchFactor = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Repeats",
+                                text: Binding(
+                                    get: { viewModel.benchRepeats },
+                                    set: { viewModel.benchRepeats = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack(spacing: 16) {
+                            Picker(
+                                "Cache Profile",
+                                selection: Binding(
+                                    get: { viewModel.benchCacheProfile },
+                                    set: { viewModel.benchCacheProfile = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Picker(
+                                "Reasoning Mode",
+                                selection: Binding(
+                                    get: { viewModel.benchReasoningMode },
+                                    set: { viewModel.benchReasoningMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Picker(
+                                "Structured Output",
+                                selection: Binding(
+                                    get: { viewModel.benchStructuredOutputMode },
+                                    set: { viewModel.benchStructuredOutputMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
+                                    Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                        .tag(option)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        if let export = viewModel.lastBenchmarkCSVExport {
+                            Text("CSV exported: \(export.rowCount) rows • \(export.outputPath)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Matrix Controls")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Context Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkContextLengthOptions, id: \.self) { contextLength in
+                                        Button {
+                                            viewModel.toggleBenchContextLength(contextLength)
+                                        } label: {
+                                            Text("\(contextLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchContextLengths.contains(contextLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Generation Lengths")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkGenerationLengthOptions, id: \.self) { generationLength in
+                                        Button {
+                                            viewModel.toggleBenchGenerationLength(generationLength)
+                                        } label: {
+                                            Text("\(generationLength)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchGenerationLengths.contains(generationLength)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Batch Sizes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkBatchSizeOptions, id: \.self) { batchSize in
+                                        Button {
+                                            viewModel.toggleBenchBatchSize(batchSize)
+                                        } label: {
+                                            Text("\(batchSize)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchBatchSizes.contains(batchSize)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Cache Profiles")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkCacheProfileOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixCacheProfile(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixCacheProfiles.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Reasoning Modes")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkReasoningModeOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixReasoningMode(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixReasoningModes.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Structured Output")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkStructuredOutputModeOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixStructuredOutputMode(option)
+                                        } label: {
+                                            Text(option.replacingOccurrences(of: "_", with: " ").capitalized)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixStructuredOutputModes.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Concurrency Levels")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                                    ForEach(RuntimeViewModel.benchmarkConcurrencyOptions, id: \.self) { option in
+                                        Button {
+                                            viewModel.toggleBenchMatrixConcurrencyLevel(option)
+                                        } label: {
+                                            Text("\(option)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                                .background(
+                                                    viewModel.selectedBenchMatrixConcurrencyLevels.contains(option)
+                                                    ? Color.accentColor.opacity(0.16)
+                                                    : Color.secondary.opacity(0.08),
+                                                    in: Capsule()
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Repeats",
+                                text: Binding(
+                                    get: { viewModel.benchMatrixRepeats },
+                                    set: { viewModel.benchMatrixRepeats = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+
+                            Picker(
+                                "Load Budget",
+                                selection: Binding(
+                                    get: { viewModel.selectedBenchmarkMatrixLoadBudgetMode },
+                                    set: { viewModel.selectedBenchmarkMatrixLoadBudgetMode = $0 }
+                                )
+                            ) {
+                                ForEach(RuntimeBenchmarkMatrixLoadBudgetMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            if viewModel.selectedBenchmarkMatrixLoadBudgetMode == .requests {
+                                TextField(
+                                    "Requests",
+                                    text: Binding(
+                                        get: { viewModel.benchMatrixRequests },
+                                        set: { viewModel.benchMatrixRequests = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            } else {
+                                TextField(
+                                    "Duration Seconds",
+                                    text: Binding(
+                                        get: { viewModel.benchMatrixDurationSeconds },
+                                        set: { viewModel.benchMatrixDurationSeconds = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        Toggle(
+                            "Allow Large Matrix",
+                            isOn: Binding(
+                                get: { viewModel.benchMatrixAllowLargeMatrix },
+                                set: { viewModel.benchMatrixAllowLargeMatrix = $0 }
+                            )
+                        )
+
+                        Text("\(viewModel.benchmarkMatrixCellCountText) • \(viewModel.benchmarkMatrixLoadBudgetSummaryText)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+
+                        if let export = viewModel.lastBenchmarkMatrixExport {
+                            Text("Matrix \(export.formatTitle) exported: \(export.rowCount) rows • \(export.outputPath)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1330,70 +2116,166 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             if let report = viewModel.lastDoctorReport {
                 GroupBox("Doctor Report") {
-                    Text(report.markdown)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopDoctorReportSummaryView(report: report)
                 }
             }
 
             GroupBox("Benchmark Results") {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
-                        Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
-                            .font(.headline)
-                        let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
-                        Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetLabel)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if viewModel.benchmarkMetricOptions.isEmpty {
-                        Text("Run a benchmark or refresh persisted results to visualize history.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker(
-                            "Metric",
-                            selection: Binding(
-                                get: { viewModel.selectedBenchmarkMetricName },
-                                set: { viewModel.selectBenchmarkMetric($0) }
-                            )
-                        ) {
-                            ForEach(viewModel.benchmarkMetricOptions, id: \.self) { metricName in
-                                Text(metricName).tag(metricName)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                            ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(metric.metricLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text(metric.valueText)
-                                        .font(.headline)
-                                        .monospacedDigit()
-                                    Text(metric.suiteTitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                            }
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
+                            Text("Selected run \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
+                                .font(.headline)
+                            let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                            Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.datasetLabel)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
-                        if viewModel.benchmarkChartPoints.isEmpty == false {
-                            Chart(viewModel.benchmarkChartPoints) { point in
-                                BarMark(
-                                    x: .value("Run", point.createdAtLabel),
-                                    y: .value("Value", point.value)
+                        if viewModel.benchmarkMetricOptions.isEmpty {
+                            Text("Run a benchmark or refresh persisted results to visualize history.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Metric",
+                                selection: Binding(
+                                    get: { viewModel.selectedBenchmarkMetricName },
+                                    set: { viewModel.selectBenchmarkMetric($0) }
                                 )
-                                .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                            ) {
+                                ForEach(viewModel.benchmarkMetricOptions, id: \.self) { metricName in
+                                    Text(metricName).tag(metricName)
+                                }
                             }
-                            .frame(height: 240)
-                            .chartLegend(position: .bottom)
+                            .pickerStyle(.menu)
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                                ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(metric.metricLabel)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(metric.valueText)
+                                            .font(.headline)
+                                            .monospacedDigit()
+                                        Text(metric.suiteTitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            if viewModel.benchmarkChartPoints.isEmpty == false {
+                                Chart(viewModel.benchmarkChartPoints) { point in
+                                    BarMark(
+                                        x: .value("Run", point.createdAtLabel),
+                                        y: .value("Value", point.value)
+                                    )
+                                    .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                                }
+                                .frame(height: 240)
+                                .chartLegend(position: .bottom)
+                            }
+                        }
+                    } else {
+                        if let selectedEntry = viewModel.selectedBenchmarkMatrixHistoryEntry {
+                            Text("Selected matrix run \(selectedEntry.jobID) • \(selectedEntry.createdAtText)")
+                                .font(.headline)
+                            let selectedSource = selectedEntry.sourceRepo.isEmpty ? selectedEntry.modelID : selectedEntry.sourceRepo
+                            Text("\(selectedEntry.taskTitle) • \(selectedSource) • \(selectedEntry.suiteSummary) • \(selectedEntry.cellCountText)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if viewModel.benchmarkMatrixSummaryRows.isEmpty {
+                            Text("Run a matrix benchmark or refresh persisted results to inspect matrix summaries.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                                ForEach(viewModel.benchmarkMatrixSummaryCards) { card in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(card.title)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(card.valueText)
+                                            .font(.headline)
+                                            .monospacedDigit()
+                                        Text(card.detail)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Summary Rows")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(viewModel.benchmarkMatrixSummaryRows.prefix(12)) { row in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(row.suiteTitle)
+                                                .font(.headline)
+                                            Spacer()
+                                            Text(row.createdAtText)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(row.configurationSummary)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(row.latencyText) • \(row.throughputText)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(row.successRateText) • \(row.peakMemoryText)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+
+                            if viewModel.benchmarkMatrixContextChartPoints.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Context vs TTFT")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Chart(viewModel.benchmarkMatrixContextChartPoints) { point in
+                                        LineMark(
+                                            x: .value("Context", point.xValue),
+                                            y: .value("TTFT", point.yValue)
+                                        )
+                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                    }
+                                    .frame(height: 220)
+                                    .chartLegend(position: .bottom)
+                                }
+                            }
+
+                            if viewModel.benchmarkMatrixThroughputChartPoints.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Batch / Concurrency Throughput")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Chart(viewModel.benchmarkMatrixThroughputChartPoints) { point in
+                                        BarMark(
+                                            x: .value("Batch", point.xValue),
+                                            y: .value("Throughput", point.yValue)
+                                        )
+                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                    }
+                                    .frame(height: 220)
+                                    .chartLegend(position: .bottom)
+                                }
+                            }
                         }
                     }
                 }
@@ -1402,46 +2284,85 @@ struct DesktopDiagnosticsToolSectionView: View {
 
             GroupBox("Benchmark History") {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
-                        Button {
-                            selectBenchmarkHistory(jobID: entry.jobID)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("\(entry.suiteTitle) • \(entry.jobID)")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(entry.statusText)
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
+                            Button {
+                                selectBenchmarkHistory(jobID: entry.jobID)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("\(entry.suiteTitle) • \(entry.jobID)")
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(entry.statusText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                    Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetLabel)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if entry.reportPath.isEmpty == false {
+                                        Text(entry.reportPath)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedBenchmarkHistoryJobID == entry.jobID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if viewModel.benchmarkHistory.isEmpty {
+                            Text("No persisted benchmark history yet.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ForEach(viewModel.benchmarkMatrixHistory.prefix(12)) { entry in
+                            Button {
+                                selectBenchmarkMatrixHistory(jobID: entry.jobID)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("\(entry.suiteSummary) • \(entry.jobID)")
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(entry.statusText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+                                    Text("\(entry.taskTitle) • \(sourceLabel)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("\(entry.cellCountText) • \(entry.loadBudgetText) • \(entry.createdAtText)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                let sourceLabel = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-                                Text("\(entry.taskTitle) • \(sourceLabel) • \(entry.datasetLabel)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text("sample \(entry.sampleSizeText) • batch \(entry.batchFactorText) • \(entry.metricCountText) • \(entry.createdAtText)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if entry.reportPath.isEmpty == false {
-                                    Text(entry.reportPath)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    viewModel.selectedBenchmarkMatrixHistoryJobID == entry.jobID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(
-                                viewModel.selectedBenchmarkHistoryJobID == entry.jobID
-                                ? Color.accentColor.opacity(0.12)
-                                : Color.secondary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12)
-                            )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                    }
-                    if viewModel.benchmarkHistory.isEmpty {
-                        Text("No persisted benchmark history yet.")
-                            .foregroundStyle(.secondary)
+                        if viewModel.benchmarkMatrixHistory.isEmpty {
+                            Text("No persisted benchmark matrix history yet.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1529,6 +2450,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
                     }
 
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Evaluation Controls")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
                     HStack(spacing: 16) {
                         TextField(
                             "Sample Size",
@@ -1562,6 +2490,26 @@ struct DesktopDiagnosticsToolSectionView: View {
                             )
                         )
                         .textFieldStyle(.roundedBorder)
+                    }
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Scoring Mode",
+                                text: Binding(
+                                    get: { viewModel.evaluationScoringMode },
+                                    set: { viewModel.evaluationScoringMode = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            TextField(
+                                "Code Exec Policy",
+                                text: Binding(
+                                    get: { viewModel.evaluationCodeExecPolicy },
+                                    set: { viewModel.evaluationCodeExecPolicy = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
                     }
 
                     if let export = viewModel.lastEvaluationExport {
@@ -1820,6 +2768,428 @@ struct DesktopAPIAuthenticationReferenceView: View {
     }
 }
 
+struct DesktopAPIQuickStartSnippet: Identifiable {
+    let id: String
+    let language: String
+    let title: String
+    let body: String
+}
+
+struct DesktopAPIQuickStartGroup: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let statusText: String
+    let note: String
+    let snippets: [DesktopAPIQuickStartSnippet]
+}
+
+struct DesktopAPIQuickStartPanel: View {
+    let foundation: DesktopFoundationState
+    let selectedSession: DesktopServerSessionState?
+
+    var body: some View {
+        GroupBox("Product Quick Starts") {
+            if let selectedSession {
+                let groups = desktopAPIQuickStartGroups(
+                    foundation: foundation,
+                    selectedSession: selectedSession
+                )
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Examples use the effective listener URL \(selectedSession.effectiveBaseURL).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(groups) { group in
+                        GroupBox(group.title) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text(group.summary)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(group.statusText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if group.note.isEmpty == false {
+                                    Text(group.note)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(group.snippets) { snippet in
+                                    GroupBox(snippet.title) {
+                                        Text(snippet.body)
+                                            .font(.caption.monospaced())
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if groups.isEmpty {
+                        Text("No product quick starts are published for the current API surfaces yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ContentUnavailableView(
+                    "No Server Session Selected",
+                    systemImage: "network.slash",
+                    description: Text("Start or select a server session to render session-aware quick-start snippets.")
+                )
+            }
+        }
+    }
+}
+
+func desktopAPIQuickStartGroups(
+    foundation: DesktopFoundationState,
+    selectedSession: DesktopServerSessionState
+) -> [DesktopAPIQuickStartGroup] {
+    let serviceBaseURL = selectedSession.effectiveBaseURL
+    let serviceRootURL = serviceBaseURL.hasSuffix("/v1")
+        ? String(serviceBaseURL.dropLast(3))
+        : serviceBaseURL
+    let authHeader = primaryGatewayHeader(for: selectedSession)
+    let modelID = selectedSession.modelID
+    let surfacesByID = Dictionary(uniqueKeysWithValues: foundation.apiSurfaces.map { ($0.id, $0) })
+
+    func fetchHeaderBlock(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        return headers.map { "        \"\($0.0)\": \"\($0.1)\"," }.joined(separator: "\n") + "\n"
+    }
+
+    func pythonHeaderLiteral(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        guard headers.isEmpty == false else {
+            return "{}"
+        }
+
+        return ([ "{"] + headers.map { "    \"\($0.0)\": \"\($0.1)\"," } + ["}"]).joined(separator: "\n")
+    }
+
+    func javascriptHeaderLiteral(extraHeaders: [(String, String)]) -> String {
+        let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+        guard headers.isEmpty == false else {
+            return "{}"
+        }
+
+        return ([ "{"] + headers.map { "  \"\($0.0)\": \"\($0.1)\"," } + ["}"]).joined(separator: "\n")
+    }
+
+    let anthropicPythonHeaders = fetchHeaderBlock(
+        extraHeaders: [
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+        ]
+    )
+    let anthropicJavaScriptHeaders = javascriptHeaderBlock(
+        extraHeaders: [
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+        ],
+        authHeader: authHeader
+    )
+
+    var groups: [DesktopAPIQuickStartGroup] = []
+
+    if let surface = surfacesByID["openai_compatible"] {
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: "",
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: openAICurlQuickStart(
+                            baseURL: serviceBaseURL,
+                            modelID: modelID,
+                            authHeader: authHeader
+                        )
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: """
+                        import requests
+
+                        headers = \(pythonHeaderLiteral(extraHeaders: [("Content-Type", "application/json")]))
+                        response = requests.post(
+                            "\(serviceBaseURL)/responses",
+                            headers=headers,
+                            json={
+                                "model": "\(modelID)",
+                                "stream": True,
+                                "input": "Hello from Melix"
+                            },
+                            timeout=30,
+                            stream=True,
+                        )
+                        response.raise_for_status()
+                        for line in response.iter_lines():
+                            if line:
+                                print(line.decode("utf-8"))
+                        """
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: """
+                        const response = await fetch("\(serviceBaseURL)/responses", {
+                          method: "POST",
+                          headers: \(javascriptHeaderLiteral(extraHeaders: [("Content-Type", "application/json")])),
+                          body: JSON.stringify({
+                            model: "\(modelID)",
+                            stream: true,
+                            input: "Hello from Melix"
+                          })
+                        });
+
+                        if (!response.ok || !response.body) {
+                          throw new Error(`Melix request failed: ${response.status}`);
+                        }
+
+                        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+                        while (true) {
+                          const { value, done } = await reader.read();
+                          if (done) break;
+                          process.stdout.write(value);
+                        }
+                        """
+                    ),
+                ]
+            )
+        )
+    }
+
+    if let surface = surfacesByID["anthropic_messages"] {
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: "",
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: anthropicCurlQuickStart(
+                            baseURL: serviceBaseURL,
+                            modelID: modelID,
+                            authHeader: authHeader
+                        )
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: [
+                            "import requests",
+                            "",
+                            "headers = {",
+                            anthropicPythonHeaders.trimmingCharacters(in: .newlines),
+                            "}",
+                            "",
+                            "response = requests.post(",
+                            "    \"\(serviceBaseURL)/messages\",",
+                            "    headers=headers,",
+                            "    json={",
+                            "        \"model\": \"\(modelID)\",",
+                            "        \"stream\": True,",
+                            "        \"max_tokens\": 128,",
+                            "        \"messages\": [{\"role\": \"user\", \"content\": \"Hello from Melix\"}]",
+                            "    },",
+                            "    timeout=30,",
+                            "    stream=True,",
+                            ")",
+                            "",
+                            "response.raise_for_status()",
+                            "for line in response.iter_lines():",
+                            "    if line:",
+                            "        print(line.decode(\"utf-8\"))",
+                        ].joined(separator: "\n")
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: [
+                            "const response = await fetch(\"\(serviceBaseURL)/messages\", {",
+                            "  method: \"POST\",",
+                            "  headers: {",
+                            anthropicJavaScriptHeaders.trimmingCharacters(in: .newlines),
+                            "  },",
+                            "  body: JSON.stringify({",
+                            "    model: \"\(modelID)\",",
+                            "    stream: true,",
+                            "    max_tokens: 128,",
+                            "    messages: [{ role: \"user\", content: \"Hello from Melix\" }]",
+                            "  })",
+                            "});",
+                            "",
+                            "if (!response.ok || !response.body) {",
+                            "  throw new Error(`Melix request failed: ${response.status}`);",
+                            "}",
+                            "",
+                            "const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();",
+                            "while (true) {",
+                            "  const { value, done } = await reader.read();",
+                            "  if (done) break;",
+                            "  process.stdout.write(value);",
+                            "}",
+                        ].joined(separator: "\n")
+                    ),
+                ]
+            )
+        )
+    }
+
+    if let surface = surfacesByID["ollama_compatibility"] {
+        let compatibilityLead = surface.compatibilityNote.isEmpty
+            ? "Native Ollama /api/* routes are not shipped yet."
+            : surface.compatibilityNote
+        groups.append(
+            DesktopAPIQuickStartGroup(
+                id: surface.id,
+                title: surface.title,
+                summary: surface.summary,
+                statusText: surface.statusText,
+                note: compatibilityLead,
+                snippets: [
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-curl",
+                        language: "curl",
+                        title: "curl",
+                        body: [
+                            "# Use this bridge only with clients that can override their provider endpoint.",
+                            healthCurlQuickStart(
+                                baseURL: serviceRootURL,
+                                authHeader: authHeader
+                            ),
+                            openAICurlQuickStart(
+                                baseURL: serviceBaseURL,
+                                modelID: modelID,
+                                authHeader: authHeader
+                            ),
+                        ].joined(separator: "\n")
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-python",
+                        language: "python",
+                        title: "Python",
+                        body: """
+                        # Point your client at Melix through an OpenAI-compatible bridge.
+                        import requests
+
+                        health_headers = \(pythonHeaderLiteral(extraHeaders: []))
+                        print(requests.get("\(serviceRootURL)/health", headers=health_headers, timeout=10).json())
+                        print("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).")
+                        """
+                    ),
+                    DesktopAPIQuickStartSnippet(
+                        id: "\(surface.id)-javascript",
+                        language: "javascript",
+                        title: "JavaScript",
+                        body: """
+                        // Native Ollama /api/* routes are not available yet.
+                        const health = await fetch("\(serviceRootURL)/health", {
+                          headers: \(javascriptHeaderLiteral(extraHeaders: []))
+                        });
+                        console.log(await health.json());
+                        console.log("Use \(serviceBaseURL) as the compatibility base URL for model \(modelID).");
+                        """
+                    ),
+                ]
+            )
+        )
+    }
+
+    return groups
+}
+
+private func openAICurlQuickStart(
+    baseURL: String,
+    modelID: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -N -sS \(baseURL)/responses \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
+    }
+    lines.append("  -H \"Content-Type: application/json\" \\")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"stream\":true,\"input\":\"Hello from Melix\"}'")
+    return lines.joined(separator: "\n")
+}
+
+private func anthropicCurlQuickStart(
+    baseURL: String,
+    modelID: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -N -sS \(baseURL)/messages \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\" \\")
+    }
+    lines.append("  -H \"anthropic-version: 2023-06-01\" \\")
+    lines.append("  -H \"Content-Type: application/json\" \\")
+    lines.append("  -d '{\"model\":\"\(modelID)\",\"stream\":true,\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Melix\"}]}'")
+    return lines.joined(separator: "\n")
+}
+
+private func healthCurlQuickStart(
+    baseURL: String,
+    authHeader: (String, String)?
+) -> String {
+    var lines = ["curl -sS \(baseURL)/health \\"]
+    if let authHeader {
+        lines.append("  -H \"\(authHeader.0): \(authHeader.1)\"")
+    } else {
+        lines = ["curl -sS \(baseURL)/health"]
+    }
+    return lines.joined(separator: "\n")
+}
+
+private func javascriptHeaderBlock(
+    extraHeaders: [(String, String)],
+    authHeader: (String, String)?
+) -> String {
+    let headers = extraHeaders + (authHeader.map { [$0] } ?? [])
+    return headers.map { "    \"\($0.0)\": \"\($0.1)\"," }.joined(separator: "\n") + "\n"
+}
+
+private func primaryGatewayHeader(
+    for session: DesktopServerSessionState
+) -> (String, String)? {
+    switch session.sharedAccessState {
+    case .localOnly:
+        return session.authMode == .bearerToken
+            ? ("Authorization", "Bearer \(session.integrationAuthValue)")
+            : nil
+    case .configuredDisabled:
+        return nil
+    case .enabled:
+        switch session.authMode {
+        case .none:
+            return nil
+        case .bearerToken:
+            return ("Authorization", "Bearer \(session.integrationAuthValue)")
+        case .apiKeys:
+            return ("x-api-key", session.integrationAuthValue)
+        }
+    }
+}
+
 struct DesktopServerGatewayAccessSummaryView: View {
     let session: DesktopServerSessionState
 
@@ -1834,6 +3204,14 @@ struct DesktopServerGatewayAccessSummaryView: View {
                     .foregroundStyle(.secondary)
                 if session.accessKeyCount > 0 {
                     Text("Configured key hints (\(session.accessKeyCount)): \(session.accessKeyHintsText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(session.persistentSessionSummaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if session.lastAuthSessionSignOutLatencyMs > 0 {
+                    Text("Last sign-out latency: \(String(format: "%.2f", session.lastAuthSessionSignOutLatencyMs)) ms")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1937,7 +3315,13 @@ struct DesktopAPIWorkspaceView: View {
                             )
                         )
                     case .quickStarts:
-                        DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
+                        VStack(alignment: .leading, spacing: 18) {
+                            DesktopAPIQuickStartPanel(
+                                foundation: foundation,
+                                selectedSession: viewModel.selectedServerSession
+                            )
+                            DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
+                        }
                     case .endpoints:
                         DesktopAPIReferenceTabView(foundation: foundation)
                     }
@@ -1987,7 +3371,7 @@ struct DesktopAPIWorkspaceView: View {
     }
 
     private var defaultBaseURL: String {
-        viewModel.selectedServerSession?.baseURL ?? "http://127.0.0.1:8080/v1"
+        viewModel.selectedServerSession?.effectiveBaseURL ?? "http://127.0.0.1:8080/v1"
     }
 }
 
@@ -2008,13 +3392,13 @@ func desktopAPIAuthenticationReferenceText(
     switch selectedSession.sharedAccessState {
     case .localOnly:
         if selectedSession.authMode == .bearerToken {
-            return "\(exportLead)Use Authorization: Bearer \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL)."
+            return "\(exportLead)Use Authorization: Bearer \(selectedSession.integrationAuthValue) for \(selectedSession.effectiveBaseURL)."
         }
-        return "\(exportLead)Local trusted mode does not require authentication for \(selectedSession.baseURL)."
+        return "\(exportLead)Local trusted mode does not require authentication for \(selectedSession.effectiveBaseURL)."
     case .configuredDisabled:
-        return "\(exportLead)Shared access is configured but disabled. Local trusted clients can call \(selectedSession.baseURL) without auth. Prepared key hints: \(selectedSession.accessKeyHintsText)."
+        return "\(exportLead)Shared access is configured but disabled. Local trusted clients can call \(selectedSession.effectiveBaseURL) without auth. Prepared key hints: \(selectedSession.accessKeyHintsText)."
     case .enabled:
-        return "\(exportLead)Shared access is enabled. Use x-api-key or Authorization: Bearer with \(selectedSession.integrationAuthValue) for \(selectedSession.baseURL). Key hints: \(selectedSession.accessKeyHintsText)."
+        return "\(exportLead)Shared access is enabled. Use x-api-key or Authorization: Bearer with \(selectedSession.integrationAuthValue) for \(selectedSession.effectiveBaseURL). Key hints: \(selectedSession.accessKeyHintsText)."
     }
 }
 

@@ -33,7 +33,7 @@ from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
 from worker.model_ops.hub_catalog import HubCatalog
-from worker.registry import MemoryBudgetExceeded, WorkerRegistry
+from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -109,12 +109,22 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                 request.model,
                 pin_on_load=request.pin_on_load,
                 memory_budget_bytes=request.memory_budget_bytes,
+                disk_streaming_mode=request.disk_streaming_mode,
             )
         except MemoryBudgetExceeded as exc:
             return runtime_pb2.LoadModelResponse(
                 ok=False,
                 error=common_pb2.ErrorStatus(
                     code="memory_budget_exceeded",
+                    message=str(exc),
+                    details=exc.details,
+                ),
+            )
+        except DiskStreamingUnsupported as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="disk_streaming_unsupported",
                     message=str(exc),
                     details=exc.details,
                 ),
@@ -253,6 +263,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def RunBench(self, request, context):
         yield from self._core.bench_events(request)
 
+    def RunBenchMatrix(self, request, context):
+        _ = context
+        return self._core.bench_matrix_response(request)
+
     def RunEvaluation(self, request, context):
         try:
             parameters = dict(request.parameters)
@@ -265,6 +279,10 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 suite_id=request.suite_id,
                 dataset_root=Path(request.dataset_root) if request.dataset_root else self._default_dataset_root(request.dataset_id),
                 sample_size=request.sample_size,
+                few_shot=int(request.few_shot) if request.few_shot else None,
+                seed=int(request.seed) if request.seed else None,
+                scoring_mode=request.scoring_mode or None,
+                code_exec_policy=request.code_exec_policy or None,
                 parameters=parameters,
             )
         except Exception as exc:

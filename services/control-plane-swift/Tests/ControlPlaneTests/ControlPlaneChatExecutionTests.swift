@@ -14,6 +14,7 @@ struct ControlPlaneChatExecutionTests {
                 .init(role: "user", content: "Hello"),
                 .init(role: "assistant", content: "World"),
             ],
+            resumeRequestID: "req-resume-42",
             temperature: 0.2,
             topP: 0.8,
             maxTokens: 256
@@ -24,6 +25,7 @@ struct ControlPlaneChatExecutionTests {
             .init(role: "user", content: "Hello"),
             .init(role: "assistant", content: "World"),
         ])
+        #expect(request.resumeRequestID == "req-resume-42")
         #expect(request.temperature == 0.2)
         #expect(request.topP == 0.8)
         #expect(request.maxTokens == 256)
@@ -111,6 +113,34 @@ struct ControlPlaneChatExecutionTests {
         #expect(observed == [
             .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
             .completed(finishReason: "stop", assistantText: "Assistant", reasoningText: "Reasoning"),
+        ])
+    }
+
+    @Test("chat execution can surface lifecycle events alongside stream payloads")
+    func chatExecutionCanSurfaceLifecycleEventsAlongsideStreamPayloads() async throws {
+        let execution = ControlPlaneChatExecution(
+            requestID: "chat-request-lifecycle",
+            modelID: "melix-dev-text",
+            stream: AsyncThrowingStream { continuation in
+                continuation.finish()
+            },
+            lifecycle: AsyncStream { continuation in
+                continuation.yield(.active)
+                continuation.yield(.disconnectGraceStarted(timeoutMs: 50))
+                continuation.yield(.resumed(recoveryLatencyMs: 12))
+                continuation.finish()
+            }
+        )
+
+        var lifecycle: [ConnectionLifecycleEvent] = []
+        for await event in execution.lifecycle {
+            lifecycle.append(event)
+        }
+
+        #expect(lifecycle == [
+            .active,
+            .disconnectGraceStarted(timeoutMs: 50),
+            .resumed(recoveryLatencyMs: 12),
         ])
     }
 }

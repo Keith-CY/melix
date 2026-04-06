@@ -1,5 +1,13 @@
 # M8.2 Provider, Org, Model, And Variant Scanning
 
+## Status
+
+Completed on 2026-04-04. Melix now scans structured `provider/org/model/variant` trees,
+preserves sidecar override precedence, projects structured discovery identity through worker-owned
+registry snapshots and the Swift control-plane catalog, and records the changed-line coverage
+evidence for the touched Python, Swift, and integration scope in the backend-foundations
+implementation plan.
+
 ## Goal
 
 Scan models using a structured `provider/org/model/variant` hierarchy rather than one flat directory interpretation.

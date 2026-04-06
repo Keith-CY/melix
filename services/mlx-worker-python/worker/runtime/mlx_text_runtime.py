@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import importlib.util
 from typing import Any
 
+from worker.runtime.text_family_adapters import resolve_text_family_config
+
 
 class RuntimeUnavailableError(RuntimeError):
     pass
@@ -81,11 +83,17 @@ class AutoMLXBackend:
         self._ensure_runtime()
         loaded = self._load_fn(model_spec.model_path, lazy=False)
         model, tokenizer = loaded[:2]
+        family_config = resolve_text_family_config(
+            dict(model_spec.ext),
+            model_path=model_spec.model_path,
+            default_route_kind=model_spec.ext.get("melix.capability.route_kind", "swift_text") or "swift_text",
+        )
         return {
             "model_id": model_spec.model_id,
             "model_path": model_spec.model_path,
             "model": model,
             "tokenizer": tokenizer,
+            **family_config.runtime_metadata(),
         }
 
     def estimate_resident_bytes(self, model_spec) -> int:

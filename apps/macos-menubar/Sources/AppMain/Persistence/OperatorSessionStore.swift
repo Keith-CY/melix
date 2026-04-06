@@ -3,26 +3,55 @@ import Foundation
 public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var selectedSurface: DesktopSurface
+    public var selectedToolSection: DesktopToolSection
     public var selectedServerSessionID: String
     public var serverSessions: [DesktopServerSessionState]
+    public var dismissedBannerIDs: [String]
+    public var downloadQueue: [RuntimeDownloadQueueEntryState]
 
     public init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 3,
         selectedSurface: DesktopSurface,
+        selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
-        serverSessions: [DesktopServerSessionState]
+        serverSessions: [DesktopServerSessionState],
+        dismissedBannerIDs: [String] = [],
+        downloadQueue: [RuntimeDownloadQueueEntryState] = []
     ) {
         self.schemaVersion = schemaVersion
         self.selectedSurface = selectedSurface
+        self.selectedToolSection = selectedToolSection
         self.selectedServerSessionID = selectedServerSessionID
         self.serverSessions = serverSessions
+        self.dismissedBannerIDs = dismissedBannerIDs
+        self.downloadQueue = downloadQueue
     }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case selectedSurface = "selected_surface"
+        case selectedToolSection = "selected_tool_section"
         case selectedServerSessionID = "selected_server_session_id"
         case serverSessions = "server_sessions"
+        case dismissedBannerIDs = "dismissed_banner_ids"
+        case downloadQueue = "download_queue"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        selectedSurface = try container.decode(DesktopSurface.self, forKey: .selectedSurface)
+        selectedToolSection = try container.decodeIfPresent(
+            DesktopToolSection.self,
+            forKey: .selectedToolSection
+        ) ?? .modelsLibrary
+        selectedServerSessionID = try container.decode(String.self, forKey: .selectedServerSessionID)
+        serverSessions = try container.decode([DesktopServerSessionState].self, forKey: .serverSessions)
+        dismissedBannerIDs = try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? []
+        downloadQueue = try container.decodeIfPresent(
+            [RuntimeDownloadQueueEntryState].self,
+            forKey: .downloadQueue
+        ) ?? []
     }
 }
 

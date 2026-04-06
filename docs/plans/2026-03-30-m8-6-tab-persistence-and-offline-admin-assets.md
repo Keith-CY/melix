@@ -1,5 +1,9 @@
 # M8.6 Tab Persistence And Offline Admin Assets
 
+Status: completed. Admin-surface tool-section state now persists across restart through
+product-owned operator-session storage, a repository-owned smoke command verifies persistence
+and secure file ownership, and the offline admin-assets contract is documented in the runbook.
+
 ## Goal
 
 Persist admin-surface navigation state and ensure the operator experience does not depend on external CDN-hosted assets where offline packaging matters.
@@ -25,8 +29,11 @@ Persist admin-surface navigation state and ensure the operator experience does n
 
 ## Verification
 
+- `python3 scripts/m8_admin_state_smoke.py --json`
+- `make proto`
+- `make py-test`
 - `make swift-test`
-- state-persistence smoke command for the touched scope
+- `make integration-test`
 
 ## Acceptance
 

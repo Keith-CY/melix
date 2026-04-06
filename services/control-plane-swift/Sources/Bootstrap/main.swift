@@ -12,7 +12,16 @@ enum MelixControlPlaneBootstrap {
         let mcpToolCatalog = MCPToolCatalog.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicyStore = GatewayAccessPolicyStore(gatewayAccessPolicy)
+        let gatewayConfigStore = GatewayConfigStore(environment: ProcessInfo.processInfo.environment)
+        let gatewayServingDefaultsStore = GatewayServingDefaultsStore(environment: ProcessInfo.processInfo.environment)
+        let gatewayRuntimeBinding = await gatewayConfigStore.bootstrapBinding()
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
+        let persistentAuthSessionStore = PersistentAuthSessionStore(
+            environment: ProcessInfo.processInfo.environment,
+            metricsStore: metricsStore
+        )
+        _ = try? await persistentAuthSessionStore.restorePersistedSessions()
+        try? await persistentAuthSessionStore.reconcile(with: gatewayAccessPolicy)
         await metricsStore.set(
             Date().timeIntervalSince(mcpLoadStartedAt) * 1000,
             forKey: "mcp.config_load_latency_ms"
@@ -25,10 +34,34 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(Double(gatewayAccessPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
         await metricsStore.set(gatewayAccessPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
         await metricsStore.set(gatewayAccessPolicy.sharedAccessReady ? 1 : 0, forKey: "shared_access.ready")
+        await metricsStore.set(Double(gatewayRuntimeBinding.port), forKey: "gateway.listener_port")
         await metricsStore.set(0, forKey: "gateway.api_key_apply_ms")
+        await metricsStore.set(0, forKey: "gateway.config_apply_ms")
+        await metricsStore.set(0, forKey: "gateway.config_persist_failures")
+        await metricsStore.set(0, forKey: "gateway.config_requires_restart_count")
+        await metricsStore.set(0, forKey: "gateway.serving_defaults_apply_ms")
+        await metricsStore.set(0, forKey: "gateway.serving_defaults_persist_failures")
+        await metricsStore.set(0, forKey: "gateway.generation_default_merge_count")
+        await metricsStore.set(0, forKey: "gateway.speculative_config_apply_ms")
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
         await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
+        await metricsStore.set(0, forKey: "persistent_session.active_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.remembered_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.expired_session_count")
+        await metricsStore.set(0, forKey: "persistent_session.restore_success_rate")
+        await metricsStore.set(0, forKey: "persistent_session.sign_out_latency_ms")
+        await metricsStore.set(
+            Double(
+                max(
+                    Int(
+                        ProcessInfo.processInfo.environment["MELIX_PERSISTENT_AUTH_SESSION_TTL_SECONDS"] ?? ""
+                    ) ?? 2_592_000,
+                    1
+                )
+            ),
+            forKey: "persistent_session.retention_ttl_seconds"
+        )
         let eventHub = EventSubscriptionHub()
         let sessionGraphStore = SessionGraphStore(metricsStore: metricsStore)
         let cacheMetadataStore = CacheMetadataStore()
@@ -71,7 +104,11 @@ enum MelixControlPlaneBootstrap {
             imageJobReadModel: imageJobReadModel,
             imageJobAdmissionController: imageJobAdmissionController,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayServingDefaultsStore: gatewayServingDefaultsStore,
+            gatewayRuntimeBinding: gatewayRuntimeBinding,
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            persistentAuthSessionStore: persistentAuthSessionStore
         )
 
         let handler = OpenAIHandler(
@@ -92,12 +129,15 @@ enum MelixControlPlaneBootstrap {
             imageJobAdmissionController: imageJobAdmissionController,
             cacheMetadataStore: cacheMetadataStore,
             mcpToolCatalog: mcpToolCatalog,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            gatewayServingDefaultsStore: gatewayServingDefaultsStore,
+            gatewayRuntimeBinding: gatewayRuntimeBinding,
+            persistentAuthSessionStore: persistentAuthSessionStore
         )
 
         let server = try BootstrapHTTPServer(
-            host: ProcessInfo.processInfo.environment["MELIX_HTTP_HOST"] ?? "127.0.0.1",
-            port: Self.httpPort(),
+            host: gatewayRuntimeBinding.host,
+            port: UInt16(gatewayRuntimeBinding.port),
             handler: handler
         )
         try await server.start()
@@ -110,18 +150,8 @@ enum MelixControlPlaneBootstrap {
             modelCatalog: modelCatalog,
             metricsStore: metricsStore
         )
-        print("Melix control plane ready on http://127.0.0.1:\(Self.httpPort())")
+        print("Melix control plane ready on http://\(gatewayRuntimeBinding.host):\(gatewayRuntimeBinding.port)")
         await server.waitUntilStopped()
-    }
-
-    private static func httpPort() -> UInt16 {
-        guard
-            let raw = ProcessInfo.processInfo.environment["MELIX_HTTP_PORT"],
-            let port = UInt16(raw)
-        else {
-            return 11434
-        }
-        return port
     }
 }
 
@@ -319,6 +349,8 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             method = .get
         case "POST":
             method = .post
+        case "DELETE":
+            method = .delete
         default:
             return .failure(.invalid)
         }

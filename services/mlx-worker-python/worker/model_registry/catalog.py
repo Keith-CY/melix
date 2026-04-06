@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
 import time
+from typing import Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime.image_family_adapters import (
+    detect_image_family_identity,
+    resolve_image_family_config,
+)
+from worker.runtime.text_family_adapters import (
+    detect_text_family_identity,
+    resolve_text_family_config,
+)
 
 _ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
 _CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
@@ -19,6 +29,7 @@ _REGISTRY_PROVIDER_ID_KEY = "melix.registry_provider_id"
 _REGISTRY_ORGANIZATION_ID_KEY = "melix.registry_organization_id"
 _REGISTRY_MODEL_NAME_KEY = "melix.registry_model_name"
 _REGISTRY_VARIANT_ID_KEY = "melix.registry_variant_id"
+_TEXT_BACKEND_ID_KEY = "text_backend_id"
 _AUDIO_BACKEND_ID_KEY = "melix.audio.backend_id"
 _AUDIO_FAMILY_ID_KEY = "melix.audio.family_id"
 _AUDIO_INSTALL_PROFILE_KEY = "melix.audio.install_profile"
@@ -26,12 +37,23 @@ _AUDIO_LANGUAGES_KEY = "melix.audio.languages"
 _AUDIO_VOICE_MODE_KEY = "melix.audio.voice_mode"
 _AUDIO_OUTPUT_FORMATS_KEY = "melix.audio.output_formats"
 _AUDIO_SUPPORTS_INSTRUCTIONS_KEY = "melix.audio.supports_instructions"
+_AUDIO_VOICE_CATALOG_SUMMARY_KEY = "melix.audio.voice_catalog_summary"
+_AUDIO_VOICE_LOCALES_KEY = "melix.audio.voice_locales"
+_AUDIO_DEFAULT_LOCALE_KEY = "melix.audio.default_locale"
+_AUDIO_PACKAGED_DEFAULT_LOCALE_KEY = "melix.audio.packaged_default_locale"
+_AUDIO_LOCALE_POLICY_KEY = "melix.audio.locale_policy"
+_GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
+_GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
+_GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
+_GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
+_GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 
 
 @dataclass(frozen=True)
 class RegistryRootSnapshot:
     root_id: str
     root_path: str
+    root_order: int
     accessible: bool
     error_code: str = ""
     error_message: str = ""
@@ -47,6 +69,65 @@ class RegistrySnapshot:
 
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _normalized_generation_config_value(value: object) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _merge_generation_config_metadata(
+    model_dir: Path,
+    *,
+    ext: dict[str, str],
+) -> None:
+    generation_config_path = model_dir / "generation_config.json"
+    if not generation_config_path.is_file():
+        return
+
+    try:
+        payload = json.loads(generation_config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    recognized_values = {
+        _GENERATION_CONFIG_TEMPERATURE_KEY: payload.get("temperature"),
+        _GENERATION_CONFIG_TOP_P_KEY: payload.get("top_p"),
+        _GENERATION_CONFIG_MAX_TOKENS_KEY: payload.get("max_new_tokens"),
+        _GENERATION_CONFIG_DO_SAMPLE_KEY: payload.get("do_sample"),
+    }
+    imported_any = False
+    for ext_key, raw_value in recognized_values.items():
+        if _normalized(ext.get(ext_key)):
+            continue
+        normalized_value = _normalized_generation_config_value(raw_value)
+        if normalized_value is None:
+            continue
+        ext[ext_key] = normalized_value
+        imported_any = True
+
+    if imported_any and not _normalized(ext.get(_GENERATION_CONFIG_SOURCE_KEY)):
+        ext[_GENERATION_CONFIG_SOURCE_KEY] = str(generation_config_path)
+
+
+def _load_model_config_payload(model_dir: Path) -> dict[str, object]:
+    config_path = model_dir / "config.json"
+    if not config_path.is_file():
+        return {}
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _path_derived_registry_identity(relative_parts: tuple[str, ...]) -> tuple[str, str, str, str] | None:
@@ -115,6 +196,66 @@ def _capability_metadata(
     if tool_parser_xml_fallback:
         metadata["tool_parser_xml_fallback"] = "true"
     return metadata
+
+
+def _text_capability_metadata(
+    *,
+    model_path: str,
+    metadata: dict[str, str] | None = None,
+    config_payload: dict[str, object] | None = None,
+    default_route_kind: str,
+) -> dict[str, str]:
+    resolved = resolve_text_family_config(
+        metadata,
+        model_path=model_path,
+        config_payload=config_payload,
+        default_route_kind=default_route_kind,
+    )
+    detected = detect_text_family_identity(
+        model_path=model_path,
+        config_payload=config_payload,
+        explicit_family_id="",
+    )
+    identity_override = (
+        resolved.family_id != detected.family_id
+        or resolved.architecture != detected.architecture
+    )
+    return {
+        **resolved.capability_metadata(),
+        "detected_architecture": detected.architecture,
+        "detected_family_id": detected.family_id,
+        "detected_identity_source": detected.source,
+        "identity_override": "true" if identity_override else "false",
+    }
+
+
+def _image_capability_metadata(
+    *,
+    model_path: str,
+    metadata: dict[str, str] | None = None,
+    default_task_kind: str,
+) -> dict[str, str]:
+    metadata = dict(metadata or {})
+    resolved = resolve_image_family_config(
+        metadata,
+        model_path=model_path,
+        default_task_kind=default_task_kind,
+    )
+    detected = detect_image_family_identity(
+        model_path=model_path,
+        explicit_family_id=metadata.get("melix.image.family_id", ""),
+        explicit_task_kind=metadata.get("melix.image.task_kind", ""),
+    )
+    identity_override = bool(metadata.get("melix.image.family_id")) or resolved.family_id != detected.family_id
+    task_override = bool(metadata.get("melix.image.task_kind")) or resolved.task_kind != detected.task_kind
+    return {
+        **resolved.capability_metadata(),
+        "detected_family_id": detected.family_id,
+        "detected_identity_source": detected.source,
+        "detected_task_kind": detected.task_kind,
+        "identity_override": "true" if identity_override else "false",
+        "task_override": "true" if task_override else "false",
+    }
 
 
 def _embedding_capability_metadata(family_id: str) -> dict[str, str]:
@@ -302,6 +443,11 @@ def _audio_metadata(
     voice_mode: str = "",
     output_formats: tuple[str, ...] = (),
     supports_instructions: bool = False,
+    voice_catalog_summary: str = "",
+    voice_locales: tuple[str, ...] = (),
+    default_locale: str = "",
+    packaged_default_locale: str = "",
+    locale_policy: str = "",
 ) -> dict[str, str]:
     return {
         _AUDIO_BACKEND_ID_KEY: backend_id,
@@ -311,6 +457,11 @@ def _audio_metadata(
         _AUDIO_VOICE_MODE_KEY: voice_mode,
         _AUDIO_OUTPUT_FORMATS_KEY: ",".join(output_formats),
         _AUDIO_SUPPORTS_INSTRUCTIONS_KEY: "true" if supports_instructions else "false",
+        _AUDIO_VOICE_CATALOG_SUMMARY_KEY: voice_catalog_summary,
+        _AUDIO_VOICE_LOCALES_KEY: ",".join(voice_locales),
+        _AUDIO_DEFAULT_LOCALE_KEY: default_locale,
+        _AUDIO_PACKAGED_DEFAULT_LOCALE_KEY: packaged_default_locale,
+        _AUDIO_LOCALE_POLICY_KEY: locale_policy,
     }
 
 
@@ -337,7 +488,10 @@ class WorkerModelCatalog:
             if model is not None:
                 self._seed_models[model.model_id] = model
         self._models = dict(self._seed_models)
-        self._last_registry_snapshot = self._refresh_registry_snapshot()
+        self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
+        self._active_registry_roots = tuple(self._configured_registry_roots())
+        self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
+        self._registry_snapshot_cache[self._active_registry_roots] = self._last_registry_snapshot
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
         return self._models.get(model_id)
@@ -345,19 +499,37 @@ class WorkerModelCatalog:
     def all_models(self) -> list[common_pb2.ModelSpec]:
         return [self._models[model_id] for model_id in sorted(self._models)]
 
-    def registry_snapshot(self, *, rescan: bool = False) -> RegistrySnapshot:
-        if rescan:
-            self._last_registry_snapshot = self._refresh_registry_snapshot()
-        return self._last_registry_snapshot
+    def registry_snapshot(
+        self,
+        *,
+        rescan: bool = False,
+        registry_roots: Iterable[str] | None = None,
+    ) -> RegistrySnapshot:
+        roots_key = tuple(self._configured_registry_roots() if registry_roots is None else self._normalized_registry_roots(registry_roots))
+        if rescan or roots_key not in self._registry_snapshot_cache:
+            self._registry_snapshot_cache[roots_key] = self._refresh_registry_snapshot(roots_key)
+        snapshot = self._registry_snapshot_cache[roots_key]
+        self._active_registry_roots = roots_key
+        self._last_registry_snapshot = snapshot
+        self._models = dict(self._seed_models)
+        for model in snapshot.models:
+            self._models.setdefault(model.model_id, model)
+        return snapshot
 
-    def registry_snapshot_payload(self, *, rescan: bool = False) -> dict[str, object]:
-        snapshot = self.registry_snapshot(rescan=rescan)
+    def registry_snapshot_payload(
+        self,
+        *,
+        rescan: bool = False,
+        registry_roots: Iterable[str] | None = None,
+    ) -> dict[str, object]:
+        snapshot = self.registry_snapshot(rescan=rescan, registry_roots=registry_roots)
         return {
             "scanned_at_unix_ms": snapshot.scanned_at_unix_ms,
             "roots": [
                 {
                     "root_id": root.root_id,
                     "root_path": root.root_path,
+                    "root_order": root.root_order,
                     "accessible": root.accessible,
                     "error_code": root.error_code,
                     "error_message": root.error_message,
@@ -382,29 +554,30 @@ class WorkerModelCatalog:
             ],
         }
 
-    def _refresh_registry_snapshot(self) -> RegistrySnapshot:
-        roots, discovered_models = self._scan_registry_roots()
-        self._models = dict(self._seed_models)
-        for model_id, model in discovered_models.items():
-            self._models.setdefault(model_id, model)
+    def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
+        roots, discovered_models = self._scan_registry_roots(registry_roots)
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
             scanned_at_unix_ms=int(time.time() * 1000),
         )
 
-    def _scan_registry_roots(self) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
+    def _scan_registry_roots(
+        self,
+        registry_roots: tuple[str, ...],
+    ) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
         roots: list[RegistryRootSnapshot] = []
         discovered_models: dict[str, common_pb2.ModelSpec] = {}
 
-        for index, root_path in enumerate(self._configured_registry_roots(), start=1):
-            root_id = f"root-{index}"
+        for index, root_path in enumerate(registry_roots, start=1):
+            root_id = _stable_registry_root_id(root_path)
             root = Path(root_path)
             if not root.is_dir():
                 roots.append(
                     RegistryRootSnapshot(
                         root_id=root_id,
                         root_path=str(root),
+                        root_order=index,
                         accessible=False,
                         error_code="not_found",
                         error_message="Registry root does not exist.",
@@ -428,6 +601,7 @@ class WorkerModelCatalog:
                     continue
                 model.ext["melix.registry_root_id"] = root_id
                 model.ext["melix.registry_root_path"] = str(root)
+                model.ext["melix.registry_root_order"] = str(index)
                 model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
                 model.ext["melix.model_path"] = str(manifest_path.parent)
                 discovered_models[model_id] = model
@@ -437,6 +611,7 @@ class WorkerModelCatalog:
                 RegistryRootSnapshot(
                     root_id=root_id,
                     root_path=str(root),
+                    root_order=index,
                     accessible=True,
                     discovered_model_ids=tuple(accepted_model_ids),
                 )
@@ -449,14 +624,20 @@ class WorkerModelCatalog:
         if not raw.strip():
             return []
 
+        return self._normalized_registry_roots(raw.split(os.pathsep))
+
+    def _normalized_registry_roots(self, raw_roots: Iterable[str]) -> list[str]:
         roots: list[str] = []
         seen: set[str] = set()
-        for part in raw.split(os.pathsep):
+        for part in raw_roots:
             normalized = part.strip()
-            if not normalized or normalized in seen:
+            if not normalized:
                 continue
-            seen.add(normalized)
-            roots.append(normalized)
+            canonical = _canonical_registry_root_path(normalized)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            roots.append(canonical)
         return roots
 
     @staticmethod
@@ -500,6 +681,25 @@ class WorkerModelCatalog:
         parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
+        config_payload = _load_model_config_payload(manifest_path.parent)
+        if model_kind == "text":
+            normalized_ext.update(
+                _text_capability_metadata(
+                    model_path=str(manifest_path.parent),
+                    metadata=normalized_ext,
+                    config_payload=config_payload,
+                    default_route_kind="python_text_compatibility",
+                )
+            )
+        if model_kind == "image":
+            normalized_ext.update(
+                _image_capability_metadata(
+                    model_path=str(manifest_path.parent),
+                    metadata=normalized_ext,
+                    default_task_kind=normalized_ext.get("melix.image.task_kind", "text-to-image"),
+                )
+            )
+        _merge_generation_config_metadata(manifest_path.parent, ext=normalized_ext)
 
         return model_id, common_pb2.ModelSpec(
             model_id=model_id,
@@ -517,9 +717,22 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_text_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        model_path = environment.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text")
+        configured_family_id = _normalized(environment.get("MELIX_DEV_TEXT_FAMILY_ID"))
+        configured_route_kind = _normalized(environment.get("MELIX_DEV_TEXT_ROUTE_KIND"))
+        metadata: dict[str, str] = {}
+        if configured_family_id:
+            metadata["text_family_id"] = configured_family_id
+        if configured_route_kind:
+            metadata["melix.capability.route_kind"] = configured_route_kind
+        text_metadata = _text_capability_metadata(
+            model_path=model_path,
+            metadata=metadata,
+            default_route_kind="swift_text",
+        )
         return common_pb2.ModelSpec(
             model_id="melix-dev-text",
-            model_path=environment.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text"),
+            model_path=model_path,
             model_kind="text",
             revision="dev",
             tokenizer_hash="tok-dev",
@@ -527,6 +740,7 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=8192,
+            ext=text_metadata,
         )
 
     @staticmethod
@@ -725,6 +939,11 @@ class WorkerModelCatalog:
                     voice_mode="named",
                     output_formats=("wav", "mp3"),
                     supports_instructions=False,
+                    voice_catalog_summary="Deterministic synthetic default voice.",
+                    voice_locales=("und",),
+                    default_locale="und",
+                    packaged_default_locale="und",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )
@@ -732,9 +951,22 @@ class WorkerModelCatalog:
     @staticmethod
     def dev_image_model(environment: dict[str, str] | None = None) -> common_pb2.ModelSpec:
         environment = dict(environment or os.environ)
+        model_path = environment.get("MELIX_DEV_IMAGE_MODEL_PATH", "models/melix-dev-image")
+        configured_family_id = _normalized(environment.get("MELIX_DEV_IMAGE_FAMILY_ID"))
+        configured_task_kind = _normalized(environment.get("MELIX_DEV_IMAGE_TASK_KIND"))
+        metadata: dict[str, str] = {}
+        if configured_family_id:
+            metadata["melix.image.family_id"] = configured_family_id
+        if configured_task_kind:
+            metadata["melix.image.task_kind"] = configured_task_kind
+        image_metadata = _image_capability_metadata(
+            model_path=model_path,
+            metadata=metadata,
+            default_task_kind=configured_task_kind or "text-to-image",
+        )
         return common_pb2.ModelSpec(
             model_id="melix-dev-image",
-            model_path=environment.get("MELIX_DEV_IMAGE_MODEL_PATH", "models/melix-dev-image"),
+            model_path=model_path,
             model_kind="image",
             revision="dev",
             tokenizer_hash="tok-image-dev",
@@ -742,18 +974,7 @@ class WorkerModelCatalog:
             parser_mode="text",
             reasoning_mode="off",
             max_context=4096,
-            ext={
-                "melix.image.backend_id": "deterministic",
-                "melix.image.task_kind": "text-to-image",
-                **_capability_metadata(
-                    adapter_set_hash="image-family-deterministic-v1",
-                    route_kind="python_image",
-                    capability_class="image_generation",
-                    supported_modalities=("text", "image"),
-                    supported_tasks=("image_generate", "image_edit"),
-                    supported_parsers=("text",),
-                ),
-            },
+            ext=image_metadata,
         )
 
     @staticmethod
@@ -842,6 +1063,11 @@ class WorkerModelCatalog:
                     voice_mode="named",
                     output_formats=("wav",),
                     supports_instructions=False,
+                    voice_catalog_summary="Named English voices exposed by the Kokoro speaker catalog.",
+                    voice_locales=("en",),
+                    default_locale="en",
+                    packaged_default_locale="en",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )
@@ -874,6 +1100,23 @@ class WorkerModelCatalog:
                     voice_mode="hybrid",
                     output_formats=("wav",),
                     supports_instructions=True,
+                    voice_catalog_summary=(
+                        "Hybrid named and instruction-conditioned multilingual voices "
+                        "for Chinese and English synthesis."
+                    ),
+                    voice_locales=("zh", "en"),
+                    default_locale="zh",
+                    packaged_default_locale="zh",
+                    locale_policy="request>model_default>packaged_default",
                 ),
             },
         )
+
+
+def _canonical_registry_root_path(raw_path: str) -> str:
+    return os.fspath(Path(raw_path).expanduser().resolve(strict=False))
+
+
+def _stable_registry_root_id(root_path: str) -> str:
+    digest = hashlib.sha1(root_path.encode("utf-8")).hexdigest()[:12]
+    return f"root-{digest}"

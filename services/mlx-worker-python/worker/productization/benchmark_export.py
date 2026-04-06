@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import io
 import time
 from pathlib import Path
 
@@ -8,17 +10,69 @@ _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
 
 
 def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
-    jobs_root = _resolve_artifact_root(Path(jobs_root), fallback_dir="bench", job_filename="bench-job.json")
-    jobs: list[dict[str, object]] = []
+    jobs_root = _resolve_artifact_root(
+        Path(jobs_root),
+        fallback_dir="bench",
+        job_filename="bench-job.json",
+        summary_filename="bench-summary.json",
+    )
+    summary_rows: list[dict[str, object]] = []
+    context_rows: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    matrix_jobs: list[dict[str, object]] = []
+    matrix_summary_rows: list[dict[str, object]] = []
+    matrix_request_rows: list[dict[str, object]] = []
 
-    _collect_benchmark_run(jobs_root, jobs=jobs, results=results)
+    _collect_benchmark_run(
+        jobs_root,
+        summary_rows=summary_rows,
+        context_rows=context_rows,
+        batch_rows=batch_rows,
+        results=results,
+    )
+    matrix_roots = [jobs_root]
+    nested_bench_root = jobs_root / "bench"
+    if nested_bench_root.is_dir() and nested_bench_root != jobs_root:
+        matrix_roots.append(nested_bench_root)
+    for matrix_root in matrix_roots:
+        _collect_benchmark_matrix_run(
+            matrix_root,
+            jobs=matrix_jobs,
+            summary_rows=matrix_summary_rows,
+            request_rows=matrix_request_rows,
+        )
     runs_root = jobs_root / "runs"
     if runs_root.is_dir():
         for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_benchmark_run(run_root, jobs=jobs, results=results)
+            _collect_benchmark_run(
+                run_root,
+                summary_rows=summary_rows,
+                context_rows=context_rows,
+                batch_rows=batch_rows,
+                results=results,
+            )
+    for matrix_root in matrix_roots:
+        matrix_runs_root = matrix_root / "matrix-runs"
+        if matrix_runs_root.is_dir():
+            for run_root in sorted(path for path in matrix_runs_root.iterdir() if path.is_dir()):
+                _collect_benchmark_matrix_run(
+                    run_root,
+                    jobs=matrix_jobs,
+                    summary_rows=matrix_summary_rows,
+                    request_rows=matrix_request_rows,
+                )
 
-    return {"benchmark_jobs": jobs, "benchmark_results": results}
+    return {
+        "benchmark_jobs": summary_rows,
+        "benchmark_summary_rows": summary_rows,
+        "benchmark_context_rows": context_rows,
+        "benchmark_batch_rows": batch_rows,
+        "benchmark_results": results,
+        "benchmark_matrix_jobs": matrix_jobs,
+        "benchmark_matrix_summary_rows": matrix_summary_rows,
+        "benchmark_matrix_request_rows": matrix_request_rows,
+    }
 
 
 def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
@@ -29,17 +83,19 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     )
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
     samples: list[dict[str, object]] = []
 
-    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, samples=samples)
+    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
     runs_root = jobs_root / "runs"
     if runs_root.is_dir():
         for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_evaluation_run(run_root, jobs=jobs, results=results, samples=samples)
+            _collect_evaluation_run(run_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
 
     return {
         "evaluation_jobs": jobs,
         "evaluation_results": results,
+        "evaluation_summary_rows": summaries,
         "evaluation_samples": samples,
     }
 
@@ -53,6 +109,94 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
         **benchmark,
         **evaluation,
     }
+
+
+def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "task_kind",
+            "source_repo",
+            "model_id",
+            "suite_id",
+            "dataset_id",
+            "score_name",
+            "score_value",
+            "sample_size",
+            "correct_count",
+            "incorrect_count",
+            "duration_seconds",
+            "created_at_unix_ms",
+        ],
+    )
+
+
+def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "suite_id",
+            "id",
+            "correct",
+            "expected",
+            "predicted",
+            "question",
+            "raw_response",
+            "time_s",
+            "parse_status",
+        ],
+    )
+
+
+def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "model_id",
+            "task_kind",
+            "source_repo",
+            "suites",
+            "context_lengths",
+            "generation_length",
+            "batch_sizes",
+            "repeats",
+            "cache_profile",
+            "reasoning_mode",
+            "structured_output_mode",
+            "request_p50_ms",
+            "request_p95_ms",
+            "status",
+            "output_dir",
+            "created_at_unix_ms",
+            "updated_at_unix_ms",
+        ],
+    )
+
+
+def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+
+
+def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+
+
+def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
+
+
+def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
 
 
 def write_export_bundle(jobs_root: Path, output_path: Path) -> Path:
@@ -122,15 +266,23 @@ def _find_metric_value(
     return None
 
 
-def _resolve_artifact_root(jobs_root: Path, *, fallback_dir: str, job_filename: str) -> Path:
+def _resolve_artifact_root(
+    jobs_root: Path,
+    *,
+    fallback_dir: str,
+    job_filename: str,
+    summary_filename: str | None = None,
+) -> Path:
     direct_job = jobs_root / job_filename
     direct_runs = jobs_root / "runs"
     fallback_root = jobs_root / fallback_dir
     fallback_job = fallback_root / job_filename
     fallback_runs = fallback_root / "runs"
-    if direct_job.is_file() or direct_runs.is_dir():
+    direct_summary = jobs_root / summary_filename if summary_filename else None
+    fallback_summary = fallback_root / summary_filename if summary_filename else None
+    if direct_job.is_file() or direct_runs.is_dir() or (direct_summary is not None and direct_summary.is_file()):
         return jobs_root
-    if fallback_job.is_file() or fallback_runs.is_dir():
+    if fallback_job.is_file() or fallback_runs.is_dir() or (fallback_summary is not None and fallback_summary.is_file()):
         return fallback_root
     return jobs_root
 
@@ -138,16 +290,167 @@ def _resolve_artifact_root(jobs_root: Path, *, fallback_dir: str, job_filename: 
 def _collect_benchmark_run(
     run_root: Path,
     *,
-    jobs: list[dict[str, object]],
+    summary_rows: list[dict[str, object]],
+    context_rows: list[dict[str, object]],
+    batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
 ) -> None:
+    summary_path = run_root / "bench-summary.json"
     job_path = run_root / "bench-job.json"
-    if job_path.is_file():
-        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+    if summary_path.is_file():
+        summary_rows.append(json.loads(summary_path.read_text(encoding="utf-8")))
+    elif job_path.is_file():
+        summary_rows.append(json.loads(job_path.read_text(encoding="utf-8")))
+
+    context_path = run_root / "bench-context-rows.jsonl"
+    if context_path.is_file():
+        for line in context_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    context_rows.append(row)
+
+    batch_path = run_root / "bench-batch-rows.jsonl"
+    if batch_path.is_file():
+        for line in batch_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    batch_rows.append(row)
 
     for result_path in sorted(run_root.glob("bench-result-*.json")):
         if result_path.is_file():
             results.append(json.loads(result_path.read_text(encoding="utf-8")))
+
+
+def _collect_benchmark_matrix_run(
+    run_root: Path,
+    *,
+    jobs: list[dict[str, object]],
+    summary_rows: list[dict[str, object]],
+    request_rows: list[dict[str, object]],
+) -> None:
+    job_path = run_root / "bench-matrix-job.json"
+    if job_path.is_file():
+        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+
+    summary_path = run_root / "bench-matrix-summary.jsonl"
+    if summary_path.is_file():
+        for line in summary_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    summary_rows.append(row)
+
+    requests_path = run_root / "bench-matrix-requests.jsonl"
+    if requests_path.is_file():
+        for line in requests_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    request_rows.append(row)
+
+
+def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: _csv_value(row.get(field, "")) for field in fieldnames})
+    return buffer.getvalue()
+
+
+def _canonical_benchmark_row_columns() -> list[str]:
+    return [
+        "job_id",
+        "model_id",
+        "task_kind",
+        "source_repo",
+        "suite",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "repeat_index",
+        "prefill_tokens_per_second",
+        "decode_tokens_per_second",
+        "ttft_ms",
+        "request_latency_ms",
+        "peak_memory_bytes",
+        "speedup_vs_batch_1",
+        "cache_profile",
+        "reasoning_mode",
+        "structured_output_mode",
+    ]
+
+
+def _canonical_benchmark_matrix_summary_columns() -> list[str]:
+    return [
+        "job_id",
+        "task_kind",
+        "source_repo",
+        "model_id",
+        "suite_id",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "cache_profile",
+        "reasoning_mode",
+        "structured_output_mode",
+        "concurrency_level",
+        "repeats",
+        "requests",
+        "duration_seconds",
+        "ttft_mean_ms",
+        "ttft_std_ms",
+        "request_latency_mean_ms",
+        "request_latency_std_ms",
+        "prefill_tokens_per_second_mean",
+        "decode_tokens_per_second_mean",
+        "throughput_requests_per_second",
+        "throughput_tokens_per_second",
+        "success_rate",
+        "peak_memory_bytes_max",
+        "queue_wait_mean_ms",
+        "queue_wait_p95_ms",
+        "created_at_unix_ms",
+    ]
+
+
+def _canonical_benchmark_matrix_request_columns() -> list[str]:
+    return [
+        "job_id",
+        "cell_id",
+        "task_kind",
+        "suite_id",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "cache_profile",
+        "reasoning_mode",
+        "structured_output_mode",
+        "concurrency_level",
+        "repeat_index",
+        "request_index",
+        "ttft_ms",
+        "request_latency_ms",
+        "prefill_tokens_per_second",
+        "decode_tokens_per_second",
+        "queue_wait_ms",
+        "peak_memory_bytes",
+        "status",
+        "error_code",
+        "created_at_unix_ms",
+    ]
+
+
+def _csv_value(value: object) -> str:
+    if isinstance(value, list):
+        return ",".join(str(item) for item in value)
+    if isinstance(value, tuple):
+        return ",".join(str(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
 
 
 def _collect_evaluation_run(
@@ -155,6 +458,7 @@ def _collect_evaluation_run(
     *,
     jobs: list[dict[str, object]],
     results: list[dict[str, object]],
+    summaries: list[dict[str, object]],
     samples: list[dict[str, object]],
 ) -> None:
     job_path = run_root / "evaluation-job.json"
@@ -163,10 +467,43 @@ def _collect_evaluation_run(
 
     result_path = run_root / "evaluation-result.json"
     if result_path.is_file():
-        results.append(json.loads(result_path.read_text(encoding="utf-8")))
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        results.append(result)
+
+    summary_path = run_root / "evaluation-summary.json"
+    if summary_path.is_file():
+        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+    elif job_path.is_file() and result_path.is_file():
+        summaries.append(_build_evaluation_summary_row(jobs[-1], results[-1]))
 
     samples_path = run_root / "evaluation-samples.jsonl"
     if samples_path.is_file():
         for line in samples_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 samples.append(json.loads(line))
+
+
+def _build_evaluation_summary_row(job: dict[str, object], result: dict[str, object]) -> dict[str, object]:
+    metrics = result.get("metrics", [])
+    score_name = str(result.get("score_name") or "")
+    score_value = result.get("score_value", 0.0)
+    if not score_name and isinstance(metrics, list) and metrics:
+        first_metric = metrics[0] if isinstance(metrics[0], dict) else {}
+        score_name = str(first_metric.get("name", ""))
+        score_value = first_metric.get("value", 0.0)
+    return {
+        "schema_version": result.get("schema_version", "melix.evaluation_summary.v1"),
+        "job_id": job.get("job_id", ""),
+        "task_kind": job.get("task_kind", ""),
+        "source_repo": job.get("source_repo", ""),
+        "model_id": job.get("model_id", ""),
+        "suite_id": job.get("suite_id", ""),
+        "dataset_id": job.get("dataset_id", ""),
+        "score_name": score_name,
+        "score_value": score_value,
+        "sample_size": result.get("sample_size", job.get("sample_size", 0)),
+        "correct_count": result.get("correct_count", 0),
+        "incorrect_count": result.get("incorrect_count", 0),
+        "duration_seconds": result.get("duration_seconds", 0.0),
+        "created_at_unix_ms": job.get("created_at_unix_ms", 0),
+    }

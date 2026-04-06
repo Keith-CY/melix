@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
 import importlib.util
-import tempfile
 import time
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Callable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
+from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -247,8 +248,15 @@ class AutoMLXVLMBackend:
 
 
 class MLXVLMRuntime:
-    def __init__(self, backend: AutoMLXVLMBackend | None = None) -> None:
+    def __init__(
+        self,
+        backend: AutoMLXVLMBackend | None = None,
+        temp_root: Path | str | None = None,
+        temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+    ) -> None:
         self._backend = backend or AutoMLXVLMBackend()
+        self._temp_root = Path(temp_root) if temp_root is not None else None
+        self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
 
     @property
@@ -272,22 +280,45 @@ class MLXVLMRuntime:
         started_at = time.perf_counter()
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
+        family_config = self._family_config(loaded_model)
         if execution_mode == "text_backed":
-            prompt_text = self._prompt_text_from_messages(messages)
-            prepared = PreparedVisionRequest(
-                prompt_text=prompt_text,
-                images=[],
-                preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
-                preprocess_input_bytes=len(prompt_text.encode("utf-8")),
-                preprocess_peak_memory_bytes=0,
-            )
+            if self._contains_non_text_media(messages):
+                prepared = family_config.shape_request(prepare_vision_request(messages))
+                if prepared.videos and not prepared.images:
+                    prepared = self._replace_prompt_text(
+                        prepared,
+                        prompt_text=self._text_backed_video_prompt(prepared),
+                    )
+                prepared = replace(
+                    prepared,
+                    preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+                    preprocess_input_bytes=prepared.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
+                )
+            else:
+                prompt_text = self._prompt_text_from_messages(messages)
+                prompt_hash_hex = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+                prepared = PreparedVisionRequest(
+                    prompt_text=prompt_text,
+                    images=[],
+                    videos=[],
+                    video_frame_policies=[],
+                    preprocess_latency_ms=max(0.0, (time.perf_counter() - started_at) * 1000.0),
+                    preprocess_input_bytes=len(prompt_text.encode("utf-8")),
+                    preprocess_peak_memory_bytes=0,
+                    prompt_hash_hex=prompt_hash_hex,
+                    multimodal_hash_hex=prompt_hash_hex,
+                )
         else:
-            prepared = self._family_config(loaded_model).shape_request(prepare_vision_request(messages))
+            prepared = family_config.shape_request(prepare_vision_request(messages))
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
             first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared.effective_video_frame_count,
+            video_requested_frame_budget=prepared.requested_video_frame_budget,
+            video_window_ms=prepared.effective_video_window_ms,
             cache_identity="",
             cache_scope_id="",
             cache_hit=False,
@@ -321,8 +352,12 @@ class MLXVLMRuntime:
             return
 
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
-        with tempfile.TemporaryDirectory(prefix="melix-vlm-") as temp_dir:
-            image_paths = self._materialize_images(prepared_request, Path(temp_dir))
+        temp_media_session = self._temp_media_session_factory(
+            temp_root=self._temp_root,
+            prefix="melix-vlm-",
+        )
+        try:
+            image_paths = self._materialize_media(prepared_request, temp_media_session)
             formatted_prompt = self._backend.apply_chat_template_fn(
                 loaded_model["processor"],
                 loaded_model["model"].config,
@@ -358,6 +393,9 @@ class MLXVLMRuntime:
                         preprocess_input_bytes=prepared_request.preprocess_input_bytes,
                         preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
                         first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                        video_effective_frame_count=prepared_request.effective_video_frame_count,
+                        video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                        video_window_ms=prepared_request.effective_video_window_ms,
                         cache_identity="",
                         cache_scope_id="",
                         cache_hit=False,
@@ -375,22 +413,43 @@ class MLXVLMRuntime:
                     peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                     finish_reason="stop",
                 )
+        finally:
+            cleanup_report = temp_media_session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
 
     @staticmethod
-    def _materialize_images(
+    def _materialize_media(
         prepared_request: PreparedVisionRequest,
-        root: Path,
+        temp_media_session: TempMediaSession,
     ) -> list[str]:
         image_paths: list[str] = []
         for index, image in enumerate(prepared_request.images):
-            suffix = image.format or image.filename.rsplit(".", 1)[-1] if "." in image.filename else "bin"
-            image_path = root / f"image-{index}.{suffix}"
-            image_path.write_bytes(image.bytes_data)
+            suffix = MLXVLMRuntime._media_suffix(image.filename, image.format)
+            image_path = temp_media_session.write_bytes(f"image-{index}.{suffix}", image.bytes_data)
             image_paths.append(str(image_path))
+        for index, video in enumerate(prepared_request.videos):
+            if not video.bytes_data:
+                continue
+            suffix = MLXVLMRuntime._media_suffix(video.filename, video.format)
+            temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
         return image_paths
+
+    @staticmethod
+    def _media_suffix(filename: str, format_name: str) -> str:
+        if format_name:
+            return format_name
+        if "." in filename:
+            return filename.rsplit(".", 1)[-1]
+        return "bin"
 
     @staticmethod
     def _family_config(loaded_model) -> Any:
@@ -413,3 +472,46 @@ class MLXVLMRuntime:
                 if text:
                     prompt_segments.append(text)
         return "\n".join(prompt_segments).strip()
+
+    @staticmethod
+    def _contains_non_text_media(messages) -> bool:
+        for message in messages:
+            for part in message.parts:
+                if getattr(part, "image_bytes", b"") or getattr(part, "image_uri", ""):
+                    return True
+                if getattr(part, "video_bytes", b"") or getattr(part, "video_uri", ""):
+                    return True
+        return False
+
+    @staticmethod
+    def _replace_prompt_text(
+        prepared_request: PreparedVisionRequest,
+        *,
+        prompt_text: str,
+    ) -> PreparedVisionRequest:
+        normalized_prompt_text = prompt_text.strip()
+        prompt_hash_hex = hashlib.sha256(normalized_prompt_text.encode("utf-8")).hexdigest()
+        return replace(
+            prepared_request,
+            prompt_text=normalized_prompt_text,
+            prompt_hash_hex=prompt_hash_hex,
+            multimodal_hash_hex=rebuild_multimodal_hash(prepared_request, prompt_hash_hex),
+        )
+
+    @staticmethod
+    def _text_backed_video_prompt(prepared_request: PreparedVisionRequest) -> str:
+        prompt_text = prepared_request.prompt_text or "Describe the video."
+        video_lines = [
+            (
+                f"Video {index + 1}: {video.filename};"
+                f" format={video.format};"
+                f" frames={policy.effective_frame_count};"
+                f" start_ms={policy.clip_start_ms};"
+                f" end_ms={policy.clip_end_ms}"
+            )
+            for index, (video, policy) in enumerate(
+                zip(prepared_request.videos, prepared_request.video_frame_policies, strict=False)
+            )
+        ]
+        video_lines.append(f"Prompt: {prompt_text}")
+        return "\n".join(video_lines)

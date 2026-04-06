@@ -30,6 +30,76 @@ public actor ModelCatalog {
         var lastAccessOrdinal: UInt64
         var lastAccessUnixMs: Int64
         var transitionReason: String
+        var memoryBudgetBytes: UInt64
+        var memoryHeadroomBytes: UInt64
+        var requiredBytes: UInt64
+    }
+
+    public struct MemoryBudgetEvidence: Equatable, Sendable {
+        public let memoryBudgetBytes: UInt64
+        public let memoryHeadroomBytes: UInt64
+        public let requiredBytes: UInt64
+
+        public init(
+            memoryBudgetBytes: UInt64 = 0,
+            memoryHeadroomBytes: UInt64 = 0,
+            requiredBytes: UInt64 = 0
+        ) {
+            self.memoryBudgetBytes = memoryBudgetBytes
+            self.memoryHeadroomBytes = memoryHeadroomBytes
+            self.requiredBytes = requiredBytes
+        }
+
+        public var isEmpty: Bool {
+            memoryBudgetBytes == 0 && memoryHeadroomBytes == 0 && requiredBytes == 0
+        }
+    }
+
+    public struct RegistryRootState: Equatable, Sendable {
+        public let rootID: String
+        public let rootPath: String
+        public let rootOrder: Int
+        public let accessible: Bool
+        public let errorCode: String
+        public let errorMessage: String
+        public let discoveredModelIDs: [String]
+
+        public init(
+            rootID: String,
+            rootPath: String,
+            rootOrder: Int,
+            accessible: Bool,
+            errorCode: String = "",
+            errorMessage: String = "",
+            discoveredModelIDs: [String] = []
+        ) {
+            self.rootID = rootID
+            self.rootPath = rootPath
+            self.rootOrder = rootOrder
+            self.accessible = accessible
+            self.errorCode = errorCode
+            self.errorMessage = errorMessage
+            self.discoveredModelIDs = discoveredModelIDs
+        }
+    }
+
+    public struct RegistryState: Equatable, Sendable {
+        public let hasConfiguredRootOverride: Bool
+        public let configuredRootPaths: [String]
+        public let roots: [RegistryRootState]
+        public let scannedAtUnixMs: Int64
+
+        public init(
+            hasConfiguredRootOverride: Bool = false,
+            configuredRootPaths: [String] = [],
+            roots: [RegistryRootState] = [],
+            scannedAtUnixMs: Int64 = 0
+        ) {
+            self.hasConfiguredRootOverride = hasConfiguredRootOverride
+            self.configuredRootPaths = configuredRootPaths
+            self.roots = roots
+            self.scannedAtUnixMs = scannedAtUnixMs
+        }
     }
 
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
@@ -37,6 +107,7 @@ public actor ModelCatalog {
     private var residencyLedger: [String: ResidencyLedger]
     private let seedModelIDs: Set<String>
     private var registryModelIDs: Set<String>
+    private var registryState: RegistryState
     private var nextAccessOrdinal: UInt64
     private let nowUnixMs: @Sendable () -> Int64
 
@@ -55,7 +126,10 @@ public actor ModelCatalog {
             ledger[model.modelID] = ResidencyLedger(
                 lastAccessOrdinal: accessOrdinal,
                 lastAccessUnixMs: seededNow,
-                transitionReason: ""
+                transitionReason: "",
+                memoryBudgetBytes: model.settings.memoryBudgetBytes,
+                memoryHeadroomBytes: 0,
+                requiredBytes: 0
             )
         }
         self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
@@ -70,6 +144,7 @@ public actor ModelCatalog {
         self.residencyLedger = ledger
         self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
         self.registryModelIDs = []
+        self.registryState = RegistryState()
         self.nextAccessOrdinal = accessOrdinal
         self.nowUnixMs = nowUnixMs
     }
@@ -89,7 +164,7 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
         model.state = .modelLoading
         model.pinned = false
         model = synchronized(model)
@@ -120,9 +195,16 @@ public actor ModelCatalog {
             transitionReason: resolvedLoadTransitionReason(
                 explicitReason: reason,
                 workerResidency: workerResidency
-            )
+            ),
+            memoryBudgetEvidence: nil,
+            clearMemoryBudgetEvidence: true
         )
         model = synchronized(model)
+        if let workerResidency {
+            model.residency.effectiveDiskStreamingMode = Self.controlPlaneDiskStreamingMode(
+                for: workerResidency.effectiveDiskStreamingMode
+            )
+        }
         models[id] = model
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
@@ -136,12 +218,18 @@ public actor ModelCatalog {
 
     public func recordLoadFailed(
         id: String,
-        reason: String = "load_failed"
+        reason: String = "load_failed",
+        memoryBudgetEvidence: MemoryBudgetEvidence? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(
+            id: id,
+            transitionReason: reason,
+            memoryBudgetEvidence: memoryBudgetEvidence,
+            clearMemoryBudgetEvidence: memoryBudgetEvidence == nil
+        )
         model.state = .modelFailed
         model.pinned = false
         model = synchronized(model)
@@ -157,7 +245,7 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: reason)
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
         model.state = .modelEvicting
         model.pinned = false
         model = synchronized(model)
@@ -172,7 +260,11 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: resolvedUnloadTransitionReason(for: id, fallback: reason))
+        touchModel(
+            id: id,
+            transitionReason: resolvedUnloadTransitionReason(for: id, fallback: reason),
+            clearMemoryBudgetEvidence: true
+        )
         model.state = .modelUnloaded
         model.pinned = false
         model = synchronized(model)
@@ -188,7 +280,11 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
-        touchModel(id: id, transitionReason: failedUnloadTransitionReason(for: id, fallback: reason))
+        touchModel(
+            id: id,
+            transitionReason: failedUnloadTransitionReason(for: id, fallback: reason),
+            clearMemoryBudgetEvidence: true
+        )
         model.state = .modelFailed
         model.pinned = false
         model = synchronized(model)
@@ -264,6 +360,42 @@ public actor ModelCatalog {
         registryModelIDs = discoveredIDs
     }
 
+    public func configuredRegistryRootOverride() -> [String]? {
+        registryState.hasConfiguredRootOverride ? registryState.configuredRootPaths : nil
+    }
+
+    public func updateConfiguredRegistryRoots(_ roots: [String]?) {
+        registryState = RegistryState(
+            hasConfiguredRootOverride: roots != nil,
+            configuredRootPaths: Self.normalizedRegistryRootPaths(roots ?? []),
+            roots: registryState.roots,
+            scannedAtUnixMs: registryState.scannedAtUnixMs
+        )
+    }
+
+    public func recordRegistrySnapshot(
+        roots: [RegistryRootState],
+        scannedAtUnixMs: Int64,
+        configuredRootPaths: [String]? = nil
+    ) {
+        let normalizedConfiguredRoots = configuredRootPaths.map(Self.normalizedRegistryRootPaths) ?? registryState.configuredRootPaths
+        registryState = RegistryState(
+            hasConfiguredRootOverride: configuredRootPaths != nil ? true : registryState.hasConfiguredRootOverride,
+            configuredRootPaths: normalizedConfiguredRoots,
+            roots: roots.sorted { lhs, rhs in
+                if lhs.rootOrder == rhs.rootOrder {
+                    return lhs.rootPath < rhs.rootPath
+                }
+                return lhs.rootOrder < rhs.rootOrder
+            },
+            scannedAtUnixMs: scannedAtUnixMs
+        )
+    }
+
+    public func registrySnapshotState() -> RegistryState {
+        registryState
+    }
+
     @discardableResult
     public func registerModel(
         _ source: Melix_Controlplane_V1_ModelSummary,
@@ -275,7 +407,10 @@ public actor ModelCatalog {
             residencyLedger[source.modelID] = ResidencyLedger(
                 lastAccessOrdinal: nextAccessOrdinal,
                 lastAccessUnixMs: now,
-                transitionReason: reason
+                transitionReason: reason,
+                memoryBudgetBytes: source.settings.memoryBudgetBytes,
+                memoryHeadroomBytes: 0,
+                requiredBytes: 0
             )
         } else {
             touchModel(id: source.modelID, transitionReason: reason)
@@ -412,6 +547,37 @@ public actor ModelCatalog {
         }
     }
 
+    private struct DetectedTextIdentity: Sendable {
+        let architecture: String
+        let familyID: String
+        let source: String
+    }
+
+    private struct DetectedImageIdentity: Sendable {
+        let familyID: String
+        let taskKind: String
+        let source: String
+    }
+
+    private static func textCapabilityAdapter(
+        familyID: String,
+        defaultRouteKind: WorkerRouteKind
+    ) -> CapabilityAdapterMetadata {
+        let routeKind = preferredTextRouteKind(for: familyID, defaultRouteKind: defaultRouteKind)
+        let supportedParsers = textSupportedParsers(for: familyID)
+        return CapabilityAdapterMetadata(
+            adapterSetHash: "text-family-\(familyID)",
+            routeKind: routeKind,
+            capabilityIdentifier: "text",
+            supportedModalities: ["text"],
+            supportedTasks: ["generate"],
+            supportedParsers: supportedParsers,
+            toolParserMode: familyID == "qwen3moe" ? .qwen : nil,
+            toolParserNamespaces: familyID == "qwen3moe" ? ["tools.text"] : [],
+            toolParserXMLFallback: familyID == "qwen3moe"
+        )
+    }
+
     private static func embeddingCapabilityAdapter(
         familyID: String
     ) -> CapabilityAdapterMetadata {
@@ -490,6 +656,28 @@ public actor ModelCatalog {
         )
     }
 
+    private static func imageCapabilityAdapter(
+        familyID: String,
+        supportsGeneration: Bool,
+        supportsEdit: Bool
+    ) -> CapabilityAdapterMetadata {
+        var supportedTasks: [String] = []
+        if supportsGeneration {
+            supportedTasks.append("image_generate")
+        }
+        if supportsEdit {
+            supportedTasks.append("image_edit")
+        }
+        return CapabilityAdapterMetadata(
+            adapterSetHash: "image-family-\(familyID)",
+            routeKind: .pythonImage,
+            capabilityIdentifier: "image_generation",
+            supportedModalities: ["text", "image"],
+            supportedTasks: supportedTasks,
+            supportedParsers: ["text"]
+        )
+    }
+
     private static func audioMetadata(
         backendID: String,
         familyID: String,
@@ -497,9 +685,14 @@ public actor ModelCatalog {
         languages: [String] = [],
         voiceMode: String = "",
         outputFormats: [String] = [],
-        supportsInstructions: Bool = false
+        supportsInstructions: Bool = false,
+        voiceCatalogSummary: String = "",
+        voiceLocales: [String] = [],
+        defaultLocale: String = "",
+        packagedDefaultLocale: String = "",
+        localePolicy: String = ""
     ) -> [String: String] {
-        [
+        var metadata = [
             "melix.audio.backend_id": backendID,
             "melix.audio.family_id": familyID,
             "melix.audio.install_profile": installProfile,
@@ -508,6 +701,12 @@ public actor ModelCatalog {
             "melix.audio.output_formats": outputFormats.joined(separator: ","),
             "melix.audio.supports_instructions": supportsInstructions ? "true" : "false",
         ]
+        metadata["melix.audio.voice_catalog_summary"] = voiceCatalogSummary
+        metadata["melix.audio.voice_locales"] = voiceLocales.joined(separator: ",")
+        metadata["melix.audio.default_locale"] = defaultLocale
+        metadata["melix.audio.packaged_default_locale"] = packagedDefaultLocale
+        metadata["melix.audio.locale_policy"] = localePolicy
+        return metadata
     }
 
     private static func applyCapabilityAdapter(
@@ -577,13 +776,298 @@ public actor ModelCatalog {
         }
     }
 
-    public static func devTextModel() -> Melix_Controlplane_V1_ModelSummary {
+    private static func inferTextIdentity(
+        from modelPath: String,
+        explicitFamilyID: String?
+    ) -> DetectedTextIdentity {
+        let normalizedPath = modelPath.lowercased()
+        if let explicitFamilyID, !explicitFamilyID.isEmpty {
+            return DetectedTextIdentity(
+                architecture: textArchitecture(for: explicitFamilyID),
+                familyID: explicitFamilyID,
+                source: "explicit_override"
+            )
+        }
+        if normalizedPath.contains("mistral4") || normalizedPath.contains("mistral-small-4") {
+            return DetectedTextIdentity(
+                architecture: "mistral4",
+                familyID: "mistral4",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("mixtral") {
+            return DetectedTextIdentity(
+                architecture: "mixtral",
+                familyID: "mixtral",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("qwen3") && normalizedPath.contains("moe") {
+            return DetectedTextIdentity(
+                architecture: "qwen3_moe",
+                familyID: "qwen3moe",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("deepseek") || normalizedPath.contains("mla") {
+            return DetectedTextIdentity(
+                architecture: "deepseek_v3",
+                familyID: "deepseek-mla",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("nemotron-h") || normalizedPath.contains("nemotron_h") {
+            return DetectedTextIdentity(
+                architecture: "nemotron_h",
+                familyID: "nemotron-h",
+                source: "directory_name"
+            )
+        }
+        return DetectedTextIdentity(
+            architecture: "llama",
+            familyID: "llama",
+            source: "default"
+        )
+    }
+
+    private static func preferredTextRouteKind(
+        for familyID: String,
+        defaultRouteKind: WorkerRouteKind
+    ) -> WorkerRouteKind {
+        switch familyID {
+        case "mistral4", "mixtral", "qwen3moe", "deepseek-mla", "nemotron-h":
+            return .pythonCompatibility
+        default:
+            return defaultRouteKind
+        }
+    }
+
+    private static func textSupportedParsers(for familyID: String) -> [String] {
+        familyID == "qwen3moe" ? ["text", "qwen"] : ["text"]
+    }
+
+    private static func textArchitecture(for familyID: String) -> String {
+        switch familyID {
+        case "mistral4":
+            return "mistral4"
+        case "mixtral":
+            return "mixtral"
+        case "qwen3moe":
+            return "qwen3_moe"
+        case "deepseek-mla":
+            return "deepseek_v3"
+        case "nemotron-h":
+            return "nemotron_h"
+        default:
+            return "llama"
+        }
+    }
+
+    private static func textAttentionProfile(for familyID: String) -> String {
+        familyID == "deepseek-mla" ? "mla" : "gqa"
+    }
+
+    private static func textRoPEProfile(for familyID: String) -> String {
+        switch familyID {
+        case "mistral4", "qwen3moe":
+            return "yarn_interleaved"
+        default:
+            return "standard"
+        }
+    }
+
+    private static func textMOEEnabled(for familyID: String) -> Bool {
+        switch familyID {
+        case "mistral4", "mixtral", "qwen3moe", "deepseek-mla":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func textExpertCount(for familyID: String) -> Int {
+        switch familyID {
+        case "mistral4", "mixtral":
+            return 8
+        case "qwen3moe":
+            return 128
+        case "deepseek-mla":
+            return 64
+        default:
+            return 0
+        }
+    }
+
+    private static func textMOEGateDequant(for familyID: String) -> Bool {
+        switch familyID {
+        case "mistral4", "qwen3moe", "deepseek-mla":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func inferImageIdentity(
+        from modelPath: String,
+        explicitFamilyID: String?,
+        explicitTaskKind: String?
+    ) -> DetectedImageIdentity {
+        let normalizedTaskKind = normalizedImageTaskKind(explicitTaskKind) ?? "text-to-image"
+        if let explicitFamilyID, !explicitFamilyID.isEmpty {
+            return DetectedImageIdentity(
+                familyID: explicitFamilyID,
+                taskKind: normalizedTaskKind,
+                source: "explicit_override"
+            )
+        }
+
+        let normalizedPath = modelPath.lowercased()
+        if normalizedPath.contains("kontext") {
+            return DetectedImageIdentity(
+                familyID: "kontext-v1",
+                taskKind: normalizedTaskKind == "text-to-image" ? "image-text-to-image" : normalizedTaskKind,
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("fill") || normalizedPath.contains("inpaint") {
+            return DetectedImageIdentity(
+                familyID: "fill-v1",
+                taskKind: "image-text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("qwenimage") || normalizedPath.contains("qwen-image") {
+            return DetectedImageIdentity(
+                familyID: "qwenimage-v1",
+                taskKind: "text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("fibo") {
+            return DetectedImageIdentity(
+                familyID: "fibo-v1",
+                taskKind: "text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedPath.contains("klein") {
+            return DetectedImageIdentity(
+                familyID: "klein-v1",
+                taskKind: "image-text-to-image",
+                source: "directory_name"
+            )
+        }
+        if normalizedTaskKind == "image-text-to-image" {
+            return DetectedImageIdentity(
+                familyID: "kontext-v1",
+                taskKind: normalizedTaskKind,
+                source: "task_kind"
+            )
+        }
+        return DetectedImageIdentity(
+            familyID: "deterministic-v1",
+            taskKind: normalizedTaskKind,
+            source: "default"
+        )
+    }
+
+    private static func normalizedImageTaskKind(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch trimmed {
+        case "":
+            return nil
+        case "text-to-image", "image-text-to-image":
+            return trimmed
+        default:
+            return nil
+        }
+    }
+
+    private static func imageSupportsGeneration(for familyID: String) -> Bool {
+        switch familyID {
+        case "fill-v1", "klein-v1":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func imageSupportsEdit(for familyID: String) -> Bool {
+        switch familyID {
+        case "qwenimage-v1", "fibo-v1":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func imageDefaultWorkflowRole(for familyID: String) -> String {
+        switch familyID {
+        case "fill-v1", "klein-v1", "kontext-v1":
+            return "edit"
+        default:
+            return "generate"
+        }
+    }
+
+    private static func imageDefaultSteps(for familyID: String) -> String {
+        switch familyID {
+        case "qwenimage-v1":
+            return "32"
+        case "fill-v1", "klein-v1":
+            return "24"
+        default:
+            return "28"
+        }
+    }
+
+    private static func imageDefaultGuidance(for familyID: String) -> String {
+        switch familyID {
+        case "qwenimage-v1":
+            return "4.0"
+        case "fill-v1", "kontext-v1", "klein-v1":
+            return "6.5"
+        default:
+            return "7.5"
+        }
+    }
+
+    private static func imageDefaultStrength(for familyID: String) -> String {
+        switch familyID {
+        case "fill-v1", "kontext-v1", "klein-v1":
+            return "0.8"
+        default:
+            return "1.0"
+        }
+    }
+
+    public static func devTextModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let modelPath = normalizedEnvironmentValue(
+            "MELIX_DEV_TEXT_MODEL_PATH",
+            environment: environment
+        ) ?? "models/melix-dev-text"
+        let explicitFamilyID = normalizedEnvironmentValue(
+            "MELIX_DEV_TEXT_FAMILY_ID",
+            environment: environment
+        )
+        let detected = inferTextIdentity(from: modelPath, explicitFamilyID: explicitFamilyID)
+        let capabilityAdapter = textCapabilityAdapter(
+            familyID: detected.familyID,
+            defaultRouteKind: .swiftText
+        )
+        let identityOverride = explicitFamilyID?.isEmpty == false ? "true" : "false"
+
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-text"
         model.kind = "text"
         model.state = .modelDiscovered
         model.capabilityClass = .modelCapabilityText
-        model.routeClass = .workerRouteSwiftText
+        model.routeClass = workerRouteClass(for: capabilityAdapter.routeKind)
         model.quantProfileID = "dev-q4"
         model.maxContext = 8192
         model.features = ["chat", "adaptive_thinking"]
@@ -593,6 +1077,28 @@ public actor ModelCatalog {
         model.settings.defaultAccelerationMode = .baseline
         model.settings.adaptiveThinking.mode = "adaptive"
         model.settings.adaptiveThinking.budgetTokens = 192
+        model.settings.ext["text_backend_id"] = "mlx_lm"
+        model.settings.ext["text_family_id"] = detected.familyID
+        model.settings.ext["model_architecture"] = detected.architecture
+        model.settings.ext["detected_architecture"] = detected.architecture
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = identityOverride
+        model.settings.ext["melix.text.attention_profile"] = textAttentionProfile(for: detected.familyID)
+        model.settings.ext["melix.text.rope_profile"] = textRoPEProfile(for: detected.familyID)
+        model.settings.ext["melix.text.moe.enabled"] = textMOEEnabled(for: detected.familyID) ? "true" : "false"
+        model.settings.ext["melix.text.moe.gate_dequant"] = textMOEGateDequant(for: detected.familyID) ? "true" : "false"
+        let expertCount = textExpertCount(for: detected.familyID)
+        if expertCount > 0 {
+            model.settings.ext["melix.text.moe.expert_count"] = String(expertCount)
+        }
+        model.settings.ext["melix.model_path"] = modelPath
+        model.settings.ext["melix.model_revision"] = "dev"
+        model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.settings.ext["melix.capability.route_kind"] = capabilityAdapter.routeKind == .pythonCompatibility
+            ? "python_text_compatibility"
+            : capabilityAdapter.routeKind.rawValue
         return withSynchronizedResidency(model)
     }
 
@@ -835,7 +1341,12 @@ public actor ModelCatalog {
                 languages: ["und"],
                 voiceMode: "named",
                 outputFormats: ["wav", "mp3"],
-                supportsInstructions: false
+                supportsInstructions: false,
+                voiceCatalogSummary: "Deterministic synthetic default voice.",
+                voiceLocales: ["und"],
+                defaultLocale: "und",
+                packagedDefaultLocale: "und",
+                localePolicy: "request>model_default>packaged_default"
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -855,6 +1366,32 @@ public actor ModelCatalog {
         model.maxContext = 4096
         model.features = ["audio", "transcription"]
         model.settings.alias = "Melix Whisper MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.stt",
+                familyID: familyID,
+                installProfile: "audio-stt",
+                languages: ["auto"]
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
+    public static func mlxParakeetModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "parakeet"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "transcription")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-parakeet-mlx"
+        model.kind = "transcription"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityTranscription
+        model.routeClass = .workerRoutePythonTranscription
+        model.quantProfileID = "fp16"
+        model.maxContext = 4096
+        model.features = ["audio", "transcription"]
+        model.settings.alias = "Melix Parakeet MLX"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext.merge(
             audioMetadata(
@@ -890,25 +1427,111 @@ public actor ModelCatalog {
                 languages: ["en"],
                 voiceMode: "named",
                 outputFormats: ["wav"],
-                supportsInstructions: false
+                supportsInstructions: false,
+                voiceCatalogSummary: "Named English voices exposed by the Kokoro speaker catalog.",
+                voiceLocales: ["en"],
+                defaultLocale: "en",
+                packagedDefaultLocale: "en",
+                localePolicy: "request>model_default>packaged_default"
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 
-    public static func devImageModel() -> Melix_Controlplane_V1_ModelSummary {
+    public static func mlxQwen3TTSModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "qwen3-tts"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "speech")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-qwen3-tts-mlx"
+        model.kind = "speech"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilitySpeech
+        model.routeClass = .workerRoutePythonSpeech
+        model.quantProfileID = "4bit"
+        model.maxContext = 4096
+        model.features = ["audio", "speech"]
+        model.settings.alias = "Melix Qwen3 TTS MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.tts",
+                familyID: familyID,
+                installProfile: "audio-tts",
+                languages: ["zh", "en"],
+                voiceMode: "hybrid",
+                outputFormats: ["wav"],
+                supportsInstructions: true,
+                voiceCatalogSummary: (
+                    "Hybrid named and instruction-conditioned multilingual voices "
+                    + "for Chinese and English synthesis."
+                ),
+                voiceLocales: ["zh", "en"],
+                defaultLocale: "zh",
+                packagedDefaultLocale: "zh",
+                localePolicy: "request>model_default>packaged_default"
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
+    public static func devImageModel(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        let modelPath = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_MODEL_PATH",
+            environment: environment
+        ) ?? "models/melix-dev-image"
+        let explicitFamilyID = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_FAMILY_ID",
+            environment: environment
+        )
+        let explicitTaskKind = normalizedEnvironmentValue(
+            "MELIX_DEV_IMAGE_TASK_KIND",
+            environment: environment
+        )
+        let detected = inferImageIdentity(
+            from: modelPath,
+            explicitFamilyID: explicitFamilyID,
+            explicitTaskKind: explicitTaskKind
+        )
+        let supportsGeneration = imageSupportsGeneration(for: detected.familyID)
+        let supportsEdit = imageSupportsEdit(for: detected.familyID)
+        let capabilityAdapter = imageCapabilityAdapter(
+            familyID: detected.familyID,
+            supportsGeneration: supportsGeneration,
+            supportsEdit: supportsEdit
+        )
         var model = Melix_Controlplane_V1_ModelSummary()
         model.modelID = "melix-dev-image"
         model.kind = "image"
         model.state = .modelDiscovered
         model.capabilityClass = .modelCapabilityImageGeneration
-        model.routeClass = .workerRoutePythonImage
-        model.features = ["image_generate", "image_edit", "artifact_jobs"]
-        model.supportedModalities = ["text", "image"]
-        model.supportedTasks = ["image_generate", "image_edit"]
+        model.routeClass = workerRouteClass(for: capabilityAdapter.routeKind)
+        model.features = capabilityAdapter.supportedTasks + ["artifact_jobs"]
         model.settings.alias = "Melix Dev Image"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.image.backend_id"] = "deterministic"
+        model.settings.ext["melix.image.family_id"] = detected.familyID
+        model.settings.ext["melix.image.task_kind"] = detected.taskKind
+        model.settings.ext["melix.image.default_workflow_role"] = imageDefaultWorkflowRole(for: detected.familyID)
+        model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
+        model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"
+        model.settings.ext["melix.image.default_size"] = "1024x1024"
+        model.settings.ext["melix.image.default_steps"] = imageDefaultSteps(for: detected.familyID)
+        model.settings.ext["melix.image.default_guidance"] = imageDefaultGuidance(for: detected.familyID)
+        model.settings.ext["melix.image.default_strength"] = imageDefaultStrength(for: detected.familyID)
+        model.settings.ext["melix.image.default_negative_prompt"] = ""
+        model.settings.ext["detected_family_id"] = detected.familyID
+        model.settings.ext["detected_task_kind"] = detected.taskKind
+        model.settings.ext["detected_identity_source"] = detected.source
+        model.settings.ext["identity_override"] = explicitFamilyID?.isEmpty == false ? "true" : "false"
+        model.settings.ext["task_override"] = explicitTaskKind?.isEmpty == false ? "true" : "false"
+        model.settings.ext["melix.model_path"] = modelPath
+        model.settings.ext["melix.model_revision"] = "dev"
+        model.settings.ext["melix.tokenizer_hash"] = "tok-image-dev"
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
         return withSynchronizedResidency(model)
     }
 
@@ -926,7 +1549,11 @@ public actor ModelCatalog {
             devOCRModel(),
             devVLMModel(),
             devTranscriptionModel(),
+            mlxWhisperModel(),
+            mlxParakeetModel(),
             devSpeechModel(),
+            mlxKokoroModel(),
+            mlxQwen3TTSModel(),
         ]
     }
 
@@ -945,6 +1572,23 @@ public actor ModelCatalog {
             return value
         }
         return nil
+    }
+
+    private static func normalizedRegistryRootPaths(_ roots: [String]) -> [String] {
+        var normalized: [String] = []
+        var seen: Set<String> = []
+        for root in roots {
+            let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty == false else {
+                continue
+            }
+            let standardized = URL(fileURLWithPath: trimmed).standardizedFileURL.path
+            guard seen.insert(standardized).inserted else {
+                continue
+            }
+            normalized.append(standardized)
+        }
+        return normalized
     }
 
     private static func inferEmbeddingIdentity(from modelPath: String) -> (
@@ -1097,6 +1741,27 @@ public actor ModelCatalog {
         if !source.settings.adaptiveThinking.mode.isEmpty || source.settings.adaptiveThinking.budgetTokens > 0 {
             merged.settings.adaptiveThinking = source.settings.adaptiveThinking
         }
+        if source.settings.diskStreamingMode != .unspecified {
+            merged.settings.diskStreamingMode = source.settings.diskStreamingMode
+        }
+        if source.settings.cacheMode != .unspecified {
+            merged.settings.cacheMode = source.settings.cacheMode
+        }
+        if source.settings.cacheMemoryBudgetBytes > 0 {
+            merged.settings.cacheMemoryBudgetBytes = source.settings.cacheMemoryBudgetBytes
+        }
+        if source.settings.cacheMemoryBudgetPct > 0 {
+            merged.settings.cacheMemoryBudgetPct = source.settings.cacheMemoryBudgetPct
+        }
+        if source.settings.cacheBlockSizeTokens > 0 {
+            merged.settings.cacheBlockSizeTokens = source.settings.cacheBlockSizeTokens
+        }
+        if !source.settings.cacheDirectory.isEmpty {
+            merged.settings.cacheDirectory = source.settings.cacheDirectory
+        }
+        if source.settings.multimodalCacheBudgetBytes > 0 {
+            merged.settings.multimodalCacheBudgetBytes = source.settings.multimodalCacheBudgetBytes
+        }
         merged.settings.ext.merge(source.settings.ext) { _, new in new }
         return merged
     }
@@ -1106,23 +1771,30 @@ public actor ModelCatalog {
     ) -> Melix_Controlplane_V1_ModelSummary {
         ModelCatalog.withSynchronizedResidency(
             source,
-            transitionReason: residencyLedger[source.modelID]?.transitionReason ?? ""
+            transitionReason: residencyLedger[source.modelID]?.transitionReason ?? "",
+            memoryBudgetEvidence: memoryBudgetEvidence(for: source.modelID)
         )
     }
 
     private static func withSynchronizedResidency(
         _ source: Melix_Controlplane_V1_ModelSummary,
-        transitionReason: String = ""
+        transitionReason: String = "",
+        memoryBudgetEvidence: MemoryBudgetEvidence = MemoryBudgetEvidence()
     ) -> Melix_Controlplane_V1_ModelSummary {
         var model = source
         model.pinned = effectivePinnedFlag(for: model)
-        model.residency = residencySummary(for: model, transitionReason: transitionReason)
+        model.residency = residencySummary(
+            for: model,
+            transitionReason: transitionReason,
+            memoryBudgetEvidence: memoryBudgetEvidence
+        )
         return model
     }
 
     private static func residencySummary(
         for model: Melix_Controlplane_V1_ModelSummary,
-        transitionReason: String
+        transitionReason: String,
+        memoryBudgetEvidence: MemoryBudgetEvidence
     ) -> Melix_Controlplane_V1_ResidencySummary {
         var residency = Melix_Controlplane_V1_ResidencySummary()
         residency.state = residencyState(for: model.state)
@@ -1131,7 +1803,44 @@ public actor ModelCatalog {
         residency.pinned = model.state == .modelPinned || model.pinned
         residency.ttlSeconds = model.settings.ttlSeconds
         residency.transitionReason = transitionReason
+        residency.effectiveDiskStreamingMode = effectiveDiskStreamingMode(for: model)
+        residency.memoryBudgetBytes = max(model.settings.memoryBudgetBytes, memoryBudgetEvidence.memoryBudgetBytes)
+        residency.memoryHeadroomBytes = memoryBudgetEvidence.memoryHeadroomBytes
+        residency.requiredBytes = memoryBudgetEvidence.requiredBytes
         return residency
+    }
+
+    private static func effectiveDiskStreamingMode(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch model.state {
+        case .modelWarm, .modelPinned:
+            switch model.settings.diskStreamingMode {
+            case .diskStreamingPreferDisk:
+                return .diskStreamingPreferDisk
+            case .diskStreamingRequireDisk:
+                return .diskStreamingRequireDisk
+            default:
+                return .diskStreamingDisabled
+            }
+        default:
+            return .diskStreamingDisabled
+        }
+    }
+
+    private static func controlPlaneDiskStreamingMode(
+        for mode: Melix_Worker_V1_DiskStreamingMode
+    ) -> Melix_Controlplane_V1_DiskStreamingMode {
+        switch mode {
+        case .diskStreamingDisabled:
+            return .diskStreamingDisabled
+        case .diskStreamingPreferDisk:
+            return .diskStreamingPreferDisk
+        case .diskStreamingRequireDisk:
+            return .diskStreamingRequireDisk
+        default:
+            return .diskStreamingDisabled
+        }
     }
 
     private static func effectivePolicy(
@@ -1223,20 +1932,50 @@ public actor ModelCatalog {
 
     private func touchModel(
         id: String,
-        transitionReason: String? = nil
+        transitionReason: String? = nil,
+        memoryBudgetEvidence: MemoryBudgetEvidence? = nil,
+        clearMemoryBudgetEvidence: Bool = false
     ) {
         nextAccessOrdinal += 1
         var ledger = residencyLedger[id] ?? ResidencyLedger(
             lastAccessOrdinal: 0,
             lastAccessUnixMs: nowUnixMs(),
-            transitionReason: ""
+            transitionReason: "",
+            memoryBudgetBytes: models[id]?.settings.memoryBudgetBytes ?? 0,
+            memoryHeadroomBytes: 0,
+            requiredBytes: 0
         )
         ledger.lastAccessOrdinal = nextAccessOrdinal
         ledger.lastAccessUnixMs = nowUnixMs()
+        ledger.memoryBudgetBytes = models[id]?.settings.memoryBudgetBytes ?? ledger.memoryBudgetBytes
         if let transitionReason, !transitionReason.isEmpty {
             ledger.transitionReason = transitionReason
         }
+        if clearMemoryBudgetEvidence {
+            ledger.memoryBudgetBytes = models[id]?.settings.memoryBudgetBytes ?? ledger.memoryBudgetBytes
+            ledger.memoryHeadroomBytes = 0
+            ledger.requiredBytes = 0
+        }
+        if let memoryBudgetEvidence {
+            ledger.memoryBudgetBytes = max(
+                models[id]?.settings.memoryBudgetBytes ?? 0,
+                memoryBudgetEvidence.memoryBudgetBytes
+            )
+            ledger.memoryHeadroomBytes = memoryBudgetEvidence.memoryHeadroomBytes
+            ledger.requiredBytes = memoryBudgetEvidence.requiredBytes
+        }
         residencyLedger[id] = ledger
+    }
+
+    private func memoryBudgetEvidence(for modelID: String) -> MemoryBudgetEvidence {
+        guard let ledger = residencyLedger[modelID] else {
+            return MemoryBudgetEvidence()
+        }
+        return MemoryBudgetEvidence(
+            memoryBudgetBytes: ledger.memoryBudgetBytes,
+            memoryHeadroomBytes: ledger.memoryHeadroomBytes,
+            requiredBytes: ledger.requiredBytes
+        )
     }
 
     private func lastAccessUnixMs(for modelID: String) -> Int64 {

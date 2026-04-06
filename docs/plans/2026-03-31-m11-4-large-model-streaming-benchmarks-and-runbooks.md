@@ -1,33 +1,55 @@
 # M11.4 Large-Model Streaming Benchmarks And Runbooks
 
+## Status
+
+Completed on 2026-04-05. The repository now owns a truthful disk-streaming evidence path via the
+`melix-disk-streaming-smoke` executable, focused Swift smoke coverage, live integration coverage,
+and an operator runbook. Both worker paths still reject `prefer_disk` and `require_disk` with
+typed `disk_streaming_unsupported` failures, so the completed milestone intentionally records a
+numeric RAM baseline plus explicit unsupported-path diagnostics instead of fabricating SSD-backed
+restore or throughput metrics.
+
 ## Goal
 
 Leave disk streaming with reproducible operator evidence for large-model startup, steady-state, and recovery behavior.
 
 ## Scope
 
-- add benchmark and smoke coverage for streamed sessions
-- record SSD-backed latency and throughput metrics
+- add baseline benchmark and unsupported-path smoke coverage for streamed-session requests
+- record the streaming diagnostics Melix can measure truthfully today
 - document operator setup and diagnosis workflows
 
 ## Files
 
+- update `Package.swift`
+- add `Sources/MelixCLICore/DiskStreamingSmokeCommand.swift`
+- add `Sources/MelixCLICore/DiskStreamingSmokeRunner.swift`
+- add `Sources/MelixDiskStreamingSmoke/main.swift`
+- update `tests/MelixCLITests/DiskStreamingSmokeRunnerTests.swift`
 - update `tests/integration/`
 - update `docs/runbooks/`
 - update `docs/README.md`
 
 ## Implementation Notes
 
-- Evidence should separate RAM-resident baselines from streamed-session behavior.
-- Runbooks should document budget tuning, recovery expectations, and cache-policy interpretation.
-- Metrics should remain suitable for future release gates.
+- Evidence should separate RAM-resident baselines from attempted streamed-session behavior.
+- Runbooks should document budget tuning, recovery expectations, cache-policy interpretation, and
+  the current unsupported-runtime boundary.
+- Metrics should remain suitable for future release gates without fabricating unavailable SSD
+  measurements.
 
 ## Verification
 
 - `make integration-test`
-- streaming-benchmark smoke command for the touched scope
+- `swift test --filter DiskStreamingSmokeRunnerTests`
+- `swift test --enable-code-coverage --filter DiskStreamingSmokeRunnerTests`
+- disk-streaming smoke command for the touched scope
 
 ## Acceptance
 
-- Disk-streaming mode has reproducible performance evidence and operator runbooks.
-- Large-model streaming diagnostics are documented and test-backed.
+- The repository owns reproducible smoke evidence for the current disk-streaming surface.
+- Large-model streaming diagnostics are documented and test-backed without claiming unsupported SSD
+  execution exists.
+- The smoke report records current RAM-baseline benchmark metrics, typed unsupported-path
+  diagnostics for `prefer_disk` and `require_disk`, and explicit placeholder fields for future
+  SSD-backed metrics that remain unavailable until runtime support exists.

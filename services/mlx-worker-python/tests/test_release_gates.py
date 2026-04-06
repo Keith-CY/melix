@@ -26,6 +26,80 @@ from worker.productization.quantization_gates import (
 from worker.productization import release_gates as release_gates_module
 
 
+def _m9_probe_count(policy: dict[str, object] | None = None) -> float:
+    active_policy = policy or DEFAULT_RELEASE_GATE_POLICY["m9"]
+    return float(
+        sum(
+            len(section_rules)
+            for section_rules in active_policy.values()
+            if isinstance(section_rules, dict)
+        )
+    )
+
+
+def _passing_m9_evidence(policy: dict[str, object] | None = None) -> dict[str, object]:
+    required_probe_count = _m9_probe_count(policy)
+    return {
+        "mcp": {
+            "metrics": {
+                "mcp.tool_injection_count": 1.0,
+                "mcp.configured_tool_count": 2.0,
+                "mcp.tool_injection_success_rate": 1.0,
+            }
+        },
+        "agent_export": {
+            "metrics": {
+                "integration.export_generation_ms": 125.0,
+                "integration.setup_success_rate": 1.0,
+                "integration.export_target_count": 5.0,
+            }
+        },
+        "shared_access": {
+            "metrics": {
+                "gateway.auth_validation_failures": 2.0,
+                "gateway.accepted_api_key_count": 2.0,
+                "shared_access.accepted_client_count": 2.0,
+                "shared_access.rejected_request_count": 1.0,
+            }
+        },
+        "persistent_session": {
+            "metrics": {
+                "persistent_session.active_session_count": 0.0,
+                "persistent_session.remembered_session_count": 0.0,
+                "persistent_session.expired_session_count": 0.0,
+                "persistent_session.restore_success_rate": 100.0,
+                "persistent_session.sign_out_latency_ms": 128.0,
+            }
+        },
+        "sanitization": {
+            "metrics": {
+                "sanitized_output.enforcement_count": 2.0,
+                "sanitized_output.blocked_html_fragment_count": 4.0,
+                "sanitized_output.unsafe_uri_rejection_count": 4.0,
+            }
+        },
+        "connection_lifecycle": {
+            "metrics": {
+                "disconnect.keepalive_gap_ms": 8.0,
+                "disconnect.recovery_latency_ms": 12.0,
+                "disconnect.resume_success_rate": 100.0,
+                "disconnect.terminal_failure_count": 1.0,
+            }
+        },
+        "closure_audit": {
+            "metrics": {
+                "closure_audit.blocker_count": 0.0,
+                "closure_audit.evidence_gap_count": 0.0,
+            }
+        },
+        "summary": {
+            "required_probe_count": required_probe_count,
+            "missing_probe_count": 0.0,
+            "failed_threshold_count": 0.0,
+        },
+    }
+
+
 def test_collect_install_evidence_reports_expected_artifacts(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -225,6 +299,155 @@ def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> N
     assert evidence["adapter_publish_ms"] == 118.0
 
 
+def test_collect_m9_collectors_delegate_to_expected_smoke_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    delegated_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def fake_run_python_json_script(
+        root: Path,
+        script_relative_path: str,
+        *script_args: str,
+    ) -> dict[str, object]:
+        delegated_calls.append((script_relative_path, script_args))
+        return {"metrics": {script_relative_path: 1.0}}
+
+    class FakeClosureAudit:
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "metrics": {
+                    "closure_audit.blocker_count": 0.0,
+                    "closure_audit.evidence_gap_count": 0.0,
+                }
+            }
+
+    monkeypatch.setattr(
+        release_gates_module,
+        "_run_python_json_script",
+        fake_run_python_json_script,
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "build_closure_audit",
+        lambda root: FakeClosureAudit(),
+    )
+    policy = {
+        "mcp": {"scripts/m9_mcp_smoke.py": {"min": 1.0}},
+        "agent_export": {"scripts/m9_agent_export_smoke.py": {"min": 1.0}},
+        "shared_access": {"scripts/m9_shared_access_smoke.py": {"min": 1.0}},
+        "persistent_session": {"scripts/m9_persistent_session_smoke.py": {"min": 1.0}},
+        "sanitization": {
+            "sanitized_output.enforcement_count": {"min": 1.0},
+            "sanitized_output.blocked_html_fragment_count": {"min": 1.0},
+            "sanitized_output.unsafe_uri_rejection_count": {"min": 1.0},
+        },
+        "connection_lifecycle": {"scripts/m9_connection_smoke.py": {"min": 1.0}},
+        "closure_audit": {
+            "closure_audit.blocker_count": {"max": 0.0},
+            "closure_audit.evidence_gap_count": {"max": 0.0},
+        },
+    }
+
+    report = release_gates_module.collect_m9_evidence(repo_root, policy=policy)
+
+    assert report["summary"]["required_probe_count"] == 10.0
+    assert report["summary"]["missing_probe_count"] == 0.0
+    assert report["summary"]["failed_threshold_count"] == 0.0
+    assert delegated_calls == [
+        (
+            "scripts/m9_mcp_smoke.py",
+            ("--repo-root", str(repo_root.resolve()), "--json"),
+        ),
+        ("scripts/m9_agent_export_smoke.py", ("--json",)),
+        ("scripts/m9_shared_access_smoke.py", ("--json",)),
+        (
+            "scripts/m9_persistent_session_smoke.py",
+            ("--repo-root", str(repo_root.resolve()), "--json"),
+        ),
+        (
+            "scripts/m9_connection_smoke.py",
+            ("--repo-root", str(repo_root.resolve()), "--json"),
+        ),
+    ]
+    assert report["sanitization"]["metrics"]["sanitized_output.enforcement_count"] == 2.0
+    assert (
+        report["closure_audit"]["metrics"]["closure_audit.blocker_count"] == 0.0
+    )
+
+
+def test_evaluate_m9_release_evidence_ignores_non_dict_policy_entries() -> None:
+    failures, summary = release_gates_module.evaluate_m9_release_evidence(
+        {"mcp": {"metrics": {"mcp.tool_injection_count": 1.0}}},
+        {
+            "mcp": {"mcp.tool_injection_count": {"min": 1.0}},
+            "notes": "ignore me",
+        },
+    )
+
+    assert failures == []
+    assert summary["required_probe_count"] == 1.0
+    assert summary["missing_probe_count"] == 0.0
+    assert summary["failed_threshold_count"] == 0.0
+
+
+def test_run_python_json_script_sets_repo_pythonpath_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    existing_pythonpath = "existing-pythonpath"
+    monkeypatch.setenv("PYTHONPATH", existing_pythonpath)
+
+    captured_env: dict[str, str] = {}
+
+    def fake_subprocess_run(command, **kwargs):
+        nonlocal captured_env
+        captured_env = dict(kwargs["env"])
+
+        class Completed:
+            stdout = json.dumps({"ok": True})
+
+        return Completed()
+
+    monkeypatch.setattr(release_gates_module.subprocess, "run", fake_subprocess_run)
+
+    payload = release_gates_module._run_python_json_script(
+        repo_root,
+        "scripts/fake.py",
+        "--json",
+    )
+
+    assert payload == {"ok": True}
+    assert captured_env["PYTHONPATH"].split(":")[0] == str(repo_root.resolve())
+    assert captured_env["PYTHONPATH"].split(":")[1] == str(
+        repo_root.resolve() / "services" / "mlx-worker-python"
+    )
+    assert captured_env["PYTHONPATH"].split(":")[-1] == existing_pythonpath
+
+
+def test_run_python_json_script_requires_stdout_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    def fake_subprocess_run(command, **kwargs):
+        class Completed:
+            stdout = ""
+
+        return Completed()
+
+    monkeypatch.setattr(release_gates_module.subprocess, "run", fake_subprocess_run)
+
+    with pytest.raises(RuntimeError, match="did not emit JSON output"):
+        release_gates_module._run_python_json_script(repo_root, "scripts/fake.py", "--json")
+
+
 def test_collect_audio_product_evidence_distinguishes_slim_and_full_builds(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -302,6 +525,7 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
                 "full.audio_runtime_pack_recovery_success_rate": 0.0,
             },
         },
+        "m9": _passing_m9_evidence(),
     }
 
     failures = evaluate_release_gate(report, policy)
@@ -325,6 +549,205 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
     assert "slim.audio_first_use_blocked_runtime_pack_count=0.00 fell below minimum 1.00" in failures
     assert "full.audio_runtime_pack_install_ms=1.00 exceeded maximum 0.00" in failures
     assert "quantization evidence is missing" in failures
+
+
+def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_cache_recovery_benchmark_evidence",
+        lambda repo_root: {
+            "metrics": {
+                "bench.recovery.hot_followup_ttft_delta_ms": 12.5,
+                "bench.recovery.cold_l2_hit_rate": 100.0,
+                "bench.recovery.partial_restore_ratio_pct": 80.0,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_quantization_benchmark_evidence",
+        lambda jobs_root: {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_m9_evidence",
+        lambda repo_root, policy=None: _passing_m9_evidence(policy),
+        raising=False,
+    )
+
+    report = build_release_gate_report(
+        repo_root,
+        jobs_root=tmp_path / "jobs",
+        policy={
+            **DEFAULT_RELEASE_GATE_POLICY,
+            "m9": {
+                "mcp": {"mcp.tool_injection_success_rate": {"min": 1.0}},
+                "agent_export": {"integration.setup_success_rate": {"min": 1.0}},
+                "shared_access": {"shared_access.accepted_client_count": {"min": 1.0}},
+                "persistent_session": {
+                    "persistent_session.restore_success_rate": {"min": 100.0}
+                },
+                "sanitization": {"sanitized_output.enforcement_count": {"min": 1.0}},
+                "connection_lifecycle": {
+                    "disconnect.resume_success_rate": {"min": 100.0}
+                },
+                "closure_audit": {
+                    "closure_audit.blocker_count": {"max": 0.0},
+                    "closure_audit.evidence_gap_count": {"max": 0.0},
+                },
+            },
+        },
+        recovery={
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+
+    assert report["m9"]["summary"]["required_probe_count"] == 8.0
+    assert report["m9"]["summary"]["missing_probe_count"] == 0.0
+    assert report["m9"]["summary"]["failed_threshold_count"] == 0.0
+    assert report["passed"] is True
+
+
+def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_m9_evidence() -> None:
+    policy = {
+        **DEFAULT_RELEASE_GATE_POLICY,
+        "m9": {
+            "mcp": {"mcp.tool_injection_success_rate": {"min": 1.0}},
+            "agent_export": {"integration.setup_success_rate": {"min": 1.0}},
+            "shared_access": {"shared_access.accepted_client_count": {"min": 1.0}},
+            "persistent_session": {"persistent_session.restore_success_rate": {"min": 100.0}},
+            "sanitization": {"sanitized_output.enforcement_count": {"min": 1.0}},
+            "connection_lifecycle": {"disconnect.resume_success_rate": {"min": 100.0}},
+            "closure_audit": {
+                "closure_audit.blocker_count": {"max": 0.0},
+                "closure_audit.evidence_gap_count": {"max": 0.0},
+            },
+        },
+    }
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 12.0,
+                "slim.audio_model_download_ms": 18.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 17.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "m9": {
+            "mcp": {"metrics": {"mcp.tool_injection_success_rate": 1.0}},
+            "agent_export": {"metrics": {"integration.setup_success_rate": 1.0}},
+            "shared_access": {"metrics": {}},
+            "persistent_session": {
+                "metrics": {"persistent_session.restore_success_rate": 100.0}
+            },
+            "sanitization": {"metrics": {"sanitized_output.enforcement_count": 2.0}},
+            "connection_lifecycle": {
+                "metrics": {"disconnect.resume_success_rate": 0.0}
+            },
+            "closure_audit": {
+                "metrics": {
+                    "closure_audit.blocker_count": 1.0,
+                    "closure_audit.evidence_gap_count": 0.0,
+                }
+            },
+            "summary": {
+                "required_probe_count": 7.0,
+                "missing_probe_count": 1.0,
+                "failed_threshold_count": 2.0,
+            },
+        },
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    assert "m9.shared_access.shared_access.accepted_client_count is missing" in failures
+    assert (
+        "m9.connection_lifecycle.disconnect.resume_success_rate=0.00 fell below minimum 100.00"
+        in failures
+    )
+    assert "m9.closure_audit.closure_audit.blocker_count=1.00 exceeded maximum 0.00" in failures
 
 
 def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
@@ -360,6 +783,12 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
                 for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
             },
         },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_m9_evidence",
+        lambda repo_root, policy=None: _passing_m9_evidence(policy),
+        raising=False,
     )
 
     report = build_release_gate_report(
@@ -435,6 +864,12 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
                 for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
             },
         },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_m9_evidence",
+        lambda repo_root, policy=None: _passing_m9_evidence(policy),
+        raising=False,
     )
 
     report = build_release_gate_report(
@@ -521,6 +956,7 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
                     }
                 },
             },
+            "m9": _passing_m9_evidence(),
         },
         load_release_gate_policy(),
     )
@@ -626,6 +1062,9 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
     assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "m9" in policy
+    assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
+    assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0
 
 
 def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
@@ -711,6 +1150,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.3,
             },
         },
+        "m9": _passing_m9_evidence(),
     }
 
     failures = evaluate_release_gate(report, policy)
@@ -770,6 +1210,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.75,
             },
         },
+        "m9": _passing_m9_evidence(),
     }
 
     failures = evaluate_release_gate(report, policy)

@@ -203,10 +203,16 @@ Task 4 reused the Task 3 `convert_model` streaming manifest path, so no addition
 
 ## Final Verification And Handoff
 
-- [ ] Run the repository defaults for the touched slice:
+- [x] Run the repository defaults for the touched slice:
   - `make proto`
+    - Result: pass
   - `make py-test`
+    - Result: `403 passed in 34.05s`
   - `make swift-test`
+    - Result: pass
   - `make integration-test`
-- [ ] Update `progress.md` and any milestone evidence docs needed to reflect what actually landed for `M8.1-M8.4`.
-- [ ] Produce a metrics report for the changed scope. If any probe is still `N/A`, record the reason explicitly in `progress.md` or the handoff note.
+    - Result: `54 passed in 622.59s (0:10:22)`
+- [x] Update `progress.md` and any milestone evidence docs needed to reflect what actually landed for `M8.1-M8.4`.
+- [x] Produce a metrics report for the changed scope. If any probe is still `N/A`, record the reason explicitly in `progress.md` or the handoff note.
+  - This close-out change is documentation-only, so executable changed-line coverage is `N/A`.
+  - The committed M8.1-M8.4 tasks already recorded their task-level changed-line coverage inside this plan.

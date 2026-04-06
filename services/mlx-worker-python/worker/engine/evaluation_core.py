@@ -7,13 +7,15 @@ import re
 import time
 
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
-from worker.productization.evaluation_schemas import EvaluationJob, EvaluationResult, EvaluationSample
-from worker.productization.evaluation_store import EvaluationStore
-from worker.productization.benchmark_schemas import (
-    build_evaluation_job,
-    build_evaluation_result,
-    build_evaluation_sample,
+from worker.productization.evaluation_schemas import (
+    EvaluationJob,
+    EvaluationResult,
+    EvaluationSample,
+    build_evaluation_job_record,
+    build_evaluation_result_record,
+    build_evaluation_sample_record,
 )
+from worker.productization.evaluation_store import EvaluationStore
 
 
 _SUITE_SCORE_MODES = {
@@ -56,6 +58,10 @@ class EvaluationCore:
         suite_id: str,
         dataset_root: Path,
         sample_size: int,
+        few_shot: int | None = None,
+        seed: int | None = None,
+        scoring_mode: str | None = None,
+        code_exec_policy: str | None = None,
         parameters: dict[str, str] | None = None,
     ) -> EvaluationRun:
         dataset_root = Path(dataset_root).resolve()
@@ -74,8 +80,25 @@ class EvaluationCore:
             if line.strip()
         ]
         selected = samples[: max(sample_size, 0)]
-        score_name, scoring_mode = _SUITE_SCORE_MODES[suite_id]
+        score_name, default_scoring_mode = _SUITE_SCORE_MODES[suite_id]
+        resolved_scoring_mode = scoring_mode if scoring_mode else default_scoring_mode
+        resolved_few_shot = self._resolve_int_parameter(
+            explicit_value=few_shot,
+            parameters=parameters,
+            key="few_shot",
+        )
+        resolved_seed = self._resolve_int_parameter(
+            explicit_value=seed,
+            parameters=parameters,
+            key="seed",
+        )
+        resolved_code_exec_policy = (
+            code_exec_policy
+            if code_exec_policy is not None and code_exec_policy != ""
+            else (parameters or {}).get("code_exec_policy", "")
+        )
         created_at_unix_ms = int(time.time() * 1000)
+        started_at = time.perf_counter()
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
         sample_records = tuple(
@@ -88,16 +111,22 @@ class EvaluationCore:
             )
             for index, sample in enumerate(selected, start=1)
         )
+        duration_seconds = round(time.perf_counter() - started_at, 6)
         correct = sum(1 for sample in sample_records if sample.correct)
+        incorrect = len(sample_records) - correct
         accuracy = round(correct / max(len(sample_records), 1), 4)
         job_parameters = {"dataset_root": str(dataset_root)}
         if parameters:
             job_parameters.update(parameters)
+        job_parameters["few_shot"] = str(resolved_few_shot)
+        job_parameters["seed"] = str(resolved_seed)
+        job_parameters["scoring_mode"] = resolved_scoring_mode
+        job_parameters["code_exec_policy"] = resolved_code_exec_policy
         job_parameters.setdefault("sample_size", str(len(sample_records)))
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
-        job = build_evaluation_job(
+        job = build_evaluation_job_record(
             job_id=job_id,
             model_id=model_id,
             task_kind=job_parameters.get("task_kind", "text-generation"),
@@ -105,26 +134,38 @@ class EvaluationCore:
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
             sample_size=len(sample_records),
-            scoring_mode=scoring_mode,
+            scoring_mode=resolved_scoring_mode,
+            few_shot=resolved_few_shot,
+            seed=resolved_seed,
+            code_exec_policy=resolved_code_exec_policy,
             parameters=job_parameters,
             status="completed",
             output_dir=output_dir,
             created_at_unix_ms=created_at_unix_ms,
             updated_at_unix_ms=created_at_unix_ms,
         )
-        result = build_evaluation_result(
+        result = build_evaluation_result_record(
             job_id=job.job_id,
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
             sample_size=len(sample_records),
+            score_name=score_name,
+            score_value=accuracy,
+            correct_count=correct,
+            incorrect_count=incorrect,
+            duration_seconds=duration_seconds,
             metrics={
                 f"eval.{suite_id}.{score_name}": accuracy,
                 f"eval.{suite_id}.correct_count": float(correct),
+                f"eval.{suite_id}.incorrect_count": float(incorrect),
+                f"eval.{suite_id}.duration_seconds": duration_seconds,
             },
             report_path=str(report_path),
             units={
                 f"eval.{suite_id}.{score_name}": "ratio",
                 f"eval.{suite_id}.correct_count": "count",
+                f"eval.{suite_id}.incorrect_count": "count",
+                f"eval.{suite_id}.duration_seconds": "s",
             },
         )
         persisted_paths: dict[str, Path] = {}
@@ -188,6 +229,23 @@ class EvaluationCore:
         return self._jobs_root / "runs" / job_id
 
     @staticmethod
+    def _resolve_int_parameter(
+        *,
+        explicit_value: int | None,
+        parameters: dict[str, str] | None,
+        key: str,
+    ) -> int:
+        if explicit_value is not None:
+            return int(explicit_value)
+        raw_value = (parameters or {}).get(key)
+        if raw_value is None or raw_value == "":
+            return 0
+        try:
+            return int(raw_value)
+        except ValueError:
+            return 0
+
+    @staticmethod
     def _build_sample_record(
         *,
         job_id: str,
@@ -202,7 +260,7 @@ class EvaluationCore:
         predicted = EvaluationCore._deterministic_answer(prompt)
         duration_s = round(time.perf_counter() - started_at, 6)
         parse_status = "parsed" if predicted else "empty_prediction"
-        return build_evaluation_sample(
+        return build_evaluation_sample_record(
             job_id=job_id,
             suite_id=suite_id,
             dataset_id=dataset_id,

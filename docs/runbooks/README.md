@@ -14,10 +14,19 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `desktop-polish.md`
+- `disk-streaming-evidence.md`
+- `video-understanding-evidence.md`
+- `session-lifecycle.md`
+- `connection-lifecycle.md`
+- `security-and-stability-closure.md`
 - `m7-benchmark-and-evaluation-foundation.md`
 - `m6-acceleration-benchmarks.md`
 - `model-family-support-matrix.md`
+- `persistent-sessions.md`
+- `rich-output-sanitization.md`
 - `service-first-reuse.md`
+- `phase-7-image-ops.md`
 - `phase-1-local-stack.md`
 - `phase-2-queue-pressure.md`
 - `phase-8-cache-recovery-benchmarks.md`

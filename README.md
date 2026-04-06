@@ -93,6 +93,16 @@ environment export file:
 python3 scripts/install_local_product.py --json
 ```
 
+When you need the installer to avoid an occupied default port while preserving the requested port
+as packaging intent:
+
+```bash
+python3 scripts/install_local_product.py \
+  --http-port 11434 \
+  --prefer-available-http-port \
+  --json
+```
+
 Validate the generated install assets without running `launchctl`:
 
 ```bash
@@ -104,6 +114,20 @@ The installer writes:
 - launch agents under `~/Library/LaunchAgents`
 - an install manifest under `~/Library/Application Support/Melix/install-manifest.json`
 - an environment export file under `~/Library/Application Support/Melix/melix-product-env.sh`
+
+The install manifest now records product version, update-channel path, requested and selected HTTP
+ports, ready-probe URL, and worker or control-plane log locations. The environment export file also
+surfaces `MELIX_PRODUCT_VERSION` and `MELIX_UPDATE_CHANNEL_PATH`.
+
+Run the deterministic packaged-startup smoke to verify update detection and startup-failure
+classification without bootstrapping launch agents:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_startup_failure_smoke.py --json
+```
 
 The full operator flow, including bootstrap and uninstall commands, is documented in
 `docs/runbooks/phase-8-local-install.md`.
@@ -120,6 +144,47 @@ python3 scripts/install_local_product.py \
 
 This creates isolated launch agents, runtime roots, managed model roots, and tooling jobs
 roots for that consumer.
+
+## Homebrew Install
+
+Install Melix from the checked-out repository with the repository-owned Homebrew formula:
+
+```bash
+brew install --formula ./infra/homebrew/Formula/melix.rb
+melix-homebrew-service manifest --json
+brew services start melix
+```
+
+This flow installs the CLI plus the control-plane and text-worker binaries, then supervises the
+three-process Melix bundle through the `homebrew` sidecar instance. Detailed install, upgrade,
+stop, and prune guidance lives in `docs/runbooks/homebrew-install.md`.
+
+## Packaging Targets
+
+Melix now ships a repository-owned packaging target matrix for Apple Silicon delivery paths. The
+current supported targets are:
+
+- `launch_agents_checkout`
+- `homebrew_service`
+- `macos_app_bundle_preview`
+
+Each target keeps the same logical Melix identity while differentiating packaging metadata, runtime
+layout, and update strategy. Build the preview app bundle with:
+
+```bash
+python3 scripts/package_macos_menubar_app.py --output-path /tmp/Melix.app --json
+```
+
+Validate the shared target matrix with:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/m8_packaging_target_smoke.py --json
+```
+
+Detailed guidance lives in `docs/runbooks/platform-packaging-targets.md`.
 
 ## LoRA And Benchmark Operator Flows
 

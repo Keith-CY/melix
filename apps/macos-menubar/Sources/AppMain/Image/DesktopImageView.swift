@@ -15,6 +15,19 @@ struct DesktopImageTabView: View {
         }
     }
 
+    @MainActor
+    func redoSelectedJob() {
+        Task {
+            await viewModel.redoSelectedImageJob()
+        }
+    }
+
+    @MainActor
+    func prepareReiterateFromSelectedJob() {
+        selectedMode = .edit
+        viewModel.prepareReiterateFromSelectedImageJob()
+    }
+
     var body: some View {
         HSplitView {
             if showsSidebar {
@@ -30,7 +43,12 @@ struct DesktopImageTabView: View {
             )
 
             if showsInspector {
-                DesktopImageInspector(viewModel: viewModel, cancelSelectedJob: cancelSelectedJob)
+                DesktopImageInspector(
+                    viewModel: viewModel,
+                    cancelSelectedJob: cancelSelectedJob,
+                    redoSelectedJob: redoSelectedJob,
+                    prepareReiterateFromSelectedJob: prepareReiterateFromSelectedJob
+                )
                     .frame(minWidth: 300, idealWidth: 320)
             }
         }
@@ -88,6 +106,18 @@ struct DesktopImageWorkspace: View {
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
 
+    private var workflowRole: RuntimeImageWorkflowRole {
+        selectedMode == .generate ? .generate : .edit
+    }
+
+    private var availableImageModels: [RuntimeModelRow] {
+        viewModel.imageModels(for: workflowRole)
+    }
+
+    private var selectedImageModelSummary: RuntimeModelRow? {
+        availableImageModels.first(where: { $0.modelID == viewModel.selectedImageModelID(for: workflowRole) })
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -113,15 +143,54 @@ struct DesktopImageWorkspace: View {
                 Picker(
                     "Model",
                     selection: Binding(
-                        get: { viewModel.selectedImageModelID },
-                        set: { viewModel.selectedImageModelID = $0 }
+                        get: { viewModel.selectedImageModelID(for: workflowRole) },
+                        set: { viewModel.setSelectedImageModelID($0, for: workflowRole) }
                     )
                 ) {
-                    ForEach(viewModel.imageModels, id: \.modelID) { model in
+                    ForEach(availableImageModels, id: \.modelID) { model in
                         Text(model.modelID).tag(model.modelID)
                     }
                 }
                 .frame(maxWidth: 320)
+
+                if let selectedImageModelSummary {
+                    Text(imageRoleSummary(for: selectedImageModelSummary))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                GroupBox("Defaults") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Source")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(viewModel.imageDefaultsSourceText)
+                        }
+                        HStack {
+                            Text("Effective models")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(effectiveModelSummary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        HStack {
+                            Text("Effective parameters")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(effectiveDefaultsSummary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        HStack {
+                            Text("Timeout policy")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(viewModel.imageTimeoutPolicyText)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                    .font(.caption)
+                }
 
                 GroupBox(selectedMode.rawValue) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -154,7 +223,66 @@ struct DesktopImageWorkspace: View {
                             )
                         }
 
+                        HStack {
+                            TextField(
+                                "Steps",
+                                text: Binding(
+                                    get: { viewModel.imageSteps },
+                                    set: { viewModel.imageSteps = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+
+                            TextField(
+                                "Guidance",
+                                text: Binding(
+                                    get: { viewModel.imageGuidance },
+                                    set: { viewModel.imageGuidance = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+
+                            if selectedMode == .edit {
+                                TextField(
+                                    "Strength",
+                                    text: Binding(
+                                        get: { viewModel.imageStrength },
+                                        set: { viewModel.imageStrength = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        TextField(
+                            "Negative prompt",
+                            text: Binding(
+                                get: { viewModel.imageNegativePrompt },
+                                set: { viewModel.imageNegativePrompt = $0 }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+
                         if selectedMode == .edit {
+                            Picker(
+                                "Edit mode",
+                                selection: Binding(
+                                    get: { viewModel.imageEditMode },
+                                    set: { viewModel.imageEditMode = $0 }
+                                )
+                            ) {
+                                Text("Edit").tag(RuntimeImageEditMode.edit)
+                                Text("Variation").tag(RuntimeImageEditMode.variation)
+                                Text("Iterate").tag(RuntimeImageEditMode.iterate)
+                            }
+                            .pickerStyle(.segmented)
+
+                            if let sourceArtifactSummary = viewModel.imageEditSourceArtifactSummaryText {
+                                Text("Source artifact • \(sourceArtifactSummary)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             TextField(
                                 "Source image URI",
                                 text: Binding(
@@ -179,6 +307,8 @@ struct DesktopImageWorkspace: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
+                                .buttonStyle(.bordered)
                             Button("Run") {
                                 Task {
                                     if selectedMode == .generate {
@@ -217,15 +347,71 @@ struct DesktopImageWorkspace: View {
         switch selectedMode {
         case .generate:
             return viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || availableImageModels.isEmpty
         case .edit:
-            return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if availableImageModels.isEmpty {
+                return true
+            }
+            switch viewModel.imageEditMode {
+            case .edit:
+                return viewModel.imageEditSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .variation:
+                return viewModel.imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .iterate:
+                return viewModel.imageEditSourceArtifactID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         }
+    }
+
+    private func imageRoleSummary(for model: RuntimeModelRow) -> String {
+        let familyText = model.imageFamilyID.isEmpty ? "generic-image" : model.imageFamilyID
+        let defaultRoleText: String
+        switch model.imageDefaultWorkflowRole {
+        case RuntimeImageWorkflowRole.generate.rawValue:
+            defaultRoleText = "Primary role generate"
+        case RuntimeImageWorkflowRole.edit.rawValue:
+            defaultRoleText = "Primary role edit"
+        default:
+            defaultRoleText = "Primary role mixed"
+        }
+        let roleText: String
+        switch workflowRole {
+        case .generate:
+            roleText = model.imageSupportsEdit ? "Supports generate + edit" : "Supports generate"
+        case .edit:
+            roleText = model.imageSupportsGeneration ? "Supports edit + generate" : "Supports edit"
+        }
+        return "Family \(familyText) • \(roleText) • \(defaultRoleText)"
+    }
+
+    private var effectiveModelSummary: String {
+        let generateModelID = viewModel.effectiveImageGenerateModelID.isEmpty
+            ? viewModel.selectedImageModelID(for: .generate)
+            : viewModel.effectiveImageGenerateModelID
+        let editModelID = viewModel.effectiveImageEditModelID.isEmpty
+            ? viewModel.selectedImageModelID(for: .edit)
+            : viewModel.effectiveImageEditModelID
+        return "Generate \(generateModelID)\nEdit \(editModelID)"
+    }
+
+    private var effectiveDefaultsSummary: String {
+        let negativePrompt = viewModel.effectiveImageNegativePrompt.isEmpty
+            ? "None"
+            : viewModel.effectiveImageNegativePrompt
+        return """
+        size \(viewModel.effectiveImageSize) • steps \(viewModel.effectiveImageSteps)
+        guidance \(viewModel.effectiveImageGuidance) • strength \(viewModel.effectiveImageStrength)
+        negative \(negativePrompt)
+        """
     }
 }
 
 struct DesktopImageInspector: View {
     let viewModel: RuntimeViewModel
     let cancelSelectedJob: @MainActor () -> Void
+    let redoSelectedJob: @MainActor () -> Void
+    let prepareReiterateFromSelectedJob: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -239,7 +425,14 @@ struct DesktopImageInspector: View {
                         Text("\(job.progress.stage) • \(String(format: "%.0f%%", job.progress.pct * 100))")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
+                        Text(viewModel.selectedImageJobTimeoutText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         HStack {
+                            Button("Redo", action: redoSelectedJob)
+                                .disabled(viewModel.canRedoSelectedImageJob == false)
+                            Button("Reiterate", action: prepareReiterateFromSelectedJob)
+                                .disabled(viewModel.canPrepareReiterateFromSelectedImageJob == false)
                             Spacer()
                             Button("Cancel", action: cancelSelectedJob)
                                 .disabled(job.cancelable == false)
@@ -313,7 +506,7 @@ private struct DesktopImageJobRowView: View {
         case .imageJobCanceled:
             return "canceled"
         case .imageJobFailed:
-            return "failed"
+            return job.error.code == "deadline_exceeded" ? "timed_out" : "failed"
         default:
             return "unknown"
         }

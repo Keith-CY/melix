@@ -265,6 +265,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert capabilities.cache.supports_prefix_cache is True
     assert capabilities.cache.kv_quant_profiles == ["q4"]
     assert capabilities.execution.supports_continuous_batching is False
+    assert capabilities.execution.supports_disk_streaming is False
 
     state = registry.start_request("req-1")
     assert registry.get_request("req-1") is state
@@ -289,6 +290,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             preprocess_input_bytes=64,
             preprocess_peak_memory_bytes=2048,
             first_token_latency_ms=5.0,
+            temp_media_artifact_count=2,
+            temp_media_artifact_bytes=96,
+            temp_media_cleanup_latency_ms=1.25,
+            temp_media_cleanup_failure_count=1,
         ),
     )
     vision_stats = registry.runtime_stats()
@@ -298,6 +303,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_preprocess_input_bytes == 64
     assert vision_stats.last_preprocess_peak_memory_bytes == 2048
     assert vision_stats.last_first_token_latency_ms == 5.0
+    assert vision_stats.last_temp_media_artifact_count == 2
+    assert vision_stats.last_temp_media_artifact_bytes == 96
+    assert vision_stats.last_temp_media_cleanup_latency_ms == 1.25
+    assert vision_stats.last_temp_media_cleanup_failure_count == 1
 
     registry.record_transcription_probe(
         SimpleNamespace(
@@ -314,6 +323,8 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert transcription_stats.last_transcription_latency_ms == 9.0
     assert transcription_stats.last_audio_duration_seconds == 0.75
     assert transcription_stats.last_audio_chunk_count == 4
+    assert transcription_stats.last_temp_media_artifact_count == 0
+    assert transcription_stats.last_temp_media_cleanup_failure_count == 0
 
     registry.record_speech_probe(
         SimpleNamespace(
@@ -326,6 +337,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert speech_stats.last_speech_latency_ms == 7.5
     assert speech_stats.last_audio_output_bytes == 128
     assert speech_stats.last_image_job_latency_ms == 0.0
+    assert speech_stats.last_temp_media_artifact_count == 0
 
     registry.record_image_probe(
         SimpleNamespace(
@@ -341,6 +353,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert image_stats.last_image_artifact_publish_ms == 3.25
     assert image_stats.last_image_output_bytes == 512
     assert image_stats.last_image_peak_memory_bytes == 40960
+    assert image_stats.last_temp_media_artifact_count == 0
     assert image_stats.model_resident_bytes == 0
     assert image_stats.cache_resident_bytes == 0
     assert image_stats.kv_cache_bytes == 0
@@ -364,7 +377,9 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     _, deterministic_transcription = registry._runtime_for_model(WorkerModelCatalog.dev_transcription_model())
     _, deterministic_speech = registry._runtime_for_model(WorkerModelCatalog.dev_speech_model())
     _, whisper = registry._runtime_for_model(WorkerModelCatalog.mlx_whisper_model())
+    _, parakeet = registry._runtime_for_model(WorkerModelCatalog.mlx_parakeet_model())
     _, kokoro = registry._runtime_for_model(WorkerModelCatalog.mlx_kokoro_model())
+    _, qwen3_tts = registry._runtime_for_model(WorkerModelCatalog.mlx_qwen3_tts_model())
 
     missing_backend = common_pb2.ModelSpec(
         model_id="missing-audio-backend",
@@ -375,7 +390,9 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     assert deterministic_transcription.runtime_name == "deterministic-transcription"
     assert deterministic_speech.runtime_name == "deterministic-speech"
     assert whisper.runtime_name == "mlx-audio-stt"
+    assert parakeet.runtime_name == "mlx-audio-stt"
     assert kokoro.runtime_name == "mlx-audio-tts"
+    assert qwen3_tts.runtime_name == "mlx-audio-tts"
 
     with pytest.raises(RuntimeError, match="requires an explicit melix.audio.backend_id"):
         registry._runtime_for_model(missing_backend)

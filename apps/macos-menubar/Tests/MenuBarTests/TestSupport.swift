@@ -12,6 +12,16 @@ enum MenuBarTestEnvironment {
 }
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
+    struct ScheduledChatEvent: Equatable, Sendable {
+        let delay: Duration
+        let event: ControlPlaneChatStreamEvent
+
+        init(delay: Duration = .zero, event: ControlPlaneChatStreamEvent) {
+            self.delay = delay
+            self.event = event
+        }
+    }
+
     struct RecordedModelOperationRequest: Equatable, Sendable {
         let modelID: String
         let operation: String
@@ -30,16 +40,94 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let tokenHint: String
     }
 
+    struct RecordedGatewayConfigApplyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let host: String
+        let port: Int
+        let servedModelID: String
+        let rateLimitPerMinute: Int
+        let timeoutSeconds: Int
+    }
+
+    struct RecordedServingDefaultsApplyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let temperature: Double
+        let topP: Double
+        let maxTokens: Int
+        let streamIntervalTokens: Int
+        let maxConcurrentRequests: Int
+        let concurrentProcessingEnabled: Bool
+        let prefillBatchSize: Int
+        let completionBatchSize: Int
+        let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+        let draftModelID: String
+        let numDraftTokens: Int
+    }
+
+    struct RecordedImageDefaultsApplyRequest: Equatable, Sendable {
+        let generateModelID: String
+        let editModelID: String
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let strength: Float
+        let negativePrompt: String
+    }
+
+    struct RecordedImageGenerateRequest: Equatable, Sendable {
+        let modelID: String
+        let prompt: String
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let negativePrompt: String
+        let n: UInt32
+        let responseFormat: String
+        let artifactNamespace: String
+    }
+
+    struct RecordedImageEditRequest: Equatable, Sendable {
+        let modelID: String
+        let prompt: String
+        let imageURL: String
+        let maskURL: String
+        let sourceArtifactID: String
+        let promptDelta: String
+        let mode: ControlPlaneImageEditRequest.Mode
+        let strength: Float
+        let size: String
+        let steps: UInt32
+        let guidance: Float
+        let negativePrompt: String
+        let n: UInt32
+        let responseFormat: String
+    }
+
+    struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
+        let serverSessionID: String
+        let autoSleepEnabled: Bool
+        let lightSleepAfterSeconds: UInt32
+        let deepSleepAfterSeconds: UInt32
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
+    private(set) var recordedBenchMatrixRequests: [ControlPlaneBenchMatrixRequest] = []
     private(set) var recordedEvaluationRequests: [ControlPlaneEvaluationRequest] = []
     private(set) var recordedExportOutputDirs: [String] = []
     private(set) var recordedGatewayAccessApplyRequests: [RecordedGatewayAccessApplyRequest] = []
+    private(set) var recordedGatewayConfigApplyRequests: [RecordedGatewayConfigApplyRequest] = []
+    private(set) var recordedServingDefaultsApplyRequests: [RecordedServingDefaultsApplyRequest] = []
+    private(set) var recordedImageDefaultsApplyRequests: [RecordedImageDefaultsApplyRequest] = []
+    private(set) var recordedImageGenerateRequests: [RecordedImageGenerateRequest] = []
+    private(set) var recordedImageEditRequests: [RecordedImageEditRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
+    private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
+    private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
     private var modelState: Melix_Controlplane_V1_ModelState = .modelDiscovered
@@ -52,6 +140,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelOperationError: Error?
     private var doctorError: Error?
     private var benchError: Error?
+    private var benchMatrixError: Error?
     private var evaluationError: Error?
     private var exportError: Error?
     private var chatError: Error?
@@ -59,18 +148,74 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var imageEditError: Error?
     private var cancelError: Error?
     private var applyGatewayAccessError: Error?
+    private var applyGatewayConfigError: Error?
+    private var applyServingDefaultsError: Error?
+    private var applyImageDefaultsError: Error?
     private var clearGatewayAccessError: Error?
+    private var startServerError: Error?
+    private var pauseServerError: Error?
+    private var resumeServerError: Error?
+    private var wakeServerError: Error?
+    private var stopServerError: Error?
+    private var updateServerIdlePolicyError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
     private var modelOperationResponsesByName: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
-    private var doctorResponse = "# Melix Doctor\n\n- worker_state: idle\n"
+    private var doctorResponse = FakeControlPlaneXPCClient.defaultDoctorReport()
     private var benchResponse = ControlPlaneBenchResult(
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
         metrics: ["bench.smoke.ttft_ms": 24.45]
+    )
+    private var benchMatrixResponse = ControlPlaneBenchMatrixResult(
+        job: {
+            var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+            job.jobID = "matrix-fake"
+            job.modelID = "melix-dev-text"
+            job.taskKind = "text-generation"
+            job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+            job.suiteIds = ["smoke"]
+            job.benchmarkMode = "matrix"
+            job.status = "completed"
+            job.outputDir = "/tmp/melix-fake/bench/matrix-runs/matrix-fake"
+            job.createdAtUnixMs = 1_712_000_000_000
+            job.updatedAtUnixMs = 1_712_000_001_000
+            return job
+        }(),
+        summaryRows: {
+            var row = Melix_Controlplane_V1_BenchmarkMatrixSummaryRow()
+            row.jobID = "matrix-fake"
+            row.taskKind = "text-generation"
+            row.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+            row.modelID = "melix-dev-text"
+            row.suiteID = "smoke"
+            row.contextLength = 1024
+            row.generationLength = 128
+            row.batchSize = 2
+            row.cacheProfile = "cold"
+            row.reasoningMode = "enabled"
+            row.structuredOutputMode = "json_schema"
+            row.concurrencyLevel = 1
+            row.repeats = 3
+            row.requests = 8
+            row.ttftMeanMs = 24.4
+            row.ttftStdMs = 1.2
+            row.requestLatencyMeanMs = 33.8
+            row.requestLatencyStdMs = 1.1
+            row.prefillTokensPerSecondMean = 310.0
+            row.decodeTokensPerSecondMean = 62.0
+            row.throughputRequestsPerSecond = 4.8
+            row.throughputTokensPerSecond = 256.0
+            row.successRate = 1
+            row.peakMemoryBytesMax = 2_048_000_000
+            row.queueWaitMeanMs = 2.3
+            row.queueWaitP95Ms = 3.1
+            row.createdAtUnixMs = 1_712_000_000_000
+            return [row]
+        }()
     )
     private var evaluationResponse = ControlPlaneEvaluationResult(
         job: {
@@ -95,6 +240,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#
     )
     private var chatEvents = FakeControlPlaneXPCClient.defaultChatEvents()
+    private var scheduledChatEvents: [ScheduledChatEvent]?
     private var imageGenerateResponse = makeMenuBarImageJobSummary(
         jobID: "image-generate-1::image-generate",
         requestID: "image-generate-1",
@@ -120,13 +266,22 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperation: Error? = nil,
         doctor: Error? = nil,
         bench: Error? = nil,
+        benchMatrix: Error? = nil,
         evaluation: Error? = nil,
         exportResults: Error? = nil,
         chat: Error? = nil,
         imageGenerate: Error? = nil,
         imageEdit: Error? = nil,
         cancel: Error? = nil,
-        applyGatewayAccess: Error? = nil
+        applyGatewayAccess: Error? = nil,
+        applyGatewayConfig: Error? = nil,
+        applyServingDefaults: Error? = nil,
+        startServer: Error? = nil,
+        pauseServer: Error? = nil,
+        resumeServer: Error? = nil,
+        wakeServer: Error? = nil,
+        stopServer: Error? = nil,
+        updateServerIdlePolicy: Error? = nil
     ) {
         handshakeError = handshake
         loadError = load
@@ -137,6 +292,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationError = modelOperation
         doctorError = doctor
         benchError = bench
+        benchMatrixError = benchMatrix
         evaluationError = evaluation
         exportError = exportResults
         chatError = chat
@@ -144,6 +300,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         imageEditError = imageEdit
         cancelError = cancel
         applyGatewayAccessError = applyGatewayAccess
+        applyGatewayConfigError = applyGatewayConfig
+        applyServingDefaultsError = applyServingDefaults
+        startServerError = startServer
+        pauseServerError = pauseServer
+        resumeServerError = resumeServer
+        wakeServerError = wakeServer
+        stopServerError = stopServer
+        updateServerIdlePolicyError = updateServerIdlePolicy
     }
 
     func configureModelResponseFeatures(_ features: [String]) {
@@ -165,12 +329,29 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationResponsesByName[operationName] = operation
     }
 
-    func configureDoctorResponse(_ markdown: String) {
-        doctorResponse = markdown
+    static func defaultDoctorReport() -> Melix_Controlplane_V1_DoctorReport {
+        var report = Melix_Controlplane_V1_DoctorReport()
+        report.markdown = "# Melix Doctor\n\n- worker_state: idle\n"
+        report.healthStatus = .healthy
+        return report
+    }
+
+    func configureDoctorResponse(
+        _ markdown: String,
+        healthStatus: Melix_Controlplane_V1_DoctorHealthStatus = .healthy,
+        findings: [Melix_Controlplane_V1_DoctorFinding] = []
+    ) {
+        doctorResponse.markdown = markdown
+        doctorResponse.healthStatus = healthStatus
+        doctorResponse.findings = findings
     }
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
         benchResponse = result
+    }
+
+    func configureBenchMatrixResponse(_ result: ControlPlaneBenchMatrixResult) {
+        benchMatrixResponse = result
     }
 
     func configureEvaluationResponse(_ result: ControlPlaneEvaluationResult) {
@@ -183,6 +364,11 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureChatEvents(_ events: [ControlPlaneChatStreamEvent]) {
         chatEvents = events
+        scheduledChatEvents = nil
+    }
+
+    func configureScheduledChatEvents(_ events: [ScheduledChatEvent]) {
+        scheduledChatEvents = events
     }
 
     func configureImageResponses(
@@ -199,6 +385,18 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureGatewayAccessClearError(_ error: Error?) {
         clearGatewayAccessError = error
+    }
+
+    func configureGatewayConfigApplyError(_ error: Error?) {
+        applyGatewayConfigError = error
+    }
+
+    func configureServingDefaultsApplyError(_ error: Error?) {
+        applyServingDefaultsError = error
+    }
+
+    func configureImageDefaultsApplyError(_ error: Error?) {
+        applyImageDefaultsError = error
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -229,14 +427,26 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw chatError
         }
         let events = chatEvents
+        let scheduledEvents = scheduledChatEvents
         return ControlPlaneChatExecution(
             requestID: "chat-request-1",
             modelID: request.modelID,
             stream: AsyncThrowingStream { continuation in
-                for event in events {
-                    continuation.yield(event)
+                Task {
+                    if let scheduledEvents {
+                        for scheduled in scheduledEvents {
+                            if scheduled.delay > .zero {
+                                try? await Task.sleep(for: scheduled.delay)
+                            }
+                            continuation.yield(scheduled.event)
+                        }
+                    } else {
+                        for event in events {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
                 }
-                continuation.finish()
             }
         )
     }
@@ -250,7 +460,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await loadModel(modelID: modelID, memoryBudgetBytes: 0)
+    }
+
+    func loadModel(
+        modelID: String,
+        memoryBudgetBytes: UInt64
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("load:\(modelID)")
+        lastLoadMemoryBudgetBytes = memoryBudgetBytes
         if let loadError {
             throw loadError
         }
@@ -283,8 +501,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let typeOverride = values["type_override"] {
             modelSettings.typeOverride = typeOverride
         }
-        if let ttl = values["ttl_seconds"], let ttlSeconds = UInt32(ttl) {
-            modelSettings.ttlSeconds = ttlSeconds
+        if let ttl = values["ttl_seconds"] {
+            if ttl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.ttlSeconds = 0
+            } else if let ttlSeconds = UInt32(ttl) {
+                modelSettings.ttlSeconds = ttlSeconds
+            }
         }
         if let pinOnLoad = values["pin_on_load"] {
             modelSettings.pinOnLoad = ["1", "true", "yes", "on"].contains(pinOnLoad.lowercased())
@@ -294,6 +516,63 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             case "pinned": .memoryResidencyPinned
             case "ttl": .memoryResidencyTtl
             default: .memoryResidencyEvictable
+            }
+        }
+        if let memoryBudgetBytes = values["memory_budget_bytes"] {
+            if memoryBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.memoryBudgetBytes = 0
+            } else {
+                modelSettings.memoryBudgetBytes = UInt64(memoryBudgetBytes) ?? 0
+            }
+        }
+        if let diskStreamingMode = values["disk_streaming_mode"] {
+            modelSettings.diskStreamingMode = switch diskStreamingMode.lowercased() {
+            case "prefer_disk": .diskStreamingPreferDisk
+            case "require_disk": .diskStreamingRequireDisk
+            default: .diskStreamingDisabled
+            }
+        }
+        if let cacheMode = values["cache_mode"] {
+            modelSettings.cacheMode = switch cacheMode.lowercased() {
+            case "rotating":
+                .rotating
+            case "hybrid":
+                .hybrid
+            case "tiered", "default":
+                .tiered
+            default:
+                .unspecified
+            }
+        }
+        if let cacheMemoryBudgetBytes = values["cache_memory_budget_bytes"] {
+            if cacheMemoryBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheMemoryBudgetBytes = 0
+            } else {
+                modelSettings.cacheMemoryBudgetBytes = UInt64(cacheMemoryBudgetBytes) ?? 0
+            }
+        }
+        if let cacheMemoryBudgetPct = values["cache_memory_budget_pct"] {
+            if cacheMemoryBudgetPct.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheMemoryBudgetPct = 0
+            } else {
+                modelSettings.cacheMemoryBudgetPct = UInt32(cacheMemoryBudgetPct) ?? 0
+            }
+        }
+        if let cacheBlockSizeTokens = values["cache_block_size_tokens"] {
+            if cacheBlockSizeTokens.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.cacheBlockSizeTokens = 0
+            } else {
+                modelSettings.cacheBlockSizeTokens = UInt32(cacheBlockSizeTokens) ?? 0
+            }
+        }
+        if let cacheDirectory = values["cache_directory"] {
+            modelSettings.cacheDirectory = cacheDirectory
+        }
+        if let multimodalCacheBudgetBytes = values["multimodal_cache_budget_bytes"] {
+            if multimodalCacheBudgetBytes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelSettings.multimodalCacheBudgetBytes = 0
+            } else {
+                modelSettings.multimodalCacheBudgetBytes = UInt64(multimodalCacheBudgetBytes) ?? 0
             }
         }
         if let accelerationMode = values["default_acceleration_mode"] {
@@ -307,6 +586,59 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
         if let profileID = values["acceleration_profile_id"] {
             modelSettings.accelerationProfileID = profileID
+        }
+        if let adaptiveThinkingMode = values["adaptive_thinking_mode"] {
+            modelSettings.adaptiveThinking.mode = adaptiveThinkingMode
+        }
+        if let budget = values["adaptive_thinking_budget_tokens"] {
+            modelSettings.adaptiveThinking.budgetTokens = UInt32(budget) ?? 0
+        }
+        if let toolParserXMLFallback = values["tool_parser_xml_fallback"] {
+            modelSettings.ext["tool_parser_xml_fallback"] = toolParserXMLFallback
+        }
+        if let ocrSamplingProfileID = values["ocr_sampling_profile_id"] {
+            modelSettings.ext["ocr_sampling_profile_id"] = ocrSamplingProfileID
+        }
+        if let ocrDefaultTemperature = values["ocr_default_temperature"] {
+            modelSettings.ext["ocr_default_temperature"] = ocrDefaultTemperature
+        }
+        if let ocrDefaultTopP = values["ocr_default_top_p"] {
+            modelSettings.ext["ocr_default_top_p"] = ocrDefaultTopP
+        }
+        if let ocrDefaultMaxTokens = values["ocr_default_max_tokens"] {
+            modelSettings.ext["ocr_default_max_tokens"] = ocrDefaultMaxTokens
+        }
+        if var snapshot = snapshotOverride,
+           let modelIndex = snapshot.models.firstIndex(where: { $0.modelID == modelID }) {
+            snapshot.models[modelIndex].settings = modelSettings
+            snapshot.models[modelIndex].cachePolicy.requestedMode = modelSettings.cacheMode
+            snapshot.models[modelIndex].cachePolicy.requestedDirectory = modelSettings.cacheDirectory
+            snapshot.models[modelIndex].cachePolicy.requestedBlockSizeTokens = modelSettings.cacheBlockSizeTokens
+            snapshot.models[modelIndex].cachePolicy.requestedCacheMemoryBudgetBytes = modelSettings.cacheMemoryBudgetBytes
+            snapshot.models[modelIndex].cachePolicy.requestedCacheMemoryBudgetPct = modelSettings.cacheMemoryBudgetPct
+            snapshot.models[modelIndex].cachePolicy.requestedMultimodalCacheBudgetBytes = modelSettings.multimodalCacheBudgetBytes
+            if snapshot.models[modelIndex].cachePolicy.effectiveMode == .unspecified {
+                snapshot.models[modelIndex].cachePolicy.effectiveMode = modelSettings.cacheMode == .unspecified
+                    ? .tiered
+                    : modelSettings.cacheMode
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveDirectory.isEmpty {
+                snapshot.models[modelIndex].cachePolicy.effectiveDirectory = modelSettings.cacheDirectory
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveBlockSizeTokens == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveBlockSizeTokens = modelSettings.cacheBlockSizeTokens
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetBytes == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetBytes = modelSettings.cacheMemoryBudgetBytes
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetPct == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveCacheMemoryBudgetPct = modelSettings.cacheMemoryBudgetPct
+            }
+            if snapshot.models[modelIndex].cachePolicy.effectiveMultimodalCacheBudgetBytes == 0 {
+                snapshot.models[modelIndex].cachePolicy.effectiveMultimodalCacheBudgetBytes = modelSettings.multimodalCacheBudgetBytes
+            }
+            snapshotOverride = snapshot
+            return snapshot.models[modelIndex]
         }
         return makeModelSummary(state: modelState)
     }
@@ -370,6 +702,19 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let imageGenerateError {
             throw imageGenerateError
         }
+        recordedImageGenerateRequests.append(
+            RecordedImageGenerateRequest(
+                modelID: request.modelID,
+                prompt: request.prompt,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                negativePrompt: request.negativePrompt,
+                n: request.n,
+                responseFormat: request.responseFormat,
+                artifactNamespace: request.artifactNamespace
+            )
+        )
         var response = imageGenerateResponse
         response.modelID = request.modelID
         if response.requestID.isEmpty {
@@ -385,12 +730,73 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         if let imageEditError {
             throw imageEditError
         }
+        recordedImageEditRequests.append(
+            RecordedImageEditRequest(
+                modelID: request.modelID,
+                prompt: request.prompt,
+                imageURL: request.imageURL,
+                maskURL: request.maskURL,
+                sourceArtifactID: request.sourceArtifactID,
+                promptDelta: request.promptDelta,
+                mode: request.mode,
+                strength: request.strength,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                negativePrompt: request.negativePrompt,
+                n: request.n,
+                responseFormat: request.responseFormat
+            )
+        )
         var response = imageEditResponse
         response.modelID = request.modelID
         if response.requestID.isEmpty {
             response.requestID = "image-edit-1"
         }
         return response
+    }
+
+    func applyImageDefaults(
+        _ request: ControlPlaneImageDefaultsRequest
+    ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary {
+        recordedActions.append("image.defaults.apply")
+        if let applyImageDefaultsError {
+            throw applyImageDefaultsError
+        }
+        recordedImageDefaultsApplyRequests.append(
+            RecordedImageDefaultsApplyRequest(
+                generateModelID: request.generateModelID,
+                editModelID: request.editModelID,
+                size: request.size,
+                steps: request.steps,
+                guidance: request.guidance,
+                strength: request.strength,
+                negativePrompt: request.negativePrompt
+            )
+        )
+
+        var summary = Melix_Controlplane_V1_ImageDefaultsSummary()
+        summary.requestedGenerateModelID = request.generateModelID
+        summary.requestedEditModelID = request.editModelID
+        summary.requestedSize = request.size
+        summary.requestedSteps = request.steps
+        summary.requestedGuidance = request.guidance
+        summary.requestedStrength = request.strength
+        summary.requestedNegativePrompt = request.negativePrompt
+        summary.effectiveGenerateModelID = request.generateModelID
+        summary.effectiveEditModelID = request.editModelID
+        summary.effectiveSize = request.size
+        summary.effectiveSteps = request.steps
+        summary.effectiveGuidance = request.guidance
+        summary.effectiveStrength = request.strength
+        summary.effectiveNegativePrompt = request.negativePrompt
+        summary.source = .operatorOverride
+        summary.updatedAtUnixMs = 1_717_171_717_000
+
+        var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
+        snapshot.imageDefaults = summary
+        snapshotOverride = snapshot
+        return summary
     }
 
     func cancelRequest(requestID: String) async throws -> Bool {
@@ -431,7 +837,252 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         recordedGatewayAccessClearRequests.append(serverSessionID)
     }
 
-    func runDoctor() async throws -> String {
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("gateway.config:\(serverSessionID)")
+        if let applyGatewayConfigError {
+            throw applyGatewayConfigError
+        }
+        recordedGatewayConfigApplyRequests.append(
+            RecordedGatewayConfigApplyRequest(
+                serverSessionID: serverSessionID,
+                host: host,
+                port: port,
+                servedModelID: servedModelID,
+                rateLimitPerMinute: rateLimitPerMinute,
+                timeoutSeconds: timeoutSeconds
+            )
+        )
+
+        var snapshot = makeSnapshot(state: modelState)
+        var config = snapshot.gatewayConfig
+        if let existingIndex = config.listeners.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+            config.listeners[existingIndex].requestedHost = host
+            config.listeners[existingIndex].requestedPort = UInt32(max(1, port))
+            config.listeners[existingIndex].effectiveHost = host
+            config.listeners[existingIndex].effectivePort = UInt32(max(1, port))
+            config.listeners[existingIndex].servedModelID = servedModelID
+            config.listeners[existingIndex].rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
+            config.listeners[existingIndex].timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            config.listeners[existingIndex].source = .operatorOverride
+            config.listeners[existingIndex].activeBinding = true
+            config.listeners[existingIndex].requiresRestart = false
+        } else {
+            var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
+            listener.serverSessionID = serverSessionID
+            listener.requestedHost = host
+            listener.requestedPort = UInt32(max(1, port))
+            listener.effectiveHost = host
+            listener.effectivePort = UInt32(max(1, port))
+            listener.servedModelID = servedModelID
+            listener.rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
+            listener.timeoutSeconds = UInt32(max(1, timeoutSeconds))
+            listener.source = .operatorOverride
+            listener.activeBinding = true
+            listener.requiresRestart = false
+            config.listeners.append(listener)
+        }
+        snapshot.gatewayConfig = config
+        snapshotOverride = snapshot
+        return snapshot
+    }
+
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        draftModelID: String,
+        numDraftTokens: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("serving-defaults.apply:\(serverSessionID)")
+        if let applyServingDefaultsError {
+            throw applyServingDefaultsError
+        }
+        recordedServingDefaultsApplyRequests.append(
+            RecordedServingDefaultsApplyRequest(
+                serverSessionID: serverSessionID,
+                temperature: temperature,
+                topP: topP,
+                maxTokens: maxTokens,
+                streamIntervalTokens: streamIntervalTokens,
+                maxConcurrentRequests: maxConcurrentRequests,
+                concurrentProcessingEnabled: concurrentProcessingEnabled,
+                prefillBatchSize: prefillBatchSize,
+                completionBatchSize: completionBatchSize,
+                accelerationMode: accelerationMode,
+                draftModelID: draftModelID,
+                numDraftTokens: numDraftTokens
+            )
+        )
+
+        let normalizedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+        let normalizedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+        let normalizedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+        let effectiveBatchCapacity: UInt32 = concurrentProcessingEnabled
+            ? min(normalizedMaxConcurrentRequests, normalizedPrefillBatchSize, normalizedCompletionBatchSize)
+            : 1
+        let effectiveConcurrentProcessingEnabled = concurrentProcessingEnabled && effectiveBatchCapacity > 1
+
+        var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
+        var summary = snapshot.servingDefaults
+        if let existingIndex = summary.sessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+            summary.sessions[existingIndex].requestedTemperature = temperature
+            summary.sessions[existingIndex].requestedTopP = topP
+            summary.sessions[existingIndex].requestedMaxTokens = UInt32(max(1, maxTokens))
+            summary.sessions[existingIndex].requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            summary.sessions[existingIndex].requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            summary.sessions[existingIndex].requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
+            summary.sessions[existingIndex].requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+            summary.sessions[existingIndex].requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+            summary.sessions[existingIndex].requestedAccelerationMode = accelerationMode
+            summary.sessions[existingIndex].requestedDraftModelID = draftModelID
+            summary.sessions[existingIndex].requestedNumDraftTokens = UInt32(max(0, numDraftTokens))
+            summary.sessions[existingIndex].effectiveTemperature = temperature
+            summary.sessions[existingIndex].effectiveTopP = topP
+            summary.sessions[existingIndex].effectiveMaxTokens = UInt32(max(1, maxTokens))
+            summary.sessions[existingIndex].effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            summary.sessions[existingIndex].effectiveMaxConcurrentRequests = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
+            summary.sessions[existingIndex].effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            summary.sessions[existingIndex].effectiveAccelerationMode = accelerationMode
+            summary.sessions[existingIndex].effectiveDraftModelID = accelerationMode == .speculativeDecode ? draftModelID : ""
+            summary.sessions[existingIndex].effectiveNumDraftTokens = accelerationMode == .speculativeDecode ? UInt32(max(0, numDraftTokens)) : 0
+            summary.sessions[existingIndex].source = .operatorOverride
+            summary.sessions[existingIndex].modelOverrideApplied = false
+        } else {
+            var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+            session.serverSessionID = serverSessionID
+            session.servedModelID = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })?.servedModelID ?? "melix-dev-text"
+            session.requestedTemperature = temperature
+            session.requestedTopP = topP
+            session.requestedMaxTokens = UInt32(max(1, maxTokens))
+            session.requestedStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            session.requestedMaxConcurrentRequests = UInt32(max(1, maxConcurrentRequests))
+            session.requestedConcurrentProcessingEnabled = concurrentProcessingEnabled
+            session.requestedPrefillBatchSize = UInt32(max(1, prefillBatchSize))
+            session.requestedCompletionBatchSize = UInt32(max(1, completionBatchSize))
+            session.requestedAccelerationMode = accelerationMode
+            session.requestedDraftModelID = draftModelID
+            session.requestedNumDraftTokens = UInt32(max(0, numDraftTokens))
+            session.effectiveTemperature = temperature
+            session.effectiveTopP = topP
+            session.effectiveMaxTokens = UInt32(max(1, maxTokens))
+            session.effectiveStreamIntervalTokens = UInt32(max(1, streamIntervalTokens))
+            session.effectiveMaxConcurrentRequests = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveConcurrentProcessingEnabled = effectiveConcurrentProcessingEnabled
+            session.effectivePrefillBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveCompletionBatchSize = effectiveConcurrentProcessingEnabled ? effectiveBatchCapacity : 1
+            session.effectiveAccelerationMode = accelerationMode
+            session.effectiveDraftModelID = accelerationMode == .speculativeDecode ? draftModelID : ""
+            session.effectiveNumDraftTokens = accelerationMode == .speculativeDecode ? UInt32(max(0, numDraftTokens)) : 0
+            session.source = .operatorOverride
+            summary.sessions.append(session)
+        }
+        snapshot.servingDefaults = summary
+        snapshotOverride = snapshot
+        return snapshot
+    }
+
+    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.start:\(serverSessionID)")
+        if let startServerError {
+            throw startServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .initialBoot
+        }
+    }
+
+    func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.pause:\(serverSessionID)")
+        if let pauseServerError {
+            throw pauseServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .paused
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .policyApply
+        }
+    }
+
+    func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.resume:\(serverSessionID)")
+        if let resumeServerError {
+            throw resumeServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .operatorResume
+        }
+    }
+
+    func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.wake:\(serverSessionID)")
+        if let wakeServerError {
+            throw wakeServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .operatorResume
+        }
+    }
+
+    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.stop:\(serverSessionID)")
+        if let stopServerError {
+            throw stopServerError
+        }
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.lifecycleState = .stopped
+            runtimeSession.powerState = .stopped
+            runtimeSession.wakeReason = .policyApply
+        }
+    }
+
+    func updateServerIdlePolicy(
+        serverSessionID: String,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        recordedActions.append("server.idle_policy:\(serverSessionID)")
+        if let updateServerIdlePolicyError {
+            throw updateServerIdlePolicyError
+        }
+        recordedServerIdlePolicyRequests.append(
+            RecordedServerIdlePolicyRequest(
+                serverSessionID: serverSessionID,
+                autoSleepEnabled: autoSleepEnabled,
+                lightSleepAfterSeconds: lightSleepAfterSeconds,
+                deepSleepAfterSeconds: deepSleepAfterSeconds
+            )
+        )
+        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+            runtimeSession.autoSleepEnabled = autoSleepEnabled
+            runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
+            runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
+        }
+    }
+
+    func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
         recordedActions.append("doctor")
         if let doctorError {
             throw doctorError
@@ -446,6 +1097,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw benchError
         }
         return benchResponse
+    }
+
+    func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+        recordedBenchMatrixRequests.append(request)
+        recordedActions.append("bench.matrix")
+        if let benchMatrixError {
+            throw benchMatrixError
+        }
+        return benchMatrixResponse
     }
 
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
@@ -485,11 +1145,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         emit(event)
     }
 
-    func sendServerStateChanged(state: Melix_Controlplane_V1_ServerState) {
+    func sendServerStateChanged(
+        state: Melix_Controlplane_V1_ServerState,
+        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    ) {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "server.state_changed"
         event.serverState = Melix_Controlplane_V1_ServerStateChanged()
         event.serverState.state = state
+        event.serverState.runtimeSessions = runtimeSessions
         emit(event)
     }
 
@@ -585,6 +1249,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot?) {
         snapshotOverride = snapshot
+        if let model = snapshot?.models.first(where: { $0.modelID == "melix-dev-text" }) ?? snapshot?.models.first {
+            modelSettings = model.settings
+            responseFeatures = model.features
+        }
     }
 
     func makeSnapshot(state: Melix_Controlplane_V1_ModelState) -> Melix_Controlplane_V1_ServerSnapshot {
@@ -657,6 +1325,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         cache.l2Bytes = 64 * 1024 * 1024
         cache.l1HitRate = 0.72
         cache.l2HitRate = 0.35
+        cache.activeMode = .tiered
+        cache.cacheRoot = "/tmp/melix-cache"
+        cache.initialCacheBlocks = 4
+        cache.supportedModes = [.tiered, .rotating, .hybrid]
+        cache.experimentalModes = [.rotating, .hybrid]
+        cache.supportsPrefixCache = true
+        cache.supportsPagedCache = true
+        cache.supportsDiskCache = true
+        cache.supportsBoundarySnapshots = true
         return cache
     }
 
@@ -668,6 +1345,27 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             "requests.inflight": 1,
         ]
         return metrics
+    }
+
+    private func mutateRuntimeSession(
+        serverSessionID: String,
+        _ update: (inout Melix_Controlplane_V1_ServerSessionRuntimeState) -> Void
+    ) -> Melix_Controlplane_V1_ServerSnapshot {
+        var snapshot = makeSnapshot(state: modelState)
+        let existingIndex = snapshot.runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID })
+        if let existingIndex {
+            update(&snapshot.runtimeSessions[existingIndex])
+        } else {
+            var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+            runtimeSession.serverSessionID = serverSessionID
+            runtimeSession.lifecycleState = .ready
+            runtimeSession.powerState = .active
+            runtimeSession.wakeReason = .initialBoot
+            update(&runtimeSession)
+            snapshot.runtimeSessions.append(runtimeSession)
+        }
+        snapshotOverride = snapshot
+        return snapshot
     }
 
     private static func defaultModelSettings() -> Melix_Controlplane_V1_ModelSettings {
@@ -716,15 +1414,29 @@ struct MenuBarTestError: Error, CustomStringConvertible {
 
 func makeMenuBarImageModelSummary(
     modelID: String = "melix-dev-image",
-    state: Melix_Controlplane_V1_ModelState = .modelWarm
+    state: Melix_Controlplane_V1_ModelState = .modelWarm,
+    familyID: String = "deterministic-v1",
+    supportsGeneration: Bool = true,
+    supportsEdit: Bool = true
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
     model.kind = "image"
     model.state = state
-    model.features = ["image_generate", "image_edit", "artifact_jobs"]
+    model.features = (supportsGeneration ? ["image_generate"] : [])
+        + (supportsEdit ? ["image_edit"] : [])
+        + ["artifact_jobs"]
+    model.supportedTasks = (supportsGeneration ? ["image_generate"] : [])
+        + (supportsEdit ? ["image_edit"] : [])
+    model.supportedModalities = ["text", "image"]
     model.maxContext = 0
     model.settings.alias = "Melix Dev Image"
+    model.settings.ext["melix.image.family_id"] = familyID
+    model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
+    model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"
+    model.settings.ext["melix.image.task_kind"] = supportsEdit && !supportsGeneration
+        ? "image-text-to-image"
+        : "text-to-image"
     return model
 }
 
@@ -754,7 +1466,14 @@ func makeMenuBarImageJobSummary(
     modelID: String = "melix-dev-image",
     operation: String,
     state: Melix_Controlplane_V1_ImageJobState = .imageJobCompleted,
-    artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = []
+    artifacts: [Melix_Controlplane_V1_ImageArtifactRef] = [],
+    recipe: Melix_Controlplane_V1_ImageJobRecipeSummary = Melix_Controlplane_V1_ImageJobRecipeSummary(),
+    timeoutSeconds: UInt32 = 0,
+    sourceArtifactID: String = "",
+    sourceJobID: String = "",
+    promptDelta: String = "",
+    editMode: Melix_Controlplane_V1_ImageEditMode = .unspecified,
+    error: Melix_Controlplane_V1_ErrorStatus = Melix_Controlplane_V1_ErrorStatus()
 ) -> Melix_Controlplane_V1_ImageJobSummary {
     var job = Melix_Controlplane_V1_ImageJobSummary()
     job.jobID = jobID
@@ -767,6 +1486,13 @@ func makeMenuBarImageJobSummary(
     job.progress.stage = state == .imageJobCompleted ? "completed" : "running"
     job.progress.pct = state == .imageJobCompleted ? 1 : 0.5
     job.artifacts = artifacts
+    job.recipe = recipe
+    job.timeoutSeconds = timeoutSeconds
+    job.sourceArtifactID = sourceArtifactID
+    job.sourceJobID = sourceJobID
+    job.promptDelta = promptDelta
+    job.editMode = editMode
+    job.error = error
     job.cancelable = state == .imageJobRunning || state == .imageJobQueued
     job.createdAtUnixMs = 1_710_000_000_000
     job.updatedAtUnixMs = 1_710_000_000_500
@@ -874,6 +1600,176 @@ func makeBenchmarkExportBundleJSON() -> String {
           "report_markdown": "# Bench Newer\\n"
         }
       ],
+      "benchmark_matrix_jobs": [
+        {
+          "schema_version": "melix.benchmark_matrix_job.v1",
+          "job_id": "matrix-older",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_ids": ["smoke"],
+          "benchmark_mode": "matrix",
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/matrix-runs/matrix-older",
+          "created_at_unix_ms": 1712150000000,
+          "updated_at_unix_ms": 1712150005000
+        },
+        {
+          "schema_version": "melix.benchmark_matrix_job.v1",
+          "job_id": "matrix-newer",
+          "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "suite_ids": ["smoke", "latency"],
+          "benchmark_mode": "matrix",
+          "status": "completed",
+          "output_dir": "/tmp/melix/bench/matrix-runs/matrix-newer",
+          "created_at_unix_ms": 1712250000000,
+          "updated_at_unix_ms": 1712250005000
+        }
+      ],
+      "benchmark_matrix_summary_rows": [
+        {
+          "job_id": "matrix-older",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "model_id": "melix-dev-text",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "cold",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeats": 3,
+          "requests": 8,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 24.4,
+          "ttft_std_ms": 1.2,
+          "request_latency_mean_ms": 33.8,
+          "request_latency_std_ms": 1.1,
+          "prefill_tokens_per_second_mean": 310.0,
+          "decode_tokens_per_second_mean": 62.0,
+          "throughput_requests_per_second": 4.8,
+          "throughput_tokens_per_second": 256.0,
+          "success_rate": 1.0,
+          "peak_memory_bytes_max": 2048000000,
+          "queue_wait_mean_ms": 2.3,
+          "queue_wait_p95_ms": 3.1,
+          "created_at_unix_ms": 1712150000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "model_id": "melix-dev-text-lora",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeats": 4,
+          "requests": 12,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 21.4,
+          "ttft_std_ms": 0.9,
+          "request_latency_mean_ms": 29.1,
+          "request_latency_std_ms": 0.8,
+          "prefill_tokens_per_second_mean": 340.0,
+          "decode_tokens_per_second_mean": 66.0,
+          "throughput_requests_per_second": 5.4,
+          "throughput_tokens_per_second": 284.0,
+          "success_rate": 1.0,
+          "peak_memory_bytes_max": 1984000000,
+          "queue_wait_mean_ms": 1.8,
+          "queue_wait_p95_ms": 2.4,
+          "created_at_unix_ms": 1712250000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "task_kind": "text-generation",
+          "source_repo": "databricks/databricks-dolly-15k",
+          "model_id": "melix-dev-text-lora",
+          "suite_id": "latency",
+          "context_length": 4096,
+          "generation_length": 256,
+          "batch_size": 4,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 2,
+          "repeats": 4,
+          "requests": 12,
+          "duration_seconds": 0,
+          "ttft_mean_ms": 31.8,
+          "ttft_std_ms": 1.6,
+          "request_latency_mean_ms": 44.7,
+          "request_latency_std_ms": 1.2,
+          "prefill_tokens_per_second_mean": 420.0,
+          "decode_tokens_per_second_mean": 74.0,
+          "throughput_requests_per_second": 7.6,
+          "throughput_tokens_per_second": 512.0,
+          "success_rate": 0.98,
+          "peak_memory_bytes_max": 2368000000,
+          "queue_wait_mean_ms": 3.4,
+          "queue_wait_p95_ms": 4.9,
+          "created_at_unix_ms": 1712250000000
+        }
+      ],
+      "benchmark_matrix_request_rows": [
+        {
+          "job_id": "matrix-newer",
+          "cell_id": "matrix-newer:smoke:1024:128:2:1",
+          "task_kind": "text-generation",
+          "suite_id": "smoke",
+          "context_length": 1024,
+          "generation_length": 128,
+          "batch_size": 2,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 1,
+          "repeat_index": 0,
+          "request_index": 0,
+          "ttft_ms": 21.1,
+          "request_latency_ms": 28.7,
+          "prefill_tokens_per_second": 336.0,
+          "decode_tokens_per_second": 65.0,
+          "queue_wait_ms": 1.7,
+          "peak_memory_bytes": 1983000000,
+          "status": "completed",
+          "error_code": "",
+          "created_at_unix_ms": 1712250000000
+        },
+        {
+          "job_id": "matrix-newer",
+          "cell_id": "matrix-newer:latency:4096:256:4:2",
+          "task_kind": "text-generation",
+          "suite_id": "latency",
+          "context_length": 4096,
+          "generation_length": 256,
+          "batch_size": 4,
+          "cache_profile": "warm",
+          "reasoning_mode": "enabled",
+          "structured_output_mode": "json_schema",
+          "concurrency_level": 2,
+          "repeat_index": 0,
+          "request_index": 0,
+          "ttft_ms": 31.4,
+          "request_latency_ms": 44.2,
+          "prefill_tokens_per_second": 416.0,
+          "decode_tokens_per_second": 73.0,
+          "queue_wait_ms": 3.1,
+          "peak_memory_bytes": 2367000000,
+          "status": "completed",
+          "error_code": "",
+          "created_at_unix_ms": 1712250000000
+        }
+      ],
       "evaluation_jobs": [
         {
           "schema_version": "melix.evaluation_job.v1",
@@ -977,9 +1873,183 @@ func makeBenchmarkExportBundleJSONWithoutResults() -> String {
         }
       ],
       "benchmark_results": [],
+      "benchmark_matrix_jobs": [],
+      "benchmark_matrix_summary_rows": [],
+      "benchmark_matrix_request_rows": [],
       "evaluation_jobs": [],
       "evaluation_results": [],
       "evaluation_samples": []
     }
     """
+}
+
+struct MenuBarRegistryRootFixture: Sendable {
+    let id: String
+    let path: String
+    let order: Int
+    let accessible: Bool
+    let errorCode: String
+    let errorMessage: String
+    let discoveredModelIDs: [String]
+
+    init(
+        id: String,
+        path: String,
+        order: Int,
+        accessible: Bool = true,
+        errorCode: String = "",
+        errorMessage: String = "",
+        discoveredModelIDs: [String] = []
+    ) {
+        self.id = id
+        self.path = path
+        self.order = order
+        self.accessible = accessible
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+        self.discoveredModelIDs = discoveredModelIDs
+    }
+}
+
+struct MenuBarDownloadFixture: Sendable {
+    let jobID: String
+    let sourceModel: String
+    let status: String
+    let stage: String
+    let pct: Double
+    let outputDir: String
+    let outputPath: String
+    let partialPath: String
+    let statePath: String
+    let selectedMirror: String
+    let downloadedBytes: Int
+    let totalBytes: Int
+    let resumeUsed: Bool
+    let resumeFromBytes: Int
+    let retryCount: Int
+    let stallDetectionCount: Int
+    let stallReason: String
+    let resumeReady: Bool
+
+    init(
+        jobID: String,
+        sourceModel: String,
+        status: String,
+        stage: String,
+        pct: Double,
+        outputDir: String,
+        outputPath: String,
+        partialPath: String,
+        statePath: String,
+        selectedMirror: String,
+        downloadedBytes: Int,
+        totalBytes: Int,
+        resumeUsed: Bool = false,
+        resumeFromBytes: Int = 0,
+        retryCount: Int = 0,
+        stallDetectionCount: Int = 0,
+        stallReason: String = "",
+        resumeReady: Bool
+    ) {
+        self.jobID = jobID
+        self.sourceModel = sourceModel
+        self.status = status
+        self.stage = stage
+        self.pct = pct
+        self.outputDir = outputDir
+        self.outputPath = outputPath
+        self.partialPath = partialPath
+        self.statePath = statePath
+        self.selectedMirror = selectedMirror
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.resumeUsed = resumeUsed
+        self.resumeFromBytes = resumeFromBytes
+        self.retryCount = retryCount
+        self.stallDetectionCount = stallDetectionCount
+        self.stallReason = stallReason
+        self.resumeReady = resumeReady
+    }
+}
+
+func makeModelOpsRegistrySnapshotManifestJSON(
+    roots: [MenuBarRegistryRootFixture],
+    downloads: [MenuBarDownloadFixture] = [],
+    scannedAtUnixMS: Int64 = 1_712_300_000_000
+) -> String {
+    let rootsJSON = roots.map { root in
+        let discoveredModelsJSON = root.discoveredModelIDs
+            .map { "\"\($0)\"" }
+            .joined(separator: ", ")
+        return """
+        {
+          "root_id": "\(root.id)",
+          "root_path": "\(root.path)",
+          "root_order": \(root.order),
+          "accessible": \(root.accessible ? "true" : "false"),
+          "error_code": "\(root.errorCode)",
+          "error_message": "\(root.errorMessage)",
+          "discovered_model_ids": [\(discoveredModelsJSON)]
+        }
+        """
+    }
+    .joined(separator: ",\n")
+    let downloadsJSON = downloads.map { download in
+        """
+        {
+          "job_id": "\(download.jobID)",
+          "source_model": "\(download.sourceModel)",
+          "status": "\(download.status)",
+          "stage": "\(download.stage)",
+          "pct": \(download.pct),
+          "output_dir": "\(download.outputDir)",
+          "output_path": "\(download.outputPath)",
+          "partial_path": "\(download.partialPath)",
+          "state_path": "\(download.statePath)",
+          "selected_mirror": "\(download.selectedMirror)",
+          "downloaded_bytes": \(download.downloadedBytes),
+          "total_bytes": \(download.totalBytes),
+          "resume_used": \(download.resumeUsed ? "true" : "false"),
+          "resume_from_bytes": \(download.resumeFromBytes),
+          "retry_count": \(download.retryCount),
+          "stall_detection_count": \(download.stallDetectionCount),
+          "stall_reason": "\(download.stallReason)",
+          "resume_ready": \(download.resumeReady ? "true" : "false")
+        }
+        """
+    }
+    .joined(separator: ",\n")
+
+    return """
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "derived_models": [],
+      "downloads": [
+        \(downloadsJSON)
+      ],
+      "model_registry": {
+        "scanned_at_unix_ms": \(scannedAtUnixMS),
+        "roots": [
+          \(rootsJSON)
+        ],
+        "models": []
+      }
+    }
+    """
+}
+
+
+struct StubProductInstallStateProvider: ProductInstallStateProviding {
+    var updateStatusResponse: ProductUpdateStatus?
+    var startupDiagnosticResponse: ProductStartupFailureDiagnostic?
+
+    func updateStatus() -> ProductUpdateStatus? {
+        updateStatusResponse
+    }
+
+    func startupFailureDiagnostic(for error: any Error) -> ProductStartupFailureDiagnostic? {
+        startupDiagnosticResponse
+    }
 }

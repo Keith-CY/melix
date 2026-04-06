@@ -18,6 +18,10 @@ class FakeChannel:
 
 
 class FakeInferenceStub:
+    def __init__(self) -> None:
+        self.last_image_generate_timeout = None
+        self.last_image_edit_timeout = None
+
     def Embed(self, request):
         return inference_pb2.EmbedResponse(
             embeddings=[
@@ -49,7 +53,8 @@ class FakeInferenceStub:
             format=request.format or "wav",
         )
 
-    def ImageGenerate(self, request):
+    def ImageGenerate(self, request, timeout=None):
+        self.last_image_generate_timeout = timeout
         return inference_pb2.ImageGenerateResponse(
             images=[b"generated-image"],
             job=inference_pb2.ImageJobDescriptor(
@@ -61,7 +66,8 @@ class FakeInferenceStub:
             ),
         )
 
-    def ImageEdit(self, request):
+    def ImageEdit(self, request, timeout=None):
+        self.last_image_edit_timeout = timeout
         return inference_pb2.ImageEditResponse(
             images=[b"edited-image"],
             job=inference_pb2.ImageJobDescriptor(
@@ -135,6 +141,36 @@ class FakeMaintenanceStub:
             completed=maintenance_pb2.BenchCompleted(report_path="/tmp/model-ops/bench-report.md")
         )
 
+    def RunBenchMatrix(self, request):
+        response = maintenance_pb2.RunBenchMatrixResponse()
+        response.job.schema_version = "melix.benchmark_matrix_job.v1"
+        response.job.job_id = "bench-matrix-1"
+        response.job.model_id = request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text"
+        response.job.task_kind = request.task_kind or "text-generation"
+        response.job.source_repo = request.source_repo or "melix-dev-text"
+        response.job.suite_ids.extend(request.suite_ids)
+        response.job.benchmark_mode = "matrix"
+        response.job.status = "completed"
+        response.job.output_dir = "/tmp/model-ops/bench/matrix-runs/bench-matrix-1"
+        row = response.summary_rows.add()
+        row.job_id = "bench-matrix-1"
+        row.task_kind = response.job.task_kind
+        row.source_repo = response.job.source_repo
+        row.model_id = response.job.model_id
+        row.suite_id = request.suite_ids[0] if request.suite_ids else "smoke"
+        row.context_length = request.context_lengths[0] if request.context_lengths else 1024
+        row.generation_length = request.generation_lengths[0] if request.generation_lengths else 128
+        row.batch_size = request.batch_sizes[0] if request.batch_sizes else 2
+        row.cache_profile = request.cache_profiles[0] if request.cache_profiles else "cold"
+        row.reasoning_mode = request.reasoning_modes[0] if request.reasoning_modes else "enabled"
+        row.structured_output_mode = request.structured_output_modes[0] if request.structured_output_modes else "plain_text"
+        row.concurrency_level = request.concurrency_levels[0] if request.concurrency_levels else 1
+        row.repeats = request.repeats or 1
+        row.requests = request.requests
+        row.duration_seconds = request.duration_seconds
+        row.ttft_mean_ms = 24.45
+        return response
+
     def RunEvaluation(self, request):
         response = maintenance_pb2.RunEvaluationResponse(ok=True)
         response.job.schema_version = "melix.evaluation_job.v1"
@@ -191,6 +227,31 @@ class FakeMaintenanceStub:
         response.card.base_models.extend(["Qwen/Qwen2.5-7B-Instruct"])
         response.card.last_modified = "2025-01-26T19:49:28Z"
         return response
+
+    def ExportResults(self, request):
+        return maintenance_pb2.ExportResultsResponse(
+            ok=True,
+            export_json=json.dumps(
+                {
+                    "output_dir": request.output_dir,
+                    "kind": "benchmark",
+                },
+                sort_keys=True,
+            ),
+            export_path="/tmp/model-ops/export.json",
+        )
+
+    def SubmitResults(self, request):
+        return maintenance_pb2.SubmitResultsResponse(
+            ok=True,
+            submission_json=json.dumps(
+                {
+                    "output_dir": request.output_dir,
+                    "device_metadata": dict(request.device_metadata),
+                },
+                sort_keys=True,
+            ),
+        )
 
 
 def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch, capsys) -> None:
@@ -326,6 +387,40 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert bench_started.started.job_id == "bench-1"
     assert bench_completed.completed.report_path == "/tmp/model-ops/bench-report.md"
 
+    matrix_request = maintenance_pb2.RunBenchMatrixRequest(
+        model_handle="melix-dev-text::1",
+        task_kind="text-generation",
+        source_repo="melix-dev-text",
+        suite_ids=["smoke"],
+        context_lengths=[1024],
+        generation_lengths=[128],
+        batch_sizes=[2],
+        cache_profiles=["cold"],
+        reasoning_modes=["enabled"],
+        structured_output_modes=["plain_text"],
+        concurrency_levels=[1],
+        repeats=2,
+        requests=8,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "run-bench-matrix",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(matrix_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    matrix_line = json.loads(capsys.readouterr().out.strip())
+    matrix_payload = maintenance_pb2.RunBenchMatrixResponse.FromString(base64.b64decode(matrix_line["message_b64"]))
+    assert matrix_payload.job.job_id == "bench-matrix-1"
+    assert matrix_payload.summary_rows[0].suite_id == "smoke"
+    assert matrix_payload.summary_rows[0].ttft_mean_ms == 24.45
+
     evaluation_request = maintenance_pb2.RunEvaluationRequest(
         model_handle="melix-dev-text::1",
         suite_id="mmlu",
@@ -401,6 +496,48 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert card_payload.card.repo_id == "mlx-community/Qwen2.5-7B-Instruct-4bit"
     assert card_payload.card.license == "apache-2.0"
     assert card_payload.card.base_models == ["Qwen/Qwen2.5-7B-Instruct"]
+
+    export_request = maintenance_pb2.ExportResultsRequest(output_dir="/tmp/model-ops/export")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "export-results",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(export_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    export_line = json.loads(capsys.readouterr().out.strip())
+    export_payload = maintenance_pb2.ExportResultsResponse.FromString(base64.b64decode(export_line["message_b64"]))
+    assert export_payload.ok is True
+    assert export_payload.export_path == "/tmp/model-ops/export.json"
+    assert json.loads(export_payload.export_json)["output_dir"] == "/tmp/model-ops/export"
+
+    submit_request = maintenance_pb2.SubmitResultsRequest(
+        output_dir="/tmp/model-ops/export",
+        device_metadata={"chip": "M4 Max"},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "submit-results",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(submit_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    submit_line = json.loads(capsys.readouterr().out.strip())
+    submit_payload = maintenance_pb2.SubmitResultsResponse.FromString(base64.b64decode(submit_line["message_b64"]))
+    assert submit_payload.ok is True
+    assert json.loads(submit_payload.submission_json)["device_metadata"] == {"chip": "M4 Max"}
 
 
 def test_bridge_helper_forwards_download_stream_manifest_events(monkeypatch, capsys) -> None:
@@ -498,7 +635,8 @@ def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys)
 
 def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys) -> None:
     monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
-    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
+    stub = FakeInferenceStub()
+    monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: stub)
 
     image_generate_request = inference_pb2.ImageGenerateRequest(
         id=common_pb2.RequestIdentity(request_id="image-generate-bridge"),
@@ -524,6 +662,7 @@ def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys)
     generate_payload = inference_pb2.ImageGenerateResponse.FromString(base64.b64decode(generate_line["message_b64"]))
     assert generate_payload.job.job_id == "image-generate-bridge::image-generate"
     assert generate_payload.images == [b"generated-image"]
+    assert stub.last_image_generate_timeout == 1800.0
 
     image_edit_request = inference_pb2.ImageEditRequest(
         id=common_pb2.RequestIdentity(request_id="image-edit-bridge"),
@@ -551,3 +690,10 @@ def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys)
     edit_payload = inference_pb2.ImageEditResponse.FromString(base64.b64decode(edit_line["message_b64"]))
     assert edit_payload.job.job_id == "image-edit-bridge::image-edit"
     assert edit_payload.images == [b"edited-image"]
+    assert stub.last_image_edit_timeout == 1800.0
+
+
+def test_image_request_timeout_seconds_uses_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS", "42")
+
+    assert control_plane_bridge.image_request_timeout_seconds() == 42.0

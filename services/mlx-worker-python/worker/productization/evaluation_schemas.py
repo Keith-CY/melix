@@ -54,6 +54,9 @@ class EvaluationJob:
     dataset_id: str
     sample_size: int
     scoring_mode: str
+    few_shot: int
+    seed: int
+    code_exec_policy: str
     parameters: dict[str, str]
     status: str
     output_dir: str
@@ -71,6 +74,9 @@ class EvaluationJob:
             "dataset_id": self.dataset_id,
             "sample_size": self.sample_size,
             "scoring_mode": self.scoring_mode,
+            "few_shot": self.few_shot,
+            "seed": self.seed,
+            "code_exec_policy": self.code_exec_policy,
             "parameters": dict(self.parameters),
             "status": self.status,
             "output_dir": self.output_dir,
@@ -86,6 +92,11 @@ class EvaluationResult:
     suite_id: str
     dataset_id: str
     sample_size: int
+    score_name: str
+    score_value: float
+    correct_count: int
+    incorrect_count: int
+    duration_seconds: float
     metrics: tuple[EvaluationMetricValue, ...]
     report_path: str
 
@@ -96,6 +107,11 @@ class EvaluationResult:
             "suite_id": self.suite_id,
             "dataset_id": self.dataset_id,
             "sample_size": self.sample_size,
+            "score_name": self.score_name,
+            "score_value": self.score_value,
+            "correct_count": self.correct_count,
+            "incorrect_count": self.incorrect_count,
+            "duration_seconds": self.duration_seconds,
             "metrics": [metric.to_dict() for metric in self.metrics],
             "report_path": self.report_path,
         }
@@ -158,6 +174,9 @@ def build_evaluation_job_record(
     scoring_mode: str,
     parameters: dict[str, str],
     status: str,
+    few_shot: int = 0,
+    seed: int = 0,
+    code_exec_policy: str = "",
     output_dir: str = "",
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
@@ -172,6 +191,9 @@ def build_evaluation_job_record(
         dataset_id=dataset_id,
         sample_size=sample_size,
         scoring_mode=scoring_mode,
+        few_shot=few_shot,
+        seed=seed,
+        code_exec_policy=code_exec_policy,
         parameters=dict(parameters),
         status=status,
         output_dir=output_dir,
@@ -189,6 +211,11 @@ def build_evaluation_result_record(
     metrics: dict[str, float],
     report_path: str,
     units: dict[str, str] | None = None,
+    score_name: str = "",
+    score_value: float = 0.0,
+    correct_count: int = 0,
+    incorrect_count: int = 0,
+    duration_seconds: float = 0.0,
 ) -> EvaluationResult:
     metric_units = units or {}
     ordered_metrics = tuple(
@@ -201,6 +228,11 @@ def build_evaluation_result_record(
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
+        score_name=score_name,
+        score_value=float(score_value),
+        correct_count=correct_count,
+        incorrect_count=incorrect_count,
+        duration_seconds=float(duration_seconds),
         metrics=ordered_metrics,
         report_path=report_path,
     )

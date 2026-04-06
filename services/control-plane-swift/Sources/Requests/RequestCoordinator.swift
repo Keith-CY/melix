@@ -5,24 +5,221 @@ import MelixWorkerProtocol
 public enum RequestCoordinatorError: Error, Equatable {
     case requestAlreadyActive
     case workerUnavailable
+    case requestNotResumable
 }
 
 public struct CoordinatedChatExecution: Sendable {
     public let requestID: String
     public let modelID: String
     public let stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    public let lifecycle: AsyncStream<ConnectionLifecycleEvent>
     public let onStreamDisconnect: (@Sendable () async -> Void)?
 
     public init(
         requestID: String,
         modelID: String,
         stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
+        lifecycle: AsyncStream<ConnectionLifecycleEvent> = AsyncStream { continuation in
+            continuation.finish()
+        },
         onStreamDisconnect: (@Sendable () async -> Void)? = nil
     ) {
         self.requestID = requestID
         self.modelID = modelID
         self.stream = stream
+        self.lifecycle = lifecycle
         self.onStreamDisconnect = onStreamDisconnect
+    }
+}
+
+private actor ResumableExecutionHub {
+    private enum TerminalState {
+        case finished
+        case failed(any Error)
+    }
+
+    private let requestID: String
+    private let modelID: String
+    private let bufferLimit: Int
+    private let onLastConsumerDetached: @Sendable () async -> Void
+    private var bufferedEvents: [Melix_Worker_V1_ExecuteEvent]
+    private var lifecycleEvents: [ConnectionLifecycleEvent]
+    private var eventContinuations: [UUID: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation]
+    private var lifecycleContinuations: [UUID: AsyncStream<ConnectionLifecycleEvent>.Continuation]
+    private var terminalState: TerminalState?
+
+    init(
+        requestID: String,
+        modelID: String,
+        bufferLimit: Int,
+        onLastConsumerDetached: @escaping @Sendable () async -> Void
+    ) {
+        self.requestID = requestID
+        self.modelID = modelID
+        self.bufferLimit = max(1, bufferLimit)
+        self.onLastConsumerDetached = onLastConsumerDetached
+        self.bufferedEvents = []
+        self.lifecycleEvents = [.active]
+        self.eventContinuations = [:]
+        self.lifecycleContinuations = [:]
+        self.terminalState = nil
+    }
+
+    func makeExecution() -> CoordinatedChatExecution {
+        CoordinatedChatExecution(
+            requestID: requestID,
+            modelID: modelID,
+            stream: attachStream(),
+            lifecycle: attachLifecycleStream()
+        )
+    }
+
+    func isTerminal() -> Bool {
+        terminalState != nil
+    }
+
+    func hasConsumers() -> Bool {
+        eventContinuations.isEmpty == false
+    }
+
+    func yield(_ event: Melix_Worker_V1_ExecuteEvent) {
+        bufferedEvents.append(event)
+        if bufferedEvents.count > bufferLimit {
+            bufferedEvents.removeFirst(bufferedEvents.count - bufferLimit)
+        }
+        for continuation in eventContinuations.values {
+            continuation.yield(event)
+        }
+    }
+
+    func emitLifecycle(_ event: ConnectionLifecycleEvent) {
+        lifecycleEvents.append(event)
+        for continuation in lifecycleContinuations.values {
+            continuation.yield(event)
+        }
+    }
+
+    func finish() {
+        guard terminalState == nil else {
+            return
+        }
+        terminalState = .finished
+        let eventContinuations = self.eventContinuations
+        let lifecycleContinuations = self.lifecycleContinuations
+        self.eventContinuations.removeAll()
+        self.lifecycleContinuations.removeAll()
+        for continuation in eventContinuations.values {
+            continuation.finish()
+        }
+        for continuation in lifecycleContinuations.values {
+            continuation.finish()
+        }
+    }
+
+    func finish(throwing error: any Error) {
+        guard terminalState == nil else {
+            return
+        }
+        terminalState = .failed(error)
+        let eventContinuations = self.eventContinuations
+        let lifecycleContinuations = self.lifecycleContinuations
+        self.eventContinuations.removeAll()
+        self.lifecycleContinuations.removeAll()
+        for continuation in eventContinuations.values {
+            continuation.finish(throwing: error)
+        }
+        for continuation in lifecycleContinuations.values {
+            continuation.finish()
+        }
+    }
+
+    private func attachStream() -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let streamID = UUID()
+            continuation.onTermination = { _ in
+                Task {
+                    await self.detachStream(streamID)
+                }
+            }
+            Task {
+                let registration = await self.registerEventContinuation(
+                    streamID,
+                    continuation: continuation
+                )
+                for event in registration.replay {
+                    continuation.yield(event)
+                }
+                switch registration.terminalState {
+                case .finished:
+                    continuation.finish()
+                case .failed(let error):
+                    continuation.finish(throwing: error)
+                case nil:
+                    break
+                }
+            }
+        }
+    }
+
+    private func attachLifecycleStream() -> AsyncStream<ConnectionLifecycleEvent> {
+        AsyncStream { continuation in
+            let streamID = UUID()
+            continuation.onTermination = { _ in
+                Task {
+                    await self.detachLifecycleStream(streamID)
+                }
+            }
+            Task {
+                let registration = await self.registerLifecycleContinuation(
+                    streamID,
+                    continuation: continuation
+                )
+                for event in registration.replay {
+                    continuation.yield(event)
+                }
+                if registration.isTerminal {
+                    continuation.finish()
+                }
+            }
+        }
+    }
+
+    private func registerEventContinuation(
+        _ streamID: UUID,
+        continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation
+    ) -> (replay: [Melix_Worker_V1_ExecuteEvent], terminalState: TerminalState?) {
+        let replay = bufferedEvents
+        let terminalState = self.terminalState
+        if terminalState == nil {
+            eventContinuations[streamID] = continuation
+        }
+        return (replay, terminalState)
+    }
+
+    private func registerLifecycleContinuation(
+        _ streamID: UUID,
+        continuation: AsyncStream<ConnectionLifecycleEvent>.Continuation
+    ) -> (replay: [ConnectionLifecycleEvent], isTerminal: Bool) {
+        let replay = lifecycleEvents
+        let isTerminal = terminalState != nil
+        if !isTerminal {
+            lifecycleContinuations[streamID] = continuation
+        }
+        return (replay, isTerminal)
+    }
+
+    private func detachStream(_ streamID: UUID) async {
+        guard eventContinuations.removeValue(forKey: streamID) != nil else {
+            return
+        }
+        guard eventContinuations.isEmpty, terminalState == nil else {
+            return
+        }
+        await onLastConsumerDetached()
+    }
+
+    private func detachLifecycleStream(_ streamID: UUID) {
+        lifecycleContinuations.removeValue(forKey: streamID)
     }
 }
 
@@ -33,7 +230,103 @@ private enum CacheRouteClass: String, Sendable {
 }
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
-private let continuousBatchTargetSize: UInt32 = 2
+
+private struct GatewayBatchingExecutionDefaults: Sendable {
+    let concurrentProcessingEnabled: Bool
+    let maxConcurrentRequests: UInt32
+    let prefillBatchSize: UInt32
+    let completionBatchSize: UInt32
+
+    init(executionExt: [String: String]) {
+        self.concurrentProcessingEnabled = Self.parseBool(
+            executionExt["melix.gateway.concurrent_processing"],
+            fallback: true
+        )
+        self.maxConcurrentRequests = Self.parseUInt32(
+            executionExt["melix.gateway.max_concurrent_sequences"] ?? executionExt["melix.gateway.max_concurrent_requests"],
+            fallback: 4
+        )
+        self.prefillBatchSize = Self.parseUInt32(
+            executionExt["melix.gateway.prefill_batch_size"],
+            fallback: 2
+        )
+        self.completionBatchSize = Self.parseUInt32(
+            executionExt["melix.gateway.completion_batch_size"],
+            fallback: 2
+        )
+    }
+
+    var effectiveAdmissionBatchSize: UInt32 {
+        guard concurrentProcessingEnabled else {
+            return 1
+        }
+        return min(maxConcurrentRequests, prefillBatchSize, completionBatchSize)
+    }
+
+    private static func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !rawValue.isEmpty else {
+            return fallback
+        }
+        switch rawValue {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return fallback
+        }
+    }
+
+    private static func parseUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), let parsed = UInt32(rawValue), parsed > 0 else {
+            return fallback
+        }
+        return parsed
+    }
+}
+
+private struct GatewaySpeculativeExecutionDefaults: Sendable {
+    let accelerationMode: Melix_Worker_V1_AccelerationMode
+    let draftModelID: String
+    let numDraftTokens: UInt32
+
+    init(executionExt: [String: String]) {
+        self.accelerationMode = Self.parseAccelerationMode(
+            executionExt["melix.gateway.acceleration_mode"]
+        )
+        self.draftModelID = executionExt["melix.gateway.draft_model_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.numDraftTokens = Self.parseUInt32(
+            executionExt["melix.gateway.num_draft_tokens"],
+            fallback: 0,
+            allowZero: true
+        )
+    }
+
+    private static func parseAccelerationMode(_ rawValue: String?) -> Melix_Worker_V1_AccelerationMode {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "speculative_decode":
+            return .speculativeDecode
+        default:
+            return .baseline
+        }
+    }
+
+    private static func parseUInt32(
+        _ rawValue: String?,
+        fallback: UInt32,
+        allowZero: Bool = false
+    ) -> UInt32 {
+        guard
+            let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let parsed = UInt32(rawValue),
+            allowZero || parsed > 0
+        else {
+            return fallback
+        }
+        return parsed
+    }
+}
 
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
@@ -210,7 +503,15 @@ public actor RequestCoordinator {
     private let sessionGraphStore: SessionGraphStore?
     private let cacheMetadataStore: CacheMetadataStore?
     private let now: @Sendable () -> Date
+    private let lifecyclePolicy: ConnectionLifecyclePolicy
     private var activeWorkerClients: [String: any WorkerClient]
+    private var executionHubs: [String: ResumableExecutionHub]
+    private var disconnectGraceTasks: [String: Task<Void, Never>]
+    private var disconnectStartedAt: [String: Date]
+    private var terminalResumeIneligibleRequestIDs: Set<String>
+    private var dispatchStartedAt: [String: Date]
+    private var disconnectResumeAttemptCount: Double
+    private var disconnectResumeSuccessCount: Double
     private var requestPlans: [String: SchedulingPlan]
     private var coldTTFTBaselinesByBranch: [String: Double]
     private var schedulingDecisionCount: Double
@@ -229,6 +530,7 @@ public actor RequestCoordinator {
         modelCatalog: ModelCatalog? = nil,
         sessionGraphStore: SessionGraphStore? = nil,
         cacheMetadataStore: CacheMetadataStore? = nil,
+        lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
@@ -239,8 +541,16 @@ public actor RequestCoordinator {
         self.modelCatalog = modelCatalog
         self.sessionGraphStore = sessionGraphStore
         self.cacheMetadataStore = cacheMetadataStore
+        self.lifecyclePolicy = lifecyclePolicy
         self.now = now
         self.activeWorkerClients = [:]
+        self.executionHubs = [:]
+        self.disconnectGraceTasks = [:]
+        self.disconnectStartedAt = [:]
+        self.terminalResumeIneligibleRequestIDs = []
+        self.dispatchStartedAt = [:]
+        self.disconnectResumeAttemptCount = 0
+        self.disconnectResumeSuccessCount = 0
         self.requestPlans = [:]
         self.coldTTFTBaselinesByBranch = [:]
         self.schedulingDecisionCount = 0
@@ -249,6 +559,44 @@ public actor RequestCoordinator {
         self.restoredRouteCount = 0
         self.prefixAffinityCheckCount = 0
         self.prefixAffinityHitCount = 0
+    }
+
+    public func resumeChatCompletion(requestID: String) async throws -> CoordinatedChatExecution {
+        guard !terminalResumeIneligibleRequestIDs.contains(requestID) else {
+            throw RequestCoordinatorError.requestNotResumable
+        }
+        guard let hub = executionHubs[requestID], !(await hub.isTerminal()) else {
+            throw RequestCoordinatorError.requestNotResumable
+        }
+
+        disconnectResumeAttemptCount += 1
+        if let startedAt = disconnectStartedAt.removeValue(forKey: requestID) {
+            disconnectGraceTasks.removeValue(forKey: requestID)?.cancel()
+            let recoveryLatencyMs = now().timeIntervalSince(startedAt) * 1000
+            disconnectResumeSuccessCount += 1
+            await metricsStore.set(recoveryLatencyMs, forKey: "disconnect.recovery_latency_ms")
+            await metricsStore.set(
+                (disconnectResumeSuccessCount / max(1, disconnectResumeAttemptCount)) * 100,
+                forKey: "disconnect.resume_success_rate"
+            )
+            await hub.emitLifecycle(.resumed(recoveryLatencyMs: recoveryLatencyMs))
+        } else {
+            await metricsStore.set(
+                (disconnectResumeSuccessCount / max(1, disconnectResumeAttemptCount)) * 100,
+                forKey: "disconnect.resume_success_rate"
+            )
+        }
+
+        let execution = await hub.makeExecution()
+        return CoordinatedChatExecution(
+            requestID: execution.requestID,
+            modelID: execution.modelID,
+            stream: execution.stream,
+            lifecycle: execution.lifecycle,
+            onStreamDisconnect: { [self] in
+                await self.handleLastConsumerDetached(requestID: requestID)
+            }
+        )
     }
 
     public func startChatCompletion(
@@ -383,149 +731,144 @@ public actor RequestCoordinator {
                 return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
             }
             await metricsStore.increment("requests.inflight")
-            activeWorkerClients[request.requestID] = workerClient
-            let metricsStore = self.metricsStore
-            let now = self.now
             let requestID = request.requestID
             let modelID = request.modelID
+            activeWorkerClients[requestID] = workerClient
+            self.dispatchStartedAt[requestID] = dispatchStartedAt
+            let hub = ResumableExecutionHub(
+                requestID: requestID,
+                modelID: modelID,
+                bufferLimit: lifecyclePolicy.resumeBufferLimit,
+                onLastConsumerDetached: { [self] in
+                    await self.handleLastConsumerDetached(requestID: requestID)
+                }
+            )
+            executionHubs[requestID] = hub
+            let metricsStore = self.metricsStore
+            let now = self.now
             let structuredOutputConfiguration = StructuredOutputConfiguration(
                 executionExt: request.workerRequest.execution.ext
             )
             let structuredOutputValidator = StructuredOutputValidator()
             let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
-            let disconnectHandler: @Sendable () async -> Void = {
-                await metricsStore.increment("http.stream_disconnect_count")
-                await metricsStore.set(
-                    now().timeIntervalSince(dispatchStartedAt) * 1000,
-                    forKey: "http.stream_disconnect_ms"
-                )
-                _ = try? await self.cancel(requestID: requestID)
-            }
+            Task {
+                var firstDeltaRecorded = false
+                var firstSemanticEventRecorded = false
+                var eventCount = 0.0
+                var reasoningBudget = initialReasoningBudget
 
-            let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
-                let task = Task {
-                    var firstDeltaRecorded = false
-                    var firstSemanticEventRecorded = false
-                    var eventCount = 0.0
-                    var reasoningBudget = initialReasoningBudget
-
-                    do {
-                        for try await event in upstream {
-                            let validatedEvent = try self.validatedStructuredOutputEvent(
-                                event,
-                                requestID: requestID,
-                                configuration: structuredOutputConfiguration,
-                                validator: structuredOutputValidator
-                            )
-                            if validatedEvent.didValidate {
-                                if validatedEvent.didFail {
-                                    await metricsStore.increment("http.structured_output_validation_failure_count")
-                                } else {
-                                    await metricsStore.increment("http.structured_output_validation_pass_count")
-                                }
-                            }
-                            let budgetOutcome: (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) =
-                                reasoningBudget?.apply(to: validatedEvent.event)
-                                ?? (events: [validatedEvent.event], didOverflow: false, shouldStop: false)
-                            if budgetOutcome.didOverflow,
-                               let reasoningBudget {
-                                await metricsStore.increment("http.reasoning_budget_overflow_count")
-                                await metricsStore.set(
-                                    Double(reasoningBudget.limitTokens),
-                                    forKey: "http.reasoning_budget_limit_tokens"
-                                )
-                                await metricsStore.set(
-                                    Double(reasoningBudget.emittedTokens),
-                                    forKey: "http.reasoning_budget_emitted_tokens"
-                                )
-                            }
-                            for outputEvent in budgetOutcome.events {
-                                await self.recordPhaseObservability(
-                                    requestID: requestID,
-                                    fallbackLane: plan.decodeLane,
-                                    requestIdentity: request.workerRequest.execution.id,
-                                    routeKind: plan.routeKind,
-                                    event: outputEvent
-                                )
-                                if !firstSemanticEventRecorded,
-                                   self.isSemanticStreamEvent(outputEvent) {
-                                    firstSemanticEventRecorded = true
-                                    let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
-                                    await metricsStore.set(
-                                        firstEventMs,
-                                        forKey: "http.stream_first_event_ms"
-                                    )
-                                }
-                                if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
-                                    firstDeltaRecorded = true
-                                    let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
-                                    let followupTTFTMs = now().timeIntervalSince(requestMetricStartedAt) * 1000
-                                    await metricsStore.set(
-                                        ttftMs,
-                                        forKey: "http.ttfd_ms"
-                                    )
-                                    await self.recordTTFTMetrics(
-                                        requestID: requestID,
-                                        ttftMs: followupTTFTMs
-                                    )
-                                }
-                                switch outputEvent.payload {
-                                case .reasoningDelta:
-                                    await metricsStore.increment("http.reasoning_delta_count")
-                                case .toolCallDelta:
-                                    await metricsStore.increment("http.tool_delta_count")
-                                default:
-                                    break
-                                }
-                                eventCount += 1
-                                await metricsStore.set(eventCount, forKey: "http.stream_event_count")
-                                continuation.yield(outputEvent)
-                            }
-                            if budgetOutcome.shouldStop {
-                                _ = try? await workerClient.abort(requestID: requestID)
-                                break
+                do {
+                    for try await event in upstream {
+                        let validatedEvent = try self.validatedStructuredOutputEvent(
+                            event,
+                            requestID: requestID,
+                            configuration: structuredOutputConfiguration,
+                            validator: structuredOutputValidator
+                        )
+                        if validatedEvent.didValidate {
+                            if validatedEvent.didFail {
+                                await metricsStore.increment("http.structured_output_validation_failure_count")
+                            } else {
+                                await metricsStore.increment("http.structured_output_validation_pass_count")
                             }
                         }
-                        await metricsStore.decrement("requests.inflight")
-                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
-                        await self.refreshWorkerRuntimeObservability(
-                            using: workerClient,
-                            routeKind: plan.routeKind
-                        )
-                        let terminalPhase = await self.terminalPhase(
-                            requestID: requestID,
-                            fallback: .requestCompleted
-                        )
-                        await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
-                        continuation.finish()
-                    } catch {
-                        await metricsStore.decrement("requests.inflight")
-                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
-                        await self.refreshWorkerRuntimeObservability(
-                            using: workerClient,
-                            routeKind: plan.routeKind
-                        )
-                        await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
-                        continuation.finish(throwing: error)
+                        let budgetOutcome: (events: [Melix_Worker_V1_ExecuteEvent], didOverflow: Bool, shouldStop: Bool) =
+                            reasoningBudget?.apply(to: validatedEvent.event)
+                            ?? (events: [validatedEvent.event], didOverflow: false, shouldStop: false)
+                        if budgetOutcome.didOverflow,
+                           let reasoningBudget {
+                            await metricsStore.increment("http.reasoning_budget_overflow_count")
+                            await metricsStore.set(
+                                Double(reasoningBudget.limitTokens),
+                                forKey: "http.reasoning_budget_limit_tokens"
+                            )
+                            await metricsStore.set(
+                                Double(reasoningBudget.emittedTokens),
+                                forKey: "http.reasoning_budget_emitted_tokens"
+                            )
+                        }
+                        for outputEvent in budgetOutcome.events {
+                            await self.recordPhaseObservability(
+                                requestID: requestID,
+                                fallbackLane: plan.decodeLane,
+                                requestIdentity: request.workerRequest.execution.id,
+                                routeKind: plan.routeKind,
+                                event: outputEvent
+                            )
+                            if !firstSemanticEventRecorded,
+                               self.isSemanticStreamEvent(outputEvent) {
+                                firstSemanticEventRecorded = true
+                                let firstEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                await metricsStore.set(
+                                    firstEventMs,
+                                    forKey: "http.stream_first_event_ms"
+                                )
+                            }
+                            if !firstDeltaRecorded, case .tokenDelta = outputEvent.payload {
+                                firstDeltaRecorded = true
+                                let ttftMs = now().timeIntervalSince(dispatchStartedAt) * 1000
+                                let followupTTFTMs = now().timeIntervalSince(requestMetricStartedAt) * 1000
+                                await metricsStore.set(
+                                    ttftMs,
+                                    forKey: "http.ttfd_ms"
+                                )
+                                await self.recordTTFTMetrics(
+                                    requestID: requestID,
+                                    ttftMs: followupTTFTMs
+                                )
+                            }
+                            switch outputEvent.payload {
+                            case .reasoningDelta:
+                                await metricsStore.increment("http.reasoning_delta_count")
+                            case .toolCallDelta:
+                                await metricsStore.increment("http.tool_delta_count")
+                            default:
+                                break
+                            }
+                            eventCount += 1
+                            await metricsStore.set(eventCount, forKey: "http.stream_event_count")
+                            await hub.yield(outputEvent)
+                        }
+                        if budgetOutcome.shouldStop {
+                            _ = try? await workerClient.abort(requestID: requestID)
+                            break
+                        }
                     }
-                }
-
-                continuation.onTermination = { termination in
-                    task.cancel()
-                    guard case .cancelled = termination else {
-                        return
-                    }
-                    Task {
-                        _ = try? await self.cancel(requestID: requestID)
-                    }
+                    await metricsStore.decrement("requests.inflight")
+                    _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                    await self.refreshWorkerRuntimeObservability(
+                        using: workerClient,
+                        routeKind: plan.routeKind
+                    )
+                    let terminalPhase = await self.terminalPhase(
+                        requestID: requestID,
+                        fallback: .requestCompleted
+                    )
+                    await hub.emitLifecycle(.completed)
+                    await hub.finish()
+                    await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                } catch {
+                    await metricsStore.decrement("requests.inflight")
+                    _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                    await self.refreshWorkerRuntimeObservability(
+                        using: workerClient,
+                        routeKind: plan.routeKind
+                    )
+                    await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
+                    await hub.finish(throwing: error)
+                    await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
                 }
             }
 
+            let execution = await hub.makeExecution()
             return CoordinatedChatExecution(
-                requestID: requestID,
-                modelID: modelID,
-                stream: stream,
-                onStreamDisconnect: disconnectHandler
+                requestID: execution.requestID,
+                modelID: execution.modelID,
+                stream: execution.stream,
+                lifecycle: execution.lifecycle,
+                onStreamDisconnect: { [self] in
+                    await self.handleLastConsumerDetached(requestID: requestID)
+                }
             )
         } catch let error as WorkerClientError where error == .unavailable {
             await metricsStore.decrement("requests.inflight")
@@ -556,6 +899,12 @@ public actor RequestCoordinator {
         guard await abortRegistry.abort(requestID) else {
             return false
         }
+        disconnectGraceTasks.removeValue(forKey: requestID)?.cancel()
+        disconnectStartedAt.removeValue(forKey: requestID)
+        terminalResumeIneligibleRequestIDs.remove(requestID)
+        if let hub = executionHubs[requestID] {
+            await hub.emitLifecycle(.cancelled)
+        }
         if let workerClient = activeWorkerClients[requestID] {
             let aborted = try await workerClient.abort(requestID: requestID)
             if aborted {
@@ -574,13 +923,100 @@ public actor RequestCoordinator {
         requestID: String,
         phase: Melix_Controlplane_V1_RequestPhase? = nil
     ) async {
+        disconnectGraceTasks.removeValue(forKey: requestID)?.cancel()
+        disconnectStartedAt.removeValue(forKey: requestID)
+        terminalResumeIneligibleRequestIDs.remove(requestID)
+        dispatchStartedAt.removeValue(forKey: requestID)
         await admissionGate.release(requestID: requestID)
         await abortRegistry.finish(requestID: requestID)
         activeWorkerClients.removeValue(forKey: requestID)
+        executionHubs.removeValue(forKey: requestID)
         requestPlans.removeValue(forKey: requestID)
         if let phase {
             await schedulerReadModel.recordTerminalState(requestID: requestID, phase: phase)
         }
+    }
+
+    private func handleLastConsumerDetached(requestID: String) async {
+        guard disconnectGraceTasks[requestID] == nil else {
+            return
+        }
+        guard disconnectStartedAt[requestID] == nil else {
+            return
+        }
+        let detachedAt = now()
+        disconnectStartedAt[requestID] = detachedAt
+        guard let hub = executionHubs[requestID], !(await hub.isTerminal()) else {
+            disconnectStartedAt.removeValue(forKey: requestID)
+            return
+        }
+        await metricsStore.increment("http.stream_disconnect_count")
+        if let dispatchStartedAt = dispatchStartedAt[requestID] {
+            await metricsStore.set(
+                now().timeIntervalSince(dispatchStartedAt) * 1000,
+                forKey: "http.stream_disconnect_ms"
+            )
+        }
+        await hub.emitLifecycle(.disconnectGraceStarted(timeoutMs: lifecyclePolicy.disconnectGracePeriod * 1000))
+        let graceNanoseconds = UInt64(lifecyclePolicy.disconnectGracePeriod * 1_000_000_000)
+        disconnectGraceTasks[requestID] = Task { [self] in
+            do {
+                try await Task.sleep(nanoseconds: graceNanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await self.handleDisconnectGraceExpiry(requestID: requestID)
+        }
+    }
+
+    private func handleDisconnectGraceExpiry(requestID: String) async {
+        disconnectGraceTasks.removeValue(forKey: requestID)
+        guard let hub = executionHubs[requestID], !(await hub.isTerminal()) else {
+            disconnectStartedAt.removeValue(forKey: requestID)
+            return
+        }
+        guard !(await hub.hasConsumers()) else {
+            disconnectStartedAt.removeValue(forKey: requestID)
+            return
+        }
+        terminalResumeIneligibleRequestIDs.insert(requestID)
+        await metricsStore.set(
+            disconnectResumeAttemptCount == 0 ? 0 : (disconnectResumeSuccessCount / disconnectResumeAttemptCount) * 100,
+            forKey: "disconnect.resume_success_rate"
+        )
+        await metricsStore.increment("disconnect.terminal_failure_count")
+        if let workerClient = activeWorkerClients[requestID] {
+            _ = try? await workerClient.abort(requestID: requestID)
+        }
+        let errorEvent = makeLifecycleFailureEvent(
+            requestID: requestID,
+            code: "stream_disconnect_timeout",
+            message: "The client disconnected and the resume grace period expired."
+        )
+        await hub.yield(errorEvent)
+        await hub.emitLifecycle(.terminalFailure(code: "stream_disconnect_timeout", message: "The client disconnected and the resume grace period expired."))
+        await hub.finish()
+        await finishRequestTracking(requestID: requestID, phase: .requestFailed)
+    }
+
+    private func makeLifecycleFailureEvent(
+        requestID: String,
+        code: String,
+        message: String
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionFailed
+        event.lane = "text.decode.interactive"
+        var errorEvent = Melix_Worker_V1_ErrorEvent()
+        errorEvent.error.code = code
+        errorEvent.error.message = message
+        event.error = errorEvent
+        return event
     }
 
     private func recordPhaseObservability(
@@ -791,6 +1227,7 @@ public actor RequestCoordinator {
     ) async -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
         let request = await resolvedModelAccelerationRequest(recoveredRequest)
+        let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
@@ -834,7 +1271,8 @@ public actor RequestCoordinator {
                 continuousBatchEligible: isContinuousBatchEligible(
                     request: request,
                     routeKind: routeKind,
-                    prefillLane: prefillLane
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
                 ),
                 batchCohortID: continuousBatchCohortID(
                     request: request,
@@ -845,7 +1283,8 @@ public actor RequestCoordinator {
                 batchMaxSize: resolvedContinuousBatchSize(
                     request: request,
                     routeKind: routeKind,
-                    prefillLane: prefillLane
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
                 )
             )
         }
@@ -891,7 +1330,8 @@ public actor RequestCoordinator {
         let continuousBatchEligible = isContinuousBatchEligible(
             request: request,
             routeKind: routeKind,
-            prefillLane: prefillLane
+            prefillLane: prefillLane,
+            batchingDefaults: batchingDefaults
         )
         return SchedulingPlan(
             translatedRequest: request,
@@ -912,7 +1352,14 @@ public actor RequestCoordinator {
                     cacheRouteClass: cacheRouteClass
                 )
                 : "",
-            batchMaxSize: continuousBatchEligible ? continuousBatchTargetSize : 1
+            batchMaxSize: continuousBatchEligible
+                ? resolvedContinuousBatchSize(
+                    request: request,
+                    routeKind: routeKind,
+                    prefillLane: prefillLane,
+                    batchingDefaults: batchingDefaults
+                )
+                : 1
         )
     }
 
@@ -927,10 +1374,32 @@ public actor RequestCoordinator {
         }
 
         var workerRequest = translatedRequest.workerRequest
+        let gatewaySpeculativeDefaults = GatewaySpeculativeExecutionDefaults(
+            executionExt: workerRequest.execution.ext
+        )
         if workerRequest.execution.acceleration.mode == .unspecified {
-            workerRequest.execution.acceleration.mode = workerAccelerationMode(
-                from: model.settings.defaultAccelerationMode
-            )
+            let gatewayMode = gatewaySpeculativeDefaults.accelerationMode
+            if model.settings.defaultAccelerationMode != .unspecified {
+                workerRequest.execution.acceleration.mode = workerAccelerationMode(
+                    from: model.settings.defaultAccelerationMode
+                )
+            } else if gatewayMode != .baseline {
+                workerRequest.execution.acceleration.mode = gatewayMode
+            } else {
+                workerRequest.execution.acceleration.mode = .baseline
+            }
+        }
+
+        if workerRequest.execution.acceleration.mode == .speculativeDecode {
+            if workerRequest.execution.acceleration.draftModelID.isEmpty {
+                workerRequest.execution.acceleration.draftModelID = gatewaySpeculativeDefaults.draftModelID
+            }
+            if workerRequest.execution.acceleration.numDraftTokens == 0 {
+                workerRequest.execution.acceleration.numDraftTokens = gatewaySpeculativeDefaults.numDraftTokens
+            }
+        } else {
+            workerRequest.execution.acceleration.draftModelID = ""
+            workerRequest.execution.acceleration.numDraftTokens = 0
         }
 
         if workerRequest.execution.acceleration.profileID.isEmpty,
@@ -962,12 +1431,19 @@ public actor RequestCoordinator {
     private func isContinuousBatchEligible(
         request: TranslatedChatRequest,
         routeKind: WorkerRouteKind,
-        prefillLane: String
+        prefillLane: String,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) -> Bool {
         guard routeKind == .swiftText else {
             return false
         }
         guard shouldUsePhaseAwareExecution(for: request.workerRequest) else {
+            return false
+        }
+        guard batchingDefaults.concurrentProcessingEnabled else {
+            return false
+        }
+        guard batchingDefaults.effectiveAdmissionBatchSize > 1 else {
             return false
         }
         return prefillLane.hasPrefix("text.prefill.")
@@ -976,13 +1452,15 @@ public actor RequestCoordinator {
     private func resolvedContinuousBatchSize(
         request: TranslatedChatRequest,
         routeKind: WorkerRouteKind,
-        prefillLane: String
+        prefillLane: String,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) -> UInt32 {
         isContinuousBatchEligible(
             request: request,
             routeKind: routeKind,
-            prefillLane: prefillLane
-        ) ? continuousBatchTargetSize : 1
+            prefillLane: prefillLane,
+            batchingDefaults: batchingDefaults
+        ) ? batchingDefaults.effectiveAdmissionBatchSize : 1
     }
 
     private func continuousBatchCohortID(
@@ -1616,6 +2094,22 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.ocr_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactCount),
+                forKey: "vision.temp_media_artifact_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactBytes),
+                forKey: "vision.temp_media_artifact_bytes"
+            )
+            await metricsStore.set(
+                stats.lastTempMediaCleanupLatencyMs,
+                forKey: "vision.temp_media_cleanup_latency_ms"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaCleanupFailureCount),
+                forKey: "vision.temp_media_cleanup_failure_count"
+            )
             await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
             await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonVLM:
@@ -1625,6 +2119,40 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactCount),
+                forKey: "vision.temp_media_artifact_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactBytes),
+                forKey: "vision.temp_media_artifact_bytes"
+            )
+            await metricsStore.set(
+                stats.lastTempMediaCleanupLatencyMs,
+                forKey: "vision.temp_media_cleanup_latency_ms"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaCleanupFailureCount),
+                forKey: "vision.temp_media_cleanup_failure_count"
+            )
+            if stats.lastVideoEffectiveFrameCount > 0 {
+                await metricsStore.set(
+                    Double(stats.lastVideoEffectiveFrameCount),
+                    forKey: "vision.video_frame_count"
+                )
+                await metricsStore.set(
+                    Double(stats.lastVideoRequestedFrameBudget),
+                    forKey: "vision.video_frame_budget"
+                )
+                await metricsStore.set(
+                    Double(stats.lastVideoWindowMs),
+                    forKey: "vision.video_window_ms"
+                )
+                await metricsStore.set(
+                    stats.lastFirstTokenLatencyMs,
+                    forKey: "vision.video_first_token_ms"
+                )
+            }
             await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
             await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonTranscription:
@@ -1719,6 +2247,14 @@ private func controlPlaneCacheSummary(
     summary.compressionRatio = workerStats.compressionRatio
     summary.l2RestoreHitRate = workerStats.l2RestoreHitRate
     summary.activeMode = makeControlPlaneCacheMode(from: workerStats.activeMode)
+    summary.cacheRoot = workerStats.cacheRoot
+    summary.initialCacheBlocks = workerStats.initialCacheBlocks
+    summary.supportedModes = workerStats.supportedModes.map(makeControlPlaneCacheMode(from:))
+    summary.experimentalModes = workerStats.experimentalModes.map(makeControlPlaneCacheMode(from:))
+    summary.supportsPrefixCache = workerStats.supportsPrefixCache
+    summary.supportsPagedCache = workerStats.supportsPagedCache
+    summary.supportsDiskCache = workerStats.supportsDiskCache
+    summary.supportsBoundarySnapshots = workerStats.supportsBoundarySnapshots
     return summary
 }
 
@@ -1943,6 +2479,8 @@ private func promptReuseFragments(
                 fragments.append(.audioURI(uri))
             case .audioBytes(let bytes):
                 fragments.append(.audioBytes(Data(bytes)))
+            case .videoUri, .videoBytes:
+                continue
             case nil:
                 continue
             }

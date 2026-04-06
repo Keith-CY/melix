@@ -23,8 +23,11 @@ struct ControlPlaneServiceTests {
         #expect(!response.serverVersion.isEmpty)
         #expect(!response.daemonInstanceID.isEmpty)
         #expect(response.snapshot.serverState == .serverReady)
+        #expect(response.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(response.snapshot.runtimeSessions.first?.lifecycleState == .ready)
         #expect(response.features.contains("cache-metadata"))
         #expect(response.features.contains("session-graph"))
+        #expect(response.features.contains("server-session-runtime"))
         #expect(response.features.contains("image-jobs"))
     }
 
@@ -66,6 +69,106 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.mcpTools.sources[0].sourceID == "disabled-search")
         #expect(response.snapshot.mcpTools.sources[1].sourceID == "filesystem")
         #expect(response.snapshot.mcpTools.sources[1].namespaces == ["tools.fs.read", "tools.fs.write"])
+    }
+
+    @Test("handshake exposes typed tooling settings state")
+    func handshakeExposesTypedToolingSettingsState() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: tempDirectory.appendingPathComponent("image-defaults.json"),
+            defaults: [:]
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/mcp-tools.json",
+                defaultParserMode: .json,
+                sources: [
+                    .init(sourceID: "filesystem", enabled: true, namespaces: ["tools.fs.read"])
+                ]
+            ),
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            imageDefaultsStore: imageDefaultsStore,
+            environment: [
+                "MELIX_CONTROL_PLANE_METRICS_PATH": "/tmp/control-plane-metrics.json"
+            ],
+            launchArguments: [
+                "melix-control-plane",
+                "--config",
+                "/tmp/melix.json",
+                "--verbose",
+            ]
+        )
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-tooling"
+
+        let response = try await service.handshake(request)
+
+        #expect(response.snapshot.toolingSettings.embedding.modelID == "melix-dev-embed")
+        #expect(response.snapshot.toolingSettings.embedding.loaded == false)
+        #expect(response.snapshot.toolingSettings.embedding.preloaded == false)
+        #expect(response.snapshot.toolingSettings.builtinToolParserModes.contains("json"))
+        #expect(response.snapshot.toolingSettings.builtinToolParserModes.contains("qwen"))
+        #expect(response.snapshot.toolingSettings.mcpDefaultParserMode == "json")
+        #expect(response.snapshot.toolingSettings.mcpConfigPath == "/tmp/mcp-tools.json")
+        #expect(response.snapshot.toolingSettings.additionalArguments == ["--config", "/tmp/melix.json", "--verbose"])
+        let configPaths = Dictionary(
+            uniqueKeysWithValues: response.snapshot.toolingSettings.configPaths.map { ($0.pathID, $0.path) }
+        )
+        #expect(configPaths["gateway_config_store_path"] == tempDirectory.appendingPathComponent("gateway-config.json").path)
+        #expect(configPaths["gateway_serving_defaults_store_path"] == tempDirectory.appendingPathComponent("gateway-serving-defaults.json").path)
+        #expect(configPaths["image_defaults_store_path"] == tempDirectory.appendingPathComponent("image-defaults.json").path)
+        #expect(configPaths["control_plane_metrics_path"] == "/tmp/control-plane-metrics.json")
+    }
+
+    @Test("handshake exposes typed API onboarding state")
+    func handshakeExposesTypedAPIOnboardingState() async throws {
+        let service = ControlPlaneService()
+
+        var request = Melix_Controlplane_V1_HandshakeRequest()
+        request.protocolVersion = "melix.controlplane.v1"
+        request.appVersion = "0.1.0"
+        request.bundleID = "com.melix.app"
+        request.clientInstanceID = "ui-api-onboarding"
+
+        let response = try await service.handshake(request)
+        let surfaces = Dictionary(
+            uniqueKeysWithValues: response.snapshot.apiOnboarding.surfaces.map { ($0.surfaceID, $0) }
+        )
+        let endpoints = Dictionary(
+            uniqueKeysWithValues: response.snapshot.apiOnboarding.endpoints.map { ($0.endpointID, $0) }
+        )
+
+        #expect(surfaces["local_service"]?.status == .shipped)
+        #expect(surfaces["openai_compatible"]?.status == .shipped)
+        #expect(surfaces["anthropic_messages"]?.status == .shipped)
+        #expect(surfaces["ollama_compatibility"]?.status == .compatibilityOnly)
+        #expect(
+            surfaces["ollama_compatibility"]?.compatibilityNote
+                .contains("Native /api/chat") == true
+        )
+        #expect(endpoints["health"]?.path == "/health")
+        #expect(endpoints["cache_stats"]?.path == "/v1/cache/stats")
+        #expect(endpoints["responses"]?.streaming == true)
+        #expect(endpoints["messages"]?.surfaceID == "anthropic_messages")
+        #expect(endpoints["images_generations"]?.method == "POST")
     }
 
     @Test("gateway access policy normalizes shared-access configuration and rejects invalid keys")
@@ -165,6 +268,109 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.gatewayAccess.keys.contains(where: { $0.tokenHint == "sk-codex" }) == false)
     }
 
+    @Test("persistent auth session restore prunes expired and malformed records while keeping active remembered sessions")
+    func persistentAuthSessionRestorePrunesExpiredAndMalformedRecordsWhileKeepingActiveRememberedSessions() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-restore-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("persistent-auth-sessions.json")
+        let payload = """
+        {
+          "schema_version": 1,
+          "sessions": [
+            {
+              "created_at_unix_ms": 1000,
+              "expires_at_unix_ms": 60000,
+              "key_id": "codex",
+              "last_restored_at_unix_ms": 0,
+              "remember_me": true,
+              "revoked_at_unix_ms": 0,
+              "session_id": "session-active",
+              "token_hash": "hash-active"
+            },
+            {
+              "created_at_unix_ms": 1000,
+              "expires_at_unix_ms": 1500,
+              "key_id": "expired",
+              "last_restored_at_unix_ms": 0,
+              "remember_me": true,
+              "revoked_at_unix_ms": 0,
+              "session_id": "session-expired",
+              "token_hash": "hash-expired"
+            },
+            "malformed-entry"
+          ]
+        }
+        """
+        try #require(payload.data(using: .utf8)).write(to: storeURL)
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: storeURL,
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 2_000 }
+        )
+
+        let result = try await store.restorePersistedSessions()
+
+        #expect(result.restoredSessionCount == 1)
+        #expect(result.expiredSessionCount == 1)
+        #expect(result.malformedRecordCount == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.remembered_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.expired_session_count") == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.retention_ttl_seconds") == 3600)
+    }
+
+    @Test("applying a new gateway policy revokes remembered sessions that no longer match the keyring")
+    func applyingANewGatewayPolicyRevokesRememberedSessionsThatNoLongerMatchTheKeyring() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-reconcile-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 10_000 }
+        )
+        let issued = try await store.issueSession(keyID: "desktop-agent", rememberMe: true)
+        let service = ControlPlaneService(
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            ),
+            persistentAuthSessionStore: store
+        )
+
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "apply-gateway-access"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = "server-session-1"
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.mode = .none
+        request.server.applyGatewayAccess.sharedAccessEnabled = false
+        let response = try await service.execute(request)
+        let validation = await store.validateSessionToken(
+            issued.token,
+            policy: GatewayAccessPolicy.localTrust
+        )
+
+        #expect(response.ok)
+        #expect(validation == .failure(.revokedSession(sessionID: issued.metadata.sessionID, keyID: "desktop-agent", rememberMe: true)))
+    }
+
     @Test("execute handles server.get_snapshot")
     func executeHandlesServerSnapshot() async throws {
         let service = ControlPlaneService()
@@ -176,6 +382,1027 @@ struct ControlPlaneServiceTests {
         #expect(response.requestID == request.requestID)
         #expect(response.commandType == request.commandType)
         #expect(response.server.snapshot.serverState == .serverReady)
+        #expect(response.server.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(response.server.snapshot.runtimeSessions.first?.powerState == .active)
+    }
+
+    @Test("execute projects typed gateway config state through server snapshots")
+    func executeProjectsTypedGatewayConfigStateThroughServerSnapshots() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-snapshot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let gatewayStore = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [:],
+            nowUnixMS: { 1_717_171_717_000 }
+        )
+        try await gatewayStore.apply(command: makeApplyGatewayConfigCommand(
+            host: "0.0.0.0",
+            port: 18_080,
+            servedModelID: "melix-dev-text",
+            rateLimitPerMinute: 180,
+            timeoutSeconds: 45
+        ))
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: gatewayStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let listener = try #require(response.server.snapshot.gatewayConfig.listeners.first)
+
+        #expect(response.ok)
+        #expect(listener.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(listener.requestedHost == "0.0.0.0")
+        #expect(listener.requestedPort == 18_080)
+        #expect(listener.effectiveHost == "127.0.0.1")
+        #expect(listener.effectivePort == 11_434)
+        #expect(listener.servedModelID == "melix-dev-text")
+        #expect(listener.rateLimitPerMinute == 180)
+        #expect(listener.timeoutSeconds == 45)
+        #expect(listener.source == .operatorOverride)
+        #expect(listener.activeBinding)
+        #expect(listener.requiresRestart)
+    }
+
+    @Test("execute applies gateway config and returns a hydrated snapshot")
+    func executeAppliesGatewayConfigAndReturnsAHydratedSnapshot() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:],
+                nowUnixMS: { 1_717_171_717_100 }
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-alt-text",
+                rateLimitPerMinute: 240,
+                timeoutSeconds: 90
+            )
+        )
+        let listener = try #require(response.server.snapshot.gatewayConfig.listeners.first)
+
+        #expect(response.ok)
+        #expect(listener.requestedHost == "127.0.0.1")
+        #expect(listener.requestedPort == 11_434)
+        #expect(listener.effectiveHost == "127.0.0.1")
+        #expect(listener.effectivePort == 11_434)
+        #expect(listener.servedModelID == "melix-alt-text")
+        #expect(listener.rateLimitPerMinute == 240)
+        #expect(listener.timeoutSeconds == 90)
+        #expect(listener.requiresRestart == false)
+        #expect(await metricsStore.value(forKey: "gateway.config_apply_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "gateway.config_requires_restart_count") == 0)
+    }
+
+    @Test("execute snapshots gateway config even when no catalog model is available")
+    func executeSnapshotsGatewayConfigEvenWhenNoCatalogModelIsAvailable() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-empty-catalog-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let listener = try #require(response.server.snapshot.gatewayConfig.listeners.first)
+
+        #expect(response.ok)
+        #expect(listener.servedModelID == "")
+        #expect(listener.requestedHost == "127.0.0.1")
+        #expect(listener.requestedPort == 11_434)
+    }
+
+    @Test("execute rejects gateway config target mismatches and typed payload validation failures")
+    func executeRejectsGatewayConfigTargetMismatchesAndTypedPayloadValidationFailures() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let mismatchedTarget = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                targetID: "server-session-other",
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let missingHost = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "",
+                port: 11_434,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let invalidPort = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 0,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let missingServedModel = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let invalidRateLimit = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 0,
+                timeoutSeconds: 60
+            )
+        )
+        let invalidTimeout = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 0
+            )
+        )
+
+        #expect(!mismatchedTarget.ok)
+        #expect(mismatchedTarget.error.code == "invalid_argument")
+        #expect(missingHost.error.code == GatewayConfigValidationError.missingHost.code)
+        #expect(invalidPort.error.code == GatewayConfigValidationError.invalidPort.code)
+        #expect(missingServedModel.error.code == GatewayConfigValidationError.missingServedModelID.code)
+        #expect(invalidRateLimit.error.code == GatewayConfigValidationError.invalidRateLimit.code)
+        #expect(invalidTimeout.error.code == GatewayConfigValidationError.invalidTimeout.code)
+    }
+
+    @Test("execute surfaces gateway config persistence failures with typed metrics")
+    func executeSurfacesGatewayConfigPersistenceFailuresWithTypedMetrics() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-persist-failure-\(UUID().uuidString)")
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config-directory")
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(storeURL: storeURL, defaults: [:]),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "0.0.0.0",
+                port: 18_080,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 180,
+                timeoutSeconds: 45
+            )
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "gateway_config_persist_failed")
+        #expect(await metricsStore.value(forKey: "gateway.config_persist_failures") == 1)
+    }
+
+    @Test("execute projects typed serving defaults state through server snapshots")
+    func executeProjectsTypedServingDefaultsStateThroughServerSnapshots() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-snapshot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:],
+            nowUnixMS: { 1_717_181_920_000 }
+        )
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.33,
+            topP: 0.9,
+            maxTokens: 640,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-text",
+            numDraftTokens: 6
+        ))
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel]),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
+
+        #expect(response.ok)
+        #expect(session.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(session.requestedTemperature == 0.33)
+        #expect(session.requestedTopP == 0.9)
+        #expect(session.requestedMaxTokens == 640)
+        #expect(session.requestedStreamIntervalTokens == 4)
+        #expect(session.requestedMaxConcurrentRequests == 6)
+        #expect(session.requestedConcurrentProcessingEnabled)
+        #expect(session.requestedPrefillBatchSize == 3)
+        #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-text")
+        #expect(session.requestedNumDraftTokens == 6)
+        #expect(session.effectiveMaxConcurrentRequests == 2)
+        #expect(session.effectivePrefillBatchSize == 2)
+        #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveDraftModelID == "melix-dev-text")
+        #expect(session.effectiveNumDraftTokens == 6)
+        #expect(session.source == .operatorOverride)
+    }
+
+    @Test("execute applies serving defaults and returns a hydrated snapshot")
+    func executeAppliesServingDefaultsAndReturnsAHydratedSnapshot() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel]),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+                defaults: [:],
+                nowUnixMS: { 1_717_181_930_000 }
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.41,
+                topP: 0.87,
+                maxTokens: 512,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 5,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 4,
+                completionBatchSize: 2,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 5
+            )
+        )
+        let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
+
+        #expect(response.ok)
+        #expect(session.requestedTemperature == 0.41)
+        #expect(session.requestedTopP == 0.87)
+        #expect(session.requestedMaxTokens == 512)
+        #expect(session.requestedStreamIntervalTokens == 2)
+        #expect(session.requestedMaxConcurrentRequests == 5)
+        #expect(session.requestedConcurrentProcessingEnabled)
+        #expect(session.requestedPrefillBatchSize == 4)
+        #expect(session.requestedCompletionBatchSize == 2)
+        #expect(session.requestedAccelerationMode == .speculativeDecode)
+        #expect(session.requestedDraftModelID == "melix-dev-text")
+        #expect(session.requestedNumDraftTokens == 5)
+        #expect(session.effectiveMaxConcurrentRequests == 2)
+        #expect(session.effectivePrefillBatchSize == 2)
+        #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveDraftModelID == "melix-dev-text")
+        #expect(session.effectiveNumDraftTokens == 5)
+        #expect(await metricsStore.value(forKey: "gateway.serving_defaults_apply_ms") >= 0)
+        #expect(await metricsStore.value(forKey: "gateway.speculative_config_apply_ms") >= 0)
+    }
+
+    @Test("execute rejects serving defaults target mismatches and typed payload validation failures")
+    func executeRejectsServingDefaultsTargetMismatchesAndTypedPayloadValidationFailures() async throws {
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+
+        let mismatchedTarget = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                targetID: "server-session-other",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4
+            )
+        )
+        let invalidTopP = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4
+            )
+        )
+        let invalidStreamInterval = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 0,
+                maxConcurrentRequests: 4
+            )
+        )
+
+        let invalidPrefillBatchSize = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                prefillBatchSize: 0
+            )
+        )
+        let invalidAccelerationMode = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .acceleratedPrefill
+            )
+        )
+        let missingDraftModelID = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "   ",
+                numDraftTokens: 4
+            )
+        )
+        let invalidNumDraftTokens = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 256,
+                streamIntervalTokens: 1,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 0
+            )
+        )
+
+        #expect(!mismatchedTarget.ok)
+        #expect(mismatchedTarget.error.code == "invalid_argument")
+        #expect(invalidTopP.error.code == ServingDefaultsValidationError.invalidTopP.code)
+        #expect(invalidStreamInterval.error.code == ServingDefaultsValidationError.invalidStreamIntervalTokens.code)
+        #expect(invalidPrefillBatchSize.error.code == ServingDefaultsValidationError.invalidPrefillBatchSize.code)
+        #expect(invalidAccelerationMode.error.code == ServingDefaultsValidationError.invalidAccelerationMode.code)
+        #expect(missingDraftModelID.error.code == ServingDefaultsValidationError.missingDraftModelID.code)
+        #expect(invalidNumDraftTokens.error.code == ServingDefaultsValidationError.invalidNumDraftTokens.code)
+    }
+
+    @Test("execute rejects speculative serving defaults for unsupported backends and unsupported models")
+    func executeRejectsSpeculativeServingDefaultsForUnsupportedBackendsAndUnsupportedModels() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-speculative-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let backendUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-backend.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: false
+        )
+        let backendUnsupported = try await backendUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        let servedModelUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-served.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        _ = try await servedModelUnsupportedService.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-ocr",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let servedModelUnsupported = try await servedModelUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        let draftModelUnsupportedService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config-draft.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        let draftModelUnsupported = try await draftModelUnsupportedService.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-ocr",
+                numDraftTokens: 6
+            )
+        )
+
+        #expect(backendUnsupported.error.code == ServingDefaultsValidationError.speculativeBackendUnsupported.code)
+        #expect(servedModelUnsupported.error.code == ServingDefaultsValidationError.speculativeServedModelUnsupported.code)
+        #expect(draftModelUnsupported.error.code == ServingDefaultsValidationError.speculativeDraftModelUnsupported.code)
+    }
+
+    @Test("execute surfaces serving defaults persistence failures with typed metrics")
+    func executeSurfacesServingDefaultsPersistenceFailuresWithTypedMetrics() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-persist-failure-\(UUID().uuidString)")
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults-directory")
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 3
+            )
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "serving_defaults_persist_failed")
+        #expect(await metricsStore.value(forKey: "gateway.serving_defaults_persist_failures") == 1)
+    }
+
+    @Test("execute projects image defaults state through server snapshots")
+    func executeProjectsImageDefaultsStateThroughServerSnapshots() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-image-defaults-snapshot-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+            defaults: [:],
+            nowUnixMS: { 1_717_181_940_000 }
+        )
+        try await imageDefaultsStore.apply(
+            command: makeApplyImageDefaultsCommand(
+                generateModelID: "melix-dev-image",
+                editModelID: "melix-dev-image",
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            ),
+            models: ModelCatalog.phaseSevenContractSeedModels()
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            imageDefaultsStore: imageDefaultsStore
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let summary = response.server.snapshot.imageDefaults
+
+        #expect(response.ok)
+        #expect(summary.requestedGenerateModelID == "melix-dev-image")
+        #expect(summary.requestedEditModelID == "melix-dev-image")
+        #expect(summary.requestedSize == "1536x1024")
+        #expect(summary.requestedSteps == 40)
+        #expect(summary.requestedGuidance == 6.25)
+        #expect(summary.requestedStrength == 0.7)
+        #expect(summary.requestedNegativePrompt == "noise")
+        #expect(summary.effectiveGenerateModelID == "melix-dev-image")
+        #expect(summary.effectiveEditModelID == "melix-dev-image")
+        #expect(summary.effectiveSize == "1536x1024")
+        #expect(summary.effectiveSteps == 40)
+        #expect(summary.effectiveGuidance == 6.25)
+        #expect(summary.effectiveStrength == 0.7)
+        #expect(summary.effectiveNegativePrompt == "noise")
+        #expect(summary.source == .operatorOverride)
+        #expect(summary.updatedAtUnixMs == 1_717_181_940_000)
+    }
+
+    @Test("execute applies image defaults and returns a hydrated summary")
+    func executeAppliesImageDefaultsAndReturnsAHydratedSummary() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-image-defaults-apply-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            metricsStore: metricsStore,
+            imageDefaultsStore: ImageDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+                defaults: [:],
+                nowUnixMS: { 1_717_181_950_000 }
+            )
+        )
+
+        let response = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: "melix-dev-image",
+                editModelID: "melix-dev-image",
+                size: "1536x1024",
+                steps: 36,
+                guidance: 6.5,
+                strength: 0.65,
+                negativePrompt: "blur"
+            )
+        )
+        let summary = response.image.imageDefaults
+
+        #expect(response.ok)
+        #expect(summary.requestedGenerateModelID == "melix-dev-image")
+        #expect(summary.requestedEditModelID == "melix-dev-image")
+        #expect(summary.requestedSize == "1536x1024")
+        #expect(summary.requestedSteps == 36)
+        #expect(summary.requestedGuidance == 6.5)
+        #expect(summary.requestedStrength == 0.65)
+        #expect(summary.requestedNegativePrompt == "blur")
+        #expect(summary.effectiveGenerateModelID == "melix-dev-image")
+        #expect(summary.effectiveEditModelID == "melix-dev-image")
+        #expect(summary.source == .operatorOverride)
+        #expect(await metricsStore.value(forKey: "images.defaults_apply_latency_ms") >= 0)
+    }
+
+    @Test("execute rejects invalid image defaults payloads and unsupported workflow models")
+    func executeRejectsInvalidImageDefaultsPayloadsAndUnsupportedWorkflowModels() async throws {
+        var qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        qwen.modelID = "melix-qwen-image"
+        var fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        fill.modelID = "melix-fill-image"
+        let text = ModelCatalog.devTextModel()
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: [qwen, fill, text]))
+
+        let invalidSize = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "wide",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+        let invalidStrength = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 1.2
+            )
+        )
+        let unsupportedGenerate = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: fill.modelID,
+                editModelID: fill.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+        let unsupportedEdit = try await service.execute(
+            makeApplyImageDefaultsRequest(
+                generateModelID: qwen.modelID,
+                editModelID: qwen.modelID,
+                size: "1024x1024",
+                steps: 28,
+                guidance: 7.5,
+                strength: 0.8
+            )
+        )
+
+        #expect(invalidSize.error.code == ImageDefaultsValidationError.invalidSize.code)
+        #expect(invalidStrength.error.code == ImageDefaultsValidationError.invalidStrength.code)
+        #expect(unsupportedGenerate.error.code == ImageDefaultsValidationError.unsupportedGenerateModel.code)
+        #expect(unsupportedEdit.error.code == ImageDefaultsValidationError.unsupportedEditModel.code)
+    }
+
+    @Test("execute handles server lifecycle controls and derives server state")
+    func executeHandlesServerLifecycleControlsAndDerivesServerState() async throws {
+        let service = ControlPlaneService()
+
+        let pauseResponse = try await service.execute(makeServerPauseRequest())
+        let wakeResponse = try await service.execute(makeServerWakeRequest())
+        let resumeResponse = try await service.execute(makeServerResumeRequest())
+        let stopResponse = try await service.execute(makeServerStopRequest())
+        let startResponse = try await service.execute(makeServerStartRequest())
+        let restartResponse = try await service.execute(makeServerRestartRequest())
+
+        #expect(pauseResponse.ok)
+        #expect(pauseResponse.server.snapshot.serverState == .serverDegraded)
+        #expect(pauseResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .paused)
+
+        #expect(wakeResponse.ok)
+        #expect(wakeResponse.server.snapshot.serverState == .serverReady)
+        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(resumeResponse.ok)
+        #expect(resumeResponse.server.snapshot.serverState == .serverReady)
+        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(stopResponse.ok)
+        #expect(stopResponse.server.snapshot.serverState == .serverStopped)
+        #expect(stopResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .stopped)
+        #expect(stopResponse.server.snapshot.runtimeSessions.first?.powerState == .stopped)
+
+        #expect(startResponse.ok)
+        #expect(startResponse.server.snapshot.serverState == .serverReady)
+        #expect(startResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(startResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+
+        #expect(restartResponse.ok)
+        #expect(restartResponse.server.snapshot.serverState == .serverReady)
+        #expect(restartResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(restartResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+    }
+
+    @Test("execute handles server idle policy updates")
+    func executeHandlesServerIdlePolicyUpdates() async throws {
+        let service = ControlPlaneService()
+
+        let response = try await service.execute(
+            makeServerSetIdlePolicyRequest(
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 60,
+                deepSleepAfterSeconds: 600
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.server.snapshot.serverState == .serverReady)
+        #expect(response.server.snapshot.runtimeSessions.first?.autoSleepEnabled == true)
+        #expect(response.server.snapshot.runtimeSessions.first?.lightSleepAfterSeconds == 60)
+        #expect(response.server.snapshot.runtimeSessions.first?.deepSleepAfterSeconds == 600)
+    }
+
+    @Test("execute rejects invalid server idle policy thresholds")
+    func executeRejectsInvalidServerIdlePolicyThresholds() async throws {
+        let service = ControlPlaneService()
+
+        let response = try await service.execute(
+            makeServerSetIdlePolicyRequest(
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 600,
+                deepSleepAfterSeconds: 60
+            )
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message == "deep_sleep_after_seconds must be greater than or equal to light_sleep_after_seconds.")
+    }
+
+    @Test("server lifecycle requests reject mismatched target and payload session ids")
+    func serverLifecycleRequestsRejectMismatchedTargetAndPayloadSessionIDs() async throws {
+        let service = ControlPlaneService()
+        var request = makeServerPauseRequest(serverSessionID: "server-session-1")
+        request.targetID = "server-session-2"
+
+        let response = try await service.execute(request)
+
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message == "Target server session does not match the command payload.")
+    }
+
+    @Test("serving activity blocks paused sessions and wakes sleeping sessions")
+    func servingActivityBlocksPausedSessionsAndWakesSleepingSessions() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+
+        let pausedResponse = try await pausedService.execute(
+            makeImageGenerateRequest(
+                modelID: "melix-dev-image",
+                prompt: "bench",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+
+        #expect(!pausedResponse.ok)
+        #expect(pausedResponse.error.code == "server_paused")
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let sleepingService = ControlPlaneService(serverSessionRuntimeStore: sleepingStore)
+
+        let wakingResponse = try await sleepingService.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-wake",
+                modelID: "melix-dev-image",
+                prompt: "bench",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshotAfterWake = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        #expect(!wakingResponse.ok)
+        #expect(wakingResponse.error.code == "not_ready")
+        #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("startChat blocks paused sessions and wakes sleeping sessions before dispatch")
+    func startChatBlocksPausedSessionsAndWakesSleepingSessionsBeforeDispatch() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+
+        await #expect(throws: ControlPlaneChatExecutionError.unavailable) {
+            try await pausedService.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+        }
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-server-wake"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-server-wake",
+                finishReason: "stop",
+                assistant: "awake",
+                reasoning: ""
+            ),
+        ])
+        let sleepingService = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: sleepingStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-server-wake" })
+        )
+
+        let execution = try await sleepingService.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "wake the server")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let snapshotAfterWake = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("server pause and stop require quiescence while requests are active")
+    func serverPauseAndStopRequireQuiescenceWhileRequestsAreActive() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-inflight",
+            laneHint: "text.decode.interactive",
+            priority: 100,
+            workerID: "swift-text-worker",
+            admissionLatencyMs: 1
+        )
+        let service = ControlPlaneService(schedulerReadModel: schedulerReadModel)
+
+        let pauseResponse = try await service.execute(makeServerPauseRequest())
+        let stopResponse = try await service.execute(makeServerStopRequest())
+
+        #expect(!pauseResponse.ok)
+        #expect(pauseResponse.error.code == "conflict")
+        #expect(!stopResponse.ok)
+        #expect(stopResponse.error.code == "conflict")
+    }
+
+    @Test("image edit serving respects paused sleeping stopped and failed server sessions")
+    func imageEditServingRespectsPausedSleepingStoppedAndFailedServerSessions() async throws {
+        var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        pausedSession.lifecycleState = .paused
+        let pausedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+        )
+        let pausedResponse = try await pausedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-paused",
+                modelID: "melix-dev-image",
+                prompt: "pause",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        sleepingSession.lifecycleState = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStore = ServerSessionRuntimeStore(runtimeSessions: [sleepingSession], nowUnixMS: { 3_000 })
+        let sleepingService = ControlPlaneService(serverSessionRuntimeStore: sleepingStore)
+        let wakingResponse = try await sleepingService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-wake",
+                modelID: "melix-dev-image",
+                prompt: "wake",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+        let wakingSnapshot = try await sleepingService.execute(makeServerSnapshotRequest())
+
+        var stoppedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        stoppedSession.lifecycleState = .stopped
+        stoppedSession.powerState = .stopped
+        let stoppedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [stoppedSession], nowUnixMS: { 4_000 })
+        )
+        let stoppedResponse = try await stoppedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-stopped",
+                modelID: "melix-dev-image",
+                prompt: "stop",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        var failedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        failedSession.lifecycleState = .error
+        let failedService = ControlPlaneService(
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [failedSession], nowUnixMS: { 5_000 })
+        )
+        let failedResponse = try await failedService.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-failed",
+                modelID: "melix-dev-image",
+                prompt: "failed",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 0.5
+            )
+        )
+
+        #expect(!pausedResponse.ok)
+        #expect(pausedResponse.error.code == "server_paused")
+        #expect(!wakingResponse.ok)
+        #expect(wakingResponse.error.code == "not_ready")
+        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(!stoppedResponse.ok)
+        #expect(stoppedResponse.error.code == "server_stopped")
+        #expect(!failedResponse.ok)
+        #expect(failedResponse.error.code == "server_failed")
+    }
+
+    @Test("applying gateway access publishes server runtime session metadata")
+    func applyingGatewayAccessPublishesServerRuntimeSessionMetadata() async throws {
+        let service = ControlPlaneService()
+        let subscription = await service.subscribe()
+
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "apply-gateway-access-runtime"
+        request.commandType = "server.apply_gateway_access"
+        request.targetID = "server-session-1"
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
+        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.mode = .none
+        request.server.applyGatewayAccess.sharedAccessEnabled = false
+
+        let response = try await service.execute(request)
+
+        var iterator = subscription.stream.makeAsyncIterator()
+        let event = await iterator.next()
+        await service.unsubscribe(subscription.subscriptionID)
+
+        #expect(response.ok)
+        #expect(event?.eventType == "server.state_changed")
+        #expect(event?.source == "server_runtime")
+        #expect(event?.serverState.runtimeSessions.first?.serverSessionID == "server-session-1")
+        #expect(event?.serverState.runtimeSessions.first?.wakeReason == .policyApply)
+        #expect(event?.serverState.runtimeSessions.first?.lifecycleState == .ready)
     }
 
     @Test("execute handles model.list")
@@ -240,6 +1467,84 @@ struct ControlPlaneServiceTests {
         #expect(discovered.settings.ext["melix.registry_root_id"] == "root-1")
         #expect(discovered.settings.ext["melix.registry_relative_path"] == "mlx-community/Qwen2.5-7B-Instruct/4bit")
         #expect(discovered.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
+    @Test("registry snapshot text families preserve compatibility routing and parser metadata")
+    func registrySnapshotTextFamiliesPreserveCompatibilityRoutingAndParserMetadata() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    "model_path": "/tmp/registry-root/mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    "model_kind": "text",
+                    "revision": "registry",
+                    "tokenizer_hash": "tok-registry",
+                    "quant_profile_id": "q4",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 32768,
+                    "ext": [
+                        "text_backend_id": "mlx_lm",
+                        "text_family_id": "qwen3moe",
+                        "model_architecture": "qwen3_moe",
+                        "detected_architecture": "qwen3_moe",
+                        "detected_family_id": "qwen3moe",
+                        "detected_identity_source": "config.model_type",
+                        "melix.adapter_set_hash": "text-family-qwen3moe",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.class": "text",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                        "melix.capability.supported_parsers": "text,qwen",
+                        "tool_parser_mode": "qwen",
+                        "tool_parser_namespaces": "tools.text",
+                        "tool_parser_xml_fallback": "true",
+                        "melix.text.attention_profile": "gqa",
+                        "melix.text.rope_profile": "yarn_interleaved",
+                        "melix.text.moe.enabled": "true",
+                        "melix.text.moe.expert_count": "128",
+                        "melix.text.moe.gate_dequant": "true",
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/registry-root",
+                        "melix.registry_relative_path": "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                        "melix.model_path": "/tmp/registry-root/mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+                    ],
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let discovered = try #require(
+            response.model.models.first(where: { $0.modelID == "mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit" })
+        )
+
+        #expect(discovered.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(discovered.capabilityClass == .modelCapabilityText)
+        #expect(discovered.supportedModalities == ["text"])
+        #expect(discovered.supportedTasks == ["generate"])
+        #expect(discovered.settings.ext["text_family_id"] == "qwen3moe")
+        #expect(discovered.settings.ext["melix.capability.route_kind"] == "python_text_compatibility")
+        #expect(discovered.settings.ext["melix.capability.supported_parsers"] == "text,qwen")
+        #expect(discovered.settings.ext["tool_parser_mode"] == "qwen")
+        #expect(discovered.settings.ext["melix.text.rope_profile"] == "yarn_interleaved")
+        #expect(discovered.settings.ext["melix.text.moe.expert_count"] == "128")
     }
 
     @Test("execute handles model.list by keeping the current catalog when registry sync throws")
@@ -381,6 +1686,126 @@ struct ControlPlaneServiceTests {
         #expect(speech.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Speech/1")
     }
 
+    @Test("registry snapshot operations persist configured roots and reuse them for subsequent model.list syncs")
+    func registrySnapshotOperationsPersistConfiguredRootsAndReuseThemForSubsequentModelListSyncs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+        let overrideJSON = #"["/tmp/root-b","/tmp/root-a"]"#
+
+        let operationResponse = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "registry_snapshot",
+                outputDir: "",
+                ext: [
+                    "melix.registry_roots_json": overrideJSON,
+                    "melix.registry_rescan": "true",
+                ]
+            )
+        )
+        let operationRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let operationState = await catalog.registrySnapshotState()
+
+        #expect(operationResponse.ok)
+        #expect(operationRequest.ext["melix.registry_roots_json"] == overrideJSON)
+        #expect(operationRequest.ext["melix.registry_rescan"] == "true")
+        #expect(operationState.hasConfiguredRootOverride)
+        #expect(operationState.configuredRootPaths == ["/tmp/root-b", "/tmp/root-a"])
+        #expect(operationState.roots.first?.rootID == "root-1")
+
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+
+        let listResponse = try await service.execute(makeListModelsRequest())
+        let listRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(listResponse.ok)
+        #expect(listRequest.ext["melix.registry_roots_json"] == overrideJSON)
+        #expect((listRequest.ext["melix.registry_rescan"] ?? "").isEmpty)
+    }
+
+    @Test("model.list preserves an explicit empty registry-root override instead of falling back to environment roots")
+    func modelListPreservesExplicitEmptyRegistryRootOverrideInsteadOfFallingBackToEnvironmentRoots() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        await catalog.updateConfiguredRegistryRoots([])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        _ = try await service.execute(makeListModelsRequest())
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(request.ext["melix.registry_roots_json"] == "[]")
+    }
+
+    @Test("registry snapshot operations reuse stored configured roots when the request omits an explicit override")
+    func registrySnapshotOperationsReuseStoredConfiguredRootsWhenOverrideIsOmitted() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        await catalog.updateConfiguredRegistryRoots(["/tmp/root-b", "/tmp/root-a"])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "registry_snapshot",
+                outputDir: "",
+                ext: [:]
+            )
+        )
+        let request = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(request.ext["melix.registry_roots_json"] == #"["/tmp/root-b","/tmp/root-a"]"#)
+    }
+
     @Test("execute handles model.load on the local fast path")
     func executeHandlesLocalModelLoad() async throws {
         let service = ControlPlaneService()
@@ -405,6 +1830,30 @@ struct ControlPlaneServiceTests {
         #expect(model.state == .modelWarm)
         #expect(model.residency.transitionReason == "operator_load")
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
+    }
+
+    @Test("execute workerless model.load rejects unsupported disk streaming modes")
+    func executeWorkerlessModelLoadRejectsUnsupportedDiskStreamingModes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let runtimeStore = ServerSessionRuntimeStore()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            serverSessionRuntimeStore: runtimeStore
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        let runtimeSessions = await runtimeStore.snapshot()
+
+        #expect(!response.ok)
+        #expect(response.error.code == "disk_streaming_unsupported")
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "operator_load_disk_streaming_unsupported")
+        #expect(runtimeSessions.first?.requestedDiskStreamingMode == .diskStreamingRequireDisk)
+        #expect(runtimeSessions.first?.effectiveDiskStreamingMode == .diskStreamingDisabled)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
 
     @Test("execute handles model.unload on the local fast path")
@@ -663,6 +2112,68 @@ struct ControlPlaneServiceTests {
         #expect(events.map(\.modelState.state) == [.modelLoading, .modelFailed])
         #expect(model.state == .modelFailed)
         #expect(model.residency.transitionReason == "operator_load_memory_budget_exceeded")
+        #expect(model.residency.memoryBudgetBytes == 4_500)
+        #expect(model.residency.memoryHeadroomBytes == 1_024)
+        #expect(model.residency.requiredBytes == 5_120)
+    }
+
+    @Test("execute forwards explicit load memory budgets to worker-backed model.load")
+    func executeForwardsExplicitLoadMemoryBudgetsToWorkerBackedModelLoad() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = true
+        loadResponse.modelHandle = "melix-dev-text::swift"
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(modelCatalog: catalog, workerRegistry: registry)
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-text", memoryBudgetBytes: 65_536)
+        )
+        let lastRequest = try #require(await workerClient.loadRequests.last)
+
+        #expect(response.ok)
+        #expect(lastRequest.memoryBudgetBytes == 65_536)
+    }
+
+    @Test("execute surfaces explicit disk-streaming rejections from worker-backed model.load")
+    func executeSurfacesExplicitDiskStreamingRejectionsFromWorkerBackedModelLoad() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        let catalog = ModelCatalog(seedModels: [model])
+        let runtimeStore = ServerSessionRuntimeStore()
+        let workerClient = ModelLifecycleWorkerClient()
+        var loadResponse = Melix_Worker_V1_LoadModelResponse()
+        loadResponse.ok = false
+        loadResponse.error.code = "disk_streaming_unsupported"
+        loadResponse.error.message = "The selected runtime does not support disk-streaming mode."
+        loadResponse.error.details = [
+            "model_id": "melix-dev-text",
+            "requested_mode": "disk_streaming_prefer_disk",
+        ]
+        await workerClient.setLoadResponse(loadResponse)
+
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+        let loadRequest = try #require(await workerClient.loadRequests.first)
+        let runtimeSessions = await runtimeStore.snapshot()
+
+        #expect(!response.ok)
+        #expect(response.error.code == "disk_streaming_unsupported")
+        #expect(loadRequest.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "operator_load_disk_streaming_unsupported")
+        #expect(runtimeSessions.first?.requestedDiskStreamingMode == .diskStreamingPreferDisk)
+        #expect(runtimeSessions.first?.effectiveDiskStreamingMode == .diskStreamingDisabled)
     }
 
     @Test("execute sanitizes explicit worker error codes before recording failure transitions")
@@ -975,6 +2486,13 @@ struct ControlPlaneServiceTests {
                     "alias": "Melix Text Turbo",
                     "pin_on_load": "true",
                     "memory_policy": "pinned",
+                    "disk_streaming_mode": "prefer_disk",
+                    "cache_mode": "hybrid",
+                    "cache_memory_budget_bytes": "4096",
+                    "cache_memory_budget_pct": "25",
+                    "cache_block_size_tokens": "64",
+                    "cache_directory": "/tmp/melix-cache",
+                    "multimodal_cache_budget_bytes": "2048",
                     "default_acceleration_mode": "speculative_decode",
                     "acceleration_profile_id": "draft-q4",
                 ]
@@ -986,8 +2504,81 @@ struct ControlPlaneServiceTests {
         #expect(response.model.model.settings.alias == "Melix Text Turbo")
         #expect(response.model.model.settings.pinOnLoad)
         #expect(response.model.model.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(response.model.model.settings.diskStreamingMode == .diskStreamingPreferDisk)
+        #expect(response.model.model.settings.cacheMode == .hybrid)
+        #expect(response.model.model.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(response.model.model.settings.cacheMemoryBudgetPct == 25)
+        #expect(response.model.model.settings.cacheBlockSizeTokens == 64)
+        #expect(response.model.model.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(response.model.model.settings.multimodalCacheBudgetBytes == 2_048)
         #expect(response.model.model.settings.defaultAccelerationMode == .speculativeDecode)
         #expect(response.model.model.settings.accelerationProfileID == "draft-q4")
+    }
+
+    @Test("execute normalizes cache mode labels and clears cache policy settings")
+    func executeNormalizesCacheModeLabelsAndClearsCachePolicySettings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let rotatingResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["cache_mode": "rotating"]
+            )
+        )
+        let defaultResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["cache_mode": "default"]
+            )
+        )
+        let clearedResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "cache_mode": "not-a-real-mode",
+                    "cache_memory_budget_bytes": "",
+                    "cache_memory_budget_pct": "",
+                    "cache_block_size_tokens": "",
+                    "cache_directory": "",
+                    "multimodal_cache_budget_bytes": "",
+                ]
+            )
+        )
+
+        #expect(rotatingResponse.ok)
+        #expect(rotatingResponse.model.model.settings.cacheMode == .rotating)
+        #expect(defaultResponse.ok)
+        #expect(defaultResponse.model.model.settings.cacheMode == .tiered)
+        #expect(clearedResponse.ok)
+        #expect(clearedResponse.model.model.settings.cacheMode == .unspecified)
+        #expect(clearedResponse.model.model.settings.cacheMemoryBudgetBytes == 0)
+        #expect(clearedResponse.model.model.settings.cacheMemoryBudgetPct == 0)
+        #expect(clearedResponse.model.model.settings.cacheBlockSizeTokens == 0)
+        #expect(clearedResponse.model.model.settings.cacheDirectory.isEmpty)
+        #expect(clearedResponse.model.model.settings.multimodalCacheBudgetBytes == 0)
+    }
+
+    @Test("execute normalizes require and fallback disk-streaming policy strings")
+    func executeNormalizesRequireAndFallbackDiskStreamingPolicyStrings() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let requireResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["disk_streaming_mode": "require-disk"]
+            )
+        )
+        let fallbackResponse = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: ["disk_streaming_mode": "not-a-real-mode"]
+            )
+        )
+
+        #expect(requireResponse.ok)
+        #expect(requireResponse.model.model.settings.diskStreamingMode == .diskStreamingRequireDisk)
+        #expect(fallbackResponse.ok)
+        #expect(fallbackResponse.model.model.settings.diskStreamingMode == .diskStreamingDisabled)
     }
 
     @Test("execute handles model.get_info through the model-operations worker")
@@ -1000,6 +2591,13 @@ struct ControlPlaneServiceTests {
             response.maxContext = 8192
             response.supportedParsers = ["text", "json"]
             response.supportedModalities = ["text"]
+            response.supportedTasks = ["generate", "chat"]
+            response.backendID = "mlx_lm"
+            response.familyID = "llama-v1"
+            response.modelPath = "/tmp/models/melix-dev-text"
+            response.modelRevision = "dev"
+            response.defaultWorkflowRole = "chat"
+            response.detectedIdentitySource = "explicit_override"
             return response
         }())
         let textClient = ScriptedChatWorkerClient(events: [])
@@ -1020,6 +2618,13 @@ struct ControlPlaneServiceTests {
         #expect(response.model.info.modelKind == "text")
         #expect(response.model.info.maxContext == 8192)
         #expect(response.model.info.supportedParsers == ["text", "json"])
+        #expect(response.model.info.supportedTasks == ["generate", "chat"])
+        #expect(response.model.info.backendID == "mlx_lm")
+        #expect(response.model.info.familyID == "llama-v1")
+        #expect(response.model.info.modelPath == "/tmp/models/melix-dev-text")
+        #expect(response.model.info.modelRevision == "dev")
+        #expect(response.model.info.defaultWorkflowRole == "chat")
+        #expect(response.model.info.detectedIdentitySource == "explicit_override")
     }
 
     @Test("execute handles model.run_operation through the model-operations worker")
@@ -1412,6 +3017,8 @@ struct ControlPlaneServiceTests {
             var response = Melix_Worker_V1_RunDoctorResponse()
             response.ok = true
             response.reportMarkdown = "# Melix Doctor\n\n- worker_state: idle\n"
+            response.healthStatus = .healthy
+            response.findings = []
             return response
         }())
         let service = ControlPlaneService(
@@ -1429,6 +3036,59 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.includeCacheDiagnostics)
         #expect(lastRequest.includeMemoryReport)
         #expect(response.ops.reportMarkdown.contains("Melix Doctor"))
+        #expect(response.ops.doctor.markdown.contains("Melix Doctor"))
+        #expect(response.ops.doctor.healthStatus == .healthy)
+        #expect(response.ops.doctor.findings.isEmpty)
+    }
+
+    @Test("execute maps typed doctor health findings from the worker")
+    func executeMapsTypedDoctorHealthFindingsFromTheWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setDoctorResponse({
+            var response = Melix_Worker_V1_RunDoctorResponse()
+            response.ok = true
+            response.reportMarkdown = "# Melix Doctor\n\n- worker_state: degraded\n"
+            response.healthStatus = .warning
+
+            var degraded = Melix_Worker_V1_DoctorFinding()
+            degraded.code = "model_not_loaded"
+            degraded.severity = .degraded
+            degraded.summary = "Model missing from registry"
+            degraded.detail = "The requested handle was not found."
+
+            var failed = Melix_Worker_V1_DoctorFinding()
+            failed.code = "worker_failed"
+            failed.severity = .failed
+            failed.summary = "Worker failed"
+            failed.detail = "Worker state is failed."
+
+            var unknown = Melix_Worker_V1_DoctorFinding()
+            unknown.code = "cache_unavailable"
+            unknown.severity = .unspecified
+            unknown.summary = "Cache unavailable"
+            unknown.detail = "The cache report did not contain resident bytes."
+
+            response.findings = [degraded, failed, unknown]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunDoctorRequest())
+
+        #expect(response.ok)
+        #expect(response.ops.doctor.healthStatus == .warning)
+        #expect(response.ops.doctor.findings.count == 3)
+        #expect(response.ops.doctor.findings[0].code == "model_not_loaded")
+        #expect(response.ops.doctor.findings[0].severity == .degraded)
+        #expect(response.ops.doctor.findings[0].detail.contains("requested handle"))
+        #expect(response.ops.doctor.findings[1].severity == .failed)
+        #expect(response.ops.doctor.findings[2].severity == .unspecified)
     }
 
     @Test("execute handles ops.search_hub_models through the model-operations worker")
@@ -1682,6 +3342,290 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkResults[0].metrics[0].unit == "ms")
         #expect(response.ops.benchmarkResults[0].metrics[0].value == 24.45)
         #expect(snapshot.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
+    }
+
+    @Test("execute forwards canonical bench request fields to the worker request")
+    func executeForwardsCanonicalBenchRequestFieldsToTheWorkerRequest() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-canonical-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents([
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.started = Melix_Worker_V1_BenchStarted()
+                event.started.jobID = "bench-canonical"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_RunBenchEvent()
+                event.completed = Melix_Worker_V1_BenchCompleted()
+                event.completed.reportPath = reportPath
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(
+            makeRunBenchRequest(
+                contextLengths: [4096, 1024],
+                batchSizes: [4, 2]
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(lastRequest.contextLengths == [1024, 4096])
+        #expect(lastRequest.generationLength == 128)
+        #expect(lastRequest.batchSizes == [2, 4])
+        #expect(lastRequest.repeats == 3)
+        #expect(lastRequest.cacheProfile == "partial_prefix")
+        #expect(lastRequest.reasoningMode == "enabled")
+        #expect(lastRequest.structuredOutputMode == "json_schema")
+    }
+
+    @Test("execute handles ops.run_bench_matrix through the model-operations worker")
+    func executeHandlesOpsRunBenchMatrixThroughTheModelOperationsWorker() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse(
+            makeBenchmarkMatrixResponse(jobID: "bench-matrix-123", modelID: "melix-dev-text")
+        )
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchMatrixRequest())
+        let lastRequest = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
+        #expect(lastRequest.suiteIds == ["smoke"])
+        #expect(lastRequest.requests == 24)
+        #expect(response.ops.benchmarkMatrixJob.jobID == "bench-matrix-123")
+        #expect(response.ops.benchmarkMatrixJob.benchmarkMode == "matrix")
+        #expect(response.ops.benchmarkMatrixSummaryRows.count == 1)
+        #expect(response.ops.benchmarkMatrixSummaryRows[0].ttftMeanMs == 24.45)
+    }
+
+    @Test("execute forwards canonical bench matrix request fields to the worker request")
+    func executeForwardsCanonicalBenchMatrixRequestFieldsToTheWorkerRequest() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchMatrixResponse(
+            makeBenchmarkMatrixResponse(jobID: "bench-matrix-canonical", modelID: "melix-dev-text")
+        )
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(
+            makeRunBenchMatrixRequest(
+                suites: ["latency", "smoke"],
+                contextLengths: [4096, 1024],
+                generationLengths: [256, 128],
+                batchSizes: [4, 2],
+                cacheProfiles: ["warm", "cold"],
+                reasoningModes: ["enabled", "disabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [8, 1],
+                repeats: 0,
+                requests: 0,
+                durationSeconds: 30,
+                allowLargeMatrix: true
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastBenchMatrixRequest)
+
+        #expect(lastRequest.suiteIds == ["latency", "smoke"])
+        #expect(lastRequest.contextLengths == [1024, 4096])
+        #expect(lastRequest.generationLengths == [128, 256])
+        #expect(lastRequest.batchSizes == [2, 4])
+        #expect(lastRequest.cacheProfiles == ["cold", "warm"])
+        #expect(lastRequest.reasoningModes == ["disabled", "enabled"])
+        #expect(lastRequest.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(lastRequest.concurrencyLevels == [1, 8])
+        #expect(lastRequest.repeats == 1)
+        #expect(lastRequest.requests == 0)
+        #expect(lastRequest.durationSeconds == 30)
+        #expect(lastRequest.allowLargeMatrix)
+    }
+
+    @Test("execute rejects ops.run_bench_matrix when load budget is missing")
+    func executeRejectsOpsRunBenchMatrixWhenLoadBudgetIsMissing() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(requests: 0, durationSeconds: 0)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Exactly one of requests or duration_seconds"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
+    @Test("execute rejects bench matrix validation failures for required dimensions and cache profiles")
+    func executeRejectsBenchMatrixValidationFailuresForRequiredDimensionsAndCacheProfiles() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunBenchMatrixRequest(suites: [])
+        var response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("matrix benchmark suite"))
+
+        request = makeRunBenchMatrixRequest(contextLengths: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("context length"))
+
+        request = makeRunBenchMatrixRequest(generationLengths: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("generation length"))
+
+        request = makeRunBenchMatrixRequest(batchSizes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("batch size"))
+
+        request = makeRunBenchMatrixRequest(cacheProfiles: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("cache profile"))
+
+        request = makeRunBenchMatrixRequest(reasoningModes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("reasoning mode"))
+
+        request = makeRunBenchMatrixRequest(structuredOutputModes: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("structured output mode"))
+
+        request = makeRunBenchMatrixRequest(concurrencyLevels: [])
+        response = try await service.execute(request)
+        #expect(response.error.message.contains("concurrency level"))
+
+        request = makeRunBenchMatrixRequest(cacheProfiles: ["ancient"])
+        response = try await service.execute(request)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("partial_prefix"))
+    }
+
+    @Test("execute rejects bench matrix targets that are unsupported or too large")
+    func executeRejectsBenchMatrixTargetsThatAreUnsupportedOrTooLarge() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var response = try await service.execute(makeRunBenchMatrixRequest(modelID: "melix-dev-image"))
+        #expect(!response.ok)
+        #expect(response.error.code == "unsupported_task_family")
+        #expect(response.error.message.contains("text-generation, image-to-text, and image-text-to-text"))
+
+        response = try await service.execute(
+            makeRunBenchMatrixRequest(
+                suites: ["latency", "smoke"],
+                contextLengths: [512, 1024, 2048, 4096],
+                generationLengths: [64, 128, 256, 512],
+                batchSizes: [1, 2, 4, 8],
+                cacheProfiles: ["cold", "warm"],
+                reasoningModes: ["disabled", "enabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [1, 2]
+            )
+        )
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("allow_large_matrix"))
+    }
+
+    @Test("execute maps bench matrix availability resolution and worker failures")
+    func executeMapsBenchMatrixAvailabilityResolutionAndWorkerFailures() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+
+        let unavailableService = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: NullWorkerClient())
+        )
+        var response = try await unavailableService.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("worker is unavailable"))
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        response = try await service.execute(makeRunBenchMatrixRequest(modelID: "missing-model"))
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("missing-model"))
+
+        let unloadedCatalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let unloadedService = ControlPlaneService(
+            modelCatalog: unloadedCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        response = try await unloadedService.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "not_found")
+        #expect(response.error.message.contains("No loaded benchmark target is available for melix-dev-text."))
+
+        await modelOpsClient.setBenchMatrixError(WorkerClientError.unavailable)
+        response = try await service.execute(makeRunBenchMatrixRequest())
+        #expect(!response.ok)
+        #expect(response.error.code == "unavailable")
+        #expect(response.error.message.contains("Matrix benchmark worker request failed"))
     }
 
     @Test("execute routes ops.run_bench to the explicit requested model when model_id is provided")
@@ -2163,6 +4107,518 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.evaluationResults[0].metrics[0].value == 1.0)
     }
 
+    @Test("execute forwards canonical evaluation request fields to the worker request")
+    func executeForwardsCanonicalEvaluationRequestFieldsToTheWorkerRequest() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job = Melix_Worker_V1_WorkerEvaluationJob()
+            response.job.jobID = "eval-canonical"
+            response.job.modelID = "melix-dev-text"
+            response.job.suiteID = "qa_smoke"
+            response.job.datasetID = "qa_smoke.dev.v1"
+            response.job.sampleSize = 8
+            response.job.scoringMode = "multiple_choice_accuracy"
+            response.job.parameters = ["judge": "deterministic"]
+            response.job.status = "completed"
+            response.job.outputDir = "/tmp/melix/evaluation/runs/eval-canonical"
+            response.results = []
+            return response
+        }())
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        _ = try await service.execute(makeRunEvaluationRequest())
+        let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        #expect(lastRequest.fewShot == 4)
+        #expect(lastRequest.seed == 7)
+        #expect(lastRequest.scoringMode == "multiple_choice_accuracy")
+        #expect(lastRequest.codeExecPolicy == "sandboxed")
+    }
+
+    @Test("local control-plane xpc client forwards canonical bench and evaluation request fields")
+    func localControlPlaneXPCClientForwardsCanonicalBenchAndEvaluationRequestFields() async throws {
+        actor RecordingService: ControlPlaneExecuting {
+            private(set) var lastBenchRequest: Melix_Controlplane_V1_RunBench?
+            private(set) var lastBenchMatrixRequest: Melix_Controlplane_V1_RunBenchMatrix?
+            private(set) var lastEvaluationRequest: Melix_Controlplane_V1_RunEvaluation?
+            private(set) var lastImageEditRequest: Melix_Controlplane_V1_EditImage?
+            private(set) var lastLoadRequest: Melix_Controlplane_V1_LoadModel?
+            private(set) var lastServerRequest: Melix_Controlplane_V1_ControlPlaneRequest?
+
+            func handshake(_ request: Melix_Controlplane_V1_HandshakeRequest) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+                _ = request
+                return Melix_Controlplane_V1_HandshakeResponse()
+            }
+
+            func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription {
+                _ = request
+                return ControlPlaneSubscription(
+                    subscriptionID: "subscription",
+                    stream: AsyncStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func unsubscribe(_ subscriptionID: String) async {
+                _ = subscriptionID
+            }
+
+            func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+                _ = request
+                return ControlPlaneChatExecution(
+                    requestID: "chat",
+                    modelID: "melix-dev-text",
+                    stream: AsyncThrowingStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+                var response = Melix_Controlplane_V1_ControlPlaneResponse()
+                response.requestID = request.requestID
+                response.commandType = request.commandType
+                response.ok = true
+                switch request.command {
+                case .image:
+                    lastImageEditRequest = request.image.edit
+                    response.image.job = Melix_Controlplane_V1_ImageJobSummary()
+                    response.image.job.jobID = "image-job"
+                case .model:
+                    lastLoadRequest = request.model.load
+                    response.model.model = Melix_Controlplane_V1_ModelSummary()
+                    response.model.model.modelID = request.model.load.modelID
+                case .server:
+                    lastServerRequest = request
+                    response.server.snapshot = Melix_Controlplane_V1_ServerSnapshot()
+                    response.server.snapshot.serverState = .serverReady
+                    var runtime = Melix_Controlplane_V1_ServerSessionRuntimeState()
+                    runtime.serverSessionID = request.targetID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : request.targetID
+                    runtime.lifecycleState = .ready
+                    runtime.powerState = .active
+                    runtime.wakeReason = .operatorResume
+                    response.server.snapshot.runtimeSessions = [runtime]
+                case .ops(let command):
+                    switch command.kind {
+                    case .runDoctor:
+                        var report = Melix_Controlplane_V1_DoctorReport()
+                        report.markdown = "# Doctor\n"
+                        report.healthStatus = .warning
+                        response.ops.doctor = report
+                    case .runBench(let bench):
+                        lastBenchRequest = bench
+                        response.ops.reportPath = "/tmp/melix/bench/report.md"
+                        response.ops.reportMarkdown = "# Bench\n"
+                    case .runBenchMatrix(let matrix):
+                        lastBenchMatrixRequest = matrix
+                        var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+                        job.schemaVersion = "melix.benchmark_matrix_job.v1"
+                        job.jobID = "bench-matrix-1"
+                        job.modelID = "melix-dev-text"
+                        job.taskKind = "text-generation"
+                        job.sourceRepo = "melix-dev-text"
+                        job.suiteIds = ["smoke"]
+                        job.benchmarkMode = "matrix"
+                        job.status = "completed"
+                        job.outputDir = "/tmp/melix/bench/matrix-runs/bench-matrix-1"
+                        job.createdAtUnixMs = 1712200000000
+                        job.updatedAtUnixMs = 1712200005000
+                        response.ops.benchmarkMatrixJob = job
+                    case .runEvaluation(let evaluation):
+                        lastEvaluationRequest = evaluation
+                        var job = Melix_Controlplane_V1_EvaluationJobSummary()
+                        job.jobID = "eval-1"
+                        response.ops.evaluationJob = job
+                    default:
+                        break
+                    }
+                default:
+                    break
+                }
+                return response
+            }
+        }
+
+        let service = RecordingService()
+        let client = LocalControlPlaneXPCClient(service: service)
+
+        _ = try await service.handshake(Melix_Controlplane_V1_HandshakeRequest())
+        let subscription = await service.subscribe(Melix_Controlplane_V1_SubscribeRequest())
+        await service.unsubscribe(subscription.subscriptionID)
+        let chatExecution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        #expect(chatExecution.requestID == "chat")
+        #expect(chatExecution.modelID == "melix-dev-text")
+        _ = try await service.execute(makeExportResultsRequest())
+
+        _ = try await client.runBench(
+            ControlPlaneBenchRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [4096, 1024],
+                generationLength: 128,
+                batchSizes: [4, 2],
+                repeats: 0,
+                cacheProfile: "partial_prefix",
+                reasoningMode: "enabled",
+                structuredOutputMode: "json_schema",
+                parameters: [
+                    "sample_size": "8",
+                    "batch_factor": "2",
+                ]
+            )
+        )
+        let benchRequest = try #require(await service.lastBenchRequest)
+
+        #expect(benchRequest.contextLengths == [1024, 4096])
+        #expect(benchRequest.generationLength == 128)
+        #expect(benchRequest.batchSizes == [2, 4])
+        #expect(benchRequest.repeats == 1)
+        #expect(benchRequest.cacheProfile == "partial_prefix")
+        #expect(benchRequest.reasoningMode == "enabled")
+        #expect(benchRequest.structuredOutputMode == "json_schema")
+
+        let doctorReport = try await client.runDoctor()
+        #expect(doctorReport.markdown == "# Doctor\n")
+        #expect(doctorReport.healthStatus == .warning)
+
+        let defaultLoaded = try await client.loadModel(modelID: "melix-dev-text")
+        #expect(defaultLoaded.modelID == "melix-dev-text")
+        var loadRequest = try #require(await service.lastLoadRequest)
+        #expect(loadRequest.modelID == "melix-dev-text")
+        #expect(loadRequest.memoryBudgetBytes == 0)
+
+        let explicitLoaded = try await client.loadModel(
+            modelID: "melix-dev-text",
+            memoryBudgetBytes: 65_536
+        )
+        #expect(explicitLoaded.modelID == "melix-dev-text")
+        loadRequest = try #require(await service.lastLoadRequest)
+        #expect(loadRequest.modelID == "melix-dev-text")
+        #expect(loadRequest.memoryBudgetBytes == 65_536)
+
+        _ = try await client.runBenchMatrix(
+            ControlPlaneBenchMatrixRequest(
+                modelID: "melix-dev-text",
+                suites: ["smoke"],
+                contextLengths: [4096, 1024],
+                generationLengths: [256, 128],
+                batchSizes: [4, 2],
+                cacheProfiles: ["warm", "cold"],
+                reasoningModes: ["enabled", "disabled"],
+                structuredOutputModes: ["json_schema", "plain_text"],
+                concurrencyLevels: [8, 1],
+                repeats: 0,
+                requests: 24
+            )
+        )
+        let matrixRequest = try #require(await service.lastBenchMatrixRequest)
+
+        #expect(matrixRequest.contextLengths == [1024, 4096])
+        #expect(matrixRequest.generationLengths == [128, 256])
+        #expect(matrixRequest.batchSizes == [2, 4])
+        #expect(matrixRequest.cacheProfiles == ["cold", "warm"])
+        #expect(matrixRequest.reasoningModes == ["disabled", "enabled"])
+        #expect(matrixRequest.structuredOutputModes == ["json_schema", "plain_text"])
+        #expect(matrixRequest.concurrencyLevels == [1, 8])
+        #expect(matrixRequest.repeats == 1)
+        #expect(matrixRequest.requests == 24)
+
+        _ = try await client.runEvaluation(
+            ControlPlaneEvaluationRequest(
+                modelID: "melix-dev-text",
+                suiteID: "qa_smoke",
+                datasetID: "qa_smoke.dev.v1",
+                sampleSize: 8,
+                parameters: [
+                    "few_shot": "4",
+                    "seed": "7",
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "code_exec_policy": "sandboxed",
+                ]
+            )
+        )
+        let evaluationRequest = try #require(await service.lastEvaluationRequest)
+
+        #expect(evaluationRequest.fewShot == 4)
+        #expect(evaluationRequest.seed == 7)
+        #expect(evaluationRequest.scoringMode == "multiple_choice_accuracy")
+        #expect(evaluationRequest.codeExecPolicy == "sandboxed")
+
+        let imageJob = try await client.editImage(
+            ControlPlaneImageEditRequest(
+                modelID: "melix-dev-image",
+                prompt: "",
+                imageURL: "",
+                sourceArtifactID: "artifact-source",
+                promptDelta: "make the colors warmer",
+                mode: .iterate,
+                strength: 0.65
+            )
+        )
+        let imageEditRequest = try #require(await service.lastImageEditRequest)
+
+        #expect(imageJob.jobID == "image-job")
+        #expect(imageEditRequest.modelID == "melix-dev-image")
+        #expect(imageEditRequest.sourceArtifactID == "artifact-source")
+        #expect(imageEditRequest.promptDelta == "make the colors warmer")
+        #expect(imageEditRequest.editMode == .iterate)
+        #expect(imageEditRequest.imageUri.isEmpty)
+
+        _ = try await client.startServerSession(serverSessionID: "server-session-2")
+        var serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.start")
+        #expect(serverRequest.targetID == "server-session-2")
+        #expect(serverRequest.server.start.serverSessionID == "server-session-2")
+
+        _ = try await client.pauseServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.pause")
+        #expect(serverRequest.server.pause.serverSessionID == "server-session-2")
+
+        _ = try await client.resumeServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.resume")
+        #expect(serverRequest.server.resume.serverSessionID == "server-session-2")
+
+        _ = try await client.wakeServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.wake")
+        #expect(serverRequest.server.wake.serverSessionID == "server-session-2")
+
+        _ = try await client.stopServerSession(serverSessionID: "server-session-2")
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.stop")
+        #expect(serverRequest.server.stop.serverSessionID == "server-session-2")
+
+        _ = try await client.updateServerIdlePolicy(
+            serverSessionID: "server-session-2",
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 60,
+            deepSleepAfterSeconds: 600
+        )
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.set_idle_policy")
+        #expect(serverRequest.server.setIdlePolicy.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.setIdlePolicy.autoSleepEnabled == true)
+        #expect(serverRequest.server.setIdlePolicy.lightSleepAfterSeconds == 60)
+        #expect(serverRequest.server.setIdlePolicy.deepSleepAfterSeconds == 600)
+
+        let gatewaySnapshot = try await client.applyServerSessionGatewayConfig(
+            serverSessionID: "server-session-2",
+            host: "0.0.0.0",
+            port: 18_080,
+            servedModelID: "melix-dev-text",
+            rateLimitPerMinute: 240,
+            timeoutSeconds: 90
+        )
+        serverRequest = try #require(await service.lastServerRequest)
+        #expect(serverRequest.commandType == "server.apply_gateway_config")
+        #expect(serverRequest.targetID == "server-session-2")
+        #expect(serverRequest.server.applyGatewayConfig.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.applyGatewayConfig.host == "0.0.0.0")
+        #expect(serverRequest.server.applyGatewayConfig.port == 18_080)
+        #expect(serverRequest.server.applyGatewayConfig.servedModelID == "melix-dev-text")
+        #expect(serverRequest.server.applyGatewayConfig.rateLimitPerMinute == 240)
+        #expect(serverRequest.server.applyGatewayConfig.timeoutSeconds == 90)
+        #expect(gatewaySnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
+    }
+
+    @Test("control-plane xpc client server lifecycle defaults surface unimplemented errors")
+    func controlPlaneXPCClientServerLifecycleDefaultsSurfaceUnimplementedErrors() async throws {
+        actor FallbackClient: ControlPlaneXPCClient {
+            func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse { .init() }
+            func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent> {
+                _ = lastSeenSeq
+                return AsyncStream { continuation in
+                    continuation.finish()
+                }
+            }
+            func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot { .init() }
+            func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func updateModelSettings(modelID: String, values: [String: String]) async throws -> Melix_Controlplane_V1_ModelSummary { .init() }
+            func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo { .init() }
+            func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+                _ = request
+                return ControlPlaneChatExecution(
+                    requestID: "chat",
+                    modelID: "melix-dev-text",
+                    stream: AsyncThrowingStream { continuation in continuation.finish() }
+                )
+            }
+            func runModelOperation(modelID: String, operation: String, outputDir: String, quantProfileID: String, weightQuant: String, kvQuant: String, ext: [String: String]) async throws -> Melix_Controlplane_V1_ModelOperationResult { .init() }
+            func generateImage(_ request: ControlPlaneImageGenerationRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
+            func editImage(_ request: ControlPlaneImageEditRequest) async throws -> Melix_Controlplane_V1_ImageJobSummary { .init() }
+            func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
+                _ = request
+                return ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
+            }
+            func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult {
+                _ = request
+                return ControlPlaneBenchMatrixResult(
+                    job: .init(),
+                    summaryRows: []
+                )
+            }
+            func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
+                _ = request
+                return ControlPlaneEvaluationResult(job: .init(), results: [])
+            }
+            func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
+                _ = outputDir
+                return ControlPlaneExportResult(exportBundleJSON: "{}")
+            }
+            func cancelRequest(requestID: String) async throws -> Bool {
+                _ = requestID
+                return false
+            }
+            func applyServerSessionGatewayAccess(
+                serverSessionID: String,
+                primaryKey: String,
+                keyID: String,
+                label: String,
+                tokenHint: String
+            ) async throws {
+                _ = serverSessionID
+                _ = primaryKey
+                _ = keyID
+                _ = label
+                _ = tokenHint
+            }
+            func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
+                _ = serverSessionID
+            }
+        }
+
+        let client = FallbackClient()
+
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Doctor is not implemented for this control-plane client."
+        )) {
+            _ = try await client.runDoctor()
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server start is not implemented for this control-plane client."
+        )) {
+            _ = try await client.startServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server pause is not implemented for this control-plane client."
+        )) {
+            _ = try await client.pauseServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server resume is not implemented for this control-plane client."
+        )) {
+            _ = try await client.resumeServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server wake is not implemented for this control-plane client."
+        )) {
+            _ = try await client.wakeServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server stop is not implemented for this control-plane client."
+        )) {
+            _ = try await client.stopServerSession(serverSessionID: "server-session-1")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Server idle-policy updates are not implemented for this control-plane client."
+        )) {
+            _ = try await client.updateServerIdlePolicy(
+                serverSessionID: "server-session-1",
+                autoSleepEnabled: true,
+                lightSleepAfterSeconds: 60,
+                deepSleepAfterSeconds: 600
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Gateway config apply is not implemented for this control-plane client."
+        )) {
+            _ = try await client.applyServerSessionGatewayConfig(
+                serverSessionID: "server-session-1",
+                host: "127.0.0.1",
+                port: 11_434,
+                servedModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        }
+
+        let loaded = try await client.loadModel(
+            modelID: "melix-dev-text",
+            memoryBudgetBytes: 98_304
+        )
+        #expect(loaded.modelID == "")
+    }
+
+    @Test("execute rejects canonical bench request validation failures")
+    func executeRejectsCanonicalBenchRequestValidationFailures() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunBenchRequest(modelID: "melix-dev-text")
+
+        request.ops.runBench.suites = []
+        var response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("benchmark suite"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.contextLengths = []
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("benchmark context length"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.repeats = 0
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.cacheProfile = "ancient"
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("partial_prefix"))
+    }
+
     @Test("execute rejects unsupported evaluation task families and unresolved targets")
     func executeRejectsUnsupportedEvaluationTaskFamiliesAndUnresolvedTargets() async throws {
         let unsupportedClient = ScriptedModelOperationsWorkerClient()
@@ -2328,6 +4784,9 @@ struct ControlPlaneServiceTests {
         #expect(forwardedRequest.n == 2)
         #expect(response.image.job.jobID == "req-image-generate::image-generate")
         #expect(response.image.job.state == .imageJobCompleted)
+        #expect(response.image.job.recipe.prompt == "Draw a neon fox")
+        #expect(response.image.job.recipe.size == "512x512")
+        #expect(response.image.job.timeoutSeconds == 1_800)
         #expect(snapshot.server.snapshot.imageJobs.contains(where: { $0.jobID == "req-image-generate::image-generate" }))
     }
 
@@ -2381,6 +4840,221 @@ struct ControlPlaneServiceTests {
         #expect(response.image.job.jobID == "req-image-edit::image-edit")
         #expect(response.image.job.artifacts.count == 3)
         #expect(response.image.job.artifacts.last?.role == .imageArtifactGenerated)
+    }
+
+    @Test("execute image requests fall back to persisted defaults and role-aware model selections")
+    func executeImageRequestsFallBackToPersistedDefaultsAndRoleAwareModelSelections() async throws {
+        var qwen = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+        ])
+        qwen.modelID = "melix-qwen-image"
+        var fill = ModelCatalog.devImageModel(environment: [
+            "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+            "MELIX_DEV_IMAGE_MODEL_PATH": "models/fill-dev",
+            "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+        ])
+        fill.modelID = "melix-fill-image"
+        let modelCatalog = ModelCatalog(seedModels: [qwen, fill])
+        _ = await modelCatalog.loadModel(id: qwen.modelID, dispatchHandle: "\(qwen.modelID)::python")
+        _ = await modelCatalog.loadModel(id: fill.modelID, dispatchHandle: "\(fill.modelID)::python")
+
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-image-default-routing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let imageDefaultsStore = ImageDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+            defaults: [:]
+        )
+        try await imageDefaultsStore.apply(
+            command: makeApplyImageDefaultsCommand(
+                generateModelID: qwen.modelID,
+                editModelID: fill.modelID,
+                size: "1536x1024",
+                steps: 40,
+                guidance: 6.25,
+                strength: 0.7,
+                negativePrompt: "noise"
+            ),
+            models: [qwen, fill]
+        )
+
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-default-generate"
+            response.job.jobID = "req-image-default-generate::image-generate"
+            response.job.modelHandle = "\(qwen.modelID)::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-default-edit"
+            response.job.jobID = "req-image-default-edit::image-edit"
+            response.job.modelHandle = "\(fill.modelID)::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            ),
+            imageDefaultsStore: imageDefaultsStore
+        )
+
+        var generateRequest = makeImageGenerateRequest(
+            requestID: "req-image-default-generate",
+            modelID: "",
+            prompt: "Draw a skyline",
+            size: "",
+            n: 0
+        )
+        generateRequest.image.generate.steps = 0
+        generateRequest.image.generate.guidance = 0
+        generateRequest.image.generate.negativePrompt = ""
+        let generateResponse = try await service.execute(generateRequest)
+
+        var editRequest = makeImageEditRequest(
+            requestID: "req-image-default-edit",
+            modelID: "",
+            prompt: "Adjust the skyline",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 0
+        )
+        editRequest.image.edit.size = ""
+        editRequest.image.edit.steps = 0
+        editRequest.image.edit.guidance = 0
+        editRequest.image.edit.negativePrompt = ""
+        let editResponse = try await service.execute(editRequest)
+
+        let forwardedGenerateRequest = try #require(await imageClient.lastImageGenerateRequest)
+        let forwardedEditRequest = try #require(await imageClient.lastImageEditRequest)
+
+        #expect(generateResponse.ok)
+        #expect(generateResponse.image.job.modelID == qwen.modelID)
+        #expect(forwardedGenerateRequest.modelHandle == "\(qwen.modelID)::python")
+        #expect(forwardedGenerateRequest.size == "1536x1024")
+        #expect(forwardedGenerateRequest.ext["melix.image.steps"] == "40")
+        #expect(forwardedGenerateRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedGenerateRequest.ext["melix.image.negative_prompt"] == "noise")
+        #expect(editResponse.ok)
+        #expect(editResponse.image.job.modelID == fill.modelID)
+        #expect(forwardedEditRequest.modelHandle == "\(fill.modelID)::python")
+        #expect(forwardedEditRequest.size == "1536x1024")
+        #expect(forwardedEditRequest.strength == 0.7)
+        #expect(forwardedEditRequest.ext["melix.image.steps"] == "40")
+        #expect(forwardedEditRequest.ext["melix.image.guidance"] == "6.25")
+        #expect(forwardedEditRequest.ext["melix.image.negative_prompt"] == "noise")
+        #expect(forwardedEditRequest.ext["melix.image.strength"] == "0.7")
+    }
+
+    @Test("execute resolves iterate image edits from a prior artifact and preserves lineage")
+    func executeResolvesIterateImageEditsFromPriorArtifact() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+
+        let imageJobReadModel = ImageJobReadModel()
+        var sourceArtifact = Melix_Controlplane_V1_ImageArtifactRef()
+        sourceArtifact.artifactID = "artifact-source"
+        sourceArtifact.jobID = "job-source"
+        sourceArtifact.role = .imageArtifactGenerated
+        sourceArtifact.mimeType = "image/png"
+        sourceArtifact.format = "png"
+        sourceArtifact.width = 1024
+        sourceArtifact.height = 1024
+        sourceArtifact.byteLength = 1024
+        sourceArtifact.storageUri = "file:///tmp/source-origin.png"
+        sourceArtifact.variantIndex = 0
+        await imageJobReadModel.recordQueued(
+            requestID: "req-source",
+            jobID: "job-source",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await imageJobReadModel.recordCompleted(jobID: "job-source", artifacts: [sourceArtifact])
+
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-iterate"
+            response.job.jobID = "req-image-iterate::image-edit"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_iterate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.sourceArtifactID = "artifact-source"
+            response.job.sourceJobID = "job-source"
+            response.job.promptDelta = "make the colors warmer"
+            response.job.editMode = .iterate
+            var generated = makeWorkerArtifact(
+                jobID: "req-image-iterate::image-edit",
+                role: .imageArtifactGenerated,
+                artifactID: "output"
+            )
+            generated.parentArtifactID = "artifact-source"
+            response.job.artifacts = [generated]
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        var request = makeImageEditRequest(
+            requestID: "req-image-iterate",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "",
+            maskURI: "",
+            strength: 0.6
+        )
+        request.image.edit.sourceArtifactID = "artifact-source"
+        request.image.edit.promptDelta = "make the colors warmer"
+        request.image.edit.editMode = .iterate
+
+        let response = try await service.execute(request)
+        let forwardedRequest = try #require(await imageClient.lastImageEditRequest)
+        let recordedJob = try #require(await imageJobReadModel.job(requestID: "req-image-iterate"))
+
+        #expect(response.ok)
+        #expect(forwardedRequest.image.isEmpty)
+        #expect(forwardedRequest.imageUri == "file:///tmp/source-origin.png")
+        #expect(forwardedRequest.prompt == "make the colors warmer")
+        #expect(forwardedRequest.sourceArtifactID == "artifact-source")
+        #expect(forwardedRequest.promptDelta == "make the colors warmer")
+        #expect(forwardedRequest.editMode == .iterate)
+        #expect(forwardedRequest.ext["melix.image.source_job_id"] == "job-source")
+        #expect(response.image.job.operation == "image_iterate")
+        #expect(response.image.job.sourceArtifactID == "artifact-source")
+        #expect(response.image.job.sourceJobID == "job-source")
+        #expect(response.image.job.promptDelta == "make the colors warmer")
+        #expect(response.image.job.editMode == Melix_Controlplane_V1_ImageEditMode.iterate)
+        #expect(response.image.job.artifacts.first?.parentArtifactID == "artifact-source")
+        #expect(recordedJob.operation == "image_iterate")
+        #expect(recordedJob.sourceArtifactID == "artifact-source")
+        #expect(recordedJob.sourceJobID == "job-source")
+        #expect(recordedJob.promptDelta == "make the colors warmer")
+        #expect(recordedJob.editMode == .iterate)
     }
 
     @Test("execute returns unimplemented for image commands without a kind")
@@ -2462,6 +5136,81 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "invalid_argument")
     }
 
+    @Test("execute validates variation and iterate image edit lineage inputs")
+    func executeValidatesVariationAndIterateImageEditLineageInputs() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: ImageJobReadModel(),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: ScriptedImageWorkerClient(),
+                modelCatalog: modelCatalog
+            )
+        )
+
+        var missingSource = makeImageEditRequest(
+            requestID: "req-image-variation-missing-source",
+            modelID: "melix-dev-image",
+            prompt: "keep composition",
+            imageURI: "",
+            maskURI: "",
+            strength: 1
+        )
+        missingSource.image.edit.editMode = .variation
+        let missingSourceResponse = try await service.execute(missingSource)
+
+        var invalidPromptDelta = makeImageEditRequest(
+            requestID: "req-image-edit-invalid-prompt-delta",
+            modelID: "melix-dev-image",
+            prompt: "replace the sky",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 1
+        )
+        invalidPromptDelta.image.edit.promptDelta = "make it warmer"
+        let invalidPromptDeltaResponse = try await service.execute(invalidPromptDelta)
+
+        var iterateWithoutDelta = makeImageEditRequest(
+            requestID: "req-image-iterate-missing-delta",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "",
+            maskURI: "",
+            strength: 1
+        )
+        iterateWithoutDelta.image.edit.sourceArtifactID = "artifact-source"
+        iterateWithoutDelta.image.edit.editMode = .iterate
+        let iterateWithoutDeltaResponse = try await service.execute(iterateWithoutDelta)
+
+        var mixedSourceInputs = makeImageEditRequest(
+            requestID: "req-image-iterate-mixed-source",
+            modelID: "melix-dev-image",
+            prompt: "",
+            imageURI: "file:///tmp/source.png",
+            maskURI: "",
+            strength: 1
+        )
+        mixedSourceInputs.image.edit.sourceArtifactID = "artifact-source"
+        mixedSourceInputs.image.edit.promptDelta = "make it warmer"
+        mixedSourceInputs.image.edit.editMode = .iterate
+        let mixedSourceInputsResponse = try await service.execute(mixedSourceInputs)
+
+        #expect(missingSourceResponse.ok == false)
+        #expect(missingSourceResponse.error.code == "invalid_argument")
+        #expect(missingSourceResponse.error.message.contains("source_artifact_id is required"))
+        #expect(invalidPromptDeltaResponse.ok == false)
+        #expect(invalidPromptDeltaResponse.error.code == "invalid_argument")
+        #expect(invalidPromptDeltaResponse.error.message.contains("prompt_delta is only supported"))
+        #expect(iterateWithoutDeltaResponse.ok == false)
+        #expect(iterateWithoutDeltaResponse.error.code == "invalid_argument")
+        #expect(iterateWithoutDeltaResponse.error.message.contains("prompt_delta is required"))
+        #expect(mixedSourceInputsResponse.ok == false)
+        #expect(mixedSourceInputsResponse.error.code == "invalid_argument")
+        #expect(mixedSourceInputsResponse.error.message.contains("cannot be combined"))
+    }
+
     @Test("execute surfaces worker image.generate failures and records the failed job state")
     func executeSurfacesImageGenerateWorkerFailures() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -2537,6 +5286,162 @@ struct ControlPlaneServiceTests {
         #expect(recordedJob.jobID == "req-image-generate::image-generate")
         #expect(recordedJob.state == .imageJobFailed)
         #expect(recordedJob.error.code == "unavailable")
+    }
+
+    @Test("execute maps image generate deadline_exceeded failures into explicit timeout state")
+    func executeMapsImageGenerateDeadlineExceededFailuresIntoTimeoutState() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateError(
+            WorkerClientError.requestFailed(code: "DEADLINE_EXCEEDED", message: "image generate timed out")
+        )
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-image-timeout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            ),
+            imageDefaultsStore: ImageDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("image-defaults.json"),
+                defaults: ["MELIX_IMAGE_REQUEST_TIMEOUT_SECONDS": "600"]
+            )
+        )
+
+        let response = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-timeout",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let snapshot = try await service.execute(makeServerSnapshotRequest())
+        let recordedJob = try #require(
+            snapshot.server.snapshot.imageJobs.first(where: { $0.requestID == "req-image-generate-timeout" })
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "deadline_exceeded")
+        #expect(response.error.message.contains("600-second creative workflow deadline"))
+        #expect(recordedJob.state == Melix_Controlplane_V1_ImageJobState.imageJobFailed)
+        #expect(recordedJob.progress.stage == "timed_out")
+        #expect(recordedJob.error.code == "deadline_exceeded")
+        #expect(recordedJob.timeoutSeconds == 600)
+        #expect(recordedJob.recipe.prompt == "Draw a fox")
+    }
+
+    @Test("execute falls back to request mapped image jobs when worker job identifiers drift")
+    func executeFallsBackToRequestMappedImageJobsWhenWorkerJobIdentifiersDrift() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.job.requestID = "req-image-generate-fallback"
+            response.job.jobID = "worker-generated-image-job"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "worker-generated-image-job")]
+            return response
+        }())
+        await imageClient.setImageEditResponse({
+            var response = Melix_Worker_V1_ImageEditResponse()
+            response.job.requestID = "req-image-edit-fallback"
+            response.job.jobID = "worker-edited-image-job"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_edit"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(jobID: "worker-edited-image-job")]
+            return response
+        }())
+        let imageJobReadModel = ImageJobReadModel()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            imageJobReadModel: imageJobReadModel,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let generateResponse = try await service.execute(
+            makeImageGenerateRequest(
+                requestID: "req-image-generate-fallback",
+                modelID: "melix-dev-image",
+                prompt: "Draw a fallback fox",
+                size: "1024x1024",
+                n: 1
+            )
+        )
+        let editResponse = try await service.execute(
+            makeImageEditRequest(
+                requestID: "req-image-edit-fallback",
+                modelID: "melix-dev-image",
+                prompt: "Adjust the fallback fox",
+                imageURI: "file:///tmp/source.png",
+                maskURI: "",
+                strength: 1
+            )
+        )
+
+        #expect(generateResponse.ok)
+        #expect(generateResponse.image.job.jobID == "req-image-generate-fallback::image-generate")
+        #expect(generateResponse.image.job.requestID == "req-image-generate-fallback")
+        #expect(editResponse.ok)
+        #expect(editResponse.image.job.jobID == "req-image-edit-fallback::image-edit")
+        #expect(editResponse.image.job.requestID == "req-image-edit-fallback")
+    }
+
+    @Test("execute maps image worker availability cancellation empty and passthrough bridge errors")
+    func executeMapsImageWorkerAvailabilityCancellationEmptyAndPassthroughBridgeErrors() async throws {
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let imageClient = ScriptedImageWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        let cases: [(String, Error, String, String)] = [
+            ("req-image-generate-unavailable", WorkerClientError.unavailable, "unavailable", "Image worker request failed"),
+            ("req-image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), "cancelled", "operator stop"),
+            ("req-image-generate-empty", WorkerClientError.requestFailed(code: "", message: ""), "unavailable", "Image worker request failed."),
+            ("req-image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), "resource_exhausted", "queue full"),
+        ]
+
+        for (requestID, error, expectedCode, expectedMessageFragment) in cases {
+            await imageClient.setImageGenerateError(error)
+            let response = try await service.execute(
+                makeImageGenerateRequest(
+                    requestID: requestID,
+                    modelID: "melix-dev-image",
+                    prompt: "Draw a typed failure",
+                    size: "1024x1024",
+                    n: 1
+                )
+            )
+
+            #expect(response.ok == false)
+            #expect(response.error.code == expectedCode)
+            #expect(response.error.message.contains(expectedMessageFragment))
+        }
     }
 
     @Test("execute fills an implicit image job identifier when the worker omits one")
@@ -2757,7 +5662,7 @@ struct ControlPlaneServiceTests {
         let recordedJob = try #require(snapshot.server.snapshot.imageJobs.first)
 
         #expect(response.ok)
-        #expect(response.image.job.state == .imageJobRunning)
+        #expect(response.image.job.state == .imageJobFailed)
         #expect(recordedJob.state == .imageJobFailed)
         #expect(recordedJob.error.code == "runtime_error")
     }
@@ -3311,6 +6216,60 @@ struct ControlPlaneServiceTests {
         }))
     }
 
+    @Test("startChat can resume a disconnected request through resumeRequestID")
+    func startChatCanResumeADisconnectedRequestThroughResumeRequestID() async throws {
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = BlockingAbortTextWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient)
+        )
+
+        let initial = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")]
+            )
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in initial.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
+
+        let resumed = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "hello")],
+                resumeRequestID: initial.requestID
+            )
+        )
+        let resumedCollector = Task {
+            var events: [ControlPlaneChatStreamEvent] = []
+            for try await event in resumed.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await textClient.emitToken(requestID: initial.requestID, text: "resumed")
+        await textClient.finishDecode(requestID: initial.requestID, assistantText: "resumed")
+
+        let resumedEvents = try await resumedCollector.value
+
+        #expect(resumed.requestID == initial.requestID)
+        #expect(resumedEvents.contains(where: {
+            if case .tokenDelta("resumed") = $0 { return true }
+            return false
+        }))
+    }
+
     @Test("startChat applies model OCR defaults for OCR models")
     func startChatAppliesModelOCRDefaultsForOCRModels() async throws {
         var ocrModel = ModelCatalog.devOCRModel()
@@ -3346,6 +6305,65 @@ struct ControlPlaneServiceTests {
         #expect(generated.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
         #expect(generated.execution.ext["melix.ocr.prompt_source"] == "request")
         #expect(generated.execution.ext["melix.ocr.sampling_source"] == "model")
+    }
+
+    @Test("startChat applies gateway serving defaults to worker requests")
+    func startChatAppliesGatewayServingDefaultsToWorkerRequests() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-chat-serving-defaults-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.44,
+            topP: 0.93,
+            maxTokens: 320,
+            streamIntervalTokens: 3,
+            maxConcurrentRequests: 5,
+            concurrentProcessingEnabled: false,
+            prefillBatchSize: 4,
+            completionBatchSize: 3
+        ))
+
+        let modelCatalog = ModelCatalog()
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-serving-defaults"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-serving-defaults",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-serving-defaults" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.sampling.temperature == 0.44)
+        #expect(generated.sampling.topP == 0.93)
+        #expect(generated.sampling.maxOutputTokens == 320)
+        #expect(generated.execution.ext["melix.stream.interval_tokens"] == "3")
+        #expect(generated.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+        #expect(generated.execution.ext["melix.gateway.concurrent_processing"] == "false")
+        #expect(generated.execution.ext["melix.gateway.prefill_batch_size"] == "4")
+        #expect(generated.execution.ext["melix.gateway.completion_batch_size"] == "3")
     }
 
     @Test("startChat auto injects MCP tool metadata into worker requests")
@@ -3514,6 +6532,75 @@ struct ControlPlaneServiceTests {
         #expect(response.ok)
         #expect(response.model.model.settings.defaultAccelerationMode == .sparsePrefill)
         #expect(response.model.model.settings.accelerationProfileID == "structured-user")
+    }
+
+    @Test("execute maps adaptive thinking and parser fallback model policy values")
+    func executeMapsAdaptiveThinkingAndParserFallbackModelPolicyValues() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "adaptive_thinking_mode": "adaptive",
+                    "adaptive_thinking_budget_tokens": "192",
+                    "tool_parser_xml_fallback": "true",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.adaptiveThinking.mode == "adaptive")
+        #expect(response.model.model.settings.adaptiveThinking.budgetTokens == 192)
+        #expect(response.model.model.settings.ext["tool_parser_xml_fallback"] == "true")
+    }
+
+    @Test("execute clears ttl and adaptive thinking budgets when model policy drafts are empty")
+    func executeClearsTTLandAdaptiveThinkingBudgetsWhenDraftsAreEmpty() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let response = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "ttl_seconds": "",
+                    "adaptive_thinking_mode": "off",
+                    "adaptive_thinking_budget_tokens": "",
+                ]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.model.settings.ttlSeconds == 0)
+        #expect(response.model.model.settings.adaptiveThinking.mode == "off")
+        #expect(response.model.model.settings.adaptiveThinking.budgetTokens == 0)
+    }
+
+    @Test("execute maps memory budget model policy values and clears them when drafts are empty")
+    func executeMapsMemoryBudgetModelPolicyValuesAndClearsThemWhenDraftsAreEmpty() async throws {
+        let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
+
+        let configured = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "memory_budget_bytes": "65536",
+                ]
+            )
+        )
+        let cleared = try await service.execute(
+            makeSetModelPolicyRequest(
+                modelID: "melix-dev-text",
+                values: [
+                    "memory_budget_bytes": "",
+                ]
+            )
+        )
+
+        #expect(configured.ok)
+        #expect(configured.model.model.settings.memoryBudgetBytes == 65_536)
+        #expect(cleared.ok)
+        #expect(cleared.model.model.settings.memoryBudgetBytes == 0)
     }
 
     @Test("execute surfaces structured errors for missing or unavailable model tools")
@@ -3890,16 +6977,13 @@ struct ControlPlaneServiceTests {
         #expect(response.error.code == "unimplemented")
     }
 
-    @Test("execute returns unimplemented for unsupported server, model, and ops variants")
+    @Test("execute returns unimplemented for unsupported model and ops variants")
     func executeReturnsUnimplementedForUnsupportedVariants() async throws {
         let service = ControlPlaneService()
 
-        let serverResponse = try await service.execute(makeServerShutdownRequest())
         let modelResponse = try await service.execute(makeModelPinRequest())
         let opsResponse = try await service.execute(makeOpsTraceRequest())
 
-        #expect(!serverResponse.ok)
-        #expect(serverResponse.error.code == "unimplemented")
         #expect(!modelResponse.ok)
         #expect(modelResponse.error.code == "unimplemented")
         #expect(!opsResponse.ok)
@@ -3927,6 +7011,258 @@ struct ControlPlaneServiceTests {
         return request
     }
 
+    private func makeServerStartRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-start-\(serverSessionID)"
+        request.commandType = "server.start"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.start = Melix_Controlplane_V1_StartServer()
+        request.server.start.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerPauseRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-pause-\(serverSessionID)"
+        request.commandType = "server.pause"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.pause = Melix_Controlplane_V1_PauseServer()
+        request.server.pause.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerResumeRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-resume-\(serverSessionID)"
+        request.commandType = "server.resume"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.resume = Melix_Controlplane_V1_ResumeServer()
+        request.server.resume.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerWakeRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-wake-\(serverSessionID)"
+        request.commandType = "server.wake"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.wake = Melix_Controlplane_V1_WakeServer()
+        request.server.wake.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerStopRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-stop-\(serverSessionID)"
+        request.commandType = "server.stop"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.stop = Melix_Controlplane_V1_StopServer()
+        request.server.stop.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerRestartRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-restart-\(serverSessionID)"
+        request.commandType = "server.restart"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.restart = Melix_Controlplane_V1_RestartServer()
+        request.server.restart.serverSessionID = serverSessionID
+        return request
+    }
+
+    private func makeServerSetIdlePolicyRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        autoSleepEnabled: Bool,
+        lightSleepAfterSeconds: UInt32,
+        deepSleepAfterSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-server-idle-policy-\(serverSessionID)"
+        request.commandType = "server.set_idle_policy"
+        request.targetID = serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.setIdlePolicy = Melix_Controlplane_V1_SetServerIdlePolicy()
+        request.server.setIdlePolicy.serverSessionID = serverSessionID
+        request.server.setIdlePolicy.autoSleepEnabled = autoSleepEnabled
+        request.server.setIdlePolicy.lightSleepAfterSeconds = lightSleepAfterSeconds
+        request.server.setIdlePolicy.deepSleepAfterSeconds = deepSleepAfterSeconds
+        return request
+    }
+
+    private func makeApplyGatewayConfigRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        targetID: String? = nil,
+        host: String,
+        port: UInt32,
+        servedModelID: String,
+        rateLimitPerMinute: UInt32,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-apply-gateway-config-\(serverSessionID)"
+        request.commandType = "server.apply_gateway_config"
+        request.targetID = targetID ?? serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyGatewayConfig = makeApplyGatewayConfigCommand(
+            serverSessionID: serverSessionID,
+            host: host,
+            port: port,
+            servedModelID: servedModelID,
+            rateLimitPerMinute: rateLimitPerMinute,
+            timeoutSeconds: timeoutSeconds
+        )
+        return request
+    }
+
+    private func makeApplyServingDefaultsRequest(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        targetID: String? = nil,
+        temperature: Double,
+        topP: Double,
+        maxTokens: UInt32,
+        streamIntervalTokens: UInt32,
+        maxConcurrentRequests: UInt32,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: UInt32 = 2,
+        completionBatchSize: UInt32 = 2,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode = .baseline,
+        draftModelID: String = "",
+        numDraftTokens: UInt32 = 0
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-apply-serving-defaults-\(serverSessionID)"
+        request.commandType = "server.apply_serving_defaults"
+        request.targetID = targetID ?? serverSessionID
+        request.server = Melix_Controlplane_V1_ServerCommand()
+        request.server.applyServingDefaults = makeApplyServingDefaultsCommand(
+            serverSessionID: serverSessionID,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens
+        )
+        return request
+    }
+
+    private func makeApplyImageDefaultsRequest(
+        generateModelID: String,
+        editModelID: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float,
+        negativePrompt: String = ""
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-apply-image-defaults"
+        request.commandType = "image.apply_defaults"
+        request.image = Melix_Controlplane_V1_ImageCommand()
+        request.image.applyDefaults = makeApplyImageDefaultsCommand(
+            generateModelID: generateModelID,
+            editModelID: editModelID,
+            size: size,
+            steps: steps,
+            guidance: guidance,
+            strength: strength,
+            negativePrompt: negativePrompt
+        )
+        return request
+    }
+
+    private func makeApplyGatewayConfigCommand(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        host: String,
+        port: UInt32,
+        servedModelID: String,
+        rateLimitPerMinute: UInt32,
+        timeoutSeconds: UInt32
+    ) -> Melix_Controlplane_V1_ApplyGatewayConfig {
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = serverSessionID
+        command.host = host
+        command.port = port
+        command.servedModelID = servedModelID
+        command.rateLimitPerMinute = rateLimitPerMinute
+        command.timeoutSeconds = timeoutSeconds
+        return command
+    }
+
+    private func makeApplyServingDefaultsCommand(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        temperature: Double,
+        topP: Double,
+        maxTokens: UInt32,
+        streamIntervalTokens: UInt32,
+        maxConcurrentRequests: UInt32,
+        concurrentProcessingEnabled: Bool = true,
+        prefillBatchSize: UInt32 = 2,
+        completionBatchSize: UInt32 = 2,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode = .baseline,
+        draftModelID: String = "",
+        numDraftTokens: UInt32 = 0
+    ) -> Melix_Controlplane_V1_ApplyServingDefaults {
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = serverSessionID
+        command.temperature = temperature
+        command.topP = topP
+        command.maxTokens = maxTokens
+        command.streamIntervalTokens = streamIntervalTokens
+        command.maxConcurrentRequests = maxConcurrentRequests
+        command.concurrentProcessingEnabled = concurrentProcessingEnabled
+        command.prefillBatchSize = prefillBatchSize
+        command.completionBatchSize = completionBatchSize
+        command.accelerationMode = accelerationMode
+        command.draftModelID = draftModelID
+        command.numDraftTokens = numDraftTokens
+        return command
+    }
+
+    private func makeApplyImageDefaultsCommand(
+        generateModelID: String,
+        editModelID: String,
+        size: String,
+        steps: UInt32,
+        guidance: Float,
+        strength: Float,
+        negativePrompt: String = ""
+    ) -> Melix_Controlplane_V1_ApplyImageDefaults {
+        var command = Melix_Controlplane_V1_ApplyImageDefaults()
+        command.generateModelID = generateModelID
+        command.editModelID = editModelID
+        command.size = size
+        command.steps = steps
+        command.guidance = guidance
+        command.strength = strength
+        command.negativePrompt = negativePrompt
+        return command
+    }
+
     private func makeListModelsRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-model-list"
@@ -3936,13 +7272,17 @@ struct ControlPlaneServiceTests {
         return request
     }
 
-    private func makeLoadModelRequest(modelID: String) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    private func makeLoadModelRequest(
+        modelID: String,
+        memoryBudgetBytes: UInt64 = 0
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-model-load-\(modelID)"
         request.commandType = "model.load"
         request.model = Melix_Controlplane_V1_ModelCommand()
         request.model.load = Melix_Controlplane_V1_LoadModel()
         request.model.load.modelID = modelID
+        request.model.load.memoryBudgetBytes = memoryBudgetBytes
         return request
     }
 
@@ -3961,7 +7301,10 @@ struct ControlPlaneServiceTests {
         modelID: String,
         prompt: String,
         size: String,
-        n: UInt32
+        n: UInt32,
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = ""
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = requestID
@@ -3971,6 +7314,9 @@ struct ControlPlaneServiceTests {
         request.image.generate.modelID = modelID
         request.image.generate.prompt = prompt
         request.image.generate.size = size
+        request.image.generate.steps = steps
+        request.image.generate.guidance = guidance
+        request.image.generate.negativePrompt = negativePrompt
         request.image.generate.n = n
         request.image.generate.responseFormat = "png"
         return request
@@ -3982,7 +7328,11 @@ struct ControlPlaneServiceTests {
         prompt: String,
         imageURI: String,
         maskURI: String,
-        strength: Float
+        strength: Float,
+        size: String = "1024x1024",
+        steps: UInt32 = 0,
+        guidance: Float = 0,
+        negativePrompt: String = ""
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = requestID
@@ -3994,7 +7344,10 @@ struct ControlPlaneServiceTests {
         request.image.edit.imageUri = imageURI
         request.image.edit.maskUri = maskURI
         request.image.edit.strength = strength
-        request.image.edit.size = "1024x1024"
+        request.image.edit.size = size
+        request.image.edit.steps = steps
+        request.image.edit.guidance = guidance
+        request.image.edit.negativePrompt = negativePrompt
         request.image.edit.n = 1
         request.image.edit.responseFormat = "png"
         return request
@@ -4050,7 +7403,15 @@ struct ControlPlaneServiceTests {
 
     private func makeRunBenchRequest(
         modelID: String = "",
-        hfRepoID: String = ""
+        hfRepoID: String = "",
+        suites: [String] = ["smoke", "latency"],
+        contextLengths: [UInt32] = [1024, 4096],
+        generationLength: UInt32 = 128,
+        batchSizes: [UInt32] = [2, 4],
+        repeats: UInt32 = 3,
+        cacheProfile: String = "partial_prefix",
+        reasoningMode: String = "enabled",
+        structuredOutputMode: String = "json_schema"
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
@@ -4059,8 +7420,110 @@ struct ControlPlaneServiceTests {
         request.ops.runBench = Melix_Controlplane_V1_RunBench()
         request.ops.runBench.modelID = modelID
         request.ops.runBench.hfRepoID = hfRepoID
-        request.ops.runBench.suites = ["smoke", "latency"]
+        request.ops.runBench.suites = suites
+        request.ops.runBench.contextLengths = contextLengths
+        request.ops.runBench.generationLength = generationLength
+        request.ops.runBench.batchSizes = batchSizes
+        request.ops.runBench.repeats = repeats
+        request.ops.runBench.cacheProfile = cacheProfile
+        request.ops.runBench.reasoningMode = reasoningMode
+        request.ops.runBench.structuredOutputMode = structuredOutputMode
         return request
+    }
+
+    private func makeRunBenchMatrixRequest(
+        modelID: String = "melix-dev-text",
+        hfRepoID: String = "",
+        suites: [String] = ["smoke"],
+        contextLengths: [UInt32] = [1024, 4096],
+        generationLengths: [UInt32] = [128, 256],
+        batchSizes: [UInt32] = [2, 4],
+        cacheProfiles: [String] = ["cold", "warm"],
+        reasoningModes: [String] = ["enabled", "disabled"],
+        structuredOutputModes: [String] = ["plain_text", "json_schema"],
+        concurrencyLevels: [UInt32] = [1, 8],
+        repeats: UInt32 = 3,
+        requests: UInt32 = 24,
+        durationSeconds: UInt32 = 0,
+        allowLargeMatrix: Bool = false
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "req-ops-bench-matrix"
+        request.commandType = "ops.run_bench_matrix"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.runBenchMatrix = Melix_Controlplane_V1_RunBenchMatrix()
+        request.ops.runBenchMatrix.modelID = modelID
+        request.ops.runBenchMatrix.hfRepoID = hfRepoID
+        request.ops.runBenchMatrix.suiteIds = suites
+        request.ops.runBenchMatrix.contextLengths = contextLengths
+        request.ops.runBenchMatrix.generationLengths = generationLengths
+        request.ops.runBenchMatrix.batchSizes = batchSizes
+        request.ops.runBenchMatrix.cacheProfiles = cacheProfiles
+        request.ops.runBenchMatrix.reasoningModes = reasoningModes
+        request.ops.runBenchMatrix.structuredOutputModes = structuredOutputModes
+        request.ops.runBenchMatrix.concurrencyLevels = concurrencyLevels
+        request.ops.runBenchMatrix.repeats = repeats
+        request.ops.runBenchMatrix.requests = requests
+        request.ops.runBenchMatrix.durationSeconds = durationSeconds
+        request.ops.runBenchMatrix.allowLargeMatrix = allowLargeMatrix
+        return request
+    }
+
+    private func makeBenchmarkMatrixJobSummary(
+        jobID: String,
+        modelID: String
+    ) -> Melix_Controlplane_V1_BenchmarkMatrixJobSummary {
+        var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+        job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        job.jobID = jobID
+        job.modelID = modelID
+        job.taskKind = "text-generation"
+        job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        job.suiteIds = ["smoke"]
+        job.benchmarkMode = "matrix"
+        job.status = "completed"
+        job.outputDir = "/tmp/melix/bench/matrix-runs/\(jobID)"
+        job.createdAtUnixMs = 1712200000000
+        job.updatedAtUnixMs = 1712200005000
+        return job
+    }
+
+    private func makeBenchmarkMatrixResponse(
+        jobID: String,
+        modelID: String
+    ) -> Melix_Worker_V1_RunBenchMatrixResponse {
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job = Melix_Worker_V1_BenchmarkMatrixJobSummary()
+        response.job.schemaVersion = "melix.benchmark_matrix_job.v1"
+        response.job.jobID = jobID
+        response.job.modelID = modelID
+        response.job.taskKind = "text-generation"
+        response.job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        response.job.suiteIds = ["smoke"]
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "completed"
+        response.job.outputDir = "/tmp/melix/bench/matrix-runs/\(jobID)"
+        response.job.createdAtUnixMs = 1712200000000
+        response.job.updatedAtUnixMs = 1712200005000
+        var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = jobID
+        row.taskKind = "text-generation"
+        row.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        row.modelID = modelID
+        row.suiteID = "smoke"
+        row.contextLength = 1024
+        row.generationLength = 128
+        row.batchSize = 2
+        row.cacheProfile = "cold"
+        row.reasoningMode = "enabled"
+        row.structuredOutputMode = "plain_text"
+        row.concurrencyLevel = 1
+        row.repeats = 3
+        row.requests = 24
+        row.ttftMeanMs = 24.45
+        row.createdAtUnixMs = 1712200000000
+        response.summaryRows = [row]
+        return response
     }
 
     private func makeBenchmarkHubModelCardResponse(
@@ -4118,6 +7581,10 @@ struct ControlPlaneServiceTests {
         request.ops.runEvaluation.suiteID = "qa_smoke"
         request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
         request.ops.runEvaluation.sampleSize = 8
+        request.ops.runEvaluation.fewShot = 4
+        request.ops.runEvaluation.seed = 7
+        request.ops.runEvaluation.scoringMode = "multiple_choice_accuracy"
+        request.ops.runEvaluation.codeExecPolicy = "sandboxed"
         request.ops.runEvaluation.parameters = [
             "judge": "deterministic",
         ]
@@ -4249,15 +7716,6 @@ struct ControlPlaneServiceTests {
         request.commandType = "preset.list"
         request.preset = Melix_Controlplane_V1_PresetCommand()
         request.preset.list = Melix_Controlplane_V1_ListPresets()
-        return request
-    }
-
-    private func makeServerShutdownRequest() -> Melix_Controlplane_V1_ControlPlaneRequest {
-        var request = Melix_Controlplane_V1_ControlPlaneRequest()
-        request.requestID = "req-server-stop"
-        request.commandType = "server.stop"
-        request.server = Melix_Controlplane_V1_ServerCommand()
-        request.server.stop = Melix_Controlplane_V1_StopServer()
         return request
     }
 
@@ -4923,6 +8381,30 @@ private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
         response.modelHandle = request.model.modelID
         return response
     }
+
+    func emitToken(requestID: String, text: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.tokenDelta = Melix_Worker_V1_TokenDelta()
+        event.tokenDelta.text = text
+        continuation.yield(event)
+    }
+
+    func finishDecode(requestID: String, assistantText: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.completed = Melix_Worker_V1_Completed()
+        event.completed.finishReason = "stop"
+        event.completed.assistantText = assistantText
+        continuation.yield(event)
+        continuation.finish()
+    }
 }
 
 private func makeWorkerArtifact(
@@ -5036,6 +8518,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private(set) var lastHubSearchRequest: Melix_Worker_V1_SearchHubModelsRequest?
     private(set) var lastHubModelCardRequest: Melix_Worker_V1_GetHubModelCardRequest?
     private(set) var lastBenchRequest: Melix_Worker_V1_RunBenchRequest?
+    private(set) var lastBenchMatrixRequest: Melix_Worker_V1_RunBenchMatrixRequest?
     private(set) var lastEvaluationRequest: Melix_Worker_V1_RunEvaluationRequest?
     private(set) var lastExportRequest: Melix_Worker_V1_ExportResultsRequest?
     private(set) var lastSubmitRequest: Melix_Worker_V1_SubmitResultsRequest?
@@ -5045,6 +8528,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var hubSearchResponse = Melix_Worker_V1_SearchHubModelsResponse()
     private var hubModelCardResponse = Melix_Worker_V1_GetHubModelCardResponse()
     private var benchEvents: [Melix_Worker_V1_RunBenchEvent] = []
+    private var benchMatrixResponse = Melix_Worker_V1_RunBenchMatrixResponse()
     private var evaluationResponse = Melix_Worker_V1_RunEvaluationResponse()
     private var exportResponse = Melix_Worker_V1_ExportResultsResponse()
     private var submitResponse = Melix_Worker_V1_SubmitResultsResponse()
@@ -5054,6 +8538,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     private var hubSearchError: Error?
     private var hubModelCardError: Error?
     private var benchError: Error?
+    private var benchMatrixError: Error?
     private var evaluationError: Error?
 
     func setInfoResponse(_ response: Melix_Worker_V1_GetModelInfoResponse) {
@@ -5078,6 +8563,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setBenchEvents(_ events: [Melix_Worker_V1_RunBenchEvent]) {
         benchEvents = events
+    }
+
+    func setBenchMatrixResponse(_ response: Melix_Worker_V1_RunBenchMatrixResponse) {
+        benchMatrixResponse = response
     }
 
     func setEvaluationResponse(_ response: Melix_Worker_V1_RunEvaluationResponse) {
@@ -5106,6 +8595,10 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
 
     func setBenchError(_ error: Error?) {
         benchError = error
+    }
+
+    func setBenchMatrixError(_ error: Error?) {
+        benchMatrixError = error
     }
 
     func setEvaluationError(_ error: Error?) {
@@ -5213,6 +8706,16 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
             }
             continuation.finish()
         }
+    }
+
+    func runBenchMatrix(
+        request: Melix_Worker_V1_RunBenchMatrixRequest
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
+        lastBenchMatrixRequest = request
+        if let benchMatrixError {
+            throw benchMatrixError
+        }
+        return benchMatrixResponse
     }
 
     func runEvaluation(

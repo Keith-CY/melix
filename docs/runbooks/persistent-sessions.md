@@ -1,0 +1,162 @@
+# Persistent Sessions
+
+## Purpose
+
+Configure and verify Melix remember-me authentication sessions without mixing them into model session graphs or desktop-local UI state.
+
+M9.4 adds a gateway-scoped auth-session workflow:
+
+- `POST /v1/melix/auth/session` creates a typed gateway session from an already valid gateway credential
+- `GET /v1/melix/auth/session` inspects the active session via `X-Melix-Session`
+- `DELETE /v1/melix/auth/session` revokes the session and records sign-out latency
+
+Remembered sessions survive process restart until TTL expiry or explicit revocation. Non-remembered sessions remain process-local and disappear on restart.
+
+## Environment Configuration
+
+```bash
+export MELIX_GATEWAY_AUTH_MODE=api_keys
+export MELIX_GATEWAY_SHARED_ACCESS_ENABLED=true
+export MELIX_GATEWAY_API_KEYS_JSON='[
+  {"id":"desktop-agent","label":"Desktop Agent","token_hint":"desktop-agent","token":"sk-desktop"}
+]'
+export MELIX_PERSISTENT_AUTH_SESSION_TTL_SECONDS=3600
+```
+
+Optional storage override:
+
+```bash
+export MELIX_HOME="${PWD}/.runtime/m9-persistent-sessions"
+```
+
+Remembered records are written to:
+
+- `${MELIX_HOME}/state/persistent-auth-sessions.json` when `MELIX_HOME` is set
+- `~/.melix/state/persistent-auth-sessions.json` otherwise
+
+The persisted document stores only session metadata and a token hash. It never stores the raw API key or raw session token.
+
+## Manual Verification
+
+### Create A Remembered Session
+
+```bash
+curl -sS \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: sk-desktop' \
+  -d '{"remember_me":true}' \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+```
+
+Expected response:
+
+- `200`
+- `resume.header = "x-melix-session"`
+- `resume.token` present
+- `session.remember_me = true`
+
+### Reuse The Session
+
+```bash
+curl -sS \
+  -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+```
+
+Expected response:
+
+- `200`
+- public model list payload
+
+### Restart Restore Check
+
+After restarting the local stack with the same `MELIX_HOME` and gateway keyring:
+
+```bash
+curl -sS \
+  -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+```
+
+Expected response:
+
+- `200`
+- `session.last_restored_at_unix_ms > 0`
+
+### Sign Out
+
+```bash
+curl -sS -X DELETE \
+  -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+```
+
+Expected follow-up rejection:
+
+```bash
+curl -sS \
+  -H "X-Melix-Session: ${MELIX_SESSION_TOKEN}" \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/models
+```
+
+- status `401`
+- `error.code = "revoked_session"`
+- `error.session_state.state = "revoked"`
+
+### Non-Remembered Session Check
+
+Create an ephemeral session:
+
+```bash
+curl -sS \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: sk-desktop' \
+  -d '{"remember_me":false}' \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-11434}/v1/melix/auth/session
+```
+
+After restart, the same token must fail with:
+
+- status `401`
+- `error.code = "missing_session"`
+- `error.session_state.state = "missing"`
+
+## Desktop Operator State
+
+The desktop gateway summary now surfaces:
+
+- active auth-session count
+- remembered auth-session count
+- expired remembered-session count
+- retention TTL
+- last sign-out latency
+
+This projection comes from control-plane metrics and does not expose raw session tokens.
+
+## Deterministic Smoke
+
+Run the repository-owned smoke command:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python python scripts/m9_persistent_session_smoke.py --json
+```
+
+The smoke covers:
+
+- remembered session creation
+- restart restore
+- sign-out and revoked-session rejection
+- non-remembered session invalidation after restart
+
+## Metrics
+
+M9.4 records these metrics in the touched scope:
+
+- `persistent_session.active_session_count`
+- `persistent_session.remembered_session_count`
+- `persistent_session.expired_session_count`
+- `persistent_session.restore_success_rate`
+- `persistent_session.sign_out_latency_ms`
+- `persistent_session.retention_ttl_seconds`

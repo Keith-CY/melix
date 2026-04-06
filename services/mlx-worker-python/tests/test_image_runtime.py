@@ -8,6 +8,8 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
 
 from worker.engine.maintenance_core import MaintenanceCore
+from worker.engine.image_edit_core import _supports_image_edit
+from worker.engine.image_generation_core import _supports_image_generation
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -113,6 +115,34 @@ def test_image_generate_rejects_non_image_model_handles(tmp_path: Path) -> None:
     assert response.job.operation == "image_generate"
 
 
+def test_image_generate_rejects_edit_only_image_families(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(
+        runtime_service,
+        WorkerModelCatalog.dev_image_model(
+            {
+                "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+                "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+                "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            }
+        ),
+    )
+
+    response = inference_service.ImageGenerate(
+        inference_pb2.ImageGenerateRequest(
+            id=common_pb2.RequestIdentity(request_id="image-generate-edit-only"),
+            model_handle=model_handle,
+            prompt="should fail",
+            size="512x512",
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "invalid_argument"
+    assert "does not support generation workflows" in response.error.message
+    assert response.job.state == common_pb2.IMAGE_JOB_FAILED
+
+
 def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
@@ -150,6 +180,69 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     assert Path(source_artifact.storage_uri).read_bytes() == b"SOURCE_IMAGE"
     assert Path(mask_artifact.storage_uri).read_bytes() == b"MASK_IMAGE"
     assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
+
+
+def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
+    source_path = tmp_path / "iterate-source.png"
+    source_path.write_bytes(b"SOURCE_IMAGE")
+
+    iterate = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-iterate-1"),
+            model_handle=model_handle,
+            prompt="make the colors warmer",
+            image_uri=source_path.as_uri(),
+            source_artifact_id="artifact-source",
+            prompt_delta="make the colors warmer",
+            edit_mode=inference_pb2.IMAGE_EDIT_MODE_ITERATE,
+            size="256x256",
+            response_format="png",
+            n=1,
+            ext={"melix.image.source_job_id": "job-source"},
+        ),
+        context=None,
+    )
+
+    assert iterate.error.code == ""
+    assert iterate.job.operation == "image_iterate"
+    assert iterate.job.source_artifact_id == "artifact-source"
+    assert iterate.job.source_job_id == "job-source"
+    assert iterate.job.prompt_delta == "make the colors warmer"
+    assert iterate.job.edit_mode == inference_pb2.IMAGE_EDIT_MODE_ITERATE
+    assert iterate.job.artifacts[0].parent_artifact_id == "artifact-source"
+    assert iterate.job.artifacts[0].ext["melix.image.source_artifact_id"] == "artifact-source"
+    assert iterate.job.artifacts[0].ext["melix.image.source_job_id"] == "job-source"
+    assert iterate.job.artifacts[0].ext["melix.image.prompt_delta"] == "make the colors warmer"
+    assert iterate.job.artifacts[0].ext["melix.image.edit_mode"] == "iterate"
+    assert iterate.job.artifacts[-1].parent_artifact_id == "artifact-source"
+    assert iterate.job.artifacts[-1].ext["melix.image.edit_mode"] == "iterate"
+
+    variation = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-variation-1"),
+            model_handle=model_handle,
+            prompt="keep composition",
+            image_uri=source_path.as_uri(),
+            source_artifact_id="artifact-source",
+            edit_mode=inference_pb2.IMAGE_EDIT_MODE_VARIATION,
+            size="256x256",
+            response_format="png",
+            n=1,
+            ext={"melix.image.source_job_id": "job-source"},
+        ),
+        context=None,
+    )
+
+    assert variation.error.code == ""
+    assert variation.job.operation == "image_variation"
+    assert variation.job.source_artifact_id == "artifact-source"
+    assert variation.job.source_job_id == "job-source"
+    assert variation.job.prompt_delta == ""
+    assert variation.job.edit_mode == inference_pb2.IMAGE_EDIT_MODE_VARIATION
+    assert variation.job.artifacts[0].ext["melix.image.edit_mode"] == "variation"
+    assert variation.job.artifacts[-1].parent_artifact_id == "artifact-source"
 
 
 def test_image_edit_rejects_missing_source_and_invalid_mask_reference(tmp_path: Path) -> None:
@@ -201,6 +294,34 @@ def test_image_edit_rejects_non_image_model_handles(tmp_path: Path) -> None:
     assert response.error.code == "invalid_argument"
     assert response.job.state == common_pb2.IMAGE_JOB_FAILED
     assert response.job.operation == "image_edit"
+
+
+def test_image_edit_rejects_generate_only_image_families(tmp_path: Path) -> None:
+    runtime_service, inference_service, _ = build_services(tmp_path)
+    model_handle = load_model(
+        runtime_service,
+        WorkerModelCatalog.dev_image_model(
+            {
+                "MELIX_DEV_IMAGE_FAMILY_ID": "qwenimage-v1",
+                "MELIX_DEV_IMAGE_MODEL_PATH": "models/qwen-image-dev",
+            }
+        ),
+    )
+
+    response = inference_service.ImageEdit(
+        inference_pb2.ImageEditRequest(
+            id=common_pb2.RequestIdentity(request_id="image-edit-generate-only"),
+            model_handle=model_handle,
+            prompt="should fail",
+            image=b"SOURCE_IMAGE",
+            size="256x256",
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "invalid_argument"
+    assert "does not support editing workflows" in response.error.message
+    assert response.job.state == common_pb2.IMAGE_JOB_FAILED
 
 
 def test_image_edit_returns_canceled_job_when_runtime_cancelled(tmp_path: Path) -> None:
@@ -324,3 +445,31 @@ def test_deterministic_image_runtime_reports_probe_snapshot_and_validates_inputs
             images_root=tmp_path,
             cancel_event=cancelled,
         )
+
+
+def test_image_role_helpers_fall_back_to_supported_tasks_and_task_kind() -> None:
+    generate_from_tasks = common_pb2.ModelSpec(
+        model_id="image-generate-from-tasks",
+        model_kind="image",
+        ext={"melix.capability.supported_tasks": "image_generate"},
+    )
+    generate_from_task_kind = common_pb2.ModelSpec(
+        model_id="image-generate-from-task-kind",
+        model_kind="image",
+        ext={"melix.image.task_kind": "text-to-image"},
+    )
+    edit_from_tasks = common_pb2.ModelSpec(
+        model_id="image-edit-from-tasks",
+        model_kind="image",
+        ext={"melix.capability.supported_tasks": "image_edit"},
+    )
+    edit_from_task_kind = common_pb2.ModelSpec(
+        model_id="image-edit-from-task-kind",
+        model_kind="image",
+        ext={"melix.image.task_kind": "image-text-to-image"},
+    )
+
+    assert _supports_image_generation(generate_from_tasks) is True
+    assert _supports_image_generation(generate_from_task_kind) is True
+    assert _supports_image_edit(edit_from_tasks) is True
+    assert _supports_image_edit(edit_from_task_kind) is True

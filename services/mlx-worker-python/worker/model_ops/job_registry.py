@@ -264,24 +264,35 @@ class ModelOpsJobRegistry:
                 continue
 
             manifest = job.get("manifest") or {}
+            downloaded_bytes = int(manifest.get("downloaded_bytes", 0))
+            total_bytes = int(manifest.get("total_bytes", 0))
+            partial_path = str(manifest.get("partial_path", ""))
+            status = str(manifest.get("terminal_state", manifest.get("status", job["status"])))
             downloads.append(
                 {
                     "job_id": job["job_id"],
                     "source_model": job["source_model"],
-                    "status": str(manifest.get("terminal_state", manifest.get("status", job["status"]))),
+                    "status": status,
                     "stage": str(manifest.get("stage", job["stage"])),
                     "pct": float(manifest.get("pct", job["pct"])),
+                    "output_dir": str(manifest.get("output_dir", job["output_dir"])),
                     "output_path": str(manifest.get("output_path", job["output_path"])),
-                    "partial_path": str(manifest.get("partial_path", "")),
+                    "partial_path": partial_path,
                     "state_path": str(manifest.get("state_path", "")),
                     "selected_mirror": str(manifest.get("selected_mirror", "")),
-                    "downloaded_bytes": int(manifest.get("downloaded_bytes", 0)),
-                    "total_bytes": int(manifest.get("total_bytes", 0)),
+                    "downloaded_bytes": downloaded_bytes,
+                    "total_bytes": total_bytes,
                     "resume_used": bool(manifest.get("resume_used", False)),
                     "resume_from_bytes": int(manifest.get("resume_from_bytes", 0)),
                     "retry_count": int(manifest.get("retry_count", 0)),
                     "stall_detection_count": int(manifest.get("stall_detection_count", 0)),
                     "stall_reason": str(manifest.get("stall_reason", "")),
+                    "resume_ready": (
+                        partial_path != ""
+                        and downloaded_bytes > 0
+                        and (total_bytes == 0 or downloaded_bytes < total_bytes)
+                        and status in {"failed", "stalled", "running", "retrying"}
+                    ),
                 }
             )
         return downloads

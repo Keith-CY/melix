@@ -48,8 +48,8 @@ struct RequestCoordinatorTests {
         #expect(await workerClient.abortedRequestIDs == ["req-cancel"])
     }
 
-    @Test("stream disconnect handler triggers worker abort and records disconnect metrics")
-    func streamDisconnectHandlerTriggersWorkerAbortAndRecordsDisconnectMetrics() async throws {
+    @Test("stream disconnect handler records disconnect metrics and opens a resume grace window")
+    func streamDisconnectHandlerRecordsDisconnectMetricsAndOpensAResumeGraceWindow() async throws {
         let workerClient = BlockingWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
         let metricsStore = MetricsStore()
@@ -57,7 +57,11 @@ struct RequestCoordinatorTests {
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
             abortRegistry: AbortRegistry(),
             schedulerReadModel: schedulerReadModel,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.05
+            )
         )
 
         let execution = try await coordinator.startChatCompletion(
@@ -66,24 +70,134 @@ struct RequestCoordinatorTests {
         let onStreamDisconnect = try #require(execution.onStreamDisconnect)
         await onStreamDisconnect()
 
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-disconnect")
+
+        #expect(await workerClient.abortedRequestIDs.isEmpty)
+        #expect(metrics.values["http.stream_disconnect_count", default: 0] == 1)
+        #expect(metrics.values["http.stream_disconnect_ms", default: -1] >= 0)
+        #expect(progress?.phase != .requestAborted)
+    }
+
+    @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
+    func disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.1
+            )
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-resume-grace")
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
         for _ in 0..<100 {
-            if await workerClient.abortedRequestIDs == ["req-disconnect"] {
+            let metrics = await metricsStore.snapshot()
+            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
                 break
             }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
+        let resumedExecution = try await coordinator.resumeChatCompletion(requestID: "req-resume-grace")
+        let resumedCollector = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in resumedExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await workerClient.emitToken(requestID: "req-resume-grace", text: "resumed")
+        await workerClient.finishDecode(requestID: "req-resume-grace", assistantText: "resumed")
+
+        let resumedEvents = try await resumedCollector.value
+        try? await Task.sleep(nanoseconds: 150_000_000)
         let metrics = await metricsStore.snapshot()
-        let terminalProgress = await waitForProgress(
+
+        #expect(resumedExecution.requestID == "req-resume-grace")
+        #expect(resumedEvents.contains { event in
+            guard case .tokenDelta(let delta) = event.payload else {
+                return false
+            }
+            return delta.text == "resumed"
+        })
+        #expect(await workerClient.abortedRequestIDs.isEmpty)
+        #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
+    }
+
+    @Test("disconnect grace expiry aborts the worker and records a terminal lifecycle failure")
+    func disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
             schedulerReadModel: schedulerReadModel,
-            requestID: "req-disconnect",
-            phase: .requestAborted
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.02
+            )
         )
 
-        #expect(await workerClient.abortedRequestIDs == ["req-disconnect"])
-        #expect(metrics.values["http.stream_disconnect_count", default: 0] == 1)
-        #expect(metrics.values["http.stream_disconnect_ms", default: -1] >= 0)
-        #expect(terminalProgress?.phase == .requestAborted)
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-resume-timeout")
+        )
+        let initialConsumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        await Task.yield()
+        initialConsumer.cancel()
+        _ = await initialConsumer.result
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        do {
+            _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
+            Issue.record("Expected expired disconnect grace to reject resume.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .requestNotResumable)
+        }
+
+        var metrics = await metricsStore.snapshot()
+        for _ in 0..<100 where metrics.values["disconnect.terminal_failure_count", default: 0] < 1 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            metrics = await metricsStore.snapshot()
+        }
+        let terminalProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-resume-timeout",
+            phase: .requestFailed
+        )
+
+        #expect(await workerClient.abortedRequestIDs == ["req-resume-timeout"])
+        #expect(metrics.values["disconnect.terminal_failure_count", default: 0] == 1)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 0)
+        #expect(terminalProgress?.phase == .requestFailed)
     }
 
     @Test("queued request cancellation succeeds before a worker is bound")
@@ -411,6 +525,39 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.prefill_chunk_count", default: -1] >= 1)
     }
 
+    @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
+    func videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout() async throws {
+        let workerClient = BlockingWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-video-ingress",
+                modelID: "melix-dev-text",
+                messages: [makeWorkerVideoMessage(text: "Summarize the clip.", videoBytes: Data("video fixture".utf8))]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        for _ in 0..<100 {
+            if await workerClient.generatedRequestIDs.contains("req-video-ingress") {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        #expect(await workerClient.generatedRequestIDs == ["req-video-ingress"])
+        #expect(try await coordinator.cancel(requestID: "req-video-ingress"))
+        _ = await consumer.result
+    }
+
     @Test("text ttft under multimodal load is recorded separately")
     func textTTFTUnderMultimodalLoadIsRecordedSeparately() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -462,6 +609,10 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 12
             response.stats.lastPreprocessPeakMemoryBytes = 8192
             response.stats.lastFirstTokenLatencyMs = 5
+            response.stats.lastTempMediaArtifactCount = 1
+            response.stats.lastTempMediaArtifactBytes = 512
+            response.stats.lastTempMediaCleanupLatencyMs = 2
+            response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 1024
             response.stats.l1HitRate = 0.25
             return response
@@ -506,6 +657,10 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 12)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 8192)
         #expect(metrics.values["vision.ocr_latency_ms", default: -1] == 5)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 1)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 512)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 0)
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 1024)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 25)
     }
@@ -519,6 +674,10 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 18
             response.stats.lastPreprocessPeakMemoryBytes = 16384
             response.stats.lastFirstTokenLatencyMs = 9
+            response.stats.lastTempMediaArtifactCount = 1
+            response.stats.lastTempMediaArtifactBytes = 1024
+            response.stats.lastTempMediaCleanupLatencyMs = 3
+            response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 2048
             response.stats.l1HitRate = 0.5
             return response
@@ -563,9 +722,87 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 18)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 16384)
         #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 9)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 1)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 1024)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 3)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 0)
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
+    }
+
+    @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
+    func videoBearingVLMRequestsPublishFramePolicyMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        await workerClient.setRuntimeStatsResponse({
+            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+            response.stats.lastProbeKind = "vlm"
+            response.stats.lastPreprocessLatencyMs = 24
+            response.stats.lastPreprocessPeakMemoryBytes = 32_768
+            response.stats.lastFirstTokenLatencyMs = 11
+            response.stats.lastVideoEffectiveFrameCount = 6
+            response.stats.lastVideoRequestedFrameBudget = 6
+            response.stats.lastVideoWindowMs = 4_000
+            response.stats.lastTempMediaArtifactCount = 2
+            response.stats.lastTempMediaArtifactBytes = 2048
+            response.stats.lastTempMediaCleanupLatencyMs = 4
+            response.stats.lastTempMediaCleanupFailureCount = 1
+            response.stats.l1CacheBytes = 2_048
+            response.stats.l1HitRate = 0.5
+            return response
+        }())
+        await workerClient.setCacheStatsResponse({
+            var response = Melix_Worker_V1_GetCacheStatsResponse()
+            response.stats.l1Bytes = 2_048
+            response.stats.blockCount = 1
+            response.stats.l1HitRate = 0.5
+            response.stats.activeMode = .tiered
+            return response
+        }())
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-video-metrics",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVideoMessage(text: "Summarize the clip.", videoBytes: Data("video fixture".utf8))]
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {}
+        }
+        await workerClient.emitToken(requestID: "req-vlm-video-metrics", text: "video")
+        await workerClient.finish(requestID: "req-vlm-video-metrics")
+        _ = try await consumer.value
+
+        let metrics = await metricsStore.snapshot()
+        let progress = await schedulerReadModel.progressSnapshot(for: "req-vlm-video-metrics")
+
+        #expect(progress?.lane == "multimodal.vision.background")
+        #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 24)
+        #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 32_768)
+        #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_first_token_ms", default: -1] == 11)
+        #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
+        #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
+        #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2048)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
     }
 
     @Test("worker unavailable requests are rejected before dispatch")
@@ -849,6 +1086,14 @@ struct RequestCoordinatorTests {
         cacheStats.stats.l2RestoreHitRate = 1.0
         cacheStats.stats.compressionRatio = 0.25
         cacheStats.stats.activeMode = .hybrid
+        cacheStats.stats.cacheRoot = "/var/melix/cache"
+        cacheStats.stats.initialCacheBlocks = 6
+        cacheStats.stats.supportedModes = [.tiered, .rotating, .hybrid]
+        cacheStats.stats.experimentalModes = [.rotating, .hybrid]
+        cacheStats.stats.supportsPrefixCache = true
+        cacheStats.stats.supportsPagedCache = true
+        cacheStats.stats.supportsDiskCache = true
+        cacheStats.stats.supportsBoundarySnapshots = true
         var scope = Melix_Worker_V1_CacheScope()
         scope.modelID = "melix-dev-text"
         scope.multimodalAdapterHash = "image-hash-hot"
@@ -952,6 +1197,14 @@ struct RequestCoordinatorTests {
         #expect(cacheSummary.l1Bytes == 2_048)
         #expect(cacheSummary.l2Bytes == 4_096)
         #expect(cacheSummary.activeMode == .hybrid)
+        #expect(cacheSummary.cacheRoot == "/var/melix/cache")
+        #expect(cacheSummary.initialCacheBlocks == 6)
+        #expect(cacheSummary.supportedModes == [.tiered, .rotating, .hybrid])
+        #expect(cacheSummary.experimentalModes == [.rotating, .hybrid])
+        #expect(cacheSummary.supportsPrefixCache)
+        #expect(cacheSummary.supportsPagedCache)
+        #expect(cacheSummary.supportsDiskCache)
+        #expect(cacheSummary.supportsBoundarySnapshots)
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.fingerprintHash == Data("fingerprint-hot".utf8))
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.multimodalAdapterHash == "image-hash-hot")
         #expect(cacheSnapshot.hotPrefixes.first?.cacheKey.scope.scopeID == "scope-hot")
@@ -1189,6 +1442,180 @@ struct RequestCoordinatorTests {
         await workerClient.emitDecodeStarted(requestID: "req-batch-2", decodeHandle: "decode-req-batch-2")
         await workerClient.emitToken(requestID: "req-batch-2", text: "batch-two")
         await workerClient.finishDecode(requestID: "req-batch-2")
+
+        _ = await consumer1.result
+        _ = await consumer2.result
+    }
+
+    @Test("gateway batching defaults can expand continuous batch capacity")
+    func gatewayBatchingDefaultsCanExpandContinuousBatchCapacity() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let batchingExt = [
+            "melix.gateway.concurrent_processing": "true",
+            "melix.gateway.max_concurrent_sequences": "5",
+            "melix.gateway.prefill_batch_size": "3",
+            "melix.gateway.completion_batch_size": "4",
+        ]
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-batch-override-1",
+                saveBoundarySnapshot: true,
+                executionExt: batchingExt
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer1.cancel() }
+
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-override-2",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+        let thirdTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-override-3",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+
+        let execution2 = try await secondTask.value
+        let execution3 = try await thirdTask.value
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+        let consumer3 = Task {
+            do {
+                for try await _ in execution3.stream {
+                }
+            } catch {
+            }
+        }
+        defer {
+            consumer2.cancel()
+            consumer3.cancel()
+        }
+
+        let snapshot = await schedulerReadModel.snapshot()
+        let metrics = await metricsStore.snapshot()
+
+        #expect(snapshot.activeRequests == 3)
+        #expect(metrics.values["scheduler.continuous_batch_size"] == 3)
+        #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+
+        for requestID in ["req-batch-override-1", "req-batch-override-2", "req-batch-override-3"] {
+            await workerClient.emitDecodeStarted(requestID: requestID, decodeHandle: "decode-\(requestID)")
+            await workerClient.emitToken(requestID: requestID, text: requestID)
+            await workerClient.finishDecode(requestID: requestID)
+        }
+
+        _ = await consumer1.result
+        _ = await consumer2.result
+        _ = await consumer3.result
+    }
+
+    @Test("gateway batching defaults can disable continuous batch admissions")
+    func gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let batchingExt = [
+            "melix.gateway.concurrent_processing": "false",
+            "melix.gateway.max_concurrent_sequences": "6",
+            "melix.gateway.prefill_batch_size": "4",
+            "melix.gateway.completion_batch_size": "3",
+        ]
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-batch-disabled-1",
+                saveBoundarySnapshot: true,
+                executionExt: batchingExt
+            )
+        )
+        let consumer1 = Task {
+            do {
+                for try await _ in execution1.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer1.cancel() }
+
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-batch-disabled-2",
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+
+        let queuedProgress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-batch-disabled-2",
+            phase: .requestQueued,
+            lane: "text.prefill.background",
+            attempts: 50
+        )
+        let snapshotBeforeRelease = await schedulerReadModel.snapshot()
+        let metricsBeforeRelease = await metricsStore.snapshot()
+
+        #expect(queuedProgress?.phase == .requestQueued)
+        #expect(snapshotBeforeRelease.activeRequests == 1)
+        #expect(metricsBeforeRelease.values["scheduler.continuous_batch_eligible_rate"] == 0)
+
+        await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-1", decodeHandle: "decode-req-batch-disabled-1")
+        await workerClient.emitToken(requestID: "req-batch-disabled-1", text: "one")
+        await workerClient.finishDecode(requestID: "req-batch-disabled-1")
+
+        let execution2 = try await secondTask.value
+        let consumer2 = Task {
+            do {
+                for try await _ in execution2.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer2.cancel() }
+
+        await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-2", decodeHandle: "decode-req-batch-disabled-2")
+        await workerClient.emitToken(requestID: "req-batch-disabled-2", text: "two")
+        await workerClient.finishDecode(requestID: "req-batch-disabled-2")
 
         _ = await consumer1.result
         _ = await consumer2.result
@@ -1795,6 +2222,90 @@ struct RequestCoordinatorTests {
         #expect(completed.assistantText == "answer")
         #expect(completed.reasoningText == "alpha beta")
         #expect(metrics.values["http.reasoning_budget_overflow_count", default: 0] == 1)
+    }
+
+    @Test("gateway speculative defaults populate worker acceleration when model defaults are unspecified")
+    func gatewaySpeculativeDefaultsPopulateWorkerAccelerationWhenModelDefaultsAreUnspecified() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-speculative-defaults",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.draftModelID == "melix-dev-text")
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 7)
+        #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-text")
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 7)
+
+        await workerClient.finish(requestID: "req-gateway-speculative-defaults")
+        _ = await consumer.result
+    }
+
+    @Test("model acceleration defaults override gateway speculative execution defaults")
+    func modelAccelerationDefaultsOverrideGatewaySpeculativeExecutionDefaults() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-speculative-overridden",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .baseline)
+        #expect(prefillRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 0)
+        #expect(decodeRequest.execution.acceleration.mode == .baseline)
+        #expect(decodeRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 0)
+
+        await workerClient.finish(requestID: "req-gateway-speculative-overridden")
+        _ = await consumer.result
     }
 
 }
@@ -2454,7 +2965,8 @@ private func makeTranslatedChatRequest(
     parentRequestID: String = "",
     restoreSnapshotID: String = "",
     saveBoundarySnapshot: Bool = false,
-    preferHotPrefix: Bool = false
+    preferHotPrefix: Bool = false,
+    executionExt: [String: String] = [:]
 ) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
     workerRequest.execution = Melix_Worker_V1_ExecutionMetadata()
@@ -2472,6 +2984,7 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
     workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot
     workerRequest.execution.cacheHints.preferHotPrefix = preferHotPrefix
+    workerRequest.execution.ext = executionExt
     workerRequest.messages = messages
 
     return TranslatedChatRequest(
@@ -2509,6 +3022,28 @@ private func makeWorkerVisionMessage(
     imagePart.media.filename = "fixture.png"
 
     message.parts = [textPart, imagePart]
+    return message
+}
+
+private func makeWorkerVideoMessage(
+    text: String,
+    videoBytes: Data
+) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+
+    var textPart = Melix_Worker_V1_MessagePart()
+    textPart.text = text
+
+    var videoPart = Melix_Worker_V1_MessagePart()
+    videoPart.videoBytes = videoBytes
+    videoPart.media.mediaType = .video
+    videoPart.media.sourceKind = .mediaSourceInlineBytes
+    videoPart.media.mimeType = "video/mp4"
+    videoPart.media.format = "mp4"
+    videoPart.media.filename = "fixture.mp4"
+
+    message.parts = [textPart, videoPart]
     return message
 }
 

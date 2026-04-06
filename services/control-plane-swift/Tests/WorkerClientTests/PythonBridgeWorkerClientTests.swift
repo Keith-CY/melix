@@ -456,6 +456,97 @@ struct PythonBridgeWorkerClientTests {
         #expect(benchEvents[1].completed.reportPath == "/tmp/model-ops/bench-report.md")
     }
 
+    @Test("model-ops bridge methods decode bench matrix responses")
+    func modelOpsBridgeMethodsDecodeBenchMatrixResponses() async throws {
+        var request = Melix_Worker_V1_RunBenchMatrixRequest()
+        request.modelHandle = "melix-dev-text::bridge"
+        request.suiteIds = ["smoke"]
+        request.contextLengths = [1024]
+        request.generationLengths = [128]
+        request.batchSizes = [2]
+        request.cacheProfiles = ["cold"]
+        request.reasoningModes = ["enabled"]
+        request.structuredOutputModes = ["plain_text"]
+        request.concurrencyLevels = [1]
+        request.repeats = 3
+        request.requests = 24
+
+        var response = Melix_Worker_V1_RunBenchMatrixResponse()
+        response.job = Melix_Worker_V1_BenchmarkMatrixJobSummary()
+        response.job.jobID = "bench-matrix-1"
+        response.job.modelID = "melix-dev-text"
+        response.job.taskKind = "text-generation"
+        response.job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+        response.job.benchmarkMode = "matrix"
+        response.job.status = "completed"
+        var row = Melix_Worker_V1_BenchmarkMatrixSummaryRow()
+        row.jobID = "bench-matrix-1"
+        row.suiteID = "smoke"
+        row.contextLength = 1024
+        row.generationLength = 128
+        row.batchSize = 2
+        row.cacheProfile = "cold"
+        row.reasoningMode = "enabled"
+        row.structuredOutputMode = "plain_text"
+        row.concurrencyLevel = 1
+        row.requests = 24
+        row.ttftMeanMs = 24.45
+        response.summaryRows = [row]
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .runBenchMatrix,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let matrix = try await client.runBenchMatrix(request: request)
+
+        #expect(matrix.job.jobID == "bench-matrix-1")
+        #expect(matrix.job.benchmarkMode == "matrix")
+        #expect(matrix.summaryRows.count == 1)
+        #expect(matrix.summaryRows[0].ttftMeanMs == 24.45)
+    }
+
+    @Test("model-ops bridge methods decode export and submit responses")
+    func modelOpsBridgeMethodsDecodeExportAndSubmitResponses() async throws {
+        var exportRequest = Melix_Worker_V1_ExportResultsRequest()
+        exportRequest.outputDir = "/tmp/model-ops/export"
+
+        var exportResponse = Melix_Worker_V1_ExportResultsResponse()
+        exportResponse.ok = true
+        exportResponse.exportJson = "{\"kind\":\"benchmark\"}"
+        exportResponse.exportPath = "/tmp/model-ops/export.json"
+
+        var submitRequest = Melix_Worker_V1_SubmitResultsRequest()
+        submitRequest.outputDir = "/tmp/model-ops/export"
+        submitRequest.deviceMetadata["chip"] = "M4 Max"
+
+        var submitResponse = Melix_Worker_V1_SubmitResultsResponse()
+        submitResponse.ok = true
+        submitResponse.submissionJson = "{\"uploaded\":true}"
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .exportResults,
+            line: bridgeMessageLine(message: try exportResponse.serializedData())
+        )
+        await runner.setUnaryResponse(
+            .submitResults,
+            line: bridgeMessageLine(message: try submitResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let exported = try await client.exportResults(request: exportRequest)
+        let submitted = try await client.submitResults(request: submitRequest)
+
+        #expect(exported.ok)
+        #expect(exported.exportPath == "/tmp/model-ops/export.json")
+        #expect(exported.exportJson.contains("benchmark"))
+        #expect(submitted.ok)
+        #expect(submitted.submissionJson.contains("uploaded"))
+    }
+
     @Test("model-ops bridge methods decode hub search and model card responses")
     func modelOpsBridgeMethodsDecodeHubSearchAndModelCardResponses() async throws {
         var searchRequest = Melix_Worker_V1_SearchHubModelsRequest()
@@ -629,6 +720,55 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-image") == "melix-dev-image::bridge")
     }
 
+    @Test("phase-seven preload uses catalog-aware image metadata when the seed model is overridden")
+    func phaseSevenPreloadUsesCatalogAwareImageMetadataWhenSeedModelIsOverridden() async throws {
+        let runner = ScriptedBridgeRunner()
+        for handle in [
+            "melix-dev-embed::bridge",
+            "melix-dev-rerank::bridge",
+            "melix-dev-ocr::bridge",
+            "melix-dev-vlm::bridge",
+            "melix-dev-transcribe::bridge",
+            "melix-dev-speech::bridge",
+            "melix-dev-image::bridge",
+        ] {
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = handle
+            await runner.enqueueUnaryResponse(
+                .loadModel,
+                line: bridgeMessageLine(message: try response.serializedData())
+            )
+        }
+
+        var fillImage = ModelCatalog.devImageModel(
+            environment: [
+                "MELIX_DEV_IMAGE_FAMILY_ID": "fill-v1",
+                "MELIX_DEV_IMAGE_TASK_KIND": "image-text-to-image",
+                "MELIX_DEV_IMAGE_MODEL_PATH": "models/flux-fill-dev",
+            ]
+        )
+        fillImage.modelID = "melix-dev-image"
+        let seedModels = ModelCatalog.phaseSixContractSeedModels() + [fillImage]
+        let catalog = ModelCatalog(seedModels: seedModels)
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        try await BootstrapWorkerPreparation.preloadPhaseSevenPythonModels(
+            workerClient: client,
+            modelCatalog: catalog,
+            memoryBudgetBytes: 4096
+        )
+
+        let loadRequests = try await runner.recordedLoadModelRequests()
+        #expect(loadRequests.count == 7)
+        let imageRequest = try #require(loadRequests.last)
+        #expect(imageRequest.model.modelID == "melix-dev-image")
+        #expect(imageRequest.model.modelPath == "models/flux-fill-dev")
+        #expect(imageRequest.model.ext["melix.image.family_id"] == "fill-v1")
+        #expect(imageRequest.model.ext["melix.image.supports_generation"] == "false")
+        #expect(imageRequest.model.ext["melix.image.supports_edit"] == "true")
+    }
+
     @Test("phase-five unary methods surface helper errors as unavailable")
     func phaseFiveUnaryMethodsSurfaceHelperErrorsAsUnavailable() async throws {
         let runner = ScriptedBridgeRunner()
@@ -656,21 +796,21 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.embed(request: embedRequest)
             Issue.record("Expected embed bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "embed down"))
         }
 
         do {
             _ = try await client.rerank(request: rerankRequest)
             Issue.record("Expected rerank bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "rerank down"))
         }
 
         do {
             _ = try await client.getModelInfo(request: infoRequest)
             Issue.record("Expected get-model-info bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "info down"))
         }
     }
 
@@ -696,14 +836,14 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.transcribe(request: transcribeRequest)
             Issue.record("Expected transcribe bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "transcribe down"))
         }
 
         do {
             _ = try await client.speak(request: speakRequest)
             Issue.record("Expected speak bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "speech down"))
         }
     }
 
@@ -732,14 +872,14 @@ struct PythonBridgeWorkerClientTests {
             _ = try await client.imageGenerate(request: generateRequest)
             Issue.record("Expected image-generate bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "image generate down"))
         }
 
         do {
             _ = try await client.imageEdit(request: editRequest)
             Issue.record("Expected image-edit bridge call to fail.")
         } catch let error as WorkerClientError {
-            #expect(error == .unavailable)
+            #expect(error == .requestFailed(code: "UNAVAILABLE", message: "image edit down"))
         }
     }
 
@@ -822,6 +962,52 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.adaptive_thinking.budget_tokens"] == "192")
     }
 
+    @Test("bootstrap worker preparation maps residency and disk streaming settings into worker specs")
+    func bootstrapWorkerPreparationMapsResidencyAndDiskStreamingSettingsIntoWorkerSpecs() throws {
+        var pinnedSummary = ModelCatalog.devTextModel()
+        pinnedSummary.settings.memoryPolicy = .memoryResidencyPinned
+        pinnedSummary.settings.diskStreamingMode = .diskStreamingDisabled
+
+        let pinnedSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: pinnedSummary))
+        #expect(pinnedSpec.settings.memoryPolicy == .memoryResidencyPinned)
+        #expect(pinnedSpec.settings.diskStreamingMode == .diskStreamingDisabled)
+
+        var ttlSummary = ModelCatalog.devTextModel()
+        ttlSummary.settings.memoryPolicy = .memoryResidencyTtl
+
+        let ttlSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: ttlSummary))
+        #expect(ttlSpec.settings.memoryPolicy == .memoryResidencyTtl)
+    }
+
+    @Test("bootstrap worker preparation maps cache settings into worker specs")
+    func bootstrapWorkerPreparationMapsCacheSettingsIntoWorkerSpecs() throws {
+        var tieredSummary = ModelCatalog.devTextModel()
+        tieredSummary.settings.cacheMode = .tiered
+        tieredSummary.settings.cacheMemoryBudgetBytes = 4_096
+        tieredSummary.settings.cacheMemoryBudgetPct = 25
+        tieredSummary.settings.cacheBlockSizeTokens = 64
+        tieredSummary.settings.cacheDirectory = "/tmp/melix-cache"
+        tieredSummary.settings.multimodalCacheBudgetBytes = 2_048
+
+        let tieredSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: tieredSummary))
+        #expect(tieredSpec.settings.cacheMode == .tiered)
+        #expect(tieredSpec.settings.cacheMemoryBudgetBytes == 4_096)
+        #expect(tieredSpec.settings.cacheMemoryBudgetPct == 25)
+        #expect(tieredSpec.settings.cacheBlockSizeTokens == 64)
+        #expect(tieredSpec.settings.cacheDirectory == "/tmp/melix-cache")
+        #expect(tieredSpec.settings.multimodalCacheBudgetBytes == 2_048)
+
+        var rotatingSummary = ModelCatalog.devTextModel()
+        rotatingSummary.settings.cacheMode = .rotating
+        let rotatingSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: rotatingSummary))
+        #expect(rotatingSpec.settings.cacheMode == .rotating)
+
+        var hybridSummary = ModelCatalog.devTextModel()
+        hybridSummary.settings.cacheMode = .hybrid
+        let hybridSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: hybridSummary))
+        #expect(hybridSpec.settings.cacheMode == .hybrid)
+    }
+
     @Test("bootstrap worker preparation builds generic text specs for activated derived models")
     func bootstrapWorkerPreparationBuildsGenericTextSpecsForActivatedDerivedModels() throws {
         var summary = ModelCatalog.devTextModel()
@@ -859,16 +1045,62 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
     }
 
+    @Test("bootstrap worker preparation builds generic OCR specs and carries generation-config metadata")
+    func bootstrapWorkerPreparationBuildsGenericOCRSpecsAndCarriesGenerationConfigMetadata() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/Vision-OCR/8bit"
+        summary.kind = "ocr"
+        summary.maxContext = 4096
+        summary.quantProfileID = "q8"
+        summary.settings.alias = "Vision OCR"
+        summary.settings.ext["melix.model_path"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit"
+        summary.settings.ext["melix.model_revision"] = "registry"
+        summary.settings.ext["melix.tokenizer_hash"] = "tok-ocr-imported"
+        summary.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
+        summary.settings.ext["melix.generation_config.source"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit/generation_config.json"
+        summary.settings.ext["melix.generation_config.temperature"] = "0.15"
+        summary.settings.ext["melix.generation_config.top_p"] = "0.92"
+        summary.settings.ext["melix.generation_config.max_tokens"] = "384"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "mlx-community/Vision-OCR/8bit")
+        #expect(spec.modelKind == "ocr")
+        #expect(spec.modelPath == "/tmp/registry-root/mlx-community/Vision-OCR/8bit")
+        #expect(spec.ext["melix.generation_config.temperature"] == "0.15")
+        #expect(spec.ext["melix.generation_config.top_p"] == "0.92")
+        #expect(spec.ext["melix.generation_config.max_tokens"] == "384")
+    }
+
+    @Test("bootstrap worker preparation skips generic OCR specs without a concrete model path")
+    func bootstrapWorkerPreparationSkipsGenericOCRSpecsWithoutConcreteModelPath() {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/Vision-OCR/8bit"
+        summary.kind = "ocr"
+        summary.maxContext = 4096
+        summary.quantProfileID = "q8"
+        summary.settings.alias = "Vision OCR"
+        summary.settings.ext["melix.model_revision"] = "registry"
+
+        #expect(BootstrapWorkerPreparation.modelSpec(for: summary) == nil)
+    }
+
     @Test("bootstrap worker preparation lets built-in audio models override model path from summary metadata")
     func bootstrapWorkerPreparationLetsBuiltInAudioModelsOverrideModelPathFromSummaryMetadata() throws {
         var summary = ModelCatalog.mlxWhisperModel()
         summary.settings.ext["melix.model_path"] = "/tmp/melix-managed-audio/whisper"
+        var parakeetSummary = ModelCatalog.mlxParakeetModel()
+        parakeetSummary.settings.ext["melix.model_path"] = "/tmp/melix-managed-audio/parakeet"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+        let parakeetSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: parakeetSummary))
 
         #expect(spec.modelID == "melix-whisper-mlx")
         #expect(spec.modelPath == "/tmp/melix-managed-audio/whisper")
         #expect(spec.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeetSpec.modelID == "melix-parakeet-mlx")
+        #expect(parakeetSpec.modelPath == "/tmp/melix-managed-audio/parakeet")
+        #expect(parakeetSpec.ext["melix.audio.family_id"] == "parakeet")
     }
 
     @Test("bootstrap worker preparation carries VLM family metadata into worker model specs")
@@ -952,7 +1184,11 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.model_revision"] = "main"
         summary.settings.ext["melix.tokenizer_hash"] = "hf.mlx-community.sdxl-turbo"
         summary.settings.ext["melix.image.backend_id"] = "deterministic"
+        summary.settings.ext["melix.image.family_id"] = "qwenimage-v1"
         summary.settings.ext["melix.image.task_kind"] = "text-to-image"
+        summary.settings.ext["melix.image.default_workflow_role"] = "generate"
+        summary.settings.ext["melix.image.supports_generation"] = "true"
+        summary.settings.ext["melix.image.supports_edit"] = "false"
         summary.settings.ext["melix.hf_repo_id"] = "mlx-community/sdxl-turbo"
         summary.settings.ext["melix.capability.route_kind"] = "python_image"
         summary.settings.ext["melix.capability.class"] = "image_generation"
@@ -966,7 +1202,11 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "mlx-community/sdxl-turbo")
         #expect(spec.modelKind == "image")
         #expect(spec.ext["melix.image.backend_id"] == "deterministic")
+        #expect(spec.ext["melix.image.family_id"] == "qwenimage-v1")
         #expect(spec.ext["melix.image.task_kind"] == "text-to-image")
+        #expect(spec.ext["melix.image.default_workflow_role"] == "generate")
+        #expect(spec.ext["melix.image.supports_generation"] == "true")
+        #expect(spec.ext["melix.image.supports_edit"] == "false")
     }
 
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
@@ -1023,7 +1263,9 @@ struct PythonBridgeWorkerClientTests {
     func bootstrapWorkerPreparationCarriesAudioMetadataIntoWorkerModelSpecs() throws {
         let deterministicSpeech = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.devSpeechModel()))
         let whisper = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxWhisperModel()))
+        let parakeet = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxParakeetModel()))
         let kokoro = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxKokoroModel()))
+        let qwen3TTS = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxQwen3TTSModel()))
 
         #expect(deterministicSpeech.modelID == "melix-dev-speech")
         #expect(deterministicSpeech.ext["melix.audio.backend_id"] == "deterministic")
@@ -1036,11 +1278,38 @@ struct PythonBridgeWorkerClientTests {
         #expect(whisper.ext["melix.audio.family_id"] == "whisper")
         #expect(whisper.ext["melix.audio.install_profile"] == "audio-stt")
 
+        #expect(parakeet.modelID == "melix-parakeet-mlx")
+        #expect(parakeet.modelKind == "transcription")
+        #expect(parakeet.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeet.ext["melix.audio.family_id"] == "parakeet")
+        #expect(parakeet.ext["melix.audio.install_profile"] == "audio-stt")
+
         #expect(kokoro.modelID == "melix-kokoro-mlx")
         #expect(kokoro.modelKind == "speech")
         #expect(kokoro.ext["melix.audio.backend_id"] == "mlx_audio.tts")
         #expect(kokoro.ext["melix.audio.family_id"] == "kokoro")
         #expect(kokoro.ext["melix.audio.output_formats"] == "wav")
+        #expect(kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
+        #expect(kokoro.ext["melix.audio.voice_locales"] == "en")
+        #expect(kokoro.ext["melix.audio.default_locale"] == "en")
+        #expect(kokoro.ext["melix.audio.packaged_default_locale"] == "en")
+        #expect(kokoro.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
+
+        #expect(qwen3TTS.modelID == "melix-qwen3-tts-mlx")
+        #expect(qwen3TTS.modelKind == "speech")
+        #expect(qwen3TTS.ext["melix.audio.backend_id"] == "mlx_audio.tts")
+        #expect(qwen3TTS.ext["melix.audio.family_id"] == "qwen3-tts")
+        #expect(qwen3TTS.ext["melix.audio.install_profile"] == "audio-tts")
+        #expect(qwen3TTS.ext["melix.audio.voice_mode"] == "hybrid")
+        #expect(qwen3TTS.ext["melix.audio.supports_instructions"] == "true")
+        #expect(
+            qwen3TTS.ext["melix.audio.voice_catalog_summary"]
+                == "Hybrid named and instruction-conditioned multilingual voices for Chinese and English synthesis."
+        )
+        #expect(qwen3TTS.ext["melix.audio.voice_locales"] == "zh,en")
+        #expect(qwen3TTS.ext["melix.audio.default_locale"] == "zh")
+        #expect(qwen3TTS.ext["melix.audio.packaged_default_locale"] == "zh")
+        #expect(qwen3TTS.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default")
     }
 
     @Test("bridge client treats helper errors as unavailable")
@@ -1259,6 +1528,26 @@ struct PythonBridgeWorkerClientTests {
         }
     }
 
+    @Test("process bridge runner preserves unary error payloads from non-zero exits")
+    func processBridgeRunnerPreservesUnaryErrorPayloadsFromNonZeroExits() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: ProcessInfo.processInfo.environment
+        )
+
+        let errorLine = try await runner.runUnary(
+            command: BridgeCommand(
+                kind: .imageGenerate,
+                socketPath: "/tmp/unused.sock",
+                requestData: Data("rpc-error".utf8)
+            )
+        )
+
+        #expect(errorLine.contains("\"kind\": \"error\""))
+        #expect(errorLine.contains("\"code\": \"DEADLINE_EXCEEDED\""))
+    }
+
     @Test("process bridge runner surfaces non-zero stream exits as unavailable")
     func processBridgeRunnerSurfacesNonZeroStreamExitsAsUnavailable() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
@@ -1344,6 +1633,7 @@ struct PythonBridgeWorkerClientTests {
 private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     private var unary: [BridgeCommandKind: [String]] = [:]
     private var streams: [BridgeCommandKind: [String]] = [:]
+    private var recordedCommands: [BridgeCommandKind: [BridgeCommand]] = [:]
 
     func setUnaryResponse(_ kind: BridgeCommandKind, line: String) {
         unary[kind] = [line]
@@ -1358,6 +1648,7 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     }
 
     func runUnary(command: BridgeCommand) async throws -> String {
+        recordedCommands[command.kind, default: []].append(command)
         if var lines = unary[command.kind], let line = lines.first {
             lines.removeFirst()
             unary[command.kind] = lines
@@ -1367,12 +1658,19 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
     }
 
     func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error> {
+        recordedCommands[command.kind, default: []].append(command)
         let lines = streams[command.kind] ?? []
         return AsyncThrowingStream { continuation in
             for line in lines {
                 continuation.yield(line)
             }
             continuation.finish()
+        }
+    }
+
+    func recordedLoadModelRequests() throws -> [Melix_Worker_V1_LoadModelRequest] {
+        try recordedCommands[.loadModel, default: []].map {
+            try Melix_Worker_V1_LoadModelRequest(serializedBytes: $0.requestData)
         }
     }
 }
@@ -1442,6 +1740,9 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"second").decode("ascii")}), flush=True)
     elif args.command == "handshake":
         print(json.dumps({"kind": "message", "message_b64": ""}), flush=True)
+    elif payload == b"rpc-error":
+        print(json.dumps({"kind": "error", "code": "DEADLINE_EXCEEDED", "message": "timed out"}), flush=True)
+        sys.exit(1)
     else:
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"ok").decode("ascii")}), flush=True)
     """.write(

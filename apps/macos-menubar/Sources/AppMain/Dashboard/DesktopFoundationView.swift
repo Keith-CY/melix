@@ -89,41 +89,309 @@ struct DesktopModelsTabView: View {
     let foundation: DesktopFoundationState
     let viewModel: RuntimeViewModel
 
+    private let memoryPolicyOptions = [
+        ("Evictable", "evictable"),
+        ("Pinned", "pinned"),
+        ("TTL", "ttl"),
+    ]
+
+    private let diskStreamingModeOptions = [
+        ("Disabled", "disabled"),
+        ("Prefer Disk", "prefer_disk"),
+        ("Require Disk", "require_disk"),
+    ]
+
+    private let cacheModeOptions = [
+        ("Tiered", "tiered"),
+        ("Rotating", "rotating"),
+        ("Hybrid", "hybrid"),
+    ]
+
+    private let accelerationModeOptions = [
+        ("Baseline", "baseline"),
+        ("Speculative Decode", "speculative_decode"),
+        ("Accelerated Prefill", "accelerated_prefill"),
+        ("Active KV Quantized", "active_kv_quantized"),
+        ("Sparse Prefill", "sparse_prefill"),
+    ]
+
+    private let adaptiveThinkingModeOptions = [
+        ("Off", "off"),
+        ("Adaptive", "adaptive"),
+        ("Enabled", "enabled"),
+    ]
+
     var body: some View {
-        List(foundation.models, id: \.modelID) { model in
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.modelID)
-                        .font(.headline)
-                    Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(model.residencyText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(model.memoryText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if !model.memoryAlertText.isEmpty {
-                        Text(model.memoryAlertText)
+        VStack(alignment: .leading, spacing: 16) {
+            List(foundation.models, id: \.modelID) { model in
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.modelID)
+                            .font(.headline)
+                        Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !model.typeOverrideText.isEmpty {
+                            Text("type override: \(model.typeOverrideText)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(model.residencyText)
                             .font(.caption2)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.secondary)
+                        Text(model.memoryText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        if !model.memoryAlertText.isEmpty {
+                            Text(model.memoryAlertText)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                        }
+                        if model.adaptiveThinkingText != "Off" || model.toolParserFallbackText != "Off" {
+                            Text("adaptive thinking: \(model.adaptiveThinkingText) • parser fallback: \(model.toolParserFallbackText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if !model.cachePolicyText.isEmpty {
+                            Text("cache policy: \(model.cachePolicyText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if !model.cacheSettingsText.isEmpty {
+                            Text("cache settings: \(model.cacheSettingsText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text("\(model.memoryPolicyText) • \(model.diskStreamingModeText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
-                    Text("\(model.memoryPolicyText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Latency Profile", action: latencyProfileAction(for: model))
+                    .buttonStyle(.bordered)
+                    Button(model.actionTitle, action: toggleModelLoadAction(for: model))
+                    .buttonStyle(.borderedProminent)
                 }
-                Spacer()
-                Button("Latency Profile") {
-                    Task { await applyLatencyProfile(to: model) }
-                }
-                .buttonStyle(.bordered)
-                Button(model.actionTitle) {
-                    Task { await toggleModelLoad(for: model) }
-                }
-                .buttonStyle(.borderedProminent)
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .frame(minHeight: 260)
+
+            DesktopRegistryRootsSectionView(viewModel: viewModel)
+
+            if let primaryModel = viewModel.primaryModel {
+                GroupBox("Model Settings") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(primaryModel.modelID)
+                            .font(.headline)
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Alias",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAliasDraft },
+                                    set: { viewModel.modelSettingsAliasDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Type Override",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsTypeOverrideDraft },
+                                    set: { viewModel.modelSettingsTypeOverrideDraft = $0 }
+                                )
+                            )
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "TTL Seconds",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsTTLDraft },
+                                    set: { viewModel.modelSettingsTTLDraft = $0 }
+                                )
+                            )
+                            Toggle(
+                                "Pin On Load",
+                                isOn: Binding(
+                                    get: { viewModel.modelSettingsPinOnLoadDraft },
+                                    set: { viewModel.modelSettingsPinOnLoadDraft = $0 }
+                                )
+                            )
+                            .toggleStyle(.checkbox)
+                        }
+                        HStack(spacing: 12) {
+                            Picker(
+                                "Memory Policy",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsMemoryPolicyDraft },
+                                    set: { viewModel.modelSettingsMemoryPolicyDraft = $0 }
+                                )
+                            ) {
+                                ForEach(memoryPolicyOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            TextField(
+                                "Memory Budget Bytes",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsMemoryBudgetDraft },
+                                    set: { viewModel.modelSettingsMemoryBudgetDraft = $0 }
+                                )
+                            )
+                            Picker(
+                                "Acceleration",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsAccelerationModeDraft },
+                                    set: { viewModel.modelSettingsAccelerationModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(accelerationModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            Picker(
+                                "Disk Streaming",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsDiskStreamingModeDraft },
+                                    set: { viewModel.modelSettingsDiskStreamingModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(diskStreamingModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            Picker(
+                                "Cache Mode",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsCacheModeDraft },
+                                    set: { viewModel.modelSettingsCacheModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(cacheModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                            TextField(
+                                "Cache Budget Bytes",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheMemoryBudgetDraft },
+                                    set: { viewModel.modelSettingsCacheMemoryBudgetDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Cache Budget %",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheMemoryBudgetPctDraft },
+                                    set: { viewModel.modelSettingsCacheMemoryBudgetPctDraft = $0 }
+                                )
+                            )
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Cache Block Tokens",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheBlockSizeTokensDraft },
+                                    set: { viewModel.modelSettingsCacheBlockSizeTokensDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Cache Directory",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsCacheDirectoryDraft },
+                                    set: { viewModel.modelSettingsCacheDirectoryDraft = $0 }
+                                )
+                            )
+                            TextField(
+                                "Multimodal Cache Budget",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsMultimodalCacheBudgetDraft },
+                                    set: { viewModel.modelSettingsMultimodalCacheBudgetDraft = $0 }
+                                )
+                            )
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Acceleration Profile",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAccelerationProfileIDDraft },
+                                    set: { viewModel.modelSettingsAccelerationProfileIDDraft = $0 }
+                                )
+                            )
+                            Picker(
+                                "Adaptive Thinking",
+                                selection: Binding(
+                                    get: { viewModel.modelSettingsAdaptiveThinkingModeDraft },
+                                    set: { viewModel.modelSettingsAdaptiveThinkingModeDraft = $0 }
+                                )
+                            ) {
+                                ForEach(adaptiveThinkingModeOptions, id: \.1) { option in
+                                    Text(option.0).tag(option.1)
+                                }
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            TextField(
+                                "Adaptive Budget",
+                                text: Binding(
+                                    get: { viewModel.modelSettingsAdaptiveThinkingBudgetDraft },
+                                    set: { viewModel.modelSettingsAdaptiveThinkingBudgetDraft = $0 }
+                                )
+                            )
+                            Toggle(
+                                "Parser XML Fallback",
+                                isOn: Binding(
+                                    get: { viewModel.modelSettingsToolParserXMLFallbackDraft },
+                                    set: { viewModel.modelSettingsToolParserXMLFallbackDraft = $0 }
+                                )
+                            )
+                            .toggleStyle(.checkbox)
+                        }
+                        if primaryModel.kind == "ocr" {
+                            HStack(spacing: 12) {
+                                TextField(
+                                    "OCR Sampling Profile",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRSamplingProfileDraft },
+                                        set: { viewModel.modelSettingsOCRSamplingProfileDraft = $0 }
+                                    )
+                                )
+                                TextField(
+                                    "OCR Temperature",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRTemperatureDraft },
+                                        set: { viewModel.modelSettingsOCRTemperatureDraft = $0 }
+                                    )
+                                )
+                            }
+                            HStack(spacing: 12) {
+                                TextField(
+                                    "OCR Top P",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRTopPDraft },
+                                        set: { viewModel.modelSettingsOCRTopPDraft = $0 }
+                                    )
+                                )
+                                TextField(
+                                    "OCR Max Tokens",
+                                    text: Binding(
+                                        get: { viewModel.modelSettingsOCRMaxTokensDraft },
+                                        set: { viewModel.modelSettingsOCRMaxTokensDraft = $0 }
+                                    )
+                                )
+                            }
+                        }
+                        HStack {
+                            Button("Apply Settings", action: applyPrimaryModelSettingsAction())
+                            .buttonStyle(.borderedProminent)
+                            Button("Reset Draft", action: resetPrimaryModelSettingsAction())
+                            .buttonStyle(.bordered)
+                            Spacer()
+                            Button("Inspect", action: inspectPrimaryModelAction())
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
     }
 
@@ -133,6 +401,7 @@ struct DesktopModelsTabView: View {
             alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
+            diskStreamingMode: "disabled",
             accelerationMode: "speculative_decode",
             accelerationProfileID: "draft-q4"
         )
@@ -144,6 +413,153 @@ struct DesktopModelsTabView: View {
         } else {
             await viewModel.loadModel(modelID: model.modelID)
         }
+    }
+
+    func latencyProfileAction(for model: RuntimeModelRow) -> () -> Void {
+        { Task { await applyLatencyProfile(to: model) } }
+    }
+
+    func toggleModelLoadAction(for model: RuntimeModelRow) -> () -> Void {
+        { Task { await toggleModelLoad(for: model) } }
+    }
+
+    func applyPrimaryModelSettingsAction() -> () -> Void {
+        { Task { await viewModel.applyPrimaryModelSettings() } }
+    }
+
+    func resetPrimaryModelSettingsAction() -> () -> Void {
+        { viewModel.resetPrimaryModelSettingsDrafts() }
+    }
+
+    func inspectPrimaryModelAction() -> () -> Void {
+        { Task { await viewModel.inspectPrimaryModel() } }
+    }
+
+    func addRegistryRoot() async {
+        await viewModel.addRegistryRoot()
+    }
+
+    func removeRegistryRoot(_ root: RuntimeRegistryRootState) async {
+        await viewModel.removeRegistryRoot(rootID: root.id)
+    }
+
+    func moveRegistryRootUp(_ root: RuntimeRegistryRootState) async {
+        await viewModel.moveRegistryRootUp(rootID: root.id)
+    }
+
+    func moveRegistryRootDown(_ root: RuntimeRegistryRootState) async {
+        await viewModel.moveRegistryRootDown(rootID: root.id)
+    }
+
+    func rescanRegistryRoots() async {
+        await viewModel.rescanRegistryRoots()
+    }
+}
+
+private struct DesktopRegistryRootsSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        GroupBox("Registry Roots") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(viewModel.registryRootSummaryText)
+                            .font(.headline)
+                        Text("Last scanned: \(viewModel.registryScannedAtText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Rescan") {
+                        Task { await viewModel.rescanRegistryRoots() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                HStack(spacing: 12) {
+                    TextField(
+                        "Add Registry Root",
+                        text: Binding(
+                            get: { viewModel.registryRootPathDraft },
+                            set: { viewModel.registryRootPathDraft = $0 }
+                        )
+                    )
+                    Button("Add Root") {
+                        Task { await viewModel.addRegistryRoot() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.canAddRegistryRoot == false)
+                }
+
+                DesktopRegistryRootsListView(viewModel: viewModel)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DesktopRegistryRootsListView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let registryRoots: [RuntimeRegistryRootState] = viewModel.registryRoots
+
+        if registryRoots.isEmpty {
+            Text(
+                viewModel.registryHasConfiguredRootOverride
+                ? "No registry roots are configured yet."
+                : "No registry snapshot has been loaded yet."
+            )
+            .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(registryRoots.enumerated()), id: \.element.id) { index, root in
+                    DesktopRegistryRootRowView(
+                        root: root,
+                        isFirst: index == 0,
+                        isLast: index == registryRoots.count - 1,
+                        moveUp: { Task { await viewModel.moveRegistryRootUp(rootID: root.id) } },
+                        moveDown: { Task { await viewModel.moveRegistryRootDown(rootID: root.id) } },
+                        remove: { Task { await viewModel.removeRegistryRoot(rootID: root.id) } }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopRegistryRootRowView: View {
+    let root: RuntimeRegistryRootState
+    let isFirst: Bool
+    let isLast: Bool
+    let moveUp: () -> Void
+    let moveDown: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(root.rootPath)
+                    .font(.headline)
+                Text("#\(root.rootOrder) • \(root.statusText)")
+                    .font(.caption)
+                    .foregroundStyle(root.accessible ? Color.secondary : Color.orange)
+                Text(root.detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button("Up", action: moveUp)
+                .buttonStyle(.bordered)
+                .disabled(isFirst)
+            Button("Down", action: moveDown)
+                .buttonStyle(.bordered)
+                .disabled(isLast)
+            Button("Remove", action: remove)
+                .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -228,6 +644,9 @@ struct DesktopToolsTabView: View {
                             Button("Bench") {
                                 Task { await runBench() }
                             }
+                            Button("Convert") {
+                                Task { await convertPrimaryModel() }
+                            }
                             Button("Quantize") {
                                 Task { await quantizePrimaryModel() }
                             }
@@ -256,28 +675,7 @@ struct DesktopToolsTabView: View {
 
             if let info = viewModel.selectedModelInfo {
                 GroupBox("Model Info") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(info.modelID) • \(info.modelKind)")
-                            .font(.headline)
-                        Text("max context \(info.maxContext)")
-                        Text("parsers: \(info.supportedParsers.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                        Text("modalities: \(info.supportedModalities.joined(separator: ", "))")
-                            .foregroundStyle(.secondary)
-                        if !info.ocrPromptProfileText.isEmpty {
-                            Text("ocr prompt profile: \(info.ocrPromptProfileText)")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !info.ocrSamplingProfileText.isEmpty {
-                            Text("ocr sampling profile: \(info.ocrSamplingProfileText)")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !info.ocrStopSequencesText.isEmpty {
-                            Text("ocr stop sequences: \(info.ocrStopSequencesText)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopModelInfoSummaryView(info: info)
                 }
             }
 
@@ -294,6 +692,28 @@ struct DesktopToolsTabView: View {
                         }
                         if !operation.artifactKind.isEmpty {
                             Text("artifact \(operation.artifactKind) • \(operation.artifactBytes) bytes")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.targetRepo.isEmpty {
+                            Text("target repo \(operation.targetRepo)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.sourceArtifactKind.isEmpty {
+                            Text("source artifact \(operation.sourceArtifactKind)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.conversionTargetFormat.isEmpty {
+                            Text("target format \(operation.conversionTargetFormat)")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !operation.artifactRuntime.isEmpty {
+                            Text(
+                                "runtime \(operation.artifactRuntime) • serving \(operation.servingCompatible ? "compatible" : "not verified")"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                        if !operation.linkedQuantizationProfileID.isEmpty {
+                            Text("linked quant \(operation.linkedQuantizationProfileID)")
                                 .foregroundStyle(.secondary)
                         }
                         if operation.calibrationSampleCount > 0 {
@@ -396,13 +816,7 @@ struct DesktopToolsTabView: View {
 
             if let report = viewModel.lastDoctorReport {
                 GroupBox("Doctor Report") {
-                    ScrollView {
-                        Text(report.markdown)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesktopDoctorReportSummaryView(report: report)
                 }
             }
 
@@ -446,6 +860,10 @@ struct DesktopToolsTabView: View {
         await viewModel.quantizePrimaryModel()
     }
 
+    func convertPrimaryModel() async {
+        await viewModel.convertPrimaryModel()
+    }
+
     func trainPrimaryModel() async {
         await viewModel.trainPrimaryModel()
     }
@@ -477,6 +895,213 @@ struct DesktopToolsTabView: View {
     func runBench() async {
         await viewModel.runBench()
     }
+}
+
+struct DesktopModelInfoSummaryView: View {
+    let info: RuntimeModelInfoState
+
+    var body: some View {
+        let content = desktopModelInfoSummaryContent(info)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(content.headline)
+                .font(.headline)
+            Text(content.maxContext)
+            ForEach(Array(content.detailLines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct DesktopDoctorReportSummaryView: View {
+    let report: RuntimeDoctorReportState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !report.healthStatusText.isEmpty {
+                Text("Status: \(report.healthStatusText)")
+                    .font(.headline)
+            }
+            if report.findings.isEmpty == false {
+                ForEach(report.findings) { finding in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(finding.severityText) • \(finding.code)")
+                            .font(.caption.weight(.semibold))
+                        Text(finding.summary)
+                            .font(.caption)
+                        if !finding.detail.isEmpty {
+                            Text(finding.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            ScrollView {
+                Text(report.markdown)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct DesktopModelInfoSummaryContent: Equatable {
+    let headline: String
+    let maxContext: String
+    let detailLines: [String]
+}
+
+func desktopModelInfoSummaryContent(
+    _ info: RuntimeModelInfoState
+) -> DesktopModelInfoSummaryContent {
+    var detailLines: [String] = []
+    if !info.aliasText.isEmpty {
+        detailLines.append("alias: \(info.aliasText)")
+    }
+    if !info.typeOverrideText.isEmpty {
+        detailLines.append("type override: \(info.typeOverrideText)")
+    }
+    if !info.backendID.isEmpty {
+        detailLines.append("backend: \(info.backendID)")
+    }
+    if !info.familyID.isEmpty {
+        detailLines.append("family: \(info.familyID)")
+    }
+    if !info.audioInstallProfileText.isEmpty {
+        detailLines.append("audio install profile: \(info.audioInstallProfileText)")
+    }
+    if !info.audioLanguagesText.isEmpty {
+        detailLines.append("audio languages: \(info.audioLanguagesText)")
+    }
+    if !info.audioVoiceModeText.isEmpty {
+        detailLines.append("voice mode: \(info.audioVoiceModeText)")
+    }
+    if !info.audioOutputFormatsText.isEmpty {
+        detailLines.append("audio formats: \(info.audioOutputFormatsText)")
+    }
+    if !info.audioSupportsInstructionsText.isEmpty {
+        detailLines.append("instruction support: \(info.audioSupportsInstructionsText)")
+    }
+    if !info.audioVoiceLocalesText.isEmpty {
+        detailLines.append("voice locales: \(info.audioVoiceLocalesText)")
+    }
+    if !info.audioDefaultLocaleText.isEmpty {
+        detailLines.append("default locale: \(info.audioDefaultLocaleText)")
+    }
+    if !info.audioPackagedDefaultLocaleText.isEmpty {
+        detailLines.append("packaged default locale: \(info.audioPackagedDefaultLocaleText)")
+    }
+    if !info.audioLocalePolicyText.isEmpty {
+        detailLines.append("locale policy: \(info.audioLocalePolicyText)")
+    }
+    if !info.audioVoiceCatalogSummaryText.isEmpty {
+        detailLines.append("voice catalog: \(info.audioVoiceCatalogSummaryText)")
+    }
+    if !info.audioRuntimePackStateText.isEmpty {
+        detailLines.append("runtime pack state: \(info.audioRuntimePackStateText)")
+    }
+    if !info.audioRuntimePackIDText.isEmpty {
+        detailLines.append("runtime pack id: \(info.audioRuntimePackIDText)")
+    }
+    if !info.audioModelStateText.isEmpty {
+        detailLines.append("audio model state: \(info.audioModelStateText)")
+    }
+    if !info.defaultWorkflowRole.isEmpty {
+        detailLines.append("default workflow: \(info.defaultWorkflowRole)")
+    }
+    if !info.detectedIdentitySource.isEmpty {
+        detailLines.append("identity source: \(info.detectedIdentitySource)")
+    }
+    detailLines.append("memory policy: \(info.memoryPolicyText)")
+    if !info.memoryBudgetText.isEmpty {
+        detailLines.append("memory budget: \(info.memoryBudgetText)")
+    }
+    detailLines.append("disk streaming: \(info.diskStreamingModeText)")
+    if !info.cacheModeText.isEmpty {
+        detailLines.append("cache mode: \(info.cacheModeText)")
+    }
+    if !info.cacheCompatibilityText.isEmpty {
+        detailLines.append("cache compatibility: \(info.cacheCompatibilityText)")
+    }
+    if !info.cacheCompatibilityReasonText.isEmpty {
+        detailLines.append("cache detail: \(info.cacheCompatibilityReasonText)")
+    }
+    if !info.cacheDirectoryText.isEmpty {
+        detailLines.append("cache directory: \(info.cacheDirectoryText)")
+    }
+    if !info.cacheRootText.isEmpty {
+        detailLines.append("cache root: \(info.cacheRootText)")
+    }
+    if !info.cacheBlockSizeText.isEmpty {
+        detailLines.append("cache block size: \(info.cacheBlockSizeText)")
+    }
+    if !info.cacheBudgetText.isEmpty {
+        detailLines.append("cache budget: \(info.cacheBudgetText)")
+    }
+    if !info.multimodalCacheBudgetText.isEmpty {
+        detailLines.append("multimodal cache budget: \(info.multimodalCacheBudgetText)")
+    }
+    if !info.initialCacheBlocksText.isEmpty {
+        detailLines.append("initial cache blocks: \(info.initialCacheBlocksText)")
+    }
+    detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
+    detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
+    detailLines.append("parser fallback: \(info.toolParserFallbackText)")
+    detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
+    if info.ttlSeconds > 0 {
+        detailLines.append("ttl seconds: \(info.ttlSeconds)")
+    }
+    detailLines.append("parsers: \(info.supportedParsers.joined(separator: ", "))")
+    detailLines.append("modalities: \(info.supportedModalities.joined(separator: ", "))")
+    if !info.supportedTasks.isEmpty {
+        detailLines.append("tasks: \(info.supportedTasks.joined(separator: ", "))")
+    }
+    if !info.modelRevision.isEmpty {
+        detailLines.append("revision: \(info.modelRevision)")
+    }
+    if !info.modelPath.isEmpty {
+        detailLines.append("source path: \(info.modelPath)")
+    }
+    if !info.ocrPromptProfileText.isEmpty {
+        detailLines.append("ocr prompt profile: \(info.ocrPromptProfileText)")
+    }
+    if !info.generationConfigSourceText.isEmpty {
+        detailLines.append("generation config: \(info.generationConfigSourceText)")
+    }
+    let generationDefaultParts = [
+        info.generationConfigTemperatureText.isEmpty ? nil : "temp \(info.generationConfigTemperatureText)",
+        info.generationConfigTopPText.isEmpty ? nil : "top-p \(info.generationConfigTopPText)",
+        info.generationConfigMaxTokensText.isEmpty ? nil : "max \(info.generationConfigMaxTokensText)",
+    ].compactMap { $0 }
+    if !generationDefaultParts.isEmpty {
+        detailLines.append("generation defaults: \(generationDefaultParts.joined(separator: " • "))")
+    }
+    if !info.ocrSamplingProfileText.isEmpty {
+        detailLines.append("ocr sampling profile: \(info.ocrSamplingProfileText)")
+    }
+    let ocrSamplingParts = [
+        info.ocrSamplingProfileText.isEmpty ? nil : info.ocrSamplingProfileText,
+        info.ocrTemperatureText.isEmpty ? nil : "temp \(info.ocrTemperatureText)",
+        info.ocrTopPText.isEmpty ? nil : "top-p \(info.ocrTopPText)",
+        info.ocrMaxTokensText.isEmpty ? nil : "max \(info.ocrMaxTokensText)",
+    ].compactMap { $0 }
+    if !ocrSamplingParts.isEmpty {
+        detailLines.append("ocr sampling defaults: \(ocrSamplingParts.joined(separator: " • "))")
+    }
+    if !info.ocrStopSequencesText.isEmpty {
+        detailLines.append("ocr stop sequences: \(info.ocrStopSequencesText)")
+    }
+    return DesktopModelInfoSummaryContent(
+        headline: "\(info.modelID) • \(info.modelKind)",
+        maxContext: "max context \(info.maxContext)",
+        detailLines: detailLines
+    )
 }
 
 struct DesktopSettingsTabView: View {
@@ -544,25 +1169,56 @@ struct DesktopAPIReferenceTabView: View {
     let foundation: DesktopFoundationState
 
     var body: some View {
-        List(foundation.apiReference) { endpoint in
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(endpoint.method)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
-                    Text(endpoint.path)
-                        .font(.headline)
-                    Spacer()
-                    Text(endpoint.streaming ? "SSE" : "JSON")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text(endpoint.summary)
+        List {
+            if foundation.apiSurfaces.isEmpty {
+                Text("No API reference has been published by the control plane yet.")
                     .foregroundStyle(.secondary)
+            } else {
+                ForEach(foundation.apiSurfaces) { surface in
+                    Section {
+                        let surfaceEndpoints = foundation.apiReference.filter { $0.surfaceID == surface.id }
+                        if surfaceEndpoints.isEmpty {
+                            Text(surface.compatibilityNote.isEmpty ? "No routes are currently published for this surface." : surface.compatibilityNote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(surfaceEndpoints) { endpoint in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(endpoint.method)
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(.quaternary, in: Capsule())
+                                        Text(endpoint.path)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(endpoint.streaming ? "SSE" : "JSON")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(endpoint.summary)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(surface.title)
+                                Spacer()
+                                Text(surface.statusText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(surface.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .textCase(nil)
+                    }
+                }
             }
-            .padding(.vertical, 4)
         }
     }
 }
