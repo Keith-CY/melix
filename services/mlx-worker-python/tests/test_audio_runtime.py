@@ -222,6 +222,7 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     catalog = WorkerModelCatalog(
         environment={
             "MELIX_MLX_AUDIO_WHISPER_MODEL_PATH": "mlx-community/whisper-large-v3-turbo-asr-fp16",
+            "MELIX_MLX_AUDIO_PARAKEET_MODEL_PATH": "mlx-community/parakeet-tdt-0.6b-v2",
             "MELIX_MLX_AUDIO_KOKORO_MODEL_PATH": "mlx-community/Kokoro-82M-bf16",
         }
     )
@@ -229,6 +230,7 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     deterministic_transcription = catalog.get("melix-dev-transcribe")
     deterministic_speech = catalog.get("melix-dev-speech")
     whisper = catalog.get("melix-whisper-mlx")
+    parakeet = catalog.get("melix-parakeet-mlx")
     kokoro = catalog.get("melix-kokoro-mlx")
 
     assert deterministic_transcription is not None
@@ -252,6 +254,13 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert whisper.ext["melix.audio.backend_id"] == "mlx_audio.stt"
     assert whisper.ext["melix.audio.install_profile"] == "audio-stt"
     assert whisper.ext["melix.audio.family_id"] == "whisper"
+
+    assert parakeet is not None
+    assert parakeet.model_kind == "transcription"
+    assert parakeet.model_path == "mlx-community/parakeet-tdt-0.6b-v2"
+    assert parakeet.ext["melix.audio.backend_id"] == "mlx_audio.stt"
+    assert parakeet.ext["melix.audio.install_profile"] == "audio-stt"
+    assert parakeet.ext["melix.audio.family_id"] == "parakeet"
 
     assert kokoro is not None
     assert kokoro.model_kind == "speech"

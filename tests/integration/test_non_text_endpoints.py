@@ -346,6 +346,12 @@ def test_family_support_matrix_tracks_live_verified_family_overrides() -> None:
     assert rows[("text", "deepseek-mla")]["live_path"]["status"] == "verified"
     assert rows[("text", "nemotron-h")]["live_path"]["status"] == "verified"
     assert rows[("text", "mixtral")]["live_path"]["status"] == "contract_only"
+    assert rows[("transcription", "whisper")]["live_path"]["status"] == "contract_only"
+    assert rows[("transcription", "whisper")]["contract"]["backend_id"] == "mlx_audio.stt"
+    assert rows[("transcription", "whisper")]["contract"]["languages"] == ["auto"]
+    assert rows[("transcription", "parakeet")]["live_path"]["status"] == "contract_only"
+    assert rows[("transcription", "parakeet")]["contract"]["backend_id"] == "mlx_audio.stt"
+    assert rows[("transcription", "parakeet")]["contract"]["languages"] == ["auto"]
     assert rows[("embedding", "bge-m3")]["live_path"]["status"] == "verified"
     assert rows[("embedding", "mxbai-embed")]["live_path"]["status"] == "verified"
     assert rows[("rerank", "causal-lm")]["live_path"]["status"] == "verified"

@@ -1089,12 +1089,18 @@ struct PythonBridgeWorkerClientTests {
     func bootstrapWorkerPreparationLetsBuiltInAudioModelsOverrideModelPathFromSummaryMetadata() throws {
         var summary = ModelCatalog.mlxWhisperModel()
         summary.settings.ext["melix.model_path"] = "/tmp/melix-managed-audio/whisper"
+        var parakeetSummary = ModelCatalog.mlxParakeetModel()
+        parakeetSummary.settings.ext["melix.model_path"] = "/tmp/melix-managed-audio/parakeet"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+        let parakeetSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: parakeetSummary))
 
         #expect(spec.modelID == "melix-whisper-mlx")
         #expect(spec.modelPath == "/tmp/melix-managed-audio/whisper")
         #expect(spec.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeetSpec.modelID == "melix-parakeet-mlx")
+        #expect(parakeetSpec.modelPath == "/tmp/melix-managed-audio/parakeet")
+        #expect(parakeetSpec.ext["melix.audio.family_id"] == "parakeet")
     }
 
     @Test("bootstrap worker preparation carries VLM family metadata into worker model specs")
@@ -1257,6 +1263,7 @@ struct PythonBridgeWorkerClientTests {
     func bootstrapWorkerPreparationCarriesAudioMetadataIntoWorkerModelSpecs() throws {
         let deterministicSpeech = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.devSpeechModel()))
         let whisper = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxWhisperModel()))
+        let parakeet = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxParakeetModel()))
         let kokoro = try #require(BootstrapWorkerPreparation.modelSpec(for: ModelCatalog.mlxKokoroModel()))
 
         #expect(deterministicSpeech.modelID == "melix-dev-speech")
@@ -1269,6 +1276,12 @@ struct PythonBridgeWorkerClientTests {
         #expect(whisper.ext["melix.audio.backend_id"] == "mlx_audio.stt")
         #expect(whisper.ext["melix.audio.family_id"] == "whisper")
         #expect(whisper.ext["melix.audio.install_profile"] == "audio-stt")
+
+        #expect(parakeet.modelID == "melix-parakeet-mlx")
+        #expect(parakeet.modelKind == "transcription")
+        #expect(parakeet.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeet.ext["melix.audio.family_id"] == "parakeet")
+        #expect(parakeet.ext["melix.audio.install_profile"] == "audio-stt")
 
         #expect(kokoro.modelID == "melix-kokoro-mlx")
         #expect(kokoro.modelKind == "speech")

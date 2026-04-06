@@ -330,6 +330,10 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
 ## M17: Speech Backends And Voice Catalog
 
 - `M17.1` `docs/plans/2026-03-31-m17-1-speech-to-text-backend-adapters-and-model-matrix.md`
+  Status: completed. The Swift control-plane catalog, Python bridge model-spec path, and
+  repository-owned family support matrix now expose `Whisper`-class and `Parakeet`-class
+  speech-to-text families with stable capability metadata and focused Swift, Python, and
+  integration evidence.
 - `M17.2` `docs/plans/2026-03-31-m17-2-text-to-speech-backend-adapters-and-multilingual-voice-catalog.md`
 - `M17.3` `docs/plans/2026-03-31-m17-3-speech-settings-locale-policy-and-optional-dependency-profiles.md`
 - `M17.4` `docs/plans/2026-03-31-m17-4-speech-integration-benchmarks-runbooks-and-operator-evidence.md`

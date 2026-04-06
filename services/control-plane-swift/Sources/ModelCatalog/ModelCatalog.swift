@@ -1363,6 +1363,32 @@ public actor ModelCatalog {
         return withSynchronizedResidency(model)
     }
 
+    public static func mlxParakeetModel() -> Melix_Controlplane_V1_ModelSummary {
+        let familyID = "parakeet"
+        let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "transcription")
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-parakeet-mlx"
+        model.kind = "transcription"
+        model.state = .modelDiscovered
+        model.capabilityClass = .modelCapabilityTranscription
+        model.routeClass = .workerRoutePythonTranscription
+        model.quantProfileID = "fp16"
+        model.maxContext = 4096
+        model.features = ["audio", "transcription"]
+        model.settings.alias = "Melix Parakeet MLX"
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext.merge(
+            audioMetadata(
+                backendID: "mlx_audio.stt",
+                familyID: familyID,
+                installProfile: "audio-stt",
+                languages: ["auto"]
+            )
+        ) { _, new in new }
+        applyCapabilityAdapter(capabilityAdapter, to: &model)
+        return withSynchronizedResidency(model)
+    }
+
     public static func mlxKokoroModel() -> Melix_Controlplane_V1_ModelSummary {
         let familyID = "kokoro"
         let capabilityAdapter = audioCapabilityAdapter(familyID: familyID, modelKind: "speech")
@@ -1465,6 +1491,8 @@ public actor ModelCatalog {
             devOCRModel(),
             devVLMModel(),
             devTranscriptionModel(),
+            mlxWhisperModel(),
+            mlxParakeetModel(),
             devSpeechModel(),
         ]
     }

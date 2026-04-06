@@ -873,6 +873,8 @@ struct ModelCatalogTests {
         #expect(vlmModel.settings.ext["vision_supports_tool_calls"] == "true")
         #expect(vlmModel.settings.ext["melix.multimodal_adapter_hash"] == "vision-family-llava-v1")
         #expect(models.first(where: { $0.modelID == "melix-dev-transcribe" })?.supportedTasks == ["transcribe"])
+        #expect(models.first(where: { $0.modelID == "melix-whisper-mlx" })?.supportedTasks == ["transcribe"])
+        #expect(models.first(where: { $0.modelID == "melix-parakeet-mlx" })?.supportedTasks == ["transcribe"])
         #expect(models.first(where: { $0.modelID == "melix-dev-speech" })?.supportedModalities == ["text", "audio"])
     }
 
@@ -881,6 +883,7 @@ struct ModelCatalogTests {
         let deterministicTranscription = ModelCatalog.devTranscriptionModel()
         let deterministicSpeech = ModelCatalog.devSpeechModel()
         let whisper = ModelCatalog.mlxWhisperModel()
+        let parakeet = ModelCatalog.mlxParakeetModel()
         let kokoro = ModelCatalog.mlxKokoroModel()
 
         #expect(deterministicTranscription.settings.ext["melix.audio.backend_id"] == "deterministic")
@@ -898,6 +901,11 @@ struct ModelCatalogTests {
         #expect(whisper.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
         #expect(whisper.settings.ext["melix.audio.family_id"] == "whisper")
         #expect(whisper.settings.ext["melix.audio.install_profile"] == "audio-stt")
+
+        #expect(parakeet.kind == "transcription")
+        #expect(parakeet.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
+        #expect(parakeet.settings.ext["melix.audio.family_id"] == "parakeet")
+        #expect(parakeet.settings.ext["melix.audio.install_profile"] == "audio-stt")
 
         #expect(kokoro.kind == "speech")
         #expect(kokoro.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")

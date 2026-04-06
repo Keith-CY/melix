@@ -377,6 +377,7 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     _, deterministic_transcription = registry._runtime_for_model(WorkerModelCatalog.dev_transcription_model())
     _, deterministic_speech = registry._runtime_for_model(WorkerModelCatalog.dev_speech_model())
     _, whisper = registry._runtime_for_model(WorkerModelCatalog.mlx_whisper_model())
+    _, parakeet = registry._runtime_for_model(WorkerModelCatalog.mlx_parakeet_model())
     _, kokoro = registry._runtime_for_model(WorkerModelCatalog.mlx_kokoro_model())
 
     missing_backend = common_pb2.ModelSpec(
@@ -388,6 +389,7 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     assert deterministic_transcription.runtime_name == "deterministic-transcription"
     assert deterministic_speech.runtime_name == "deterministic-speech"
     assert whisper.runtime_name == "mlx-audio-stt"
+    assert parakeet.runtime_name == "mlx-audio-stt"
     assert kokoro.runtime_name == "mlx-audio-tts"
 
     with pytest.raises(RuntimeError, match="requires an explicit melix.audio.backend_id"):

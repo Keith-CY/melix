@@ -2,78 +2,88 @@
 
 ## Goal
 
-Close `M16.4` by leaving video understanding with one repository-owned operator-evidence workflow:
-live-path smoke coverage for representative video requests, measurable preprocessing/routing/latency
-data, and a runbook that explains how to reproduce and diagnose the current video path.
+Close `M17.1` by making real speech-to-text backend families first-class across the Melix catalog,
+the Swift Python-bridge path, and the repository-owned model-family support matrix.
 
 ## Scope
 
-- add a repository-owned `M16.4` video smoke command or script that exercises:
-  - one short local video path
-  - one remote video URL
-  - one bounded multi-frame workload
-- capture operator-relevant metrics for video requests, including preprocessing, routing, latency,
-  frame-policy, and cleanup evidence
-- add integration and unit coverage for the smoke payload and any new metrics-report helper
-- document the workflow in a dedicated runbook and update repository indexes once complete
+- add `Parakeet`-class transcription metadata to the Swift catalog and bridge so control-plane
+  discovery stays aligned with the existing Python worker registry
+- extend the repository-owned family support matrix and runbook coverage to include supported
+  speech-to-text backend families and their capability metadata
+- add or update focused Python, Swift, and integration coverage for transcription-family routing,
+  catalog metadata, and matrix rows
+- update milestone bookkeeping once acceptance is met
 
 ## Measurement Points
 
-- smoke output records per-scenario request latency and control-plane metric evidence
-- at least one scenario proves local-path video ingress, one proves remote-URL ingress, and one
-  proves bounded multi-frame window semantics
-- operator evidence includes background-lane or queue diagnosis signals rather than only response
-  payload checks
+- Swift and Python catalog surfaces expose the same transcription backend families and backend IDs
+- the family support matrix includes stable rows for `whisper` and `parakeet` with truthful support
+  status and capability metadata
+- integration coverage proves the matrix exports the new transcription-family rows instead of only
+  text, embedding, rerank, and image families
 - changed-line coverage for the touched executable scope remains at or above `95%`
 
 ## Phases
 
-1. M16.4 boundary lock and evidence-shape design
+1. M17.1 boundary lock and gap confirmation
    - status: completed
    - evidence:
-     - reviewed the umbrella `M16` roadmap slice, the dedicated `M16.4` plan, and existing smoke
-       patterns used by `M9.3`, `M11.4`, `M15.4`, and Phase 6 multimodal metrics reporting
-     - confirmed the preferred shape is a repository-owned smoke script plus metrics-report helper,
-       with no new operator UI surface required in this slice
-2. Video smoke workflow and metrics report implementation
+     - reviewed the dedicated `M17.1` plan, the umbrella `M17` roadmap slice, the current Swift
+       catalog and Python bridge implementations, and the existing family support matrix coverage
+     - confirmed the Python worker already exposes `whisper` and `parakeet` transcription families,
+       while the remaining gaps are Swift catalog parity and repository-owned matrix/runbook
+       coverage
+2. Swift catalog and bridge parity
    - status: completed
    - evidence:
-     - added `scripts/m16_video_runtime_smoke.py` so one repository-owned smoke workflow now
-       exercises local-path, remote-URL, bounded inline multi-frame, and routing-under-load video
-       requests through the live HTTP path
-     - added `build_phase16_video_metrics_report(...)` plus export wiring so the touched scope now
-       emits machine-readable success rates and operator metrics for video request latency,
-       frame-policy, cleanup, and scheduler evidence
-3. Integration coverage and runbook evidence
+     - added `mlxParakeetModel()` to `ModelCatalog.swift`, promoted `melix-whisper-mlx` and
+       `melix-parakeet-mlx` into the default phase-six contract seed set, and kept the real
+       speech-to-text families discoverable through the shared control-plane catalog path
+     - added the matching `melix-parakeet-mlx` bridge spec in
+       `PythonBridgeWorkerClient.swift` and extended focused Swift tests so transcription metadata
+       parity is enforced for deterministic, Whisper, Parakeet, and Kokoro entries
+3. Speech family matrix and integration evidence
    - status: completed
    - evidence:
-     - added `tests/integration/test_video_runtime_smoke.py` and expanded
-       `services/mlx-worker-python/tests/test_acceptance_metrics.py` so the smoke payload and
-       acceptance-metrics helper are covered together
-     - added `docs/runbooks/video-understanding-evidence.md` plus runbook and docs indexes so
-       reproduction, metric interpretation, cleanup diagnosis, and background-lane debugging are
-       documented in one repository-owned path
-4. Verification and roadmap bookkeeping
+     - extended the Python family support matrix to publish `transcription` rows for `whisper` and
+       `parakeet`, including stable `backend_id`, `install_profile`, and `languages` fields with
+       truthful `contract_only` live-path status
+     - expanded Python and integration coverage so exported matrix rows include the new
+       speech-to-text families and remain machine-checkable across catalog, runtime, and matrix
+       views
+4. Runbook and milestone bookkeeping
    - status: completed
    - evidence:
-     - focused `pytest` verification passed for the touched Python and integration scope, Python
-       changed-line coverage reached `100.00%` (`52/52`), and full `make py-test` passed
-     - `progress.md`, the dedicated `M16.4` plan, the umbrella `M16` roadmap file, and the
-       execution index are updated together once acceptance is met
+     - updated the model-family support matrix runbook to describe speech-to-text backend families,
+       capability fields, and support-status semantics alongside the existing text, embedding,
+       rerank, and image guidance
+     - updated `progress.md`, the `M17.1` plan, and the execution index together once acceptance
+       and verification evidence landed
+5. Verification and commit closure
+   - status: completed
+   - evidence:
+     - focused Python verification passed with `62 passed in 176.80s`, focused Swift verification
+       passed with `85 tests in 2 suites`, full `make py-test` passed with `531 passed in 35.07s`,
+       and full `make integration-test` passed with `74 passed in 1013.15s`
+     - changed-line coverage reached `100.00%` for both touched Python (`35/35`) and touched Swift
+       (`76/76`) scope, while `make swift-test` reproduced the pre-existing
+       `services/control-plane-swift` repository-wide hang after focused touched-scope suites had
+       already passed
 
 ## Acceptance
 
-- the repository owns reproducible live-path operator evidence for representative video workloads
-- smoke output records truthful preprocessing, routing, latency, frame-policy, and cleanup data
-- runbook guidance explains how to reproduce and diagnose the current video path without unwritten
-  context
+- Melix exposes `Whisper`-class and `Parakeet`-class speech-to-text models consistently across the
+  Swift catalog, bridge, and Python worker registry
+- the repository-owned family support matrix documents supported speech-to-text backend families
+  with stable capability metadata
 - verification proves the touched executable scope at or above `95%` changed-line coverage before
-  commit, and the current touched Python scope reaches `100.00%` (`52/52`)
+  commit
 
 ## Risks
 
-- if the smoke workflow only checks response text, `M16.4` will miss the operator-evidence goal
-- if remote-URL video evidence depends on an external network resource, the smoke will become
-  flaky and non-repository-owned
-- if the runbook omits queue and cleanup diagnosis, contributors will still need code spelunking to
-  interpret video failures
+- if Swift catalog parity is incomplete, control-plane surfaces will drift from the Python worker
+  truth even though the backend already supports the family
+- if the family support matrix overstates live support, operator guidance will stop being reliable
+- if integration coverage only checks catalog entries and not exported matrix rows, future changes
+  can silently drop speech-family visibility

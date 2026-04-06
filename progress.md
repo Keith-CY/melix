@@ -2,6 +2,46 @@
 
 ## 2026-04-06
 
+- Closed `M17.1` by making real speech-to-text backend families first-class across the Swift
+  catalog, the Python bridge path, and the repository-owned model-family support matrix:
+  - added `mlxParakeetModel()` to the Swift control-plane catalog and promoted both
+    `melix-whisper-mlx` and `melix-parakeet-mlx` into the default phase-six seed set, so real
+    speech-to-text models are now discoverable without bespoke test wiring
+  - added the matching `melix-parakeet-mlx` bridge model spec in
+    `services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift`, keeping
+    the control-plane bootstrap path aligned with the existing Python worker registry truth
+  - extended the repository-owned family support matrix with `transcription` rows for `whisper`
+    and `parakeet`, including stable `backend_id`, `install_profile`, and `languages` contract
+    fields plus truthful `contract_only` live-path status
+  - expanded focused Swift, Python, and integration coverage so catalog metadata, runtime routing,
+    and matrix exports all guard the new speech-to-text families
+- Verification summary for `M17.1`:
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q`: `62 passed in 176.80s (0:02:56)`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --data-file=/tmp/m17_1_python.coverage -m pytest services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py -q && PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage json --data-file=/tmp/m17_1_python.coverage -o /tmp/m17_1_python_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/m17_1_python_coverage.json services/mlx-worker-python/worker/productization/family_support_matrix.py services/mlx-worker-python/tests/test_audio_runtime.py services/mlx-worker-python/tests/test_mlx_audio_runtime.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_acceptance_metrics.py tests/integration/test_non_text_endpoints.py`: `62 passed in 176.16s (0:02:56)` and changed-line coverage `100.00%` (`35/35`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'ModelCatalogTests|PythonBridgeWorkerClientTests'`: `85 tests in 2 suites passed after 1.035 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift services/control-plane-swift/Tests/ControlPlaneTests/ModelCatalogTests.swift services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: `100.00%` (`76/76`)
+  - `make py-test`: `531 passed in 35.07s`
+  - `make swift-test`: repository-wide execution again blocked inside the untouched
+    `services/control-plane-swift` package after focused touched-scope Swift suites had already
+    passed; the hang was sampled, reproduced, and recorded as existing repository instability
+    rather than an `M17.1` regression
+  - `make integration-test`: `74 passed in 1013.15s (0:16:53)`
+  - `git diff --check`: pass
+- Metrics report for `M17.1`:
+  - the repository-owned family support matrix now exposes:
+    - `summary.transcription_family_count = 2`
+    - `("transcription", "whisper").contract.backend_id = "mlx_audio.stt"`
+    - `("transcription", "parakeet").contract.backend_id = "mlx_audio.stt"`
+    - `("transcription", "whisper").contract.install_profile = "audio-stt"`
+    - `("transcription", "parakeet").contract.install_profile = "audio-stt"`
+    - `("transcription", "whisper").contract.languages = ["auto"]`
+    - `("transcription", "parakeet").contract.languages = ["auto"]`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python touched-scope coverage: `100.00%` (`35/35`)
+    - Swift touched-scope coverage: `100.00%` (`76/76`)
+  - generated protobuf outputs and planning-status documents are excluded from executable
+    changed-line coverage because they are generated artifacts or repository bookkeeping
+
 - Closed `M16.4` and completed `M16` by adding repository-owned live video operator evidence on
   top of the ingress, frame-policy, routing, and cleanup slices:
   - added `scripts/m16_video_runtime_smoke.py` so one reproducible smoke workflow now exercises a

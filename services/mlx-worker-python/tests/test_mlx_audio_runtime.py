@@ -34,9 +34,18 @@ def _install_fake_mlx_audio(
     monkeypatch.setitem(sys.modules, "mlx_audio.tts.utils", mlx_audio_tts_utils)
 
 
+@pytest.mark.parametrize(
+    ("builder", "expected_family"),
+    [
+        (WorkerModelCatalog.mlx_whisper_model, "whisper"),
+        (WorkerModelCatalog.mlx_parakeet_model, "parakeet"),
+    ],
+)
 def test_mlx_audio_transcription_runtime_uses_lazy_import_and_cleans_up_inline_audio_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    builder,
+    expected_family: str,
 ) -> None:
     from worker.runtime.mlx_audio_runtime import MLXAudioTranscriptionRuntime
 
@@ -57,10 +66,10 @@ def test_mlx_audio_transcription_runtime_uses_lazy_import_and_cleans_up_inline_a
     _install_fake_mlx_audio(monkeypatch, stt_loader=fake_load_model)
 
     runtime = MLXAudioTranscriptionRuntime(temp_root=tmp_path)
-    loaded = runtime.load_model(WorkerModelCatalog.mlx_whisper_model())
+    loaded = runtime.load_model(builder())
 
     assert loaded.backend_id == "mlx_audio.stt"
-    assert loaded.family_id == "whisper"
+    assert loaded.family_id == expected_family
     assert loaded.runtime_name == "mlx-audio-stt"
 
     result = runtime.transcribe(

@@ -119,6 +119,20 @@ _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
         ],
     },
     {
+        "capability": "transcription",
+        "family_id": "whisper",
+        "model_id": "melix-whisper-mlx",
+        "environment": {},
+        "integration_tests": [],
+    },
+    {
+        "capability": "transcription",
+        "family_id": "parakeet",
+        "model_id": "melix-parakeet-mlx",
+        "environment": {},
+        "integration_tests": [],
+    },
+    {
         "capability": "rerank",
         "family_id": "basic",
         "model_id": "melix-dev-rerank",
@@ -254,6 +268,14 @@ def _contract_payload(variant: dict[str, Any]) -> dict[str, Any]:
                 "moe_gate_dequant": ext.get("melix.text.moe.gate_dequant", "") == "true",
             }
         )
+    elif variant["capability"] == "transcription":
+        contract.update(
+            {
+                "backend_id": ext.get("melix.audio.backend_id", ""),
+                "install_profile": ext.get("melix.audio.install_profile", ""),
+                "languages": _split_csv(ext.get("melix.audio.languages", "")),
+            }
+        )
     elif variant["capability"] == "rerank":
         contract.update(
             {
@@ -299,6 +321,7 @@ def build_family_support_matrix() -> dict[str, Any]:
         "summary": {
             "family_count": len(families),
             "text_family_count": sum(1 for row in families if row["capability"] == "text"),
+            "transcription_family_count": sum(1 for row in families if row["capability"] == "transcription"),
             "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
             "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
             "image_family_count": sum(1 for row in families if row["capability"] == "image"),

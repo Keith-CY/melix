@@ -265,11 +265,12 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         for row in matrix["families"]
     }
 
-    assert matrix["summary"]["family_count"] == 19
+    assert matrix["summary"]["family_count"] == 21
     assert matrix["summary"]["text_family_count"] == 6
+    assert matrix["summary"]["transcription_family_count"] == 2
     assert matrix["summary"]["image_family_count"] == 6
     assert matrix["summary"]["live_verified_count"] == 15
-    assert matrix["summary"]["contract_only_count"] == 4
+    assert matrix["summary"]["contract_only_count"] == 6
 
     qwen3moe = rows[("text", "qwen3moe")]
     assert qwen3moe["contract"]["route_kind"] == "python_text_compatibility"
@@ -290,6 +291,20 @@ def test_build_family_support_matrix_exposes_contract_rows_and_live_path_evidenc
         "tests/integration/test_non_text_endpoints.py::"
         "test_embeddings_endpoint_supports_bge_and_mxbai_family_overrides"
     ) in bge["live_path"]["integration_tests"]
+
+    whisper = rows[("transcription", "whisper")]
+    assert whisper["contract"]["route_kind"] == "python_transcription"
+    assert whisper["contract"]["backend_id"] == "mlx_audio.stt"
+    assert whisper["contract"]["install_profile"] == "audio-stt"
+    assert whisper["contract"]["languages"] == ["auto"]
+    assert whisper["live_path"]["status"] == "contract_only"
+
+    parakeet = rows[("transcription", "parakeet")]
+    assert parakeet["contract"]["route_kind"] == "python_transcription"
+    assert parakeet["contract"]["backend_id"] == "mlx_audio.stt"
+    assert parakeet["contract"]["install_profile"] == "audio-stt"
+    assert parakeet["contract"]["languages"] == ["auto"]
+    assert parakeet["live_path"]["status"] == "contract_only"
 
     basic = rows[("rerank", "basic")]
     assert basic["contract"]["route_kind"] == "python_rerank"

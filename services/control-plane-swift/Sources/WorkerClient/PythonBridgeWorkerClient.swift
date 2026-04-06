@@ -464,6 +464,8 @@ public enum BootstrapWorkerPreparation {
             return devSpeechModel()
         case "melix-whisper-mlx":
             return mlxWhisperModel()
+        case "melix-parakeet-mlx":
+            return mlxParakeetModel()
         case "melix-kokoro-mlx":
             return mlxKokoroModel()
         case "melix-dev-image":
@@ -1075,6 +1077,33 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.audio.output_formats"] = ""
         model.ext["melix.audio.supports_instructions"] = "false"
         model.ext["melix.adapter_set_hash"] = "audio-family-whisper"
+        model.ext["melix.capability.route_kind"] = "python_transcription"
+        model.ext["melix.capability.class"] = "transcription"
+        model.ext["melix.capability.supported_modalities"] = "audio,text"
+        model.ext["melix.capability.supported_tasks"] = "transcribe"
+        model.ext["melix.capability.supported_parsers"] = "text"
+        return model
+    }
+
+    private static func mlxParakeetModel() -> Melix_Worker_V1_ModelSpec {
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "melix-parakeet-mlx"
+        model.modelPath = "mlx-community/parakeet-tdt-0.6b-v2"
+        model.modelKind = "transcription"
+        model.revision = "mlx-audio"
+        model.tokenizerHash = "tok-parakeet-mlx"
+        model.quantProfileID = "fp16"
+        model.parserMode = "text"
+        model.reasoningMode = "off"
+        model.maxContext = 4096
+        model.ext["melix.audio.backend_id"] = "mlx_audio.stt"
+        model.ext["melix.audio.family_id"] = "parakeet"
+        model.ext["melix.audio.install_profile"] = "audio-stt"
+        model.ext["melix.audio.languages"] = "auto"
+        model.ext["melix.audio.voice_mode"] = ""
+        model.ext["melix.audio.output_formats"] = ""
+        model.ext["melix.audio.supports_instructions"] = "false"
+        model.ext["melix.adapter_set_hash"] = "audio-family-parakeet"
         model.ext["melix.capability.route_kind"] = "python_transcription"
         model.ext["melix.capability.class"] = "transcription"
         model.ext["melix.capability.supported_modalities"] = "audio,text"
