@@ -1254,6 +1254,10 @@ def test_ocr_and_vlm_runtimes_expose_probe_snapshots_after_cancelled_generation(
     vlm_probe = vlm_runtime.last_probe_snapshot()
     assert vlm_probe.preprocess_input_bytes == len(b"cancelled vision input")
     assert vlm_probe.first_token_latency_ms >= 0.0
+    assert vlm_probe.temp_media_artifact_count == 1
+    assert vlm_probe.temp_media_artifact_bytes == len(b"cancelled vision input")
+    assert vlm_probe.temp_media_cleanup_latency_ms >= 0.0
+    assert vlm_probe.temp_media_cleanup_failure_count == 0
 
 
 def test_ocr_runtime_render_prompt_accepts_chat_template_kwargs() -> None:

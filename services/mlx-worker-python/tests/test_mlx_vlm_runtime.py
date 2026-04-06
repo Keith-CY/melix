@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from threading import Event
 import time
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from worker.runtime.mlx_vlm_runtime import (
     MLXVLMRuntime,
     _gemma4_multimodal_weight_presence,
 )
+from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
 def imported_gemma4_vlm_model() -> common_pb2.ModelSpec:
@@ -160,9 +162,106 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert stream_calls[0][0] == "formatted::Describe the image."
     assert len(stream_calls[0][1]) == 1
     assert stream_calls[0][2] == [b"fake-image-payload"]
+    assert not Path(stream_calls[0][1][0]).exists()
     probe = runtime.last_probe_snapshot()
     assert probe.preprocess_input_bytes == len(b"fake-image-payload")
     assert probe.first_token_latency_ms > 0.0
+    assert probe.temp_media_artifact_count == 1
+    assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
+    assert probe.temp_media_cleanup_latency_ms >= 0.0
+    assert probe.temp_media_cleanup_failure_count == 0
+
+
+def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: Path) -> None:
+    sessions: list[TempMediaSession] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace()
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        yield SimpleNamespace(
+            text="A photo of a cat",
+            prompt_tokens=12,
+            generation_tokens=1,
+            prompt_tps=110.0,
+            generation_tps=24.0,
+            peak_memory=1.5,
+        )
+
+    def failing_cleanup(_path: Path) -> None:
+        raise OSError("cleanup failed")
+
+    def session_factory(**kwargs) -> TempMediaSession:
+        session = TempMediaSession(
+            cleanup_impl=failing_cleanup,
+            **kwargs,
+        )
+        sessions.append(session)
+        return session
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        ),
+        temp_root=tmp_path,
+        temp_media_session_factory=session_factory,
+    )
+
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=16),
+            Event(),
+        )
+    )
+
+    assert "".join(event.text for event in events) == "A photo of a cat"
+    assert sessions
+    assert sessions[0].session_root is not None
+    assert sessions[0].session_root.exists()
+    probe = runtime.last_probe_snapshot()
+    assert probe.temp_media_artifact_count == 1
+    assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
+    assert probe.temp_media_cleanup_failure_count == 1
+    assert probe.temp_media_cleanup_latency_ms >= 0.0
 
 
 def test_gemma4_multimodal_weight_presence_detects_text_backed_exports() -> None:

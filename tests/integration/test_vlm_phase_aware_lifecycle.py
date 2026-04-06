@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 
 import grpc
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, inference_pb2_grpc, runtime_pb2, runtime_pb2_grpc
-from tests.integration.helpers import LiveMelixStack
+from tests.integration.helpers import LiveMelixStack, abort_worker_request
 from worker.model_registry.catalog import WorkerModelCatalog
+
+
+def _load_dev_vlm_model(runtime_stub: runtime_pb2_grpc.RuntimeServiceStub) -> str:
+    load_response = runtime_stub.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        timeout=5,
+    )
+    assert load_response.ok is True
+    assert load_response.model_handle
+    return load_response.model_handle
 
 
 def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
@@ -21,12 +33,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
 
-        load_response = runtime_stub.LoadModel(
-            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
-            timeout=5,
-        )
-        assert load_response.ok is True
-        assert load_response.model_handle
+        model_handle = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-prefill"
         messages = [
@@ -51,7 +58,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
             inference_pb2.PrefillRequest(
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=load_response.model_handle,
+                    model_handle=model_handle,
                 ),
                 messages=messages,
                 return_decode_handle=True,
@@ -75,7 +82,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
             inference_pb2.DecodeRequest(
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=load_response.model_handle,
+                    model_handle=model_handle,
                 ),
                 decode_handle=prefill_response.decode_handle,
                 sampling=common_pb2.SamplingConfig(max_output_tokens=64),
@@ -208,12 +215,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
 
-        load_response = runtime_stub.LoadModel(
-            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
-            timeout=5,
-        )
-        assert load_response.ok is True
-        assert load_response.model_handle
+        model_handle = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-video-prefill"
         messages = [
@@ -242,7 +244,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
             inference_pb2.PrefillRequest(
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=load_response.model_handle,
+                    model_handle=model_handle,
                 ),
                 messages=messages,
                 return_decode_handle=True,
@@ -258,7 +260,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
             inference_pb2.DecodeRequest(
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=load_response.model_handle,
+                    model_handle=model_handle,
                 ),
                 decode_handle=prefill_response.decode_handle,
                 sampling=common_pb2.SamplingConfig(max_output_tokens=64),
@@ -287,6 +289,150 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
         assert final_stats.last_video_effective_frame_count == 5
         assert final_stats.last_video_requested_frame_budget == 5
         assert final_stats.last_video_window_ms == 2_000
+    finally:
+        if channel is not None:
+            channel.close()
+        stack.stop()
+
+
+def test_python_vlm_worker_records_temp_media_cleanup_metrics_for_generate() -> None:
+    stack = LiveMelixStack(Path(__file__).resolve().parents[2])
+    channel = None
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        channel = grpc.insecure_channel(f"unix://{stack.python_socket_path}")
+        runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
+        inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
+        model_handle = _load_dev_vlm_model(runtime_stub)
+
+        request_id = "integration-vlm-temp-media-success"
+        events = list(
+            inference_stub.Generate(
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id=request_id),
+                        model_handle=model_handle,
+                    ),
+                    messages=[
+                        common_pb2.ChatMessage(
+                            role="user",
+                            parts=[
+                                common_pb2.MessagePart(text="Describe the image."),
+                                common_pb2.MessagePart(
+                                    image_bytes=b"integration temp image",
+                                    media=common_pb2.MediaMetadata(
+                                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                        mime_type="image/png",
+                                        filename="integration.png",
+                                    ),
+                                ),
+                            ],
+                        )
+                    ],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=32),
+                    stream=True,
+                    return_usage=True,
+                ),
+                timeout=5,
+            )
+        )
+
+        completed = next(event.completed for event in events if event.HasField("completed"))
+        final_stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=5).stats
+
+        assert completed.finish_reason == "stop"
+        assert final_stats.last_probe_kind == "vlm"
+        assert final_stats.last_temp_media_artifact_count == 1
+        assert final_stats.last_temp_media_artifact_bytes == len(b"integration temp image")
+        assert final_stats.last_temp_media_cleanup_latency_ms >= 0.0
+        assert final_stats.last_temp_media_cleanup_failure_count == 0
+    finally:
+        if channel is not None:
+            channel.close()
+        stack.stop()
+
+
+def test_python_vlm_worker_cleans_temp_media_on_cancelled_generate() -> None:
+    stack = LiveMelixStack(
+        Path(__file__).resolve().parents[2],
+        environment_overrides={"MELIX_DETERMINISTIC_VLM_DELAY_MS": "200"},
+    )
+    channel = None
+
+    try:
+        stack.start()
+        stack.wait_for_models(["melix-dev-vlm"])
+
+        channel = grpc.insecure_channel(f"unix://{stack.python_socket_path}")
+        runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
+        inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
+        model_handle = _load_dev_vlm_model(runtime_stub)
+
+        request_id = "integration-vlm-temp-media-cancel"
+        response_stream = inference_stub.Generate(
+            inference_pb2.GenerateRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[
+                            common_pb2.MessagePart(text="Summarize the clip."),
+                            common_pb2.MessagePart(
+                                video_bytes=b"integration temp video",
+                                media=common_pb2.MediaMetadata(
+                                    media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                                    source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                    mime_type="video/mp4",
+                                    format="mp4",
+                                    filename="cancel.mp4",
+                                    frame_budget=5,
+                                    start_ms=400,
+                                    end_ms=2_400,
+                                ),
+                            ),
+                        ],
+                    )
+                ],
+                sampling=common_pb2.SamplingConfig(max_output_tokens=32),
+                stream=True,
+                return_usage=True,
+            ),
+            timeout=5,
+        )
+
+        events: list[inference_pb2.ExecuteEvent] = []
+        errors: list[BaseException] = []
+
+        def consume_stream() -> None:
+            try:
+                events.extend(list(response_stream))
+            except BaseException as exc:  # pragma: no cover - defensive thread capture
+                errors.append(exc)
+
+        consumer = threading.Thread(target=consume_stream, daemon=True)
+        consumer.start()
+        time.sleep(0.05)
+        assert abort_worker_request(stack.python_socket_path, request_id) is True
+        consumer.join(timeout=5)
+
+        assert not errors
+        assert consumer.is_alive() is False
+        completed = next(event.completed for event in events if event.HasField("completed"))
+        final_stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=5).stats
+
+        assert completed.finish_reason == "cancelled"
+        assert final_stats.last_probe_kind == "vlm"
+        assert final_stats.last_temp_media_artifact_count == 1
+        assert final_stats.last_temp_media_artifact_bytes == len(b"integration temp video")
+        assert final_stats.last_temp_media_cleanup_latency_ms >= 0.0
+        assert final_stats.last_temp_media_cleanup_failure_count == 0
     finally:
         if channel is not None:
             channel.close()

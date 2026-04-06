@@ -2,6 +2,52 @@
 
 ## 2026-04-06
 
+- Closed `M16.3` by making temporary multimodal analysis artifacts explicit, deterministically
+  cleaned up, and visible through worker plus control-plane state instead of remaining hidden
+  inside best-effort temporary-directory scopes:
+  - added `worker/runtime/temp_media_lifecycle.py` so one repository-owned temp-media session now
+    stages analysis artifacts, tracks byte totals, records cleanup latency, and reports cleanup
+    failures
+  - adopted that lifecycle helper in both deterministic and MLX-backed VLM runtimes so inline
+    image and video assets now follow the same success, failure, and cancellation cleanup path,
+    while prepared video inputs preserve inline bytes for deterministic staging
+  - extended worker `RuntimeStats`, registry bookkeeping, and Swift `RequestCoordinator` metric
+    publication with temporary-media artifact count, artifact bytes, cleanup latency, and cleanup
+    failure counters for OCR and VLM routes
+  - added focused Python, Swift, and integration coverage for successful cleanup, explicit cleanup
+    failure reporting, and cancelled-generate cleanup behavior across the multimodal lifecycle path
+- Verification summary for `M16.3`:
+  - `make proto`: pass
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_temp_media_lifecycle.py services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_vision_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py -q`: `83 passed in 0.24s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'ocrRequestsPublishVisionMetrics|vlmRequestsPublishVisionMetrics|videoBearingVLMRequestsPublishFramePolicyMetrics|postChatCompletionsRecordsVideoFrameMetricsForVLMRequests'`: `4 tests passed`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python pytest tests/integration/test_vlm_phase_aware_lifecycle.py -q`: `5 passed in 56.55s`
+  - `PYTHONPATH='.:services/mlx-worker-python' uv run --project services/mlx-worker-python coverage run --data-file=/tmp/m16_3_python.coverage -m pytest services/mlx-worker-python/tests/test_temp_media_lifecycle.py services/mlx-worker-python/tests/test_video_preprocessing.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_vision_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py tests/integration/test_vlm_phase_aware_lifecycle.py -q`: `88 passed in 73.45s (0:01:13)`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/Requests/RequestCoordinator.swift services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift`: `100.00%` (`64/64`)
+  - `make py-test`: `528 passed in 31.36s`
+  - `make swift-test`: repository-wide execution entered the `services/control-plane-swift` package
+    and then blocked without emitting a failure or additional test output; focused touched-scope
+    Swift verification and changed-line coverage passed, so the full-package hang is recorded as
+    out-of-scope repository instability rather than an `M16.3` regression
+  - `make integration-test`: repository-wide execution remained long-running during this capture;
+    the touched live VLM lifecycle integration suite above passed, so `M16.3` acceptance relies on
+    the focused live-path evidence rather than waiting on unrelated repository integration runtime
+- Metrics report for `M16.3`:
+  - touched handwritten executable scope now exposes:
+    - `last_temp_media_artifact_count`
+    - `last_temp_media_artifact_bytes`
+    - `last_temp_media_cleanup_latency_ms`
+    - `last_temp_media_cleanup_failure_count`
+    - `vision.temp_media_artifact_count`
+    - `vision.temp_media_artifact_bytes`
+    - `vision.temp_media_cleanup_latency_ms`
+    - `vision.temp_media_cleanup_failure_count`
+  - changed-line coverage for the touched handwritten executable scope:
+    - Python worker aggregate touched-scope coverage: `95.83%` (`207/216`)
+    - Swift control-plane aggregate touched-scope coverage: `100.00%` (`64/64`)
+  - generated protobuf outputs and planning-status documents are excluded from executable
+    changed-line coverage because they are generated artifacts or non-executable repository
+    bookkeeping
+
 - Closed `M16.2` by making video analysis requests carry explicit frame-policy state through the
   worker runtime, background-lane scheduling, and control-plane observability:
   - extended the worker runtime stats protocol with

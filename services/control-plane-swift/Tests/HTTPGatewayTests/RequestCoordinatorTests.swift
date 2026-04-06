@@ -609,6 +609,10 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 12
             response.stats.lastPreprocessPeakMemoryBytes = 8192
             response.stats.lastFirstTokenLatencyMs = 5
+            response.stats.lastTempMediaArtifactCount = 1
+            response.stats.lastTempMediaArtifactBytes = 512
+            response.stats.lastTempMediaCleanupLatencyMs = 2
+            response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 1024
             response.stats.l1HitRate = 0.25
             return response
@@ -653,6 +657,10 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 12)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 8192)
         #expect(metrics.values["vision.ocr_latency_ms", default: -1] == 5)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 1)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 512)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 0)
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 1024)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 25)
     }
@@ -666,6 +674,10 @@ struct RequestCoordinatorTests {
             response.stats.lastPreprocessLatencyMs = 18
             response.stats.lastPreprocessPeakMemoryBytes = 16384
             response.stats.lastFirstTokenLatencyMs = 9
+            response.stats.lastTempMediaArtifactCount = 1
+            response.stats.lastTempMediaArtifactBytes = 1024
+            response.stats.lastTempMediaCleanupLatencyMs = 3
+            response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 2048
             response.stats.l1HitRate = 0.5
             return response
@@ -710,6 +722,10 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.preprocess_latency_ms", default: -1] == 18)
         #expect(metrics.values["vision.preprocess_peak_memory_bytes", default: -1] == 16384)
         #expect(metrics.values["vision.vlm_first_token_ms", default: -1] == 9)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 1)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 1024)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 3)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 0)
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
@@ -727,6 +743,10 @@ struct RequestCoordinatorTests {
             response.stats.lastVideoEffectiveFrameCount = 6
             response.stats.lastVideoRequestedFrameBudget = 6
             response.stats.lastVideoWindowMs = 4_000
+            response.stats.lastTempMediaArtifactCount = 2
+            response.stats.lastTempMediaArtifactBytes = 2048
+            response.stats.lastTempMediaCleanupLatencyMs = 4
+            response.stats.lastTempMediaCleanupFailureCount = 1
             response.stats.l1CacheBytes = 2_048
             response.stats.l1HitRate = 0.5
             return response
@@ -779,6 +799,10 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
         #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
         #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2048)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
     }
 
     @Test("worker unavailable requests are rejected before dispatch")

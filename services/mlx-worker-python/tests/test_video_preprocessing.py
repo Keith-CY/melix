@@ -32,6 +32,7 @@ def test_prepare_video_input_accepts_inline_bytes_with_explicit_metadata() -> No
     assert prepared == PreparedVideoInput(
         source_kind="inline",
         reference="inline:video",
+        bytes_data=b"video-bytes",
         mime_type="video/mp4",
         format="mp4",
         filename="inline.mp4",
@@ -61,6 +62,7 @@ def test_prepare_video_input_accepts_uri_and_infers_format_from_reference() -> N
 
     assert prepared.source_kind == "uri"
     assert prepared.reference == "https://example.com/media/demo.mov"
+    assert prepared.bytes_data == b""
     assert prepared.mime_type == ""
     assert prepared.format == "mov"
     assert prepared.filename == "demo.mov"
@@ -85,6 +87,7 @@ def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> Non
 
     assert prepared.source_kind == "uri"
     assert prepared.reference == "/tmp/local-demo"
+    assert prepared.bytes_data == b""
     assert prepared.format == "webm"
     assert prepared.filename == "local-demo"
     assert len(prepared.sha256_hex) == 64

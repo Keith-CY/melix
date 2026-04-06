@@ -24,6 +24,7 @@ MAX_VIDEO_FRAME_BUDGET = 128
 class PreparedVideoInput:
     source_kind: str
     reference: str
+    bytes_data: bytes
     mime_type: str
     format: str
     filename: str
@@ -53,6 +54,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
         return PreparedVideoInput(
             source_kind="inline",
             reference="inline:video",
+            bytes_data=bytes_data,
             mime_type=mime_type,
             format=resolved_format,
             filename=filename or f"inline-video.{resolved_format}",
@@ -73,6 +75,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
     return PreparedVideoInput(
         source_kind="uri",
         reference=uri,
+        bytes_data=b"",
         mime_type=mime_type,
         format=resolved_format,
         filename=resolved_filename,

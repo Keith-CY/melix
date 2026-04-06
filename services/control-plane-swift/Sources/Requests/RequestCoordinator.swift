@@ -2094,6 +2094,22 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.ocr_latency_ms")
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactCount),
+                forKey: "vision.temp_media_artifact_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactBytes),
+                forKey: "vision.temp_media_artifact_bytes"
+            )
+            await metricsStore.set(
+                stats.lastTempMediaCleanupLatencyMs,
+                forKey: "vision.temp_media_cleanup_latency_ms"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaCleanupFailureCount),
+                forKey: "vision.temp_media_cleanup_failure_count"
+            )
             await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
             await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonVLM:
@@ -2103,6 +2119,22 @@ public actor RequestCoordinator {
                 forKey: "vision.preprocess_peak_memory_bytes"
             )
             await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactCount),
+                forKey: "vision.temp_media_artifact_count"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaArtifactBytes),
+                forKey: "vision.temp_media_artifact_bytes"
+            )
+            await metricsStore.set(
+                stats.lastTempMediaCleanupLatencyMs,
+                forKey: "vision.temp_media_cleanup_latency_ms"
+            )
+            await metricsStore.set(
+                Double(stats.lastTempMediaCleanupFailureCount),
+                forKey: "vision.temp_media_cleanup_failure_count"
+            )
             if stats.lastVideoEffectiveFrameCount > 0 {
                 await metricsStore.set(
                     Double(stats.lastVideoEffectiveFrameCount),

@@ -133,6 +133,10 @@ class WorkerRegistry:
         self._last_video_effective_frame_count = 0
         self._last_video_requested_frame_budget = 0
         self._last_video_window_ms = 0
+        self._last_temp_media_artifact_count = 0
+        self._last_temp_media_artifact_bytes = 0
+        self._last_temp_media_cleanup_latency_ms = 0.0
+        self._last_temp_media_cleanup_failure_count = 0
         self._last_image_job_latency_ms = 0.0
         self._last_image_artifact_publish_ms = 0.0
         self._last_image_output_bytes = 0
@@ -324,6 +328,10 @@ class WorkerRegistry:
             last_video_effective_frame_count = self._last_video_effective_frame_count
             last_video_requested_frame_budget = self._last_video_requested_frame_budget
             last_video_window_ms = self._last_video_window_ms
+            last_temp_media_artifact_count = self._last_temp_media_artifact_count
+            last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
+            last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
+            last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
             last_image_job_latency_ms = self._last_image_job_latency_ms
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
@@ -356,6 +364,10 @@ class WorkerRegistry:
             last_video_effective_frame_count=last_video_effective_frame_count,
             last_video_requested_frame_budget=last_video_requested_frame_budget,
             last_video_window_ms=last_video_window_ms,
+            last_temp_media_artifact_count=last_temp_media_artifact_count,
+            last_temp_media_artifact_bytes=last_temp_media_artifact_bytes,
+            last_temp_media_cleanup_latency_ms=last_temp_media_cleanup_latency_ms,
+            last_temp_media_cleanup_failure_count=last_temp_media_cleanup_failure_count,
             last_image_job_latency_ms=last_image_job_latency_ms,
             last_image_artifact_publish_ms=last_image_artifact_publish_ms,
             last_image_output_bytes=last_image_output_bytes,
@@ -399,6 +411,10 @@ class WorkerRegistry:
             self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))
             self._last_video_requested_frame_budget = int(getattr(probe, "video_requested_frame_budget", 0))
             self._last_video_window_ms = int(getattr(probe, "video_window_ms", 0))
+            self._last_temp_media_artifact_count = int(getattr(probe, "temp_media_artifact_count", 0))
+            self._last_temp_media_artifact_bytes = int(getattr(probe, "temp_media_artifact_bytes", 0))
+            self._last_temp_media_cleanup_latency_ms = float(getattr(probe, "temp_media_cleanup_latency_ms", 0.0))
+            self._last_temp_media_cleanup_failure_count = int(getattr(probe, "temp_media_cleanup_failure_count", 0))
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -420,6 +436,10 @@ class WorkerRegistry:
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -441,6 +461,10 @@ class WorkerRegistry:
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = 0.0
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
@@ -469,6 +493,10 @@ class WorkerRegistry:
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0
+            self._last_temp_media_artifact_count = 0
+            self._last_temp_media_artifact_bytes = 0
+            self._last_temp_media_cleanup_latency_ms = 0.0
+            self._last_temp_media_cleanup_failure_count = 0
             self._last_image_job_latency_ms = float(getattr(probe, "job_latency_ms", 0.0))
             self._last_image_artifact_publish_ms = float(getattr(probe, "artifact_publish_ms", 0.0))
             self._last_image_output_bytes = int(getattr(probe, "output_bytes", 0))

@@ -311,6 +311,11 @@ The roadmap extension in `M10-M17` includes milestone-level plans plus decompose
   request coordinator, worker runtime probes export video frame and clip-window evidence, and the
   touched Python plus Swift scope records repository-owned changed-line coverage evidence.
 - `M16.3` `docs/plans/2026-03-31-m16-3-temporary-media-lifecycle-cleanup-and-failure-recovery.md`
+  Status: completed. Temporary multimodal analysis assets now flow through one repository-owned
+  temp-media lifecycle helper, deterministic and MLX VLM runtimes report cleanup counts, bytes,
+  latency, and failures through runtime stats, the Swift control plane publishes cleanup metrics
+  for OCR and VLM routes, and focused Python, Swift, and integration coverage evidence is recorded
+  in the repository.
 - `M16.4` `docs/plans/2026-03-31-m16-4-video-integration-benchmarks-and-operator-evidence.md`
 
 ## M17: Speech Backends And Voice Catalog

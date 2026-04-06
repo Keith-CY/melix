@@ -3,15 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import importlib.util
-import tempfile
 import time
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Callable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
+from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
 
 
@@ -248,8 +248,15 @@ class AutoMLXVLMBackend:
 
 
 class MLXVLMRuntime:
-    def __init__(self, backend: AutoMLXVLMBackend | None = None) -> None:
+    def __init__(
+        self,
+        backend: AutoMLXVLMBackend | None = None,
+        temp_root: Path | str | None = None,
+        temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+    ) -> None:
         self._backend = backend or AutoMLXVLMBackend()
+        self._temp_root = Path(temp_root) if temp_root is not None else None
+        self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
 
     @property
@@ -345,8 +352,12 @@ class MLXVLMRuntime:
             return
 
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
-        with tempfile.TemporaryDirectory(prefix="melix-vlm-") as temp_dir:
-            image_paths = self._materialize_images(prepared_request, Path(temp_dir))
+        temp_media_session = self._temp_media_session_factory(
+            temp_root=self._temp_root,
+            prefix="melix-vlm-",
+        )
+        try:
+            image_paths = self._materialize_media(prepared_request, temp_media_session)
             formatted_prompt = self._backend.apply_chat_template_fn(
                 loaded_model["processor"],
                 loaded_model["model"].config,
@@ -402,22 +413,43 @@ class MLXVLMRuntime:
                     peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                     finish_reason="stop",
                 )
+        finally:
+            cleanup_report = temp_media_session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
 
     @staticmethod
-    def _materialize_images(
+    def _materialize_media(
         prepared_request: PreparedVisionRequest,
-        root: Path,
+        temp_media_session: TempMediaSession,
     ) -> list[str]:
         image_paths: list[str] = []
         for index, image in enumerate(prepared_request.images):
-            suffix = image.format or image.filename.rsplit(".", 1)[-1] if "." in image.filename else "bin"
-            image_path = root / f"image-{index}.{suffix}"
-            image_path.write_bytes(image.bytes_data)
+            suffix = MLXVLMRuntime._media_suffix(image.filename, image.format)
+            image_path = temp_media_session.write_bytes(f"image-{index}.{suffix}", image.bytes_data)
             image_paths.append(str(image_path))
+        for index, video in enumerate(prepared_request.videos):
+            if not video.bytes_data:
+                continue
+            suffix = MLXVLMRuntime._media_suffix(video.filename, video.format)
+            temp_media_session.write_bytes(f"video-{index}.{suffix}", video.bytes_data)
         return image_paths
+
+    @staticmethod
+    def _media_suffix(filename: str, format_name: str) -> str:
+        if format_name:
+            return format_name
+        if "." in filename:
+            return filename.rsplit(".", 1)[-1]
+        return "bin"
 
     @staticmethod
     def _family_config(loaded_model) -> Any:

@@ -102,6 +102,10 @@ message RuntimeStats {
   uint64 last_video_effective_frame_count = 34;
   uint64 last_video_requested_frame_budget = 35;
   uint64 last_video_window_ms = 36;
+  uint64 last_temp_media_artifact_count = 37;
+  uint64 last_temp_media_artifact_bytes = 38;
+  double last_temp_media_cleanup_latency_ms = 39;
+  uint64 last_temp_media_cleanup_failure_count = 40;
 }
 
 message GetRuntimeStatsRequest {}

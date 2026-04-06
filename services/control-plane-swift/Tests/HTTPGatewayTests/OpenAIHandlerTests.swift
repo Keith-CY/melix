@@ -1234,6 +1234,10 @@ struct OpenAIHandlerTests {
             response.stats.lastVideoEffectiveFrameCount = 6
             response.stats.lastVideoRequestedFrameBudget = 6
             response.stats.lastVideoWindowMs = 4_000
+            response.stats.lastTempMediaArtifactCount = 2
+            response.stats.lastTempMediaArtifactBytes = 2_048
+            response.stats.lastTempMediaCleanupLatencyMs = 4
+            response.stats.lastTempMediaCleanupFailureCount = 1
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -1333,6 +1337,10 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.video_frame_count", default: -1] == 6)
         #expect(metrics.values["vision.video_frame_budget", default: -1] == 6)
         #expect(metrics.values["vision.video_window_ms", default: -1] == 4_000)
+        #expect(metrics.values["vision.temp_media_artifact_count", default: -1] == 2)
+        #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2_048)
+        #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
+        #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
     }
 
     @Test("chat completions translator preserves recovery metadata on worker requests")

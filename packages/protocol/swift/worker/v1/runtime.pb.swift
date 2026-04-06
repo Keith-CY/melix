@@ -410,6 +410,26 @@ public struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._lastVideoWindowMs = newValue}
   }
 
+  public var lastTempMediaArtifactCount: UInt64 {
+    get {_storage._lastTempMediaArtifactCount}
+    set {_uniqueStorage()._lastTempMediaArtifactCount = newValue}
+  }
+
+  public var lastTempMediaArtifactBytes: UInt64 {
+    get {_storage._lastTempMediaArtifactBytes}
+    set {_uniqueStorage()._lastTempMediaArtifactBytes = newValue}
+  }
+
+  public var lastTempMediaCleanupLatencyMs: Double {
+    get {_storage._lastTempMediaCleanupLatencyMs}
+    set {_uniqueStorage()._lastTempMediaCleanupLatencyMs = newValue}
+  }
+
+  public var lastTempMediaCleanupFailureCount: UInt64 {
+    get {_storage._lastTempMediaCleanupFailureCount}
+    set {_uniqueStorage()._lastTempMediaCleanupFailureCount = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -960,7 +980,7 @@ extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -999,6 +1019,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
     var _lastVideoEffectiveFrameCount: UInt64 = 0
     var _lastVideoRequestedFrameBudget: UInt64 = 0
     var _lastVideoWindowMs: UInt64 = 0
+    var _lastTempMediaArtifactCount: UInt64 = 0
+    var _lastTempMediaArtifactBytes: UInt64 = 0
+    var _lastTempMediaCleanupLatencyMs: Double = 0
+    var _lastTempMediaCleanupFailureCount: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1045,6 +1069,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       _lastVideoEffectiveFrameCount = source._lastVideoEffectiveFrameCount
       _lastVideoRequestedFrameBudget = source._lastVideoRequestedFrameBudget
       _lastVideoWindowMs = source._lastVideoWindowMs
+      _lastTempMediaArtifactCount = source._lastTempMediaArtifactCount
+      _lastTempMediaArtifactBytes = source._lastTempMediaArtifactBytes
+      _lastTempMediaCleanupLatencyMs = source._lastTempMediaCleanupLatencyMs
+      _lastTempMediaCleanupFailureCount = source._lastTempMediaCleanupFailureCount
     }
   }
 
@@ -1099,6 +1127,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         case 34: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastVideoEffectiveFrameCount) }()
         case 35: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastVideoRequestedFrameBudget) }()
         case 36: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastVideoWindowMs) }()
+        case 37: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastTempMediaArtifactCount) }()
+        case 38: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastTempMediaArtifactBytes) }()
+        case 39: try { try decoder.decodeSingularDoubleField(value: &_storage._lastTempMediaCleanupLatencyMs) }()
+        case 40: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastTempMediaCleanupFailureCount) }()
         default: break
         }
       }
@@ -1215,6 +1247,18 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
       if _storage._lastVideoWindowMs != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._lastVideoWindowMs, fieldNumber: 36)
       }
+      if _storage._lastTempMediaArtifactCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastTempMediaArtifactCount, fieldNumber: 37)
+      }
+      if _storage._lastTempMediaArtifactBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastTempMediaArtifactBytes, fieldNumber: 38)
+      }
+      if _storage._lastTempMediaCleanupLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._lastTempMediaCleanupLatencyMs, fieldNumber: 39)
+      }
+      if _storage._lastTempMediaCleanupFailureCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastTempMediaCleanupFailureCount, fieldNumber: 40)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1260,6 +1304,10 @@ extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._Me
         if _storage._lastVideoEffectiveFrameCount != rhs_storage._lastVideoEffectiveFrameCount {return false}
         if _storage._lastVideoRequestedFrameBudget != rhs_storage._lastVideoRequestedFrameBudget {return false}
         if _storage._lastVideoWindowMs != rhs_storage._lastVideoWindowMs {return false}
+        if _storage._lastTempMediaArtifactCount != rhs_storage._lastTempMediaArtifactCount {return false}
+        if _storage._lastTempMediaArtifactBytes != rhs_storage._lastTempMediaArtifactBytes {return false}
+        if _storage._lastTempMediaCleanupLatencyMs != rhs_storage._lastTempMediaCleanupLatencyMs {return false}
+        if _storage._lastTempMediaCleanupFailureCount != rhs_storage._lastTempMediaCleanupFailureCount {return false}
         return true
       }
       if !storagesAreEqual {return false}
