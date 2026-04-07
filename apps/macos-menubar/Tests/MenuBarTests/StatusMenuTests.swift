@@ -318,6 +318,89 @@ struct StatusMenuTests {
         #expect(statusItem.button?.image?.isTemplate == true)
         #expect(statusItem.menu?.items.count == 2)
     }
+
+    @Test("AppKit renderer constrains the tray icon to the menu bar size")
+    @MainActor
+    func appKitRendererConstrainsTrayIconSize() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
+        let statusBar = NSStatusBar()
+        let renderer = AppKitStatusMenuRenderer(statusBar: statusBar)
+        let target = NSObject()
+        let content = StatusMenuContent(
+            title: "Melix Ready",
+            items: [
+                .info("Server: Ready"),
+            ]
+        )
+
+        renderer.render(
+            content: content,
+            target: target,
+            action: #selector(getter: NSObject.description)
+        )
+
+        let statusItem = renderer.currentStatusItem
+        defer { statusBar.removeStatusItem(statusItem) }
+
+        let iconSize = try #require(statusItem.button?.image?.size)
+        #expect(iconSize.width <= statusBar.thickness)
+        #expect(iconSize.height <= statusBar.thickness)
+    }
+
+    @Test("AppKit renderer keeps the tray glyph tightly framed inside the menu bar icon")
+    @MainActor
+    func appKitRendererKeepsTrayGlyphTightlyFramed() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
+        let statusBar = NSStatusBar()
+        let renderer = AppKitStatusMenuRenderer(statusBar: statusBar)
+        let target = NSObject()
+        let content = StatusMenuContent(
+            title: "Melix Ready",
+            items: [
+                .info("Server: Ready"),
+            ]
+        )
+
+        renderer.render(
+            content: content,
+            target: target,
+            action: #selector(getter: NSObject.description)
+        )
+
+        let statusItem = renderer.currentStatusItem
+        defer { statusBar.removeStatusItem(statusItem) }
+
+        let image = try #require(statusItem.button?.image)
+        let glyphBounds = try #require(alphaBounds(for: image))
+        #expect(glyphBounds.width / image.size.width >= 0.75)
+        #expect(glyphBounds.height / image.size.height >= 0.75)
+    }
+
+    @Test("AppKit renderer compacts long error labels to keep the dropdown narrow")
+    @MainActor
+    func appKitRendererCompactsLongErrorLabels() async throws {
+        let target = NSObject()
+        let message = """
+        Operator session persistence failed: Error Domain=NSCocoaErrorDomain Code=513 \
+        "You don’t have permission to save the file" NSUnderlyingError=POSIX 13
+        """
+        let content = StatusMenuContent(
+            title: "Melix Error",
+            items: [
+                .error(message),
+            ]
+        )
+
+        let menu = AppKitStatusMenuRenderer.makeMenu(
+            content: content,
+            target: target,
+            action: #selector(getter: NSObject.description)
+        )
+
+        #expect(menu.items.count == 1)
+        #expect(menu.items[0].title == "Error: Operator session persistence failed")
+        #expect(menu.items[0].toolTip == "Error: \(message)")
+    }
 }
 
 private func makeStatusMenuNamedModelOperationResult(
@@ -381,4 +464,40 @@ private final class OpenConsoleRecorder {
     func open() {
         wasCalled = true
     }
+}
+
+@MainActor
+private func alphaBounds(for image: NSImage) -> NSSize? {
+    guard
+        let tiffRepresentation = image.tiffRepresentation,
+        let bitmap = NSBitmapImageRep(data: tiffRepresentation)
+    else {
+        return nil
+    }
+
+    var minX = bitmap.pixelsWide
+    var minY = bitmap.pixelsHigh
+    var maxX = -1
+    var maxY = -1
+
+    for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide {
+            guard let color = bitmap.colorAt(x: x, y: y), color.alphaComponent > 0 else {
+                continue
+            }
+            minX = min(minX, x)
+            minY = min(minY, y)
+            maxX = max(maxX, x)
+            maxY = max(maxY, y)
+        }
+    }
+
+    guard maxX >= minX, maxY >= minY else {
+        return nil
+    }
+
+    return NSSize(
+        width: CGFloat(maxX - minX + 1),
+        height: CGFloat(maxY - minY + 1)
+    )
 }

@@ -32,22 +32,35 @@ public protocol StatusMenuRendering {
 
 @MainActor
 public final class AppKitStatusMenuRenderer: StatusMenuRendering {
+    private let statusBar: NSStatusBar
     private let statusItem: NSStatusItem
+    private static let maxInfoTitleLength = 44
+    private static let maxErrorTitleLength = 44
 
     var currentStatusItem: NSStatusItem {
         statusItem
     }
 
     public init(statusBar: NSStatusBar = .system) {
-        self.statusItem = statusBar.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusBar = statusBar
+        self.statusItem = statusBar.statusItem(withLength: NSStatusItem.squareLength)
     }
 
     public func render(content: StatusMenuContent, target: AnyObject, action: Selector) {
         statusItem.button?.title = ""
-        statusItem.button?.image = MelixBranding.trayTemplateIcon()
+        statusItem.button?.image = sizedTrayTemplateIcon()
         statusItem.button?.imagePosition = .imageOnly
+        statusItem.button?.imageScaling = .scaleProportionallyUpOrDown
         statusItem.button?.toolTip = content.title
         statusItem.menu = Self.makeMenu(content: content, target: target, action: action)
+    }
+
+    private func sizedTrayTemplateIcon() -> NSImage {
+        let baseImage = MelixBranding.trayTemplateIcon()
+        let image = (baseImage.copy() as? NSImage) ?? baseImage
+        let iconSide = max(14, floor(statusBar.thickness - 1))
+        image.size = NSSize(width: iconSide, height: iconSide)
+        return image
     }
 
     static func makeMenu(content: StatusMenuContent, target: AnyObject, action: Selector) -> NSMenu {
@@ -65,8 +78,10 @@ public final class AppKitStatusMenuRenderer: StatusMenuRendering {
     ) -> NSMenuItem {
         switch item {
         case .info(let title):
-            let menuItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let displayTitle = compactInfoTitle(title)
+            let menuItem = NSMenuItem(title: displayTitle, action: nil, keyEquivalent: "")
             menuItem.isEnabled = false
+            menuItem.toolTip = displayTitle == title ? nil : title
             return menuItem
         case .action(let title, let menuAction):
             let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -74,12 +89,31 @@ public final class AppKitStatusMenuRenderer: StatusMenuRendering {
             menuItem.representedObject = menuAction.rawValue
             return menuItem
         case .error(let message):
-            let menuItem = NSMenuItem(title: "Error: \(message)", action: nil, keyEquivalent: "")
+            let menuItem = NSMenuItem(title: compactErrorTitle(message), action: nil, keyEquivalent: "")
             menuItem.isEnabled = false
+            menuItem.toolTip = "Error: \(message)"
             return menuItem
         case .separator:
             return .separator()
         }
+    }
+
+    private static func compactInfoTitle(_ title: String) -> String {
+        compactMenuText(title, maxLength: maxInfoTitleLength)
+    }
+
+    private static func compactErrorTitle(_ message: String) -> String {
+        let summary = message.split(separator: ":", maxSplits: 1).first.map(String.init) ?? message
+        return "Error: \(compactMenuText(summary, maxLength: maxErrorTitleLength))"
+    }
+
+    private static func compactMenuText(_ text: String, maxLength: Int) -> String {
+        guard text.count > maxLength else {
+            return text
+        }
+
+        let endIndex = text.index(text.startIndex, offsetBy: maxLength)
+        return String(text[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 }
 
