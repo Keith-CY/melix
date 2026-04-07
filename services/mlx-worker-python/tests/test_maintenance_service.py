@@ -2305,6 +2305,103 @@ def test_run_evaluation_uses_checked_in_multimodal_fixture_when_dataset_root_is_
     assert Path(captured_image_paths[0]).suffix == ".ppm"
 
 
+def test_run_evaluation_uses_checked_in_imagenette_fixture_when_dataset_root_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / "imagenette.dev.v1"
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}::images={num_images}"
+
+    captured_prompts: list[str] = []
+    captured_image_paths: list[str] = []
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        captured_prompts.append(prompt)
+        captured_image_paths.extend(list(image or []))
+        yield SimpleNamespace(
+            text="Answer: tench",
+            prompt_tokens=18,
+            generation_tokens=2,
+            prompt_tps=42.0,
+            generation_tps=21.0,
+            peak_memory=2048.0,
+        )
+
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        mlx_vlm_runtime=MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=fake_apply_chat_template,
+            )
+        ),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+    loaded = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="google/paligemma2-3b-ft-docci-448",
+            model_path="google/paligemma2-3b-ft-docci-448",
+            model_kind="vlm",
+            revision="main",
+            tokenizer_hash="hf.google.paligemma2-3b-ft-docci-448",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                "melix.vlm.backend_id": "mlx_vlm",
+                "vision_family_id": "paligemma-v1",
+                "vision_prompt_profile_id": "paligemma-caption-v1",
+                "vision_tokenization_mode": "prefix",
+                "vision_max_images_per_prompt": "1",
+                "vision_supports_tool_calls": "false",
+                "melix.multimodal_adapter_hash": "vision-family-paligemma-v1",
+            },
+        )
+    )
+
+    assert fixture_root.exists() is True
+    monkeypatch.chdir(repo_root)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=loaded.handle,
+            suite_id="imagenette",
+            dataset_id="imagenette.dev.v1",
+            sample_size=1,
+            task_kind="image-text-to-text",
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.dataset_id == "imagenette.dev.v1"
+    assert response.job.task_kind == "image-text-to-text"
+    assert response.results[0].metrics[0].name == "eval.imagenette.accuracy"
+    assert response.results[0].metrics[0].value == 1.0
+    assert captured_prompts
+    assert "Classify the main subject in this image." in captured_prompts[0]
+    assert "garbage truck" in captured_prompts[0]
+    assert captured_image_paths
+    assert Path(captured_image_paths[0]).suffix == ".jpg"
+
+
 def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitted(
     tmp_path: Path,
 ) -> None:

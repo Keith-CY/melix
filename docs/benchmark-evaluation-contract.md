@@ -21,7 +21,6 @@ This contract applies to:
 
 This contract does not define:
 
-- vision-language intelligence suites
 - one-command combined benchmark plus evaluation runs
 - leaderboard or community-submission APIs
 
@@ -407,6 +406,7 @@ The first canonical `eval` suite set is:
 - `hellaswag`
 - `winogrande`
 - `truthfulqa_mc`
+- `imagenette`
 - `gsm8k`
 - `humaneval`
 - `mbpp`

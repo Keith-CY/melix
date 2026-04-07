@@ -189,14 +189,13 @@ swift run melix eval run \
   --code-exec-policy sandboxed
 ```
 
-Example with an explicit dataset override:
+Example with a checked-in image evaluation fixture:
 
 ```bash
 swift run melix eval run \
-  --repo-id google/paligemma2-3b-ft-docci-448 \
-  --suite mmlu \
-  --dataset-id mmlu.vision.dev.v1 \
-  --sample-size 1
+  --repo-id mlx-community/paligemma2-3b-ft-docci-448-8bit \
+  --suite imagenette \
+  --sample-size 10
 ```
 
 History and exports:
@@ -223,6 +222,7 @@ Notes:
 - if you omit `--suite`, the CLI defaults to `mmlu`
 - if you omit `--dataset-id`, the CLI defaults to `<suite>.dev.v1`
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
+- `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
 - relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`

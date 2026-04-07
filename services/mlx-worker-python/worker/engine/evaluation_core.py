@@ -28,6 +28,7 @@ _SUITE_SCORE_MODES = {
     "hellaswag": ("accuracy", "multiple_choice_accuracy"),
     "winogrande": ("accuracy", "multiple_choice_accuracy"),
     "truthfulqa_mc": ("accuracy", "multiple_choice_accuracy"),
+    "imagenette": ("accuracy", "exact_match"),
     "gsm8k": ("exact_match", "exact_match"),
     "humaneval": ("pass_at_1", "pass_at_1"),
     "mbpp": ("pass_at_1", "pass_at_1"),

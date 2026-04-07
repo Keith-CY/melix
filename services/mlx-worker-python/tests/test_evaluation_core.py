@@ -422,6 +422,55 @@ def test_run_local_suite_supports_multimodal_live_evaluation_and_persists_media_
     assert persisted_samples[0]["media_references"] == [str(image_path)]
 
 
+def test_run_local_suite_supports_imagenette_multimodal_accuracy(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixtures" / "garbage-truck.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"fake-jpg")
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="imagenette.dev.v1",
+        suite_id="imagenette",
+        task_kind="image-text-to-text",
+        samples=(
+            {
+                "id": "imagenette-0007",
+                "prompt": (
+                    "Classify the main subject in this image. "
+                    "Answer with exactly one label from this list: "
+                    "tench, English springer, cassette player, chain saw, church, "
+                    "French horn, garbage truck, gas pump, golf ball, parachute."
+                ),
+                "expected": "garbage truck",
+                "image_uri": str(image_path),
+            },
+        ),
+    )
+    runtime = ScriptedVisionEvaluationRuntime("Answer: garbage truck", {"images": 1})
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="imagenette-eval-model", runtime_kind="vlm")
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="imagenette-eval-model",
+        model_handle=registry.handle,
+        suite_id="imagenette",
+        dataset_root=dataset_root,
+        sample_size=1,
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+    assert run.job.dataset_id == "imagenette.dev.v1"
+    assert run.job.task_kind == "image-text-to-text"
+    assert run.job.scoring_mode == "exact_match"
+    assert run.result.score_name == "accuracy"
+    assert run.result.score_value == 1.0
+    assert metrics["eval.imagenette.accuracy"] == 1.0
+    assert metrics["eval.imagenette.correct_count"] == 1.0
+    assert metrics["eval.imagenette.incorrect_count"] == 0.0
+    assert run.samples[0].predicted == "garbage truck"
+    assert run.samples[0].correct is True
+    assert run.samples[0].media_references == (str(image_path),)
+
+
 def test_parse_prediction_prefers_answer_prefix_and_equation_results_for_numeric_answers() -> None:
     predicted, parse_status = EvaluationCore._parse_prediction(
         suite_id="mmlu",
