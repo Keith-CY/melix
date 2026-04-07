@@ -1,5 +1,12 @@
 import SwiftUI
 
+enum DesktopShellChromeMetrics {
+    static let titleBarTabHeightBudget: CGFloat = 30
+    static let titleBarTabHorizontalPadding: CGFloat = 9
+    static let titleBarTabVerticalPadding: CGFloat = 4
+    static let titleBarTabContainerInset: CGFloat = 3
+}
+
 struct DesktopWorkspaceTitleBarTabsView: View {
     let viewModel: RuntimeViewModel
 
@@ -33,16 +40,16 @@ struct DesktopShellTabStripView: View {
     let selectSurface: (DesktopSurface) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(DesktopSurface.allCases) { surface in
                 Button {
                     selectSurface(surface)
                 } label: {
                     Text(surface.rawValue)
-                        .font(.subheadline.weight(selectedSurface == surface ? .semibold : .medium))
+                        .font(.caption.weight(selectedSurface == surface ? .semibold : .medium))
                         .lineLimit(1)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, DesktopShellChromeMetrics.titleBarTabHorizontalPadding)
+                        .padding(.vertical, DesktopShellChromeMetrics.titleBarTabVerticalPadding)
                         .background(
                             selectedSurface == surface
                             ? Color.accentColor.opacity(0.18)
@@ -54,7 +61,8 @@ struct DesktopShellTabStripView: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .padding(4)
+        .padding(DesktopShellChromeMetrics.titleBarTabContainerInset)
+        .frame(height: DesktopShellChromeMetrics.titleBarTabHeightBudget)
         .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
         .overlay(
             Capsule()

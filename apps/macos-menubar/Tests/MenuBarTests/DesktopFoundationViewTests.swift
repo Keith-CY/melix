@@ -21,6 +21,19 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .chat)
     }
 
+    @Test("title-bar tabs fit a compact height budget")
+    @MainActor
+    func titleBarTabsFitACompactHeightBudget() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+
+        let hosted = hostView(DesktopWorkspaceTitleBarTabsView(viewModel: viewModel))
+
+        #expect(hosted.fittingSize.height <= DesktopShellChromeMetrics.titleBarTabHeightBudget)
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(viewModel.selectedSurface == .chat)
+    }
+
     @Test("root view renders workspace content without in-content shell chrome")
     @MainActor
     func rootViewRendersWorkspaceContentWithoutInContentShellChrome() async throws {
@@ -2046,6 +2059,25 @@ struct DesktopFoundationViewTests {
         #expect(requests[2].operation == "registry_snapshot")
     }
 
+    @Test("downloads section renders audio setup notice as a compact single row")
+    @MainActor
+    func downloadsSectionRendersCompactAudioSetupNotice() async throws {
+        let action = RuntimeAudioSetupActionState(
+            modelID: "melix-whisper-mlx",
+            alias: "Melix Whisper MLX",
+            detail: "Install melix-audio-runtime-pack to enable audio requests for Melix Whisper MLX.",
+            actionTitle: "Install Audio Support",
+            kind: .installRuntime
+        )
+        let hosted = hostView(
+            DesktopAudioSetupNoticeRow(action: action, performAction: {})
+        )
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(hosted.fittingSize.height <= DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
+        #expect(action.detail.contains("melix-audio-runtime-pack"))
+    }
+
     @Test("tools tab renders typed convert operation metadata")
     @MainActor
     func toolsTabRendersTypedConvertOperationMetadata() async throws {
@@ -2371,6 +2403,46 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.chatSessions.isEmpty)
     }
 
+    @Test("chat workspace uses compact layout metrics")
+    @MainActor
+    func chatWorkspaceUsesCompactLayoutMetrics() {
+        #expect(DesktopChatLayoutMetrics.sidebarIdealWidth <= 230)
+        #expect(DesktopChatLayoutMetrics.inspectorIdealWidth <= 240)
+        #expect(DesktopChatLayoutMetrics.composerMinHeight <= 84)
+        #expect(DesktopChatLayoutMetrics.collapsedRailWidth <= 32)
+    }
+
+    @Test("chat collapsed rails render compact restore affordances")
+    @MainActor
+    func chatCollapsedRailsRenderCompactRestoreAffordances() {
+        let leadingRail = hostView(DesktopChatPaneRail(edge: .leading, action: {}))
+        let trailingRail = hostView(DesktopChatPaneRail(edge: .trailing, action: {}))
+
+        #expect(leadingRail.fittingSize.width <= DesktopChatLayoutMetrics.collapsedRailWidth + 4)
+        #expect(trailingRail.fittingSize.width <= DesktopChatLayoutMetrics.collapsedRailWidth + 4)
+    }
+
+    @Test("chat tab renders collapsed rails when both side panes start hidden")
+    @MainActor
+    func chatTabRendersCollapsedRailsWhenBothSidePanesStartHidden() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let hosted = hostView(
+            DesktopChatTabView(
+                viewModel: viewModel,
+                initiallyShowsSidebar: false,
+                initiallyShowsInspector: false
+            )
+        )
+        let renderedTexts = renderedTextValues(in: hosted)
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Chat Sessions") == false)
+        #expect(renderedTexts.contains("Inspector") == false)
+    }
+
     @Test("chat session workspace renders the server required state when no server is running")
     @MainActor
     func chatSessionWorkspaceRendersTheServerRequiredStateWhenNoServerIsRunning() async throws {
@@ -2393,6 +2465,27 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.selectedChatServerSession?.isRunning == false)
         #expect(viewModel.chatStatusText == "Stopped")
+    }
+
+    @Test("chat workspace hides header fork and export buttons")
+    @MainActor
+    func chatWorkspaceHidesHeaderForkAndExportButtons() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        let hosted = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+        let renderedTexts = renderedTextValues(in: hosted)
+
+        #expect(renderedTexts.contains("Fork") == false)
+        #expect(renderedTexts.contains("Export") == false)
     }
 
     @Test("chat session workspace renders lifecycle notices for paused and sleeping servers")

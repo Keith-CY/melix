@@ -942,28 +942,10 @@ struct DesktopDownloadsToolSectionView: View {
             if viewModel.audioSetupActions.isEmpty == false {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(viewModel.audioSetupActions) { action in
-                        HStack(spacing: 10) {
-                            Label("Audio Setup Required", systemImage: "waveform.badge.exclamationmark")
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-
-                            Text(action.alias)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            Button(action.actionTitle) {
-                                Task { await viewModel.performAudioSetupAction(action) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                        DesktopAudioSetupNoticeRow(
+                            action: action,
+                            performAction: makeAudioSetupAction(for: action)
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1072,6 +1054,44 @@ struct DesktopDownloadsToolSectionView: View {
                 }
             }
         }
+    }
+
+    private func makeAudioSetupAction(for action: RuntimeAudioSetupActionState) -> () -> Void {
+        { Task { await viewModel.performAudioSetupAction(action) } }
+    }
+}
+
+enum DesktopDownloadsLayoutMetrics {
+    static let compactAudioNoticeHeightBudget: CGFloat = 34
+}
+
+struct DesktopAudioSetupNoticeRow: View {
+    let action: RuntimeAudioSetupActionState
+    let performAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label("Audio Setup Required", systemImage: "waveform.badge.exclamationmark")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text(action.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 8)
+
+            Button(action.actionTitle, action: performAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

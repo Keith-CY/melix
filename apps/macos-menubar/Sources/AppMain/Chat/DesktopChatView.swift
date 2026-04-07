@@ -1,16 +1,85 @@
 import SwiftUI
 import MelixControlPlaneCore
 
+enum DesktopChatLayoutMetrics {
+    static let sidebarMinWidth: CGFloat = 190
+    static let sidebarIdealWidth: CGFloat = 220
+    static let inspectorMinWidth: CGFloat = 210
+    static let inspectorIdealWidth: CGFloat = 232
+    static let collapsedRailWidth: CGFloat = 28
+    static let composerMinHeight: CGFloat = 76
+}
+
+enum DesktopChatPaneRailEdge {
+    case leading
+    case trailing
+
+    var restoreSymbolName: String {
+        switch self {
+        case .leading:
+            return "sidebar.left"
+        case .trailing:
+            return "sidebar.right"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .leading:
+            return "Show Chat Sessions"
+        case .trailing:
+            return "Show Inspector"
+        }
+    }
+}
+
+struct DesktopChatPaneRail: View {
+    let edge: DesktopChatPaneRailEdge
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: edge.restoreSymbolName)
+                .font(.caption.weight(.semibold))
+                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(edge.accessibilityLabel)
+        .accessibilityLabel(edge.accessibilityLabel)
+        .background(Color.secondary.opacity(0.04))
+    }
+}
+
 struct DesktopChatTabView: View {
     let viewModel: RuntimeViewModel
     @State private var showsSidebar = true
     @State private var showsInspector = true
 
+    init(
+        viewModel: RuntimeViewModel,
+        initiallyShowsSidebar: Bool = true,
+        initiallyShowsInspector: Bool = true
+    ) {
+        self.viewModel = viewModel
+        _showsSidebar = State(initialValue: initiallyShowsSidebar)
+        _showsInspector = State(initialValue: initiallyShowsInspector)
+    }
+
     var body: some View {
         HSplitView {
             if showsSidebar {
                 DesktopChatSessionSidebar(viewModel: viewModel)
-                    .frame(minWidth: 250, idealWidth: 270)
+                    .frame(
+                        minWidth: DesktopChatLayoutMetrics.sidebarMinWidth,
+                        idealWidth: DesktopChatLayoutMetrics.sidebarIdealWidth
+                    )
+            } else {
+                DesktopChatPaneRail(edge: .leading) {
+                    showsSidebar = true
+                }
+                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
             }
 
             DesktopChatSessionWorkspace(
@@ -21,7 +90,15 @@ struct DesktopChatTabView: View {
 
             if showsInspector {
                 DesktopChatSessionInspector(viewModel: viewModel)
-                    .frame(minWidth: 280, idealWidth: 300)
+                    .frame(
+                        minWidth: DesktopChatLayoutMetrics.inspectorMinWidth,
+                        idealWidth: DesktopChatLayoutMetrics.inspectorIdealWidth
+                    )
+            } else {
+                DesktopChatPaneRail(edge: .trailing) {
+                    showsInspector = true
+                }
+                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
             }
         }
     }
@@ -31,7 +108,7 @@ struct DesktopChatSessionSidebar: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Chat Sessions")
                     .font(.headline)
@@ -52,35 +129,23 @@ struct DesktopChatSessionSidebar: View {
                 )
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
+                    LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(viewModel.chatSessions) { session in
-                            Button {
-                                viewModel.selectChatSession(id: session.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(session.title)
-                                            .font(.headline)
-                                        Spacer()
-                                        Text(session.branchTitle)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(session.summaryText)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+                            DesktopChatSessionRow(
+                                session: session,
+                                isSelected: viewModel.selectedChatSession?.id == session.id,
+                                onSelect: {
+                                    viewModel.selectChatSession(id: session.id)
+                                },
+                                onFork: {
+                                    viewModel.selectChatSession(id: session.id)
+                                    viewModel.forkSelectedChatSession()
+                                },
+                                onExport: {
+                                    viewModel.selectChatSession(id: session.id)
+                                    _ = viewModel.exportSelectedChatSession()
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    viewModel.selectedChatSession?.id == session.id
-                                    ? Color.accentColor.opacity(0.14)
-                                    : Color.secondary.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
-                            }
-                            .buttonStyle(.plain)
+                            )
                         }
                     }
                 }
@@ -88,7 +153,7 @@ struct DesktopChatSessionSidebar: View {
 
             Spacer()
         }
-        .padding(20)
+        .padding(14)
     }
 }
 
@@ -98,41 +163,39 @@ struct DesktopChatSessionWorkspace: View {
     @Binding var showsInspector: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
-                        .font(.largeTitle.weight(.semibold))
+                        .font(.title2.weight(.semibold))
                     HStack(spacing: 8) {
                         if let branch = viewModel.selectedChatSession?.branchTitle {
                             Text(branch)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
+                                .font(.caption2)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
                                 .background(.quaternary, in: Capsule())
                         }
                         if let server = viewModel.selectedChatServerSession {
                             Text(server.title)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
+                                .font(.caption2)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
                                 .background(.quaternary, in: Capsule())
                         }
                     }
                 }
                 Spacer()
-                Button("Fork") {
-                    viewModel.forkSelectedChatSession()
-                }
-                .buttonStyle(.bordered)
-                Button("Export") {
-                    _ = viewModel.exportSelectedChatSession()
-                }
-                .buttonStyle(.bordered)
-                Button(showsSidebar ? "Hide List" : "Show List") {
+                DesktopChatPaneToggleButton(
+                    systemName: showsSidebar ? "sidebar.left" : "sidebar.left",
+                    helpText: showsSidebar ? "Hide Chat Sessions" : "Show Chat Sessions"
+                ) {
                     showsSidebar.toggle()
                 }
-                Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                DesktopChatPaneToggleButton(
+                    systemName: showsInspector ? "sidebar.right" : "sidebar.right",
+                    helpText: showsInspector ? "Hide Inspector" : "Show Inspector"
+                ) {
                     showsInspector.toggle()
                 }
             }
@@ -213,9 +276,18 @@ struct DesktopChatSessionWorkspace: View {
                     )
                 )
                 .font(.body.monospaced())
-                .frame(minHeight: 120)
-                .padding(8)
-                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+                .scrollContentBackground(.hidden)
+                .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.75))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
 
                 HStack {
                     Text(viewModel.chatStatusText)
@@ -243,7 +315,7 @@ struct DesktopChatSessionWorkspace: View {
                 }
             }
         }
-        .padding(20)
+        .padding(16)
     }
 }
 
@@ -309,7 +381,91 @@ struct DesktopChatSessionInspector: View {
 
             Spacer()
         }
-        .padding(20)
+        .padding(14)
+    }
+}
+
+private struct DesktopChatSessionRow: View {
+    let session: DesktopChatSessionState
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onFork: () -> Void
+    let onExport: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(session.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(session.branchTitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(session.summaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            DesktopChatSessionRowActions(onFork: onFork, onExport: onExport)
+        }
+        .padding(10)
+        .background(
+            isSelected
+            ? Color.accentColor.opacity(0.14)
+            : Color.secondary.opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+    }
+}
+
+private struct DesktopChatSessionRowActions: View {
+    let onFork: () -> Void
+    let onExport: () -> Void
+
+    var body: some View {
+        Menu {
+            Button("Fork", action: onFork)
+            Button("Export", action: onExport)
+        } label: {
+            HStack(spacing: 2) {
+                Image(systemName: "ellipsis.circle")
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            .frame(height: 18)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct DesktopChatPaneToggleButton: View {
+    let systemName: String
+    let helpText: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.caption.weight(.semibold))
+                .frame(width: 26, height: 24)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+        .accessibilityLabel(helpText)
     }
 }
 
