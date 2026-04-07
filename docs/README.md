@@ -142,6 +142,7 @@ Current phase-status and planning documents:
 - `plans/2026-03-27-phase-7-image-generation-editing.md`
 - `plans/2026-03-27-phase-8-desktop-productization-release.md`
 - `plans/2026-04-03-bench-matrix-performance-lab.md`
+- `plans/2026-04-07-multimodal-evaluation-and-lora-comparison-roadmap.md`
 
 Current roadmap and phase-status documents:
 
