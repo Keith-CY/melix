@@ -27,6 +27,7 @@ class MacOSAppBundleLayout:
     bundled_python_executable_path: Path
     bundled_site_packages_path: Path
     bundled_repo_root_path: Path
+    bundled_icon_path: Path
     bundled_wait_script_path: Path
     embedded_env_script_path: Path
     packaging_target_manifest_path: Path
@@ -51,6 +52,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         bundled_python_executable_path=python_runtime_path / "bin/python3",
         bundled_site_packages_path=resources_path / "python-site-packages",
         bundled_repo_root_path=resources_path / "repo",
+        bundled_icon_path=resources_path / "MelixAppIcon.icns",
         bundled_wait_script_path=resources_path / "repo/scripts/wait_for_worker_ready.py",
         embedded_env_script_path=resources_path / "melix-product-env.sh",
         packaging_target_manifest_path=resources_path / "packaging-target-manifest.json",
@@ -71,16 +73,16 @@ def resolve_site_packages_root(repo_root: str | Path) -> Path:
     return candidates[0]
 
 
-def render_info_plist(*, app_name: str, bundle_id: str, version: str) -> bytes:
+def render_info_plist(*, app_name: str, bundle_id: str, version: str, icon_file: str) -> bytes:
     payload: dict[str, Any] = {
         "CFBundleDisplayName": app_name,
         "CFBundleExecutable": app_name,
+        "CFBundleIconFile": icon_file,
         "CFBundleIdentifier": bundle_id,
         "CFBundleName": app_name,
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
-        "LSUIElement": True,
         "NSHighResolutionCapable": True,
     }
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
@@ -124,6 +126,7 @@ def render_launcher_script(
     bundled_python_executable_relative_path: str,
     bundled_site_packages_relative_path: str,
     wait_script_relative_path: str,
+    menu_bar_presentation_mode: str = "dock-and-tray",
     app_support_name: str = "Melix",
 ) -> str:
     repo_root = Path(bundle_repo_root)
@@ -143,6 +146,7 @@ def render_launcher_script(
             'export MELIX_CONTROL_PLANE_METRICS_PATH="$MELIX_RUNTIME_DIR/control-plane-metrics-${RUN_TOKEN}.json"',
             'export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-metrics-${RUN_TOKEN}.json"',
             'export MELIX_PYTHON_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/python-worker-metrics-${RUN_TOKEN}.json"',
+            f'export MELIX_MENU_BAR_PRESENTATION_MODE="{menu_bar_presentation_mode}"',
             f'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/{bundled_python_executable_relative_path}"',
             'export PYTHONUNBUFFERED=1',
             f'export PYTHONPATH="$RESOURCES_DIR/{bundled_site_packages_relative_path}:$MELIX_REPO_ROOT:$MELIX_REPO_ROOT/services/mlx-worker-python"',
@@ -179,6 +183,7 @@ def write_unsigned_macos_app_bundle(
     version: str = "0.1.0",
     packaging_target_id: str = "macos_app_bundle_preview",
     update_channel_path: str | Path | None = None,
+    icon_source_path: str | Path | None = None,
 ) -> dict[str, str]:
     repo_root_path = Path(repo_root).expanduser().resolve()
     executable = Path(executable_path).expanduser().resolve()
@@ -190,6 +195,11 @@ def write_unsigned_macos_app_bundle(
         if update_channel_path is not None
         else default_update_channel_path(repo_root_path)
     )
+    resolved_icon_source_path = (
+        Path(icon_source_path).expanduser().resolve()
+        if icon_source_path is not None
+        else repo_root_path / "apps/macos-menubar/Sources/AppMain/Resources/Branding/MelixAppIcon.icns"
+    )
 
     if not executable.is_file():
         raise FileNotFoundError(f"Missing menubar executable: {executable}")
@@ -199,6 +209,8 @@ def write_unsigned_macos_app_bundle(
         raise FileNotFoundError(f"Missing bundled Python runtime root: {python_runtime}")
     if not python_site_packages.is_dir():
         raise FileNotFoundError(f"Missing Python site-packages: {python_site_packages}")
+    if not resolved_icon_source_path.is_file():
+        raise FileNotFoundError(f"Missing macOS app icon: {resolved_icon_source_path}")
 
     layout = build_macos_app_bundle_layout(output_path, app_name=app_name)
     target_metadata = build_packaging_target_metadata(
@@ -215,6 +227,7 @@ def write_unsigned_macos_app_bundle(
 
     shutil.copy2(executable, layout.bundled_app_binary_path)
     shutil.copy2(swift_worker_executable, layout.bundled_swift_worker_binary_path)
+    shutil.copy2(resolved_icon_source_path, layout.bundled_icon_path)
     shutil.copytree(python_runtime, layout.bundled_python_runtime_path, dirs_exist_ok=True, symlinks=True)
     shutil.copytree(python_site_packages, layout.bundled_site_packages_path, dirs_exist_ok=True, symlinks=True)
 
@@ -237,7 +250,12 @@ def write_unsigned_macos_app_bundle(
     )
 
     layout.plist_path.write_bytes(
-        render_info_plist(app_name=app_name, bundle_id=bundle_id, version=version)
+        render_info_plist(
+            app_name=app_name,
+            bundle_id=bundle_id,
+            version=version,
+            icon_file=layout.bundled_icon_path.name,
+        )
     )
     layout.launcher_path.write_text(
         render_launcher_script(
@@ -263,11 +281,13 @@ def write_unsigned_macos_app_bundle(
     return {
         "app_path": str(layout.app_path),
         "launcher_path": str(layout.launcher_path),
+        "resources_path": str(layout.resources_path),
         "bundled_binary_path": str(layout.bundled_app_binary_path),
         "bundled_swift_worker_binary_path": str(layout.bundled_swift_worker_binary_path),
         "bundled_python_runtime_path": str(layout.bundled_python_runtime_path),
         "bundled_site_packages_path": str(layout.bundled_site_packages_path),
         "bundled_repo_root_path": str(layout.bundled_repo_root_path),
+        "bundled_icon_path": str(layout.bundled_icon_path),
         "plist_path": str(layout.plist_path),
         "embedded_env_script_path": str(layout.embedded_env_script_path),
         "packaging_target_manifest_path": str(layout.packaging_target_manifest_path),

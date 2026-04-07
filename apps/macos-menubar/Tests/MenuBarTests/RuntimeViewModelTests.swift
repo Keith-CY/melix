@@ -2028,20 +2028,22 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
+        let installAction = try #require(viewModel.audioSetupActions.first)
         await client.configureSnapshot(
             makeSnapshot(serverState: .serverReady, models: [ModelCatalog.devTextModel(), runtimeInstalled])
         )
-        await viewModel.installAudioRuntime(modelID: "melix-whisper-mlx")
+        await viewModel.performAudioSetupAction(installAction)
 
         let installRequest = try #require(await client.recordedModelOperationRequests.first)
         #expect(installRequest.operation == "install_audio_runtime")
         #expect(installRequest.modelID == "melix-whisper-mlx")
         #expect(viewModel.audioSetupActions.first?.actionTitle == "Download Audio Model")
 
+        let downloadAction = try #require(viewModel.audioSetupActions.first)
         await client.configureSnapshot(
             makeSnapshot(serverState: .serverReady, models: [ModelCatalog.devTextModel(), managedLocal])
         )
-        await viewModel.downloadAudioModel(modelID: "melix-whisper-mlx")
+        await viewModel.performAudioSetupAction(downloadAction)
 
         let requests = await client.recordedModelOperationRequests
         #expect(requests.count == 3)

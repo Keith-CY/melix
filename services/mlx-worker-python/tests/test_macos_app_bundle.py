@@ -24,20 +24,23 @@ def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Pat
     assert layout.resources_path == layout.contents_path / "Resources"
     assert layout.launcher_path == layout.macos_path / "Melix"
     assert layout.bundled_swift_worker_binary_path == layout.resources_path / "melix-text-worker-swift"
+    assert layout.bundled_icon_path == layout.resources_path / "MelixAppIcon.icns"
 
 
-def test_render_info_plist_marks_app_as_menu_bar_accessory() -> None:
+def test_render_info_plist_sets_bundle_icon_and_dock_visible_defaults() -> None:
     payload = plistlib.loads(
         render_info_plist(
             app_name="Melix",
             bundle_id="io.melix.menubar.preview",
             version="0.1.0",
+            icon_file="MelixAppIcon.icns",
         )
     )
 
     assert payload["CFBundleExecutable"] == "Melix"
+    assert payload["CFBundleIconFile"] == "MelixAppIcon.icns"
     assert payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
-    assert payload["LSUIElement"] is True
+    assert "LSUIElement" not in payload
 
 
 def test_render_portable_environment_script_uses_home_relative_paths() -> None:
@@ -71,6 +74,7 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     )
 
     assert 'export MELIX_REPO_ROOT="$RESOURCES_DIR/repo"' in script
+    assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in script
     assert 'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/python-runtime/bin/python3"' in script
     assert '"$RESOURCES_DIR/melix-text-worker-swift"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" -m worker.bootstrap' in script
@@ -131,6 +135,8 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     python_executable = python_runtime / "bin/python3"
     python_executable.write_text("#!/usr/bin/env bash\necho python\n", encoding="utf-8")
     python_executable.chmod(0o755)
+    icon_file = tmp_path / "MelixAppIcon.icns"
+    icon_file.write_bytes(b"icns")
     python_site_packages = tmp_path / "python-site-packages"
     python_site_packages.mkdir()
     (python_site_packages / "grpc.py").write_text("", encoding="utf-8")
@@ -142,6 +148,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
         python_runtime_root=python_runtime,
         python_site_packages_path=python_site_packages,
         output_path=tmp_path / "Melix.app",
+        icon_source_path=icon_file,
     )
 
     app_path = Path(manifest["app_path"])
@@ -150,18 +157,62 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     assert Path(manifest["bundled_python_runtime_path"]).exists() is True
     assert Path(manifest["bundled_site_packages_path"]).exists() is True
     assert Path(manifest["bundled_repo_root_path"]).joinpath("services/mlx-worker-python/worker/bootstrap.py").exists() is True
+    assert Path(manifest["bundled_icon_path"]).exists() is True
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
     launcher = Path(manifest["launcher_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
     assert "melix-text-worker-swift" in launcher
+    assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in launcher
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
+    assert plist_payload["CFBundleIconFile"] == "MelixAppIcon.icns"
+    assert "LSUIElement" not in plist_payload
     env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script
     assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
     target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
     assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
     assert target_payload["logical_product_identity"] == "io.melix"
+
+
+def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
+    (repo_root / "packages/protocol/python").mkdir(parents=True)
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "services/mlx-worker-python/worker/bootstrap.py").write_text("print('bootstrap')\n", encoding="utf-8")
+    (repo_root / "services/mlx-worker-python/worker/control_plane_bridge.py").write_text("print('bridge')\n", encoding="utf-8")
+    (repo_root / "services/mlx-worker-python/pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+    (repo_root / "packages/protocol/python/__init__.py").write_text("", encoding="utf-8")
+    (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
+    menubar = tmp_path / "melix-menubar"
+    swift_worker = tmp_path / "melix-text-worker-swift"
+    for executable in (menubar, swift_worker):
+        executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    python_runtime = tmp_path / "python-runtime"
+    (python_runtime / "bin").mkdir(parents=True)
+    python_executable = python_runtime / "bin/python3"
+    python_executable.write_text("#!/usr/bin/env bash\necho python\n", encoding="utf-8")
+    python_executable.chmod(0o755)
+    python_site_packages = tmp_path / "python-site-packages"
+    python_site_packages.mkdir()
+
+    try:
+        write_unsigned_macos_app_bundle(
+            repo_root=repo_root,
+            executable_path=menubar,
+            swift_text_worker_executable_path=swift_worker,
+            python_runtime_root=python_runtime,
+            python_site_packages_path=python_site_packages,
+            output_path=tmp_path / "Melix.app",
+            icon_source_path=tmp_path / "missing.icns",
+        )
+    except FileNotFoundError as error:
+        assert "Missing macOS app icon" in str(error)
+    else:
+        raise AssertionError("expected write_unsigned_macos_app_bundle() to require an icon file")
 
 
 def test_archive_macos_app_bundle_creates_zip(tmp_path: Path) -> None:

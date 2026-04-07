@@ -58,6 +58,12 @@ def main() -> int:
     parser.add_argument("--archive-path", default="")
     parser.add_argument("--python-runtime-root", default="")
     parser.add_argument("--python-site-packages-path", default="")
+    parser.add_argument(
+        "--icon-source-path",
+        default=str(
+            ROOT / "apps/macos-menubar/Sources/AppMain/Resources/Branding/MelixAppIcon.icns"
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -86,6 +92,7 @@ def main() -> int:
         version=args.version,
         packaging_target_id=args.packaging_target_id,
         update_channel_path=args.update_channel_path or None,
+        icon_source_path=args.icon_source_path,
     )
     if args.archive_path:
         manifest["archive_path"] = str(

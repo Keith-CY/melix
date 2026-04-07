@@ -312,7 +312,10 @@ struct StatusMenuTests {
 
         let statusItem = renderer.currentStatusItem
         defer { statusBar.removeStatusItem(statusItem) }
-        #expect(statusItem.button?.title == "Melix Ready")
+        #expect(statusItem.button?.title == "")
+        #expect(statusItem.button?.toolTip == "Melix Ready")
+        #expect(statusItem.button?.image != nil)
+        #expect(statusItem.button?.image?.isTemplate == true)
         #expect(statusItem.menu?.items.count == 2)
     }
 }

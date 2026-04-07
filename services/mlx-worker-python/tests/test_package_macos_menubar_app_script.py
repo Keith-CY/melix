@@ -62,6 +62,8 @@ def test_main_forwards_packaging_target_and_update_channel(
             "macos_app_bundle_preview",
             "--update-channel-path",
             str(tmp_path / "stable.json"),
+            "--icon-source-path",
+            str(tmp_path / "MelixAppIcon.icns"),
             "--json",
         ],
     )
@@ -69,6 +71,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert module.main() == 0
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
+    assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["packaging_target_id"] == "macos_app_bundle_preview"

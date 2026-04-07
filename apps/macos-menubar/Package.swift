@@ -21,7 +21,10 @@ let package = Package(
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
             ],
-            path: "Sources/AppMain"
+            path: "Sources/AppMain",
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "MenuBarTests",

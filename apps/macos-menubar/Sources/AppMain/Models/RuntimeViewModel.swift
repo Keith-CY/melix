@@ -3477,6 +3477,15 @@ public final class RuntimeViewModel {
         await refreshDesktopFoundation()
     }
 
+    public func performAudioSetupAction(_ action: RuntimeAudioSetupActionState) async {
+        switch action.kind {
+        case .installRuntime:
+            await installAudioRuntime(modelID: action.modelID)
+        case .downloadModel:
+            await downloadAudioModel(modelID: action.modelID)
+        }
+    }
+
     public func uploadPrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return

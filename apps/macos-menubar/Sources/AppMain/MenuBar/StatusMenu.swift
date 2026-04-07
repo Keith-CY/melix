@@ -43,7 +43,10 @@ public final class AppKitStatusMenuRenderer: StatusMenuRendering {
     }
 
     public func render(content: StatusMenuContent, target: AnyObject, action: Selector) {
-        statusItem.button?.title = content.title
+        statusItem.button?.title = ""
+        statusItem.button?.image = MelixBranding.trayTemplateIcon()
+        statusItem.button?.imagePosition = .imageOnly
+        statusItem.button?.toolTip = content.title
         statusItem.menu = Self.makeMenu(content: content, target: target, action: action)
     }
 

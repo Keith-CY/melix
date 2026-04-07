@@ -11,13 +11,6 @@ public struct DesktopFoundationRootView: View {
     public var body: some View {
         DesktopWorkspaceShellView(viewModel: viewModel)
         .frame(minWidth: 980, minHeight: 680)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Refresh") {
-                    Task { await viewModel.refreshDesktopFoundation() }
-                }
-            }
-        }
     }
 }
 

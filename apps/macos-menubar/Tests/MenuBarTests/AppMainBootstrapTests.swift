@@ -57,6 +57,7 @@ struct AppMainBootstrapTests {
 
         MelixMenuBarLauncher.launch(
             application: app,
+            presentationMode: .tray,
             bootstrapFactory: { bootstrap },
             retain: { retainedBootstrap = $0 }
         )
@@ -64,7 +65,7 @@ struct AppMainBootstrapTests {
             await client.handshakeCount == 1
         }
 
-        #expect(app.didSetAccessoryActivationPolicy)
+        #expect(app.recordedPolicies == [.accessory])
         #expect(app.didRun)
         #expect(retainedBootstrap === bootstrap)
         #expect(menu.installCount == 1)
@@ -77,10 +78,10 @@ struct AppMainBootstrapTests {
         let application = RecordingNSApplication()
         let liveApplication = LiveMenuBarApplication(application: application)
 
-        liveApplication.setAccessoryActivationPolicy()
+        liveApplication.setActivationPolicy(.regular)
         liveApplication.run()
 
-        #expect(application.recordedPolicies == [.accessory])
+        #expect(application.recordedPolicies == [.regular])
         #expect(application.runCount == 1)
     }
 
@@ -103,7 +104,33 @@ struct AppMainBootstrapTests {
             await client.handshakeCount == 1
         }
 
-        #expect(application.didSetAccessoryActivationPolicy)
+        #expect(application.recordedPolicies == [.accessory])
+        #expect(application.didRun)
+        #expect(menu.installCount == 1)
+        #expect(await client.handshakeCount == 1)
+    }
+
+    @Test("launchLive can use dock and tray presentation mode when requested")
+    @MainActor
+    func launchLiveCanUseDockAndTrayPresentationMode() async throws {
+        let application = RecordingApplicationLifecycle()
+        let client = FakeControlPlaneXPCClient()
+        let menu = RecordingInstallStatusMenu()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            statusMenuFactory: { _, _ in menu }
+        )
+
+        MelixMenuBarApp.launchLive(
+            application: application,
+            bootstrapFactory: { bootstrap },
+            presentationMode: .dockAndTray
+        )
+        try await waitForBootstrapCondition("expected dock and tray launch handshake to complete") {
+            await client.handshakeCount == 1
+        }
+
+        #expect(application.recordedPolicies == [.regular])
         #expect(application.didRun)
         #expect(menu.installCount == 1)
         #expect(await client.handshakeCount == 1)
@@ -215,6 +242,7 @@ struct AppMainBootstrapTests {
                 "MELIX_WORKER_SOCKET_PATH": "/tmp/python.sock",
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/swift.sock",
                 "MELIX_MENU_BAR_STARTUP_SURFACE": "console",
+                "MELIX_MENU_BAR_PRESENTATION_MODE": "dock-and-tray",
             ]
         )
 
@@ -222,6 +250,7 @@ struct AppMainBootstrapTests {
         #expect(environment.pythonWorkerSocketPath == "/tmp/python.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/tmp/swift.sock")
         #expect(environment.startupSurface == .console)
+        #expect(environment.presentationMode == .dockAndTray)
     }
 
     @Test("bootstrap environment falls back to inferred repo root and default sockets")
@@ -233,6 +262,7 @@ struct AppMainBootstrapTests {
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
         #expect(environment.startupSurface == .tray)
+        #expect(environment.presentationMode == .tray)
     }
 
     @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")
@@ -343,7 +373,7 @@ struct AppMainBootstrapTests {
             }
         }
 
-        #expect(application.didSetAccessoryActivationPolicy)
+        #expect(application.recordedPolicies == [.accessory])
         #expect(application.didRun)
     }
 }
@@ -378,11 +408,11 @@ private final class RecordingDesktopFoundationPresenter: DesktopFoundationPresen
 
 @MainActor
 private final class RecordingApplicationLifecycle: MenuBarApplicationLifecycle {
-    private(set) var didSetAccessoryActivationPolicy = false
+    private(set) var recordedPolicies: [NSApplication.ActivationPolicy] = []
     private(set) var didRun = false
 
-    func setAccessoryActivationPolicy() {
-        didSetAccessoryActivationPolicy = true
+    func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) {
+        recordedPolicies.append(activationPolicy)
     }
 
     func run() {

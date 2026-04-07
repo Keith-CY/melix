@@ -15,6 +15,27 @@ public enum MenuBarStartupSurface: String {
     }
 }
 
+public enum MenuBarPresentationMode: String, Equatable {
+    case tray
+    case dockAndTray = "dock-and-tray"
+
+    init(environmentValue: String?) {
+        let normalized = environmentValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        self = MenuBarPresentationMode(rawValue: normalized) ?? .tray
+    }
+
+    var activationPolicy: NSApplication.ActivationPolicy {
+        switch self {
+        case .tray:
+            return .accessory
+        case .dockAndTray:
+            return .regular
+        }
+    }
+}
+
 @MainActor
 public protocol StatusMenuInstalling: AnyObject {
     func install()
@@ -24,7 +45,7 @@ extension StatusMenu: StatusMenuInstalling {}
 
 @MainActor
 public protocol MenuBarApplicationLifecycle {
-    func setAccessoryActivationPolicy()
+    func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy)
     func run()
 }
 
@@ -45,8 +66,8 @@ public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
         self.application = application
     }
 
-    public func setAccessoryActivationPolicy() {
-        _ = application.setActivationPolicy(.accessory)
+    public func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) {
+        _ = application.setActivationPolicy(activationPolicy)
     }
 
     public func run() {
@@ -164,6 +185,7 @@ struct MenuBarBootstrapEnvironment {
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
     let startupSurface: MenuBarStartupSurface
+    let presentationMode: MenuBarPresentationMode
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -176,6 +198,9 @@ struct MenuBarBootstrapEnvironment {
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
         self.startupSurface = MenuBarStartupSurface(
             environmentValue: environment["MELIX_MENU_BAR_STARTUP_SURFACE"]
+        )
+        self.presentationMode = MenuBarPresentationMode(
+            environmentValue: environment["MELIX_MENU_BAR_PRESENTATION_MODE"]
         )
     }
 
@@ -195,10 +220,11 @@ struct MenuBarBootstrapEnvironment {
 enum MelixMenuBarLauncher {
     static func launch(
         application: any MenuBarApplicationLifecycle,
+        presentationMode: MenuBarPresentationMode,
         bootstrapFactory: () -> MelixMenuBarBootstrap,
         retain: (MelixMenuBarBootstrap) -> Void
     ) {
-        application.setAccessoryActivationPolicy()
+        application.setActivationPolicy(presentationMode.activationPolicy)
 
         let bootstrap = bootstrapFactory()
         retain(bootstrap)
@@ -215,10 +241,14 @@ enum MelixMenuBarApp {
 
     static func launchLive(
         application: any MenuBarApplicationLifecycle = LiveMenuBarApplication(),
-        bootstrapFactory: () -> MelixMenuBarBootstrap = { MelixMenuBarBootstrap.live() }
+        bootstrapFactory: () -> MelixMenuBarBootstrap = { MelixMenuBarBootstrap.live() },
+        presentationMode: MenuBarPresentationMode = MenuBarBootstrapEnvironment(
+            environment: ProcessInfo.processInfo.environment
+        ).presentationMode
     ) {
         MelixMenuBarLauncher.launch(
             application: application,
+            presentationMode: presentationMode,
             bootstrapFactory: bootstrapFactory,
             retain: { retainedBootstrap = $0 }
         )

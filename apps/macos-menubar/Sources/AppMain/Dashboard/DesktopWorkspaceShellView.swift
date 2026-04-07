@@ -16,16 +16,10 @@ struct DesktopWorkspaceShellView: View {
                 }
             }
 
-            DesktopShellHeaderView(viewModel: viewModel)
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 14)
-
-            Divider()
-
-            DesktopHeaderShelfView(viewModel: viewModel)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+            DesktopShellChromeView(viewModel: viewModel)
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
 
             Divider()
 
@@ -102,53 +96,6 @@ private struct DesktopShellBannerView: View {
     }
 }
 
-private struct DesktopShellHeaderView: View {
-    let viewModel: RuntimeViewModel
-
-    var body: some View {
-        ZStack {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Melix Workspace")
-                        .font(.title2.weight(.semibold))
-                    Text("\(viewModel.serverStateText) • \(viewModel.connectionStateText)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(viewModel.daemonInstanceID.isEmpty ? "No daemon id" : viewModel.daemonInstanceID)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                    Text(viewModel.protocolVersion)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            HStack(spacing: 10) {
-                ForEach(DesktopSurface.allCases) { surface in
-                    Button {
-                        viewModel.selectSurface(surface)
-                    } label: {
-                        Label(surface.rawValue, systemImage: surface.symbolName)
-                            .font(.subheadline.weight(.medium))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                viewModel.selectedSurface == surface
-                                ? Color.accentColor.opacity(0.16)
-                                : Color.secondary.opacity(0.08),
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-}
-
 struct DesktopInlineNoticeCardView: View {
     let notice: DesktopBannerState
 
@@ -192,36 +139,6 @@ struct DesktopInlineNoticeCardView: View {
             return "pause.circle.fill"
         case .critical:
             return "exclamationmark.triangle.fill"
-        }
-    }
-}
-
-private struct DesktopHeaderShelfView: View {
-    let viewModel: RuntimeViewModel
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button("New Chat") {
-                viewModel.createChatSession()
-            }
-            .buttonStyle(.borderedProminent)
-
-            Button("New Image Job") {
-                viewModel.selectSurface(.image)
-            }
-            .buttonStyle(.bordered)
-
-            Button("New Server Session") {
-                viewModel.createServerSession()
-            }
-            .buttonStyle(.bordered)
-
-            Button("Open Command Center") {
-                viewModel.openCommandCenter()
-            }
-            .buttonStyle(.bordered)
-
-            Spacer()
         }
     }
 }
@@ -1030,34 +947,33 @@ struct DesktopDownloadsToolSectionView: View {
                 .foregroundStyle(.secondary)
 
             if viewModel.audioSetupActions.isEmpty == false {
-                GroupBox("Audio Setup") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(viewModel.audioSetupActions) { action in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(action.alias)
-                                        .font(.headline)
-                                    Text(action.detail)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button(action.actionTitle) {
-                                    Task {
-                                        switch action.kind {
-                                        case .installRuntime:
-                                            await viewModel.installAudioRuntime(modelID: action.modelID)
-                                        case .downloadModel:
-                                            await viewModel.downloadAudioModel(modelID: action.modelID)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.audioSetupActions) { action in
+                        HStack(spacing: 10) {
+                            Label("Audio Setup Required", systemImage: "waveform.badge.exclamationmark")
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+
+                            Text(action.alias)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            Button(action.actionTitle) {
+                                Task { await viewModel.performAudioSetupAction(action) }
                             }
+                            .buttonStyle(.borderedProminent)
+                            .fixedSize(horizontal: true, vertical: false)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack {
@@ -1065,16 +981,19 @@ struct DesktopDownloadsToolSectionView: View {
                     Task { await viewModel.convertPrimaryModel() }
                 }
                 .buttonStyle(.bordered)
+                .fixedSize(horizontal: true, vertical: false)
 
                 Button("Download Model") {
                     Task { await viewModel.downloadPrimaryModel() }
                 }
                 .buttonStyle(.borderedProminent)
+                .fixedSize(horizontal: true, vertical: false)
 
                 Button("Upload Artifact") {
                     Task { await viewModel.uploadPrimaryModel() }
                 }
                 .buttonStyle(.bordered)
+                .fixedSize(horizontal: true, vertical: false)
             }
 
             GroupBox("Download Queue") {
