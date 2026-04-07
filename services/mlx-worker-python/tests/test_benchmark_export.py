@@ -10,6 +10,8 @@ from worker.productization.benchmark_export import (
     build_benchmark_matrix_requests_csv,
     build_benchmark_matrix_summary_csv,
     build_benchmark_summary_csv,
+    build_evaluation_samples_csv,
+    build_evaluation_summary_csv,
     build_export_bundle,
     collect_benchmark_artifacts,
     collect_evaluation_artifacts,
@@ -584,3 +586,103 @@ def test_build_comparison_table_ignores_evaluation_metrics() -> None:
     table = build_comparison_table([run])
 
     assert table == ""
+
+
+def test_collect_benchmark_artifacts_returns_empty_lists_for_nonexistent_directory(
+    tmp_path: Path,
+) -> None:
+    result = collect_benchmark_artifacts(tmp_path / "does-not-exist")
+
+    assert result["benchmark_jobs"] == []
+    assert result["benchmark_summary_rows"] == []
+    assert result["benchmark_context_rows"] == []
+    assert result["benchmark_batch_rows"] == []
+    assert result["benchmark_results"] == []
+    assert result["benchmark_matrix_jobs"] == []
+    assert result["benchmark_matrix_summary_rows"] == []
+    assert result["benchmark_matrix_request_rows"] == []
+
+
+def test_collect_evaluation_artifacts_returns_empty_lists_for_nonexistent_directory(
+    tmp_path: Path,
+) -> None:
+    result = collect_evaluation_artifacts(tmp_path / "does-not-exist")
+
+    assert result["evaluation_jobs"] == []
+    assert result["evaluation_results"] == []
+    assert result["evaluation_summary_rows"] == []
+    assert result["evaluation_samples"] == []
+
+
+def test_build_comparison_table_returns_empty_string_for_no_runs() -> None:
+    assert build_comparison_table([]) == ""
+
+
+def test_build_comparison_table_returns_empty_string_when_runs_have_no_metrics() -> None:
+    run = {
+        "benchmark_jobs": [{"job_id": "bench-empty", "model_id": "model-x"}],
+        "benchmark_results": [],
+    }
+
+    assert build_comparison_table([run]) == ""
+
+
+def test_build_comparison_table_uses_job_id_as_label_when_model_id_absent() -> None:
+    run = {
+        "benchmark_jobs": [{"job_id": "bench-no-model"}],
+        "benchmark_results": [{
+            "metrics": [{"name": "bench.smoke.ttft_ms", "value": 10.0}],
+        }],
+    }
+
+    table = build_comparison_table([run])
+
+    assert "| Metric | bench-no-model |" in table
+
+
+def test_build_comparison_table_uses_run_index_label_when_no_jobs() -> None:
+    run = {
+        "benchmark_jobs": [],
+        "benchmark_results": [{
+            "metrics": [{"name": "bench.smoke.ttft_ms", "value": 10.0}],
+        }],
+    }
+
+    table = build_comparison_table([run])
+
+    assert "| Metric | run-0 |" in table
+
+
+def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
+    empty_bundle: dict[str, object] = {}
+
+    summary_csv = build_evaluation_summary_csv(empty_bundle)
+    samples_csv = build_evaluation_samples_csv(empty_bundle)
+
+    summary_lines = [line for line in summary_csv.splitlines() if line.strip()]
+    samples_lines = [line for line in samples_csv.splitlines() if line.strip()]
+    assert len(summary_lines) == 1
+    assert summary_lines[0].startswith("job_id,task_kind")
+    assert len(samples_lines) == 1
+    assert samples_lines[0].startswith("job_id,suite_id")
+
+
+def test_benchmark_csv_builders_return_header_only_for_empty_bundle() -> None:
+    empty_bundle: dict[str, object] = {}
+
+    summary_csv = build_benchmark_summary_csv(empty_bundle)
+    context_csv = build_benchmark_context_csv(empty_bundle)
+    batch_csv = build_benchmark_batch_csv(empty_bundle)
+    matrix_summary_csv = build_benchmark_matrix_summary_csv(empty_bundle)
+    matrix_requests_csv = build_benchmark_matrix_requests_csv(empty_bundle)
+
+    for csv_text, expected_prefix in [
+        (summary_csv, "job_id,model_id,task_kind"),
+        (context_csv, "job_id,model_id,task_kind"),
+        (batch_csv, "job_id,model_id,task_kind"),
+        (matrix_summary_csv, "job_id,task_kind,source_repo,model_id"),
+        (matrix_requests_csv, "job_id,cell_id,task_kind"),
+    ]:
+        nonempty_lines = [line for line in csv_text.splitlines() if line.strip()]
+        assert len(nonempty_lines) == 1, f"expected header-only CSV but got {nonempty_lines}"
+        assert nonempty_lines[0].startswith(expected_prefix)

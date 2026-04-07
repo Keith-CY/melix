@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from worker.productization.benchmark_queue import (
     BenchmarkQueueRecord,
     BenchmarkQueueStore,
@@ -174,3 +176,118 @@ def test_transition_updates_state_and_terminal_timestamp(tmp_path: Path) -> None
     persisted = json.loads((queue_root / "queue-1.json").read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
     assert persisted["completed_at_unix_ms"] == 200
+
+
+def test_transition_raises_when_queue_item_does_not_exist(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+
+    with pytest.raises(FileNotFoundError):
+        store.transition(
+            queue_root=tmp_path / "queue",
+            queue_item_id="nonexistent-item",
+            status="running",
+            updated_at_unix_ms=100,
+        )
+
+
+def test_list_records_returns_empty_when_queue_root_does_not_exist(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+
+    records = store.list_records(queue_root=tmp_path / "missing-queue-dir")
+
+    assert records == []
+
+
+def test_benchmark_queue_record_from_dict_uses_zero_for_missing_optional_timestamps() -> None:
+    payload = {
+        "queue_item_id": "q-minimal",
+        "job_kind": "benchmark",
+        "model_id": "melix-dev-text",
+        "status": "queued",
+        "created_at_unix_ms": 100,
+        "updated_at_unix_ms": 100,
+    }
+
+    record = BenchmarkQueueRecord.from_dict(payload)
+
+    assert record.started_at_unix_ms == 0
+    assert record.completed_at_unix_ms == 0
+    assert record.suite_ids == ()
+    assert record.parameters == {}
+
+
+def test_transition_to_failed_sets_completed_timestamp(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-fail",
+            job_kind="benchmark",
+            model_id="melix-dev-text",
+            suite_ids=("smoke",),
+            parameters={},
+            status="queued",
+            created_at_unix_ms=100,
+            updated_at_unix_ms=100,
+        ),
+    )
+
+    failed = store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-fail",
+        status="failed",
+        updated_at_unix_ms=200,
+    )
+
+    assert failed.status == "failed"
+    assert failed.completed_at_unix_ms == 200
+    persisted = json.loads((queue_root / "queue-fail.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["completed_at_unix_ms"] == 200
+
+
+def test_transition_running_does_not_overwrite_existing_started_at(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-restart",
+            job_kind="benchmark",
+            model_id="melix-dev-text",
+            suite_ids=("smoke",),
+            parameters={},
+            status="queued",
+            created_at_unix_ms=100,
+            updated_at_unix_ms=100,
+        ),
+    )
+
+    first_run = store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-restart",
+        status="running",
+        updated_at_unix_ms=150,
+    )
+    second_run = store.transition(
+        queue_root=queue_root,
+        queue_item_id="queue-restart",
+        status="running",
+        updated_at_unix_ms=200,
+    )
+
+    assert first_run.started_at_unix_ms == 150
+    # a second "running" transition must not overwrite the original start time
+    assert second_run.started_at_unix_ms == 150
+    assert second_run.updated_at_unix_ms == 200
+
+
+def test_queue_snapshot_returns_empty_for_empty_directory(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+
+    snapshot = store.queue_snapshot(queue_root=tmp_path / "empty-queue")
+
+    assert snapshot["total"] == 0
+    assert snapshot["by_status"] == {}
+    assert snapshot["records"] == []

@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from packages.protocol.python.worker.v1 import maintenance_pb2
+from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
-from worker.model_ops.quantization_profiles import protected_scope_for_request
+from worker.model_ops.quantization_profiles import (
+    normalize_quantization_profile,
+    protected_scope_for_request,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 
@@ -306,3 +309,67 @@ def test_protected_scope_prefers_explicit_scope_and_can_be_empty() -> None:
 
     empty_request = maintenance_pb2.ConvertModelRequest()
     assert protected_scope_for_request(empty_request) == ""
+
+
+def test_normalize_profile_falls_back_to_weight_quant_when_ext_profile_id_is_unsupported() -> None:
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        weight_quant="q6",
+        kv_quant="q8",
+        ext={"quant_profile_id": "q-bogus"},
+    )
+    profile = normalize_quantization_profile(request)
+    # q-bogus is not in _SUPPORTED_OQ_PROFILE_IDS, so it falls back to weight_quant "q6"
+    assert profile.quant_profile_id == "q6"
+    assert profile.weight_quant == "q6"
+
+
+def test_normalize_profile_falls_back_to_q4_when_both_ext_and_weight_quant_are_unsupported() -> None:
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        weight_quant="q-invalid",
+        ext={"quant_profile_id": "q-also-invalid"},
+    )
+    profile = normalize_quantization_profile(request)
+    # both unsupported: double-fallback ends at q4
+    assert profile.quant_profile_id == "q4"
+    assert profile.weight_quant == "q-invalid"  # weight_quant field is not normalized, only profile_id
+
+
+def test_normalize_profile_strips_non_quant_ext_keys() -> None:
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        weight_quant="q4",
+        ext={
+            "operation": "quantize",
+            "quant_group_size": "128",
+            "quant_algorithm": "oqe",
+        },
+    )
+    profile = normalize_quantization_profile(request)
+    # only keys starting with "quant_" are kept in ext
+    assert "operation" not in profile.ext
+    assert profile.ext.get("quant_group_size") == "128"
+    assert profile.ext.get("quant_algorithm") == "oqe"
+
+
+def test_protected_scope_uses_source_model_spec_ext_over_request_source_model() -> None:
+    spec = common_pb2.ModelSpec(model_id="llama-family-3-8b")
+    spec.ext["embedding_family_id"] = "llama-embed"
+
+    request = maintenance_pb2.ConvertModelRequest(source_model="melix-dev-text")
+    # spec ext fields come before request.source_model in candidate priority
+    assert protected_scope_for_request(request, source_model_spec=spec) == "model-family:llama-embed"
+
+
+def test_protected_scope_falls_back_to_source_model_spec_model_id() -> None:
+    spec = common_pb2.ModelSpec(model_id="gemma-2b")
+    request = maintenance_pb2.ConvertModelRequest(source_model="melix-dev-text")
+    # spec has no ext families, so model_id is the first non-empty candidate
+    result = protected_scope_for_request(request, source_model_spec=spec)
+    assert result == "model-family:gemma-2b"
+
+
+def test_protected_scope_falls_back_to_request_source_model_when_spec_absent() -> None:
+    request = maintenance_pb2.ConvertModelRequest(source_model="melix-fallback-model")
+    assert protected_scope_for_request(request) == "model-family:melix-fallback-model"

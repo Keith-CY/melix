@@ -336,3 +336,80 @@ def test_benchmark_suite_dataset_helpers_cover_split_resolution_and_http_failure
     with pytest.raises(ModelOperationError) as fetch_error:
         benchmark_suites._fetch_hf_dataset_server_json("rows", {"dataset": "demo/dataset"})
     assert fetch_error.value.code == "hf_dataset_fetch_failed"
+
+
+def _make_definition(task_kind: str) -> BenchmarkSuiteDefinition:
+    return BenchmarkSuiteDefinition(
+        task_kind=task_kind,
+        suite_id="smoke",
+        title="Smoke",
+        dataset_path="demo/dataset",
+        dataset_name="default",
+        dataset_revision="main",
+        dataset_split="train",
+        prompt_feature="instruction",
+        text_feature="",
+        image_feature="image",
+        source_image_feature="image",
+        mask_feature="",
+        default_prompt="Describe this.",
+        default_sample_size=1,
+        default_batch_factor=1,
+    )
+
+
+def test_suite_cases_raises_for_unknown_task_kind() -> None:
+    definition = _make_definition("audio-to-text")
+    rows = [{"instruction": "Transcribe the audio."}]
+
+    with pytest.raises(ModelOperationError) as error:
+        benchmark_suites._suite_cases(definition, rows=rows, sample_size=1, batch_factor=1)
+
+    assert error.value.code == "invalid_benchmark_suite"
+
+
+def test_suite_cases_raises_when_image_to_text_rows_have_no_image_uris() -> None:
+    definition = _make_definition("image-to-text")
+    rows = [{"instruction": "no image here"}]
+
+    with pytest.raises(ModelOperationError) as error:
+        benchmark_suites._suite_cases(definition, rows=rows, sample_size=1, batch_factor=1)
+
+    assert error.value.code == "invalid_benchmark_suite"
+
+
+def test_suite_cases_raises_when_image_text_to_image_rows_have_no_source_uris() -> None:
+    definition = _make_definition("image-text-to-image")
+    rows = [{"instruction": "no source image here"}]
+
+    with pytest.raises(ModelOperationError) as error:
+        benchmark_suites._suite_cases(definition, rows=rows, sample_size=1, batch_factor=1)
+
+    assert error.value.code == "invalid_benchmark_suite"
+
+
+def test_parse_positive_int_clamps_to_one_for_zero_and_negative_values() -> None:
+    assert benchmark_suites._parse_positive_int("0", 5) == 1
+    assert benchmark_suites._parse_positive_int("-3", 5) == 1
+    assert benchmark_suites._parse_positive_int("-1", 2) == 1
+
+
+def test_parse_positive_int_returns_default_for_non_numeric_and_empty_input() -> None:
+    assert benchmark_suites._parse_positive_int("abc", 7) == 7
+    assert benchmark_suites._parse_positive_int("", 3) == 3
+    assert benchmark_suites._parse_positive_int("  ", 4) == 4
+
+
+def test_benchmark_suite_catalog_raises_for_unknown_task_kind(tmp_path: Path) -> None:
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkSuiteFetcher())
+
+    with pytest.raises(ModelOperationError) as error:
+        catalog.resolve_suite(
+            "smoke",
+            jobs_root=tmp_path,
+            parameters={},
+            task_kind="audio-to-text",
+        )
+
+    assert error.value.code == "invalid_benchmark_suite"
+    assert error.value.details == {"suite_id": "smoke", "task_kind": "audio-to-text"}
