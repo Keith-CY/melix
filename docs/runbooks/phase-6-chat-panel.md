@@ -44,6 +44,14 @@ curl -sS http://127.0.0.1:11434/v1/models
 swift run --package-path apps/macos-menubar melix-menubar
 ```
 
+If you want the whole local app, including the backend stack and workspace window, without
+recompiling on each restart, build once and use the built-artifact entrypoint instead:
+
+```bash
+make swift-test
+MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_app_up.sh
+```
+
 5. Open the `Chat` tab and submit a prompt against the default text model.
    - Confirm the transcript records the user prompt and assistant output.
    - Confirm reasoning and tool-call sections appear when the runtime emits those deltas.
@@ -85,6 +93,13 @@ bash scripts/dev_up.sh
 
 ```bash
 swift run --package-path apps/macos-menubar melix-menubar
+```
+
+For repeated full-app restarts without launch-time compile overhead:
+
+```bash
+make swift-test
+MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_app_up.sh
 ```
 
 4. Retry the real Swift MLX path only after the deterministic desktop chat flow is stable.

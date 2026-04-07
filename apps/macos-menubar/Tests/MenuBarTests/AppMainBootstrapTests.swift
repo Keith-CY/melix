@@ -134,6 +134,46 @@ struct AppMainBootstrapTests {
         #expect(presenter.showCount == 1)
     }
 
+    @Test("bootstrap keeps tray startup surface from auto-opening the workspace")
+    @MainActor
+    func bootstrapKeepsTrayStartupSurfaceFromAutoOpeningWorkspace() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let menu = RecordingInstallStatusMenu()
+        let presenter = RecordingDesktopFoundationPresenter()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            startupSurface: .tray,
+            desktopFoundationPresenterFactory: { _, _ in presenter },
+            statusMenuFactory: { _, _ in menu }
+        )
+
+        bootstrap.start()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(menu.installCount == 1)
+        #expect(presenter.showCount == 0)
+    }
+
+    @Test("bootstrap auto-opens the workspace when startup surface is console")
+    @MainActor
+    func bootstrapAutoOpensWorkspaceWhenStartupSurfaceIsConsole() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let menu = RecordingInstallStatusMenu()
+        let presenter = RecordingDesktopFoundationPresenter()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: client,
+            startupSurface: .console,
+            desktopFoundationPresenterFactory: { _, _ in presenter },
+            statusMenuFactory: { _, _ in menu }
+        )
+
+        bootstrap.start()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(menu.installCount == 1)
+        #expect(presenter.showCount == 1)
+    }
+
     @Test("bootstrap wires the command center presenter into the view model action")
     @MainActor
     func bootstrapWiresCommandCenterPresenter() async throws {
@@ -174,12 +214,14 @@ struct AppMainBootstrapTests {
                 "MELIX_REPO_ROOT": "/tmp/melix-root",
                 "MELIX_WORKER_SOCKET_PATH": "/tmp/python.sock",
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/swift.sock",
+                "MELIX_MENU_BAR_STARTUP_SURFACE": "console",
             ]
         )
 
         #expect(environment.repoRoot == "/tmp/melix-root")
         #expect(environment.pythonWorkerSocketPath == "/tmp/python.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/tmp/swift.sock")
+        #expect(environment.startupSurface == .console)
     }
 
     @Test("bootstrap environment falls back to inferred repo root and default sockets")
@@ -190,6 +232,7 @@ struct AppMainBootstrapTests {
         #expect(environment.repoRoot.hasSuffix("/melix"))
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
+        #expect(environment.startupSurface == .tray)
     }
 
     @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")

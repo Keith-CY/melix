@@ -37,6 +37,14 @@ Use the opt-in fast path only when the Swift binaries are already built and you 
 bash scripts/dev_up.sh --prefer-built
 ```
 
+When you want the backend stack plus the native workspace window without recompiling at launch
+time, build once and then use the full-app entrypoint:
+
+```bash
+make swift-test
+bash scripts/dev_app_up.sh
+```
+
 3. Check model visibility through the control plane.
 
 ```bash
@@ -64,7 +72,7 @@ make phase1-metrics
 - The Swift text worker socket path already exists because shutdown did not complete.
 - `MELIX_DEV_TEXT_MODEL_PATH` is missing while `MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift`.
 - Swift package caches or module caches were not initialized before startup.
-- `--prefer-built` was used before the Swift executables were built under `.build/.../debug`.
+- `--prefer-built` or `scripts/dev_app_up.sh` was used before the Swift executables were built under `.build/.../debug`.
 
 ## Recovery
 
@@ -94,6 +102,13 @@ bash scripts/dev_up.sh
 ```bash
 MELIX_DEV_TEXT_MODEL_PATH="<model path or repo>" \
 make phase1-metrics PHASE1_METRICS_ARGS="--swift-backend-mode swift --json"
+```
+
+5. When you want the full app after the backend path is stable, relaunch from built artifacts.
+
+```bash
+make swift-test
+bash scripts/dev_app_up.sh
 ```
 
 ## Verification

@@ -2,6 +2,19 @@ import AppKit
 import Foundation
 import MelixControlPlaneCore
 
+public enum MenuBarStartupSurface: String {
+    case tray
+    case console
+    case commandCenter = "command-center"
+
+    init(environmentValue: String?) {
+        let normalized = environmentValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        self = MenuBarStartupSurface(rawValue: normalized) ?? .tray
+    }
+}
+
 @MainActor
 public protocol StatusMenuInstalling: AnyObject {
     func install()
@@ -44,12 +57,14 @@ public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
 @MainActor
 public final class MelixMenuBarBootstrap {
     private let viewModel: RuntimeViewModel
+    private let startupSurface: MenuBarStartupSurface
     private let desktopFoundationPresenter: any DesktopFoundationPresenting
     private let commandCenterPresenter: any DesktopFoundationPresenting
     private let statusMenu: any StatusMenuInstalling
 
     public init(
         client: any ControlPlaneXPCClient,
+        startupSurface: MenuBarStartupSurface = .tray,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         melixHome: MelixHome = MelixHome(),
         operatorSessionStore: (any OperatorSessionStoring)? = nil,
@@ -87,6 +102,7 @@ public final class MelixMenuBarBootstrap {
             commandCenterPresenter.show()
         }
         self.viewModel = viewModel
+        self.startupSurface = startupSurface
         self.desktopFoundationPresenter = desktopFoundationPresenter
         self.commandCenterPresenter = commandCenterPresenter
         self.statusMenu = statusMenuFactory(viewModel) {
@@ -96,6 +112,14 @@ public final class MelixMenuBarBootstrap {
 
     public func start() {
         statusMenu.install()
+        switch startupSurface {
+        case .tray:
+            break
+        case .console:
+            desktopFoundationPresenter.show()
+        case .commandCenter:
+            commandCenterPresenter.show()
+        }
         Task {
             await viewModel.start()
         }
@@ -127,6 +151,7 @@ public final class MelixMenuBarBootstrap {
         let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
         return MelixMenuBarBootstrap(
             client: LocalControlPlaneXPCClient(service: service),
+            startupSurface: environment.startupSurface,
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome)
@@ -138,6 +163,7 @@ struct MenuBarBootstrapEnvironment {
     let repoRoot: String
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
+    let startupSurface: MenuBarStartupSurface
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -148,6 +174,9 @@ struct MenuBarBootstrapEnvironment {
         self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
+        self.startupSurface = MenuBarStartupSurface(
+            environmentValue: environment["MELIX_MENU_BAR_STARTUP_SURFACE"]
+        )
     }
 
     private static func inferRepoRoot() -> String {

@@ -44,6 +44,28 @@ curl -sS http://127.0.0.1:11434/v1/models
 make phase1-metrics
 ```
 
+Compile the Swift products once when you want to relaunch the full local app, including the
+native window UI, without paying `swift run` compile overhead on every restart:
+
+```bash
+make swift-test
+```
+
+Then start the backend stack plus the built menubar app:
+
+```bash
+bash scripts/dev_app_up.sh
+```
+
+This full-app path always uses existing built Swift executables for:
+
+- `melix-text-worker-swift`
+- `melix-control-plane`
+- `melix-menubar`
+
+It fails fast when those artifacts are missing. Keep `bash scripts/dev_up.sh` as the default
+backend-only deterministic loop when you do not need the native window UI.
+
 Shut it down:
 
 ```bash

@@ -40,6 +40,7 @@ stop_pid_file() {
   rm -f "$pid_file"
 }
 
+stop_pid_file "$RUNTIME_DIR/menubar.pid"
 stop_pid_file "$RUNTIME_DIR/control-plane.pid"
 stop_pid_file "$RUNTIME_DIR/python-worker.pid"
 stop_pid_file "$RUNTIME_DIR/swift-text-worker.pid"
