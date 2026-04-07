@@ -4,7 +4,7 @@
 
 **Goal:** Let Melix operators boot the local backend stack together with the native window UI from already-built artifacts, so repeated local restarts do not recompile Swift packages at launch time.
 
-**Architecture:** Keep `scripts/dev_up.sh` as the current backend-only entrypoint and add a separate full-app entrypoint that composes the existing runtime bootstrap with one built-only menubar launch. The Swift control plane remains orchestration truth, the Python worker remains execution truth, and the menubar app stays a thin operator shell that can optionally auto-open the workspace window on startup.
+**Architecture:** Keep `scripts/dev_up.sh` as the current backend-only entrypoint and add a separate full-app entrypoint that composes the existing runtime bootstrap with one built-only menubar launch. The Swift control plane remains orchestration truth, the Python worker remains execution truth, and the menubar app stays a thin operator shell that can auto-open the workspace window on startup, surface a standard app-level quit menu, and route development-time termination back through `scripts/dev_down.sh`.
 
 **Tech Stack:** Python launch scripts, shell wrappers, Swift AppKit bootstrap code, pytest, Swift Testing.
 
@@ -15,7 +15,9 @@
 - [x] Add a built-artifact full-app startup entrypoint without changing the default behavior of `scripts/dev_up.sh`.
 - [x] Require prebuilt Swift binaries for the full-app path and fail fast with actionable guidance when they are missing.
 - [x] Launch `melix-menubar` from the runtime bootstrap and auto-open the workspace window through an explicit startup-surface contract.
+- [x] Launch the full-app path in `dock-and-tray` presentation mode so standard macOS app shortcuts such as `Cmd+Q` are available.
 - [x] Extend shutdown handling so `scripts/dev_down.sh` also stops the menubar process when the full-app path was used.
+- [x] Route app-level quit actions in the full-app path back through the shared `dev_down` shutdown contract.
 - [x] Update operator docs for compile-once and repeated local window-UI restarts.
 
 ## Probes And Success Metrics
@@ -23,11 +25,11 @@
 - [x] Startup artifact probe:
   - `scripts/dev_app_up.py` resolves built binaries for `melix-text-worker-swift`, `melix-control-plane`, and `melix-menubar`.
 - [x] Startup contract probe:
-  - the menubar process receives `MELIX_MENU_BAR_STARTUP_SURFACE=console` from the full-app bootstrap path.
+  - the menubar process receives `MELIX_MENU_BAR_STARTUP_SURFACE=console`, `MELIX_MENU_BAR_PRESENTATION_MODE=dock-and-tray`, and `MELIX_MENU_BAR_TERMINATION_MODE=dev-down-script` from the full-app bootstrap path.
 - [x] UI behavior probe:
-  - the default menubar launch remains tray-only, while the `console` startup surface auto-opens the workspace presenter exactly once.
+  - the default menubar launch remains tray-only, while the full-app `console` startup surface auto-opens the workspace presenter exactly once and installs a standard `Cmd+Q` quit menu.
 - [x] Shutdown probe:
-  - `scripts/dev_down.sh` removes `menubar.pid` after stopping the full-app runtime.
+  - `scripts/dev_down.sh` removes `menubar.pid` after stopping the full-app runtime, and full-app quit actions request the same shutdown path.
 - [x] Operator loop probe:
   - after one prior `swift test` or `swift build`, `bash scripts/dev_app_up.sh` can reopen the full app without invoking `swift run`.
 

@@ -36,6 +36,18 @@ public enum MenuBarPresentationMode: String, Equatable {
     }
 }
 
+public enum MenuBarTerminationMode: String, Equatable {
+    case terminate
+    case devDownScript = "dev-down-script"
+
+    init(environmentValue: String?) {
+        let normalized = environmentValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        self = MenuBarTerminationMode(rawValue: normalized) ?? .terminate
+    }
+}
+
 @MainActor
 public protocol StatusMenuInstalling: AnyObject {
     func install()
@@ -46,6 +58,7 @@ extension StatusMenu: StatusMenuInstalling {}
 @MainActor
 public protocol MenuBarApplicationLifecycle {
     func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy)
+    func setMainMenu(_ menu: NSMenu?)
     func run()
 }
 
@@ -53,10 +66,15 @@ public protocol MenuBarApplicationLifecycle {
 public protocol NSApplicationControlling {
     @discardableResult
     func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) -> Bool
+    func setMainMenu(_ menu: NSMenu?)
     func run()
 }
 
-extension NSApplication: NSApplicationControlling {}
+extension NSApplication: NSApplicationControlling {
+    public func setMainMenu(_ menu: NSMenu?) {
+        mainMenu = menu
+    }
+}
 
 @MainActor
 public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
@@ -70,8 +88,106 @@ public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
         _ = application.setActivationPolicy(activationPolicy)
     }
 
+    public func setMainMenu(_ menu: NSMenu?) {
+        application.setMainMenu(menu)
+    }
+
     public func run() {
         application.run()
+    }
+}
+
+@MainActor
+public final class MenuBarTerminationCoordinator: NSObject {
+    private let mode: MenuBarTerminationMode
+    private let repoRoot: String
+    private let runtimeDirectory: String?
+    private let terminateApplication: @MainActor @Sendable () -> Void
+    private let launchDevDownScript: @MainActor @Sendable (String, String?) -> Void
+    private var isTerminationRequested = false
+
+    public init(
+        mode: MenuBarTerminationMode,
+        repoRoot: String,
+        runtimeDirectory: String?,
+        terminateApplication: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) },
+        launchDevDownScript: (@MainActor @Sendable (String, String?) -> Void)? = nil
+    ) {
+        self.mode = mode
+        self.repoRoot = repoRoot
+        self.runtimeDirectory = runtimeDirectory
+        self.terminateApplication = terminateApplication
+        self.launchDevDownScript = launchDevDownScript ?? { repoRoot, runtimeDirectory in
+            MenuBarTerminationCoordinator.launchDevDownProcess(
+                repoRoot: repoRoot,
+                runtimeDirectory: runtimeDirectory
+            )
+        }
+    }
+
+    @objc
+    public func handleQuitMenuItem(_ sender: Any?) {
+        _ = sender
+        requestTermination()
+    }
+
+    public func requestTermination() {
+        guard isTerminationRequested == false else {
+            return
+        }
+
+        isTerminationRequested = true
+        if mode == .devDownScript {
+            launchDevDownScript(repoRoot, runtimeDirectory)
+        }
+        terminateApplication()
+    }
+
+    static func launchDevDownProcess(repoRoot: String, runtimeDirectory: String?) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [
+            "-c",
+            """
+import os, subprocess, sys
+script_path = sys.argv[1]
+runtime_dir = sys.argv[2] if len(sys.argv) > 2 else ""
+env = os.environ.copy()
+if runtime_dir:
+    env["MELIX_RUNTIME_DIR"] = runtime_dir
+subprocess.Popen(
+    ["/bin/bash", script_path],
+    env=env,
+    start_new_session=True,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+""",
+            URL(fileURLWithPath: repoRoot)
+                .appendingPathComponent("scripts/dev_down.sh")
+                .path,
+            runtimeDirectory ?? "",
+        ]
+        try? process.run()
+    }
+}
+
+enum MenuBarApplicationMenuBuilder {
+    @MainActor
+    static func makeMainMenu(
+        target: AnyObject,
+        action: Selector
+    ) -> NSMenu {
+        let mainMenu = NSMenu(title: MelixBranding.productName)
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: MelixBranding.productName)
+        let quitItem = NSMenuItem(title: "Quit Melix", action: action, keyEquivalent: "q")
+        quitItem.target = target
+        quitItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(quitItem)
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+        return mainMenu
     }
 }
 
@@ -102,11 +218,17 @@ public final class MelixMenuBarBootstrap {
         ) -> any DesktopFoundationPresenting = { viewModel, metrics in
             CommandCenterPresenter(viewModel: viewModel, metrics: metrics)
         },
+        terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) },
         statusMenuFactory: @MainActor @escaping (
             RuntimeViewModel,
+            @escaping @MainActor @Sendable () -> Void,
             @escaping @MainActor @Sendable () -> Void
-        ) -> any StatusMenuInstalling = { viewModel, openConsole in
-            StatusMenu(viewModel: viewModel, openConsoleHandler: openConsole)
+        ) -> any StatusMenuInstalling = { viewModel, openConsole, terminationHandler in
+            StatusMenu(
+                viewModel: viewModel,
+                openConsoleHandler: openConsole,
+                terminationHandler: terminationHandler
+            )
         }
     ) {
         let resolvedOperatorSessionStore = operatorSessionStore ?? OperatorSessionStore(melixHome: melixHome)
@@ -126,9 +248,9 @@ public final class MelixMenuBarBootstrap {
         self.startupSurface = startupSurface
         self.desktopFoundationPresenter = desktopFoundationPresenter
         self.commandCenterPresenter = commandCenterPresenter
-        self.statusMenu = statusMenuFactory(viewModel) {
+        self.statusMenu = statusMenuFactory(viewModel, {
             desktopFoundationPresenter.show()
-        }
+        }, terminationHandler)
     }
 
     public func start() {
@@ -146,8 +268,10 @@ public final class MelixMenuBarBootstrap {
         }
     }
 
-    public static func live() -> MelixMenuBarBootstrap {
-        let environment = MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+    static func live(
+        environment: MenuBarBootstrapEnvironment,
+        terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) }
+    ) -> MelixMenuBarBootstrap {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: environment.swiftTextWorkerSocketPath
@@ -175,7 +299,17 @@ public final class MelixMenuBarBootstrap {
             startupSurface: environment.startupSurface,
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
-            serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome)
+            serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
+            terminationHandler: terminationHandler
+        )
+    }
+
+    public static func live(
+        terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) }
+    ) -> MelixMenuBarBootstrap {
+        live(
+            environment: MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment),
+            terminationHandler: terminationHandler
         )
     }
 }
@@ -186,6 +320,8 @@ struct MenuBarBootstrapEnvironment {
     let swiftTextWorkerSocketPath: String
     let startupSurface: MenuBarStartupSurface
     let presentationMode: MenuBarPresentationMode
+    let terminationMode: MenuBarTerminationMode
+    let runtimeDirectory: String?
 
     init(environment: [String: String]) {
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
@@ -202,6 +338,12 @@ struct MenuBarBootstrapEnvironment {
         self.presentationMode = MenuBarPresentationMode(
             environmentValue: environment["MELIX_MENU_BAR_PRESENTATION_MODE"]
         )
+        self.terminationMode = MenuBarTerminationMode(
+            environmentValue: environment["MELIX_MENU_BAR_TERMINATION_MODE"]
+        )
+        self.runtimeDirectory =
+            environment["MELIX_RUNTIME_DIR"]
+            ?? URL(fileURLWithPath: self.pythonWorkerSocketPath).deletingLastPathComponent().path
     }
 
     private static func inferRepoRoot() -> String {
@@ -221,12 +363,25 @@ enum MelixMenuBarLauncher {
     static func launch(
         application: any MenuBarApplicationLifecycle,
         presentationMode: MenuBarPresentationMode,
-        bootstrapFactory: () -> MelixMenuBarBootstrap,
+        terminationCoordinator: MenuBarTerminationCoordinator = MenuBarTerminationCoordinator(
+            mode: .terminate,
+            repoRoot: FileManager.default.currentDirectoryPath,
+            runtimeDirectory: nil
+        ),
+        bootstrapFactory: (@escaping @MainActor @Sendable () -> Void) -> MelixMenuBarBootstrap,
         retain: (MelixMenuBarBootstrap) -> Void
     ) {
         application.setActivationPolicy(presentationMode.activationPolicy)
+        application.setMainMenu(
+            MenuBarApplicationMenuBuilder.makeMainMenu(
+                target: terminationCoordinator,
+                action: #selector(MenuBarTerminationCoordinator.handleQuitMenuItem(_:))
+            )
+        )
 
-        let bootstrap = bootstrapFactory()
+        let bootstrap = bootstrapFactory {
+            terminationCoordinator.requestTermination()
+        }
         retain(bootstrap)
         bootstrap.start()
 
@@ -238,18 +393,33 @@ enum MelixMenuBarLauncher {
 @MainActor
 enum MelixMenuBarApp {
     private static var retainedBootstrap: MelixMenuBarBootstrap?
+    private static var retainedTerminationCoordinator: MenuBarTerminationCoordinator?
 
     static func launchLive(
         application: any MenuBarApplicationLifecycle = LiveMenuBarApplication(),
-        bootstrapFactory: () -> MelixMenuBarBootstrap = { MelixMenuBarBootstrap.live() },
+        bootstrapFactory: ((@escaping @MainActor @Sendable () -> Void) -> MelixMenuBarBootstrap)? = nil,
         presentationMode: MenuBarPresentationMode = MenuBarBootstrapEnvironment(
             environment: ProcessInfo.processInfo.environment
         ).presentationMode
     ) {
+        let environment = MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let terminationCoordinator = MenuBarTerminationCoordinator(
+            mode: environment.terminationMode,
+            repoRoot: environment.repoRoot,
+            runtimeDirectory: environment.runtimeDirectory
+        )
+        retainedTerminationCoordinator = terminationCoordinator
+
         MelixMenuBarLauncher.launch(
             application: application,
             presentationMode: presentationMode,
-            bootstrapFactory: bootstrapFactory,
+            terminationCoordinator: terminationCoordinator,
+            bootstrapFactory: bootstrapFactory ?? { terminationHandler in
+                MelixMenuBarBootstrap.live(
+                    environment: environment,
+                    terminationHandler: terminationHandler
+                )
+            },
             retain: { retainedBootstrap = $0 }
         )
     }

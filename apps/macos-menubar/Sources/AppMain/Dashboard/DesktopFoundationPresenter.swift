@@ -120,10 +120,6 @@ public final class LiveDesktopFoundationWindow: NSObject, DesktopFoundationWindo
     public init(viewModel: RuntimeViewModel) {
         let hostingController = NSHostingController(rootView: DesktopFoundationRootView(viewModel: viewModel))
         let window = NSWindow(contentViewController: hostingController)
-        let toolbar = NSToolbar(identifier: "MelixWorkspaceToolbar")
-        toolbar.allowsUserCustomization = false
-        toolbar.autosavesConfiguration = false
-        window.toolbar = toolbar
         window.toolbarStyle = .unifiedCompact
         window.title = "Melix"
         window.setContentSize(NSSize(width: 1100, height: 760))
@@ -135,6 +131,7 @@ public final class LiveDesktopFoundationWindow: NSObject, DesktopFoundationWindo
 
     public func show() {
         windowController.showWindow(nil)
+        windowController.window?.toolbarStyle = .unifiedCompact
         windowController.window?.makeKeyAndOrderFront(nil)
     }
 }

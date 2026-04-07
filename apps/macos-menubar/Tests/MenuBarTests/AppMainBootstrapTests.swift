@@ -27,7 +27,7 @@ struct AppMainBootstrapTests {
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
             metrics: metrics,
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         bootstrap.start()
@@ -51,14 +51,14 @@ struct AppMainBootstrapTests {
         let menu = RecordingInstallStatusMenu()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
         var retainedBootstrap: MelixMenuBarBootstrap?
 
         MelixMenuBarLauncher.launch(
             application: app,
             presentationMode: .tray,
-            bootstrapFactory: { bootstrap },
+            bootstrapFactory: { _ in bootstrap },
             retain: { retainedBootstrap = $0 }
         )
         try await waitForBootstrapCondition("expected launcher handshake to complete") {
@@ -70,6 +70,32 @@ struct AppMainBootstrapTests {
         #expect(retainedBootstrap === bootstrap)
         #expect(menu.installCount == 1)
         #expect(await client.handshakeCount == 1)
+    }
+
+    @Test("launcher installs a command-q application menu item")
+    @MainActor
+    func launcherInstallsCommandQApplicationMenuItem() async throws {
+        let app = RecordingApplicationLifecycle()
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
+        )
+
+        MelixMenuBarLauncher.launch(
+            application: app,
+            presentationMode: .dockAndTray,
+            bootstrapFactory: { _ in bootstrap },
+            retain: { _ in }
+        )
+
+        let mainMenu = try #require(app.mainMenu)
+        let appMenuItem = try #require(mainMenu.items.first)
+        let appMenu = try #require(appMenuItem.submenu)
+        let quitItem = try #require(appMenu.items.last)
+
+        #expect(quitItem.title == "Quit Melix")
+        #expect(quitItem.keyEquivalent == "q")
+        #expect(quitItem.keyEquivalentModifierMask == [.command])
     }
 
     @Test("live application delegates activation policy and run to its application controller")
@@ -85,6 +111,32 @@ struct AppMainBootstrapTests {
         #expect(application.runCount == 1)
     }
 
+    @Test("live application delegates main-menu updates to its application controller")
+    @MainActor
+    func liveApplicationDelegatesMainMenuUpdates() {
+        let application = RecordingNSApplication()
+        let liveApplication = LiveMenuBarApplication(application: application)
+        let menu = NSMenu(title: "Melix Test")
+
+        liveApplication.setMainMenu(menu)
+
+        #expect(application.mainMenu === menu)
+    }
+
+    @Test("shared application controller accepts main-menu updates")
+    @MainActor
+    func sharedApplicationControllerAcceptsMainMenuUpdates() {
+        let previousMenu = NSApplication.shared.mainMenu
+        let menu = NSMenu(title: "Melix Shared Test")
+        defer {
+            NSApplication.shared.mainMenu = previousMenu
+        }
+
+        LiveMenuBarApplication().setMainMenu(menu)
+
+        #expect(NSApplication.shared.mainMenu === menu)
+    }
+
     @Test("launchLive uses the shared launcher path")
     @MainActor
     func launchLiveUsesSharedLauncherPath() async throws {
@@ -93,12 +145,12 @@ struct AppMainBootstrapTests {
         let menu = RecordingInstallStatusMenu()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         MelixMenuBarApp.launchLive(
             application: application,
-            bootstrapFactory: { bootstrap }
+            bootstrapFactory: { _ in bootstrap }
         )
         try await waitForBootstrapCondition("expected launchLive handshake to complete") {
             await client.handshakeCount == 1
@@ -118,12 +170,12 @@ struct AppMainBootstrapTests {
         let menu = RecordingInstallStatusMenu()
         let bootstrap = MelixMenuBarBootstrap(
             client: client,
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         MelixMenuBarApp.launchLive(
             application: application,
-            bootstrapFactory: { bootstrap },
+            bootstrapFactory: { _ in bootstrap },
             presentationMode: .dockAndTray
         )
         try await waitForBootstrapCondition("expected dock and tray launch handshake to complete") {
@@ -147,7 +199,7 @@ struct AppMainBootstrapTests {
             client: client,
             metrics: metrics,
             desktopFoundationPresenterFactory: { _, _ in presenter },
-            statusMenuFactory: { _, openConsole in
+            statusMenuFactory: { _, openConsole, _ in
                 menu.openConsole = openConsole
                 return menu
             }
@@ -171,7 +223,7 @@ struct AppMainBootstrapTests {
             client: client,
             startupSurface: .tray,
             desktopFoundationPresenterFactory: { _, _ in presenter },
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         bootstrap.start()
@@ -191,7 +243,7 @@ struct AppMainBootstrapTests {
             client: client,
             startupSurface: .console,
             desktopFoundationPresenterFactory: { _, _ in presenter },
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         bootstrap.start()
@@ -221,7 +273,7 @@ struct AppMainBootstrapTests {
                 capturedViewModel = viewModel
                 return commandCenterPresenter
             },
-            statusMenuFactory: { _, _ in menu }
+            statusMenuFactory: { _, _, _ in menu }
         )
 
         bootstrap.start()
@@ -243,6 +295,8 @@ struct AppMainBootstrapTests {
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/swift.sock",
                 "MELIX_MENU_BAR_STARTUP_SURFACE": "console",
                 "MELIX_MENU_BAR_PRESENTATION_MODE": "dock-and-tray",
+                "MELIX_MENU_BAR_TERMINATION_MODE": "dev-down-script",
+                "MELIX_RUNTIME_DIR": "/tmp/melix-runtime",
             ]
         )
 
@@ -251,6 +305,8 @@ struct AppMainBootstrapTests {
         #expect(environment.swiftTextWorkerSocketPath == "/tmp/swift.sock")
         #expect(environment.startupSurface == .console)
         #expect(environment.presentationMode == .dockAndTray)
+        #expect(environment.terminationMode == .devDownScript)
+        #expect(environment.runtimeDirectory == "/tmp/melix-runtime")
     }
 
     @Test("bootstrap environment falls back to inferred repo root and default sockets")
@@ -263,6 +319,83 @@ struct AppMainBootstrapTests {
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
         #expect(environment.startupSurface == .tray)
         #expect(environment.presentationMode == .tray)
+        #expect(environment.terminationMode == .terminate)
+    }
+
+    @Test("termination coordinator launches dev-down and then terminates the application")
+    @MainActor
+    func terminationCoordinatorLaunchesDevDownAndTerminatesApplication() async throws {
+        let recorder = TerminationCoordinatorRecorder()
+        let coordinator = MenuBarTerminationCoordinator(
+            mode: .devDownScript,
+            repoRoot: "/tmp/melix-repo",
+            runtimeDirectory: "/tmp/melix-runtime",
+            terminateApplication: { recorder.terminateApplicationCallCount += 1 },
+            launchDevDownScript: { repoRoot, runtimeDirectory in
+                recorder.devDownRequests.append((repoRoot, runtimeDirectory))
+            }
+        )
+
+        coordinator.requestTermination()
+
+        #expect(recorder.terminateApplicationCallCount == 1)
+        #expect(recorder.devDownRequests.count == 1)
+        #expect(recorder.devDownRequests.first?.0 == "/tmp/melix-repo")
+        #expect(recorder.devDownRequests.first?.1 == "/tmp/melix-runtime")
+    }
+
+    @Test("termination coordinator routes quit menu actions once")
+    @MainActor
+    func terminationCoordinatorRoutesQuitMenuActionsOnce() {
+        let recorder = TerminationCoordinatorRecorder()
+        let coordinator = MenuBarTerminationCoordinator(
+            mode: .devDownScript,
+            repoRoot: "/tmp/melix-repo",
+            runtimeDirectory: "/tmp/melix-runtime",
+            terminateApplication: { recorder.terminateApplicationCallCount += 1 },
+            launchDevDownScript: { repoRoot, runtimeDirectory in
+                recorder.devDownRequests.append((repoRoot, runtimeDirectory))
+            }
+        )
+
+        coordinator.handleQuitMenuItem(nil)
+        coordinator.handleQuitMenuItem(nil)
+
+        #expect(recorder.terminateApplicationCallCount == 1)
+        #expect(recorder.devDownRequests.count == 1)
+    }
+
+    @Test("dev-down launcher spawns the shutdown script with MELIX_RUNTIME_DIR")
+    @MainActor
+    func devDownLauncherSpawnsShutdownScriptWithRuntimeDirectory() async throws {
+        let repoRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-dev-down-\(UUID().uuidString)")
+        let scriptsDirectory = repoRoot.appendingPathComponent("scripts")
+        let outputFile = repoRoot.appendingPathComponent("dev-down-output.txt")
+        let completionFile = repoRoot.appendingPathComponent("dev-down-finished.txt")
+        let scriptURL = scriptsDirectory.appendingPathComponent("dev_down.sh")
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+        try """
+        #!/bin/bash
+        set -eu
+        printf '%s\n' "${MELIX_RUNTIME_DIR:-}" > '\(outputFile.path)'
+        touch '\(completionFile.path)'
+        """.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        MenuBarTerminationCoordinator.launchDevDownProcess(
+            repoRoot: repoRoot.path,
+            runtimeDirectory: "/tmp/melix-runtime"
+        )
+
+        try await waitForBootstrapCondition("expected dev_down.sh to finish") {
+            FileManager.default.fileExists(atPath: completionFile.path)
+        }
+
+        let recordedRuntimeDirectory = try String(contentsOf: outputFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(recordedRuntimeDirectory == "/tmp/melix-runtime")
     }
 
     @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")
@@ -345,7 +478,7 @@ struct AppMainBootstrapTests {
             melixHome: MelixHome(environment: ProcessInfo.processInfo.environment),
             operatorSessionStore: nil,
             serverSessionAPIKeyStore: nil,
-            statusMenuFactory: { _, _ in RecordingInstallStatusMenu() }
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
         )
 
         #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
@@ -374,6 +507,41 @@ struct AppMainBootstrapTests {
         }
 
         #expect(application.recordedPolicies == [.accessory])
+        #expect(application.didRun)
+    }
+
+    @Test("launcher routes bootstrap termination callbacks through the termination coordinator")
+    @MainActor
+    func launcherRoutesBootstrapTerminationCallbacksThroughTerminationCoordinator() {
+        let application = RecordingApplicationLifecycle()
+        let recorder = TerminationCoordinatorRecorder()
+        let coordinator = MenuBarTerminationCoordinator(
+            mode: .devDownScript,
+            repoRoot: "/tmp/melix-repo",
+            runtimeDirectory: "/tmp/melix-runtime",
+            terminateApplication: { recorder.terminateApplicationCallCount += 1 },
+            launchDevDownScript: { repoRoot, runtimeDirectory in
+                recorder.devDownRequests.append((repoRoot, runtimeDirectory))
+            }
+        )
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
+        )
+
+        MelixMenuBarLauncher.launch(
+            application: application,
+            presentationMode: .tray,
+            terminationCoordinator: coordinator,
+            bootstrapFactory: { terminationHandler in
+                terminationHandler()
+                return bootstrap
+            },
+            retain: { _ in }
+        )
+
+        #expect(recorder.terminateApplicationCallCount == 1)
+        #expect(recorder.devDownRequests.count == 1)
         #expect(application.didRun)
     }
 }
@@ -410,9 +578,14 @@ private final class RecordingDesktopFoundationPresenter: DesktopFoundationPresen
 private final class RecordingApplicationLifecycle: MenuBarApplicationLifecycle {
     private(set) var recordedPolicies: [NSApplication.ActivationPolicy] = []
     private(set) var didRun = false
+    private(set) var mainMenu: NSMenu?
 
     func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) {
         recordedPolicies.append(activationPolicy)
+    }
+
+    func setMainMenu(_ menu: NSMenu?) {
+        mainMenu = menu
     }
 
     func run() {
@@ -424,15 +597,26 @@ private final class RecordingApplicationLifecycle: MenuBarApplicationLifecycle {
 private final class RecordingNSApplication: NSApplicationControlling {
     private(set) var recordedPolicies: [NSApplication.ActivationPolicy] = []
     private(set) var runCount = 0
+    private(set) var mainMenu: NSMenu?
 
     func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) -> Bool {
         recordedPolicies.append(activationPolicy)
         return true
     }
 
+    func setMainMenu(_ menu: NSMenu?) {
+        mainMenu = menu
+    }
+
     func run() {
         runCount += 1
     }
+}
+
+@MainActor
+private final class TerminationCoordinatorRecorder {
+    var terminateApplicationCallCount = 0
+    var devDownRequests: [(String, String?)] = []
 }
 
 @MainActor

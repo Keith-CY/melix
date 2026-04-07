@@ -92,9 +92,13 @@ struct DesktopFoundationPresenterTests {
         let windowController = try #require(mirror.descendant("windowController") as? NSWindowController)
         let window = try #require(windowController.window)
 
+        workspaceWindow.show()
+        try await Task.sleep(for: .milliseconds(50))
+
         #expect(window.title == "Melix")
         #expect(window.toolbar != nil)
         #expect(window.toolbarStyle == .unifiedCompact)
+        #expect(window.toolbar?.items.isEmpty == false)
     }
 }
 

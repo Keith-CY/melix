@@ -149,6 +149,9 @@ def test_start_full_app_launches_menubar_with_console_startup_surface(
     assert spawn["cwd"] == tmp_path
     assert spawn["log_path"] == layout.runtime_dir / "menubar.log"
     assert spawn["env_overrides"]["MELIX_MENU_BAR_STARTUP_SURFACE"] == "console"
+    assert spawn["env_overrides"]["MELIX_MENU_BAR_PRESENTATION_MODE"] == "dock-and-tray"
+    assert spawn["env_overrides"]["MELIX_MENU_BAR_TERMINATION_MODE"] == "dev-down-script"
+    assert spawn["env_overrides"]["MELIX_RUNTIME_DIR"] == str(layout.runtime_dir)
     assert spawn["env_overrides"]["MELIX_REPO_ROOT"] == str(tmp_path)
     assert spawn["env_overrides"]["MELIX_WORKER_SOCKET_PATH"] == str(layout.python_socket_path)
     assert spawn["env_overrides"]["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == str(layout.swift_text_worker_socket_path)
