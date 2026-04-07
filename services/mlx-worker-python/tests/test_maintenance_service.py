@@ -2305,6 +2305,35 @@ def test_run_evaluation_uses_checked_in_multimodal_fixture_when_dataset_root_is_
     assert Path(captured_image_paths[0]).suffix == ".ppm"
 
 
+def test_run_evaluation_rejects_text_generation_task_kind_for_multimodal_fixture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / "mmlu.vision.dev.v1"
+
+    service = build_service(tmp_path)
+    loaded = service._core._registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    assert fixture_root.exists() is True
+    monkeypatch.chdir(repo_root)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=loaded.handle,
+            suite_id="mmlu",
+            dataset_id="mmlu.vision.dev.v1",
+            sample_size=1,
+            task_kind="text-generation",
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "evaluation_failed"
+    assert "requires image inputs" in response.error.message
+
+
 def test_run_evaluation_uses_checked_in_imagenette_fixture_when_dataset_root_is_omitted(
     tmp_path: Path,
     monkeypatch,

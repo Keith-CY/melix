@@ -18,6 +18,7 @@ from worker.runtime.multimodal_preprocessing import (
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
+    _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
 )
 from worker.runtime.temp_media_lifecycle import TempMediaSession
@@ -82,8 +83,12 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     stream_calls: list[tuple[str, list[str], list[bytes]]] = []
 
     def fake_load(model_path: str, revision: str = "main"):
-        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
-        processor = SimpleNamespace()
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
         return model, processor
 
     def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
@@ -176,8 +181,12 @@ def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: 
     sessions: list[TempMediaSession] = []
 
     def fake_load(model_path: str, revision: str = "main"):
-        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
-        processor = SimpleNamespace()
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
         return model, processor
 
     def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
@@ -274,6 +283,40 @@ def test_gemma4_multimodal_weight_presence_detects_text_backed_exports() -> None
 
     assert has_vision is False
     assert has_audio is False
+
+
+def test_mlx_vlm_runtime_overrides_stale_text_backed_metadata_for_loaded_gemma4_vision_models() -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    model_spec = imported_gemma4_vlm_model()
+    model_spec.ext["melix.vlm.execution_mode"] = "text_backed"
+
+    loaded_model = runtime.load_model(model_spec)
+
+    assert loaded_model["metadata"]["melix.vlm.execution_mode"] == "multimodal"
+
+
+def test_gemma4_loaded_execution_mode_treats_image_processor_as_multimodal() -> None:
+    model = SimpleNamespace(vision_tower=None, embed_vision=None)
+    processor = SimpleNamespace(image_processor=object())
+
+    assert _gemma4_loaded_execution_mode(model, processor) == "multimodal"
 
 
 def test_mlx_vlm_runtime_supports_prompt_only_generation_for_text_backed_models() -> None:

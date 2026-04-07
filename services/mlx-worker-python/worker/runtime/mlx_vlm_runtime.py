@@ -31,6 +31,14 @@ def _gemma4_multimodal_weight_presence(weight_names: list[str] | tuple[str, ...]
     return has_vision, has_audio
 
 
+def _gemma4_loaded_execution_mode(model: Any, processor: Any) -> str:
+    if getattr(model, "vision_tower", None) is not None or getattr(model, "embed_vision", None) is not None:
+        return "multimodal"
+    if getattr(processor, "image_processor", None) is not None:
+        return "multimodal"
+    return "text_backed"
+
+
 def _patch_gemma4_scaled_linear_quantization() -> None:
     import mlx.nn as nn
     import mlx_vlm.models.gemma4.language as gemma4_language
@@ -128,6 +136,8 @@ class AutoMLXVLMBackend:
                 model_spec.model_path,
                 revision=model_spec.revision or "main",
             )
+            if self._should_attempt_gemma4_text_backed_fallback(model_spec):
+                execution_mode = _gemma4_loaded_execution_mode(model, processor)
         except Exception as exc:
             if not self._should_attempt_gemma4_text_backed_fallback(model_spec):
                 raise

@@ -436,9 +436,34 @@ def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object]
     vision_config = config_payload.get("vision_config")
     if isinstance(vision_config, Mapping) and len(vision_config) > 0:
         return ""
-    if (model_dir / "processor_config.json").is_file():
+    if (model_dir / "processor_config.json").is_file() or (model_dir / "preprocessor_config.json").is_file():
+        return ""
+    has_multimodal_marker = any(
+        key in config_payload and config_payload.get(key) not in (None, "", [], {})
+        for key in ("image_token_id", "boi_token_id", "eoi_token_id")
+    )
+    if has_multimodal_marker and _gemma4_index_has_vision_weights(model_dir):
         return ""
     return "text_backed"
+
+
+def _gemma4_index_has_vision_weights(model_dir: Path) -> bool:
+    index_path = model_dir / "model.safetensors.index.json"
+    if not index_path.is_file():
+        return False
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False
+    return any(
+        str(name).startswith("vision_tower.") or str(name).startswith("embed_vision.")
+        for name in weight_map
+    )
 
 
 def _vlm_capability_metadata(

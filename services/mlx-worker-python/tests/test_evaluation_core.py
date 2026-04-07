@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
@@ -469,6 +471,45 @@ def test_run_local_suite_supports_imagenette_multimodal_accuracy(tmp_path: Path)
     assert run.samples[0].predicted == "garbage truck"
     assert run.samples[0].correct is True
     assert run.samples[0].media_references == (str(image_path),)
+
+
+def test_sample_declares_image_media_detects_supported_image_fields() -> None:
+    assert EvaluationCore._sample_declares_image_media({"image_uri": "/tmp/cat.png"}) is True
+    assert EvaluationCore._sample_declares_image_media({"image_uris": ["", "/tmp/dog.png"]}) is True
+    assert EvaluationCore._sample_declares_image_media({"images": ["", "/tmp/bird.png"]}) is True
+    assert (
+        EvaluationCore._sample_declares_image_media(
+            {"media": ["ignore-me", {"image_uri": ""}, {"uri": "/tmp/fish.png"}]}
+        )
+        is True
+    )
+
+
+def test_validate_live_multimodal_execution_skips_text_backed_guard_without_image_evidence() -> None:
+    loaded_model = SimpleNamespace(
+        runtime_model={"metadata": {"melix.vlm.execution_mode": "text_backed"}}
+    )
+
+    EvaluationCore._validate_live_multimodal_execution(
+        loaded_model=loaded_model,
+        manifest_input_modalities=("text",),
+        samples=[{"prompt": "hello"}],
+        task_kind="image-text-to-text",
+    )
+
+
+def test_validate_live_multimodal_execution_rejects_text_backed_models_with_image_media() -> None:
+    loaded_model = SimpleNamespace(
+        runtime_model={"metadata": {"melix.vlm.execution_mode": "text_backed"}}
+    )
+
+    with pytest.raises(ValueError, match="does not include vision weights"):
+        EvaluationCore._validate_live_multimodal_execution(
+            loaded_model=loaded_model,
+            manifest_input_modalities=("text",),
+            samples=[{"media": ["ignore-me", {"uri": "/tmp/cat.png"}]}],
+            task_kind="image-text-to-text",
+        )
 
 
 def test_parse_prediction_prefers_answer_prefix_and_equation_results_for_numeric_answers() -> None:

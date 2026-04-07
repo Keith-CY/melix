@@ -2822,6 +2822,14 @@ public actor ControlPlaneService {
             return .textToImage
         case BenchmarkTaskKind.imageTextToImage.rawValue:
             return .imageTextToImage
+        case "any-to-any":
+            if supportsVisionAnyToAnyBenchmarkImport(for: card) {
+                return .imageTextToText
+            }
+            throw BenchmarkTargetResolutionError(
+                code: "unsupported_task_family",
+                message: "Hub repo \(card.repoID) declares unsupported pipeline_tag=\(card.pipelineTag)."
+            )
         default:
             throw BenchmarkTargetResolutionError(
                 code: "unsupported_task_family",
@@ -2898,13 +2906,45 @@ public actor ControlPlaneService {
             let hasMultimodalProcessorFiles =
                 siblingFiles.contains("processor_config.json")
                 || siblingFiles.contains("preprocessor_config.json")
-            if !hasMultimodalProcessorFiles {
+            if !hasMultimodalProcessorFiles && !shouldDeferVisionExecutionModeInference(for: card) {
                 return BenchmarkTaskKind.textGeneration.rawValue
             }
         default:
             break
         }
         return taskKind.rawValue
+    }
+
+    private func supportsVisionAnyToAnyBenchmarkImport(
+        for card: Melix_Worker_V1_HubModelCard
+    ) -> Bool {
+        let normalizedTags = Set(
+            card.tags.map {
+                $0
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                    .replacingOccurrences(of: "_", with: "-")
+            }
+        )
+        guard benchmarkVisionFamilyID(for: card) == "gemma4-v1" else {
+            return false
+        }
+        return normalizedTags.contains("mlx")
+            || normalizedTags.contains("any-to-any")
+            || normalizedTags.contains("vision")
+            || normalizedTags.contains("vlm")
+            || normalizedTags.contains("multimodal")
+            || normalizedTags.contains("image-text-to-text")
+    }
+
+    private func shouldDeferVisionExecutionModeInference(
+        for card: Melix_Worker_V1_HubModelCard
+    ) -> Bool {
+        let pipelineTag = card.pipelineTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard pipelineTag == "any-to-any" else {
+            return false
+        }
+        return supportsVisionAnyToAnyBenchmarkImport(for: card)
     }
 
     private func benchmarkVisionFamilyID(

@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from worker.model_registry.catalog import WorkerModelCatalog
+from worker.model_registry.catalog import WorkerModelCatalog, _gemma4_index_has_vision_weights
 
 
 def _write_registry_manifest(
@@ -40,6 +40,11 @@ def _expected_root_id(root: Path) -> str:
 def _write_model_config(variant_dir: Path, payload: dict[str, object]) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "model.safetensors.index.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
 def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_duplicate(tmp_path: Path) -> None:
@@ -455,6 +460,64 @@ def test_registry_snapshot_promotes_gemma4_from_text_config_with_processor_hint(
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+
+
+def test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-e2b-it-4bit" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-e2b-it-4bit/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "image_token_id": 258880,
+        },
+    )
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "embed_vision.proj.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-e2b-it-4bit/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+
+
+def test_gemma4_weight_index_detection_handles_missing_or_invalid_payloads(tmp_path: Path) -> None:
+    model_dir = tmp_path / "gemma4"
+    model_dir.mkdir(parents=True)
+
+    assert _gemma4_index_has_vision_weights(model_dir) is False
+
+    (model_dir / "model.safetensors.index.json").write_text("{not-json}\n", encoding="utf-8")
+    assert _gemma4_index_has_vision_weights(model_dir) is False
+
+    (model_dir / "model.safetensors.index.json").write_text('["not-a-dict"]\n', encoding="utf-8")
+    assert _gemma4_index_has_vision_weights(model_dir) is False
+
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": ["not-a-dict"]}) + "\n",
+        encoding="utf-8",
+    )
+    assert _gemma4_index_has_vision_weights(model_dir) is False
 
 
 def test_registry_snapshot_keeps_non_gemma_text_manifest_as_text(tmp_path: Path) -> None:

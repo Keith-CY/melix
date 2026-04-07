@@ -125,6 +125,18 @@ class EvaluationCore:
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
         loaded_model = self._loaded_model_for_execution(model_handle)
+        self._validate_task_kind_against_dataset(
+            dataset_id=str(manifest["dataset_id"]),
+            samples=selected,
+            manifest_input_modalities=manifest_input_modalities,
+            task_kind=resolved_task_kind,
+        )
+        self._validate_live_multimodal_execution(
+            loaded_model=loaded_model,
+            manifest_input_modalities=manifest_input_modalities,
+            samples=selected,
+            task_kind=resolved_task_kind,
+        )
         resolved_model_id = (
             getattr(getattr(loaded_model, "spec", None), "model_id", "") if loaded_model is not None else ""
         ) or model_id
@@ -285,6 +297,46 @@ class EvaluationCore:
             return int(raw_value)
         except ValueError:
             return 0
+
+    @staticmethod
+    def _validate_task_kind_against_dataset(
+        *,
+        dataset_id: str,
+        samples: list[dict[str, object]],
+        manifest_input_modalities: tuple[str, ...],
+        task_kind: str,
+    ) -> None:
+        if task_kind in _MULTIMODAL_TASK_KINDS:
+            return
+        if "image" in manifest_input_modalities or any(
+            EvaluationCore._sample_declares_image_media(sample)
+            for sample in samples
+        ):
+            raise ValueError(
+                f"Evaluation dataset {dataset_id} requires image inputs, but resolved task_kind={task_kind}."
+            )
+
+    @staticmethod
+    def _validate_live_multimodal_execution(
+        *,
+        loaded_model,
+        manifest_input_modalities: tuple[str, ...],
+        samples: list[dict[str, object]],
+        task_kind: str,
+    ) -> None:
+        if task_kind not in _MULTIMODAL_TASK_KINDS or loaded_model is None:
+            return
+        if "image" not in manifest_input_modalities and not any(
+            EvaluationCore._sample_declares_image_media(sample)
+            for sample in samples
+        ):
+            return
+        runtime_model = getattr(loaded_model, "runtime_model", {})
+        metadata = runtime_model.get("metadata", {}) if isinstance(runtime_model, dict) else {}
+        if str(metadata.get("melix.vlm.execution_mode", "")).strip() == "text_backed":
+            raise ValueError(
+                "The loaded VLM package does not include vision weights, so image evaluation is unavailable."
+            )
 
     def _build_sample_record(
         self,
@@ -511,6 +563,23 @@ class EvaluationCore:
         if not modalities and task_kind == "text-generation":
             modalities.append("text")
         return tuple(modalities)
+
+    @staticmethod
+    def _sample_declares_image_media(sample: dict[str, object]) -> bool:
+        if isinstance(sample.get("image_uri"), str) and str(sample.get("image_uri")).strip():
+            return True
+        for key in ("image_uris", "images"):
+            raw_value = sample.get(key)
+            if isinstance(raw_value, (list, tuple)) and any(str(item).strip() for item in raw_value):
+                return True
+        raw_media = sample.get("media")
+        if isinstance(raw_media, (list, tuple)):
+            for item in raw_media:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("image_uri", "")).strip() or str(item.get("uri", "")).strip():
+                    return True
+        return False
 
     @staticmethod
     def _evaluation_max_output_tokens(expected: str) -> int:

@@ -3956,6 +3956,103 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkJob.taskKind == "text-to-image")
     }
 
+    @Test("execute imports supported gemma4 any-to-any evaluation targets as image-text-to-text VLM models")
+    func executeImportsGemma4AnyToAnyEvaluationTarget() async throws {
+        let importedEvalClient = ScriptedModelOperationsWorkerClient()
+        await importedEvalClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/gemma-4-e2b-it-4bit",
+                modelName: "gemma-4-e2b-it-4bit",
+                pipelineTag: "any-to-any",
+                tags: ["gemma4", "mlx", "vision"],
+                siblingFiles: [
+                    "config.json",
+                    "tokenizer.json",
+                    "model.safetensors.index.json",
+                ]
+            )
+        )
+        await importedEvalClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job.jobID = "eval-gemma4-any"
+            response.job.modelID = "mlx-community/gemma-4-e2b-it-4bit"
+            response.job.taskKind = "image-text-to-text"
+            response.job.sourceRepo = "mlx-community/gemma-4-e2b-it-4bit"
+            response.job.suiteID = "imagenette"
+            response.job.datasetID = "imagenette.dev.v1"
+            response.job.sampleSize = 1
+            response.job.status = "completed"
+            return response
+        }())
+        let importedRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: importedRuntimeClient,
+                modelOperationsClient: importedEvalClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunEvaluationRequest(
+                modelID: "",
+                hfRepoID: "mlx-community/gemma-4-e2b-it-4bit",
+                suiteID: "imagenette",
+                datasetID: "imagenette.dev.v1"
+            )
+        )
+        let loadRequest = try #require(await importedRuntimeClient.lastLoadModelRequest)
+        let evalRequest = try #require(await importedEvalClient.lastEvaluationRequest)
+
+        #expect(response.ok == true)
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(loadRequest.model.ext["melix.task_kind"] == "image-text-to-text")
+        #expect(loadRequest.model.ext["melix.vlm.execution_mode"] == nil)
+        #expect(loadRequest.model.ext["vision_family_id"] == "gemma4-v1")
+        #expect(evalRequest.taskKind == "image-text-to-text")
+        #expect(evalRequest.sourceRepo == "mlx-community/gemma-4-e2b-it-4bit")
+        #expect(response.ops.evaluationJob.taskKind == "image-text-to-text")
+    }
+
+    @Test("execute rejects unsupported any-to-any evaluation targets that are not gemma4 vision imports")
+    func executeRejectsUnsupportedAnyToAnyEvaluationTarget() async throws {
+        let importedEvalClient = ScriptedModelOperationsWorkerClient()
+        await importedEvalClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/audio-any-model",
+                modelName: "audio-any-model",
+                pipelineTag: "any-to-any",
+                tags: ["mlx", "audio"],
+                siblingFiles: [
+                    "config.json",
+                    "model.safetensors.index.json",
+                ]
+            )
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: importedEvalClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunEvaluationRequest(
+                modelID: "",
+                hfRepoID: "mlx-community/audio-any-model",
+                suiteID: "imagenette",
+                datasetID: "imagenette.dev.v1"
+            )
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "unsupported_task_family")
+        #expect(response.error.message.contains("pipeline_tag=any-to-any"))
+    }
+
     @Test("execute imports image-text-to-image benchmark targets through the image route")
     func executeImportsDirectImageEditBenchmarkTarget() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-edit-report.md").path
