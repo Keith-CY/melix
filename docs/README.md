@@ -157,6 +157,7 @@ Recent decision records:
 
 Current runbooks:
 
+- `runbooks/benchmark-matrix-evaluation-and-lora.md`
 - `runbooks/desktop-polish.md`
 - `runbooks/disk-streaming-evidence.md`
 - `runbooks/session-lifecycle.md`

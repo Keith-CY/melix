@@ -237,6 +237,7 @@ swift run melix bench export-csv \
 
 Detailed operator guidance lives in:
 
+- `docs/runbooks/benchmark-matrix-evaluation-and-lora.md`
 - `docs/runbooks/phase-8-lora-adapter-workflow.md`
 - `docs/runbooks/m7-benchmark-and-evaluation-foundation.md`
 
