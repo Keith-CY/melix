@@ -15,6 +15,7 @@ def test_build_dataset_package_manifest_preserves_dataset_identity() -> None:
         version="2026-03-31",
         sample_count=2,
         split="validation",
+        task_kind="text-generation",
     )
     payload = manifest.to_dict()
 
@@ -24,6 +25,8 @@ def test_build_dataset_package_manifest_preserves_dataset_identity() -> None:
     assert payload["version"] == "2026-03-31"
     assert payload["sample_count"] == 2
     assert payload["split"] == "validation"
+    assert payload["task_kind"] == "text-generation"
+    assert payload["input_modalities"] == []
 
 
 def test_build_evaluation_job_record_preserves_core_fields() -> None:
@@ -93,6 +96,7 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         correct=True,
         time_s=0.0123,
         parse_status="parsed",
+        task_kind="text-generation",
     )
 
     assert sample.to_dict() == {
@@ -108,4 +112,44 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "correct": True,
         "time_s": 0.0123,
         "parse_status": "parsed",
+        "task_kind": "text-generation",
+        "input_modalities": [],
+        "media_references": [],
+    }
+
+
+def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="mmlu",
+        dataset_id="vision-dev",
+        sample_id="vision-1",
+        question="Describe the image.",
+        expected="Cat",
+        predicted="Cat",
+        raw_response="Answer: Cat",
+        correct=True,
+        time_s=0.045,
+        parse_status="parsed_answer_prefix",
+        task_kind="image-text-to-text",
+        input_modalities=("text", "image"),
+        media_references=("/tmp/cat.png",),
+    )
+
+    assert sample.to_dict() == {
+        "schema_version": "melix.evaluation_sample.v1",
+        "job_id": "eval-1",
+        "suite_id": "mmlu",
+        "dataset_id": "vision-dev",
+        "sample_id": "vision-1",
+        "question": "Describe the image.",
+        "expected": "Cat",
+        "predicted": "Cat",
+        "raw_response": "Answer: Cat",
+        "correct": True,
+        "time_s": 0.045,
+        "parse_status": "parsed_answer_prefix",
+        "task_kind": "image-text-to-text",
+        "input_modalities": ["text", "image"],
+        "media_references": ["/tmp/cat.png"],
     }

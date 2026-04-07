@@ -38,6 +38,7 @@ _ANSWER_PREFIX_PATTERN = re.compile(
 _NUMERIC_TOKEN_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
 _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
+_MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,14 @@ class EvaluationCore:
         selected = samples[: max(sample_size, 0)]
         score_name, default_scoring_mode = _SUITE_SCORE_MODES[suite_id]
         resolved_scoring_mode = scoring_mode if scoring_mode else default_scoring_mode
+        resolved_task_kind = str(
+            (parameters or {}).get("task_kind") or manifest.get("task_kind") or "text-generation"
+        )
+        manifest_input_modalities = tuple(
+            str(value)
+            for value in manifest.get("input_modalities", [])
+            if str(value).strip()
+        )
         resolved_few_shot = self._resolve_int_parameter(
             explicit_value=few_shot,
             parameters=parameters,
@@ -121,13 +130,15 @@ class EvaluationCore:
         for index, sample in enumerate(selected, start=1):
             sample_records_list.append(
                 self._build_sample_record(
-                job_id=job_id,
-                suite_id=suite_id,
-                dataset_id=manifest["dataset_id"],
-                index=index,
-                sample=sample,
-                loaded_model=loaded_model,
-            )
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=manifest["dataset_id"],
+                    task_kind=resolved_task_kind,
+                    manifest_input_modalities=manifest_input_modalities,
+                    index=index,
+                    sample=sample,
+                    loaded_model=loaded_model,
+                )
             )
             if loaded_model is not None:
                 self._release_runtime_memory()
@@ -139,6 +150,7 @@ class EvaluationCore:
         job_parameters = {"dataset_root": str(dataset_root)}
         if parameters:
             job_parameters.update(parameters)
+        job_parameters.setdefault("task_kind", resolved_task_kind)
         job_parameters["few_shot"] = str(resolved_few_shot)
         job_parameters["seed"] = str(resolved_seed)
         job_parameters["scoring_mode"] = resolved_scoring_mode
@@ -150,7 +162,7 @@ class EvaluationCore:
         job = build_evaluation_job_record(
             job_id=job_id,
             model_id=resolved_model_id,
-            task_kind=job_parameters.get("task_kind", "text-generation"),
+            task_kind=job_parameters.get("task_kind", resolved_task_kind),
             source_repo=job_parameters.get("source_repo", ""),
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
@@ -277,19 +289,35 @@ class EvaluationCore:
         job_id: str,
         suite_id: str,
         dataset_id: str,
+        task_kind: str,
+        manifest_input_modalities: tuple[str, ...],
         index: int,
         sample: dict[str, object],
         loaded_model=None,
     ) -> EvaluationSample:
         prompt = str(sample.get("prompt", sample.get("question", "")))
         expected = str(sample.get("expected", sample.get("answer", ""))).strip()
+        media_references = EvaluationCore._media_references_for_sample(
+            task_kind=task_kind,
+            sample=sample,
+        )
+        input_modalities = EvaluationCore._input_modalities_for_sample(
+            task_kind=task_kind,
+            prompt=prompt,
+            media_references=media_references,
+            manifest_input_modalities=manifest_input_modalities,
+        )
         started_at = time.perf_counter()
         raw_response = ""
         if loaded_model is not None:
             raw_response = EvaluationCore._execute_live_prompt(
                 registry=self._registry,
                 loaded_model=loaded_model,
-                prompt=prompt,
+                messages=EvaluationCore._evaluation_messages(
+                    prompt=prompt,
+                    expected=expected,
+                    media_references=media_references,
+                ),
                 expected=expected,
                 request_id=f"eval:{job_id}:{suite_id}:{sample.get('id', index)}",
             )
@@ -299,9 +327,13 @@ class EvaluationCore:
                 expected=expected,
             )
         else:
-            predicted = EvaluationCore._deterministic_answer(prompt)
-            raw_response = predicted
-            parse_status = "parsed" if predicted else "empty_prediction"
+            if task_kind in _MULTIMODAL_TASK_KINDS:
+                predicted = ""
+                parse_status = "unsupported_multimodal_offline"
+            else:
+                predicted = EvaluationCore._deterministic_answer(prompt)
+                raw_response = predicted
+                parse_status = "parsed" if predicted else "empty_prediction"
         duration_s = round(time.perf_counter() - started_at, 6)
         return build_evaluation_sample_record(
             job_id=job_id,
@@ -315,6 +347,9 @@ class EvaluationCore:
             correct=EvaluationCore._answers_match(expected=expected, predicted=predicted),
             time_s=duration_s,
             parse_status=parse_status,
+            task_kind=task_kind,
+            input_modalities=input_modalities,
+            media_references=media_references,
         )
 
     @staticmethod
@@ -331,12 +366,18 @@ class EvaluationCore:
         return str(left - right)
 
     @staticmethod
-    def _execute_live_prompt(*, registry, loaded_model, prompt: str, expected: str, request_id: str) -> str:
+    def _execute_live_prompt(
+        *,
+        registry,
+        loaded_model,
+        messages: list[common_pb2.ChatMessage],
+        expected: str,
+        request_id: str,
+    ) -> str:
         runtime = registry.runtime_for_loaded_model(loaded_model)
         state = registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         chunks: list[str] = []
         try:
-            messages = EvaluationCore._evaluation_messages(prompt=prompt, expected=expected)
             rendered_prompt = runtime.render_prompt(
                 messages,
                 loaded_model=loaded_model.runtime_model,
@@ -365,17 +406,89 @@ class EvaluationCore:
         return "".join(chunks).strip()
 
     @staticmethod
-    def _evaluation_messages(prompt: str, expected: str) -> list[common_pb2.ChatMessage]:
+    def _evaluation_messages(
+        prompt: str,
+        expected: str,
+        media_references: tuple[str, ...] = (),
+    ) -> list[common_pb2.ChatMessage]:
         if EvaluationCore._looks_like_numeric(expected):
             instruction = "Return only the final numeric answer. Do not include reasoning or explanation."
         elif EvaluationCore._looks_like_option(expected):
             instruction = "Return only the single best answer choice letter. Do not include reasoning or explanation."
         else:
             instruction = "Return only the final short answer. Do not include reasoning or explanation."
+        user_parts: list[common_pb2.MessagePart] = []
+        if prompt:
+            user_parts.append(common_pb2.MessagePart(text=prompt))
+        for media_reference in media_references:
+            user_parts.append(
+                common_pb2.MessagePart(
+                    image_uri=media_reference,
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_URI,
+                        filename=Path(media_reference).name,
+                    ),
+                )
+            )
+        if not user_parts:
+            user_parts.append(common_pb2.MessagePart(text=prompt))
         return [
             common_pb2.ChatMessage(role="system", parts=[common_pb2.MessagePart(text=instruction)]),
-            common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=prompt)]),
+            common_pb2.ChatMessage(role="user", parts=user_parts),
         ]
+
+    @staticmethod
+    def _media_references_for_sample(
+        *,
+        task_kind: str,
+        sample: dict[str, object],
+    ) -> tuple[str, ...]:
+        if task_kind not in _MULTIMODAL_TASK_KINDS:
+            return ()
+
+        references: list[str] = []
+
+        def append_reference(value: object) -> None:
+            if isinstance(value, str) and value.strip():
+                references.append(value)
+
+        append_reference(sample.get("image_uri"))
+        for key in ("image_uris", "images"):
+            raw_value = sample.get(key)
+            if isinstance(raw_value, (list, tuple)):
+                for item in raw_value:
+                    append_reference(item)
+        raw_media = sample.get("media")
+        if isinstance(raw_media, (list, tuple)):
+            for item in raw_media:
+                if isinstance(item, dict):
+                    append_reference(item.get("image_uri"))
+                    append_reference(item.get("uri"))
+        return tuple(dict.fromkeys(references))
+
+    @staticmethod
+    def _input_modalities_for_sample(
+        *,
+        task_kind: str,
+        prompt: str,
+        media_references: tuple[str, ...],
+        manifest_input_modalities: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        modalities: list[str] = []
+        if prompt.strip():
+            modalities.append("text")
+        if media_references or task_kind in _MULTIMODAL_TASK_KINDS:
+            modalities.append("image")
+        if not modalities:
+            modalities.extend(
+                modality
+                for modality in manifest_input_modalities
+                if modality not in modalities
+            )
+        if not modalities and task_kind == "text-generation":
+            modalities.append("text")
+        return tuple(modalities)
 
     @staticmethod
     def _evaluation_max_output_tokens(expected: str) -> int:

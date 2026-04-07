@@ -126,6 +126,7 @@ class EvaluationStore:
     def _samples_csv(samples: tuple[EvaluationSample, ...]) -> str:
         header = [
             "id",
+            "task_kind",
             "correct",
             "expected",
             "predicted",
@@ -133,6 +134,8 @@ class EvaluationStore:
             "raw_response",
             "time_s",
             "parse_status",
+            "input_modalities",
+            "media_references",
         ]
         rows = [",".join(header)]
         for sample in samples:
@@ -140,6 +143,7 @@ class EvaluationStore:
                 ",".join(
                     [
                         EvaluationStore._csv_field(sample.sample_id),
+                        EvaluationStore._csv_field(sample.task_kind),
                         "true" if sample.correct else "false",
                         EvaluationStore._csv_field(sample.expected),
                         EvaluationStore._csv_field(sample.predicted),
@@ -147,6 +151,8 @@ class EvaluationStore:
                         EvaluationStore._csv_field(sample.raw_response),
                         EvaluationStore._csv_field(str(sample.time_s)),
                         EvaluationStore._csv_field(sample.parse_status),
+                        EvaluationStore._csv_field(",".join(sample.input_modalities)),
+                        EvaluationStore._csv_field(",".join(sample.media_references)),
                     ]
                 )
             )

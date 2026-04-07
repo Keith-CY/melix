@@ -17,6 +17,8 @@ class EvaluationDatasetPackageManifest:
     version: str
     sample_count: int
     split: str
+    task_kind: str
+    input_modalities: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -26,6 +28,8 @@ class EvaluationDatasetPackageManifest:
             "version": self.version,
             "sample_count": self.sample_count,
             "split": self.split,
+            "task_kind": self.task_kind,
+            "input_modalities": list(self.input_modalities),
         }
 
 
@@ -131,6 +135,9 @@ class EvaluationSample:
     correct: bool
     time_s: float
     parse_status: str
+    task_kind: str
+    input_modalities: tuple[str, ...]
+    media_references: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -146,11 +153,21 @@ class EvaluationSample:
             "correct": self.correct,
             "time_s": self.time_s,
             "parse_status": self.parse_status,
+            "task_kind": self.task_kind,
+            "input_modalities": list(self.input_modalities),
+            "media_references": list(self.media_references),
         }
 
 
 def build_dataset_package_manifest(
-    *, dataset_id: str, suite_id: str, version: str, sample_count: int, split: str
+    *,
+    dataset_id: str,
+    suite_id: str,
+    version: str,
+    sample_count: int,
+    split: str,
+    task_kind: str = "text-generation",
+    input_modalities: tuple[str, ...] = (),
 ) -> EvaluationDatasetPackageManifest:
     return EvaluationDatasetPackageManifest(
         schema_version=_EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION,
@@ -159,6 +176,8 @@ def build_dataset_package_manifest(
         version=version,
         sample_count=sample_count,
         split=split,
+        task_kind=task_kind,
+        input_modalities=tuple(input_modalities),
     )
 
 
@@ -251,6 +270,9 @@ def build_evaluation_sample_record(
     correct: bool,
     time_s: float,
     parse_status: str,
+    task_kind: str = "text-generation",
+    input_modalities: tuple[str, ...] = (),
+    media_references: tuple[str, ...] = (),
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -265,4 +287,7 @@ def build_evaluation_sample_record(
         correct=correct,
         time_s=float(time_s),
         parse_status=parse_status,
+        task_kind=task_kind,
+        input_modalities=tuple(input_modalities),
+        media_references=tuple(media_references),
     )

@@ -99,6 +99,45 @@ class ProbeRuntime:
         return self._probe
 
 
+class ScriptedVisionEvaluationRuntime:
+    def __init__(self, response: str, probe: object) -> None:
+        self._response = response
+        self._probe = probe
+        self.rendered_messages: list[list[list[tuple[str, str, str, str]]]] = []
+
+    def render_prompt(self, messages, loaded_model=None, execution_ext=None):
+        _ = loaded_model
+        _ = execution_ext
+        snapshot: list[list[tuple[str, str, str, str]]] = []
+        for message in messages:
+            parts_snapshot: list[tuple[str, str, str, str]] = []
+            for part in message.parts:
+                media_filename = part.media.filename if part.HasField("media") else ""
+                parts_snapshot.append(
+                    (
+                        part.WhichOneof("part") or "",
+                        part.text,
+                        part.image_uri,
+                        media_filename,
+                    )
+                )
+            snapshot.append(parts_snapshot)
+        self.rendered_messages.append(snapshot)
+        return messages
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = execution_ext
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(text=self._response, completion_tokens=1)
+
+    def last_probe_snapshot(self):
+        return self._probe
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -327,6 +366,62 @@ def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -
     assert registry.vision_probes == [("vlm", {"images": 1})]
 
 
+def test_run_local_suite_supports_multimodal_live_evaluation_and_persists_media_evidence(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "fixtures" / "cat.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"fake-png")
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="vision-dev",
+        suite_id="mmlu",
+        task_kind="image-text-to-text",
+        samples=(
+            {
+                "id": "vision-1",
+                "prompt": "Name the animal in the image.",
+                "expected": "Cat",
+                "image_uri": str(image_path),
+            },
+        ),
+    )
+    jobs_root = tmp_path / "runs" / "vision"
+    runtime = ScriptedVisionEvaluationRuntime("Answer: Cat", {"images": 1})
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="vision-eval-model", runtime_kind="vlm")
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="vision-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+    )
+
+    assert run.job.task_kind == "image-text-to-text"
+    assert run.samples[0].task_kind == "image-text-to-text"
+    assert run.samples[0].input_modalities == ("text", "image")
+    assert run.samples[0].media_references == (str(image_path),)
+    assert run.samples[0].predicted == "Cat"
+    assert run.samples[0].correct is True
+    assert registry.vision_probes == [("vlm", {"images": 1})]
+    assert runtime.rendered_messages
+    user_parts = runtime.rendered_messages[0][1]
+    assert user_parts[0] == ("text", "Name the animal in the image.", "", "")
+    assert user_parts[1][0] == "image_uri"
+    assert user_parts[1][2] == str(image_path)
+    assert user_parts[1][3] == "cat.png"
+    persisted_samples = [
+        json.loads(line)
+        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert persisted_samples[0]["task_kind"] == "image-text-to-text"
+    assert persisted_samples[0]["input_modalities"] == ["text", "image"]
+    assert persisted_samples[0]["media_references"] == [str(image_path)]
+
+
 def test_parse_prediction_prefers_answer_prefix_and_equation_results_for_numeric_answers() -> None:
     predicted, parse_status = EvaluationCore._parse_prediction(
         suite_id="mmlu",
@@ -512,6 +607,7 @@ def _write_dataset_package(
     tmp_path: Path,
     dataset_id: str,
     suite_id: str,
+    task_kind: str = "text-generation",
     samples: tuple[dict[str, str], ...],
 ) -> Path:
     dataset_root = tmp_path / "datasets" / dataset_id
@@ -522,6 +618,8 @@ def _write_dataset_package(
                 "schema_version": "melix.evaluation_dataset_package.v1",
                 "dataset_id": dataset_id,
                 "suite_id": suite_id,
+                "task_kind": task_kind,
+                "input_modalities": ["text"] if task_kind == "text-generation" else ["text", "image"],
                 "version": "2026-03-31",
                 "sample_count": len(samples),
                 "split": "validation",

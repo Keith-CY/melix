@@ -64,6 +64,9 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         correct=True,
         time_s=0.01,
         parse_status="parsed",
+        task_kind="image-text-to-text",
+        input_modalities=("text", "image"),
+        media_references=("/tmp/cat.png",),
     )
 
     persisted = store.persist_result(
@@ -87,7 +90,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n"
     )
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n"
+        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
@@ -113,6 +116,9 @@ def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:
         correct=True,
         time_s=0.01,
         parse_status="parsed",
+        task_kind="image-text-to-text",
+        input_modalities=("text", "image"),
+        media_references=("/tmp/a,1.png", '/tmp/b"2".png'),
     )
 
     csv_payload = EvaluationStore._samples_csv((sample,))
@@ -121,3 +127,5 @@ def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:
     assert '"say ""hello"""' in csv_payload
     assert '"value,with,comma"' in csv_payload
     assert '"quoted ""response"""' in csv_payload
+    assert '"text,image"' in csv_payload
+    assert '"/tmp/a,1.png,/tmp/b""2"".png"' in csv_payload
