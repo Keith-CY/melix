@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
@@ -135,6 +136,7 @@ class EvaluationCore:
                     dataset_id=manifest["dataset_id"],
                     task_kind=resolved_task_kind,
                     manifest_input_modalities=manifest_input_modalities,
+                    dataset_root=dataset_root,
                     index=index,
                     sample=sample,
                     loaded_model=loaded_model,
@@ -291,6 +293,7 @@ class EvaluationCore:
         dataset_id: str,
         task_kind: str,
         manifest_input_modalities: tuple[str, ...],
+        dataset_root: Path,
         index: int,
         sample: dict[str, object],
         loaded_model=None,
@@ -299,6 +302,7 @@ class EvaluationCore:
         expected = str(sample.get("expected", sample.get("answer", ""))).strip()
         media_references = EvaluationCore._media_references_for_sample(
             task_kind=task_kind,
+            dataset_root=dataset_root,
             sample=sample,
         )
         input_modalities = EvaluationCore._input_modalities_for_sample(
@@ -442,6 +446,7 @@ class EvaluationCore:
     def _media_references_for_sample(
         *,
         task_kind: str,
+        dataset_root: Path,
         sample: dict[str, object],
     ) -> tuple[str, ...]:
         if task_kind not in _MULTIMODAL_TASK_KINDS:
@@ -451,7 +456,12 @@ class EvaluationCore:
 
         def append_reference(value: object) -> None:
             if isinstance(value, str) and value.strip():
-                references.append(value)
+                references.append(
+                    EvaluationCore._resolved_media_reference(
+                        dataset_root=dataset_root,
+                        value=value,
+                    )
+                )
 
         append_reference(sample.get("image_uri"))
         for key in ("image_uris", "images"):
@@ -466,6 +476,17 @@ class EvaluationCore:
                     append_reference(item.get("image_uri"))
                     append_reference(item.get("uri"))
         return tuple(dict.fromkeys(references))
+
+    @staticmethod
+    def _resolved_media_reference(*, dataset_root: Path, value: str) -> str:
+        stripped = value.strip()
+        parsed = urlparse(stripped)
+        if parsed.scheme in {"http", "https", "file"}:
+            return stripped
+        candidate = Path(stripped)
+        if candidate.is_absolute():
+            return str(candidate)
+        return str((dataset_root / candidate).resolve())
 
     @staticmethod
     def _input_modalities_for_sample(

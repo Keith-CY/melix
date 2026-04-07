@@ -193,11 +193,10 @@ Example with an explicit dataset override:
 
 ```bash
 swift run melix eval run \
-  --repo-id meta-llama/Llama-3.2-1B-Instruct \
+  --repo-id google/paligemma2-3b-ft-docci-448 \
   --suite mmlu \
-  --dataset-id mmlu.dev.v1 \
-  --dataset-root /absolute/path/to/evaluation-fixtures \
-  --sample-size 8
+  --dataset-id mmlu.vision.dev.v1 \
+  --sample-size 1
 ```
 
 History and exports:
@@ -223,6 +222,9 @@ Notes:
 
 - if you omit `--suite`, the CLI defaults to `mmlu`
 - if you omit `--dataset-id`, the CLI defaults to `<suite>.dev.v1`
+- `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
+- relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically
+- use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 
 ## Use LoRA With Benchmark, Matrix, And Evaluation

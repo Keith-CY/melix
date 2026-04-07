@@ -1,0 +1,10 @@
+{
+  "schema_version": "melix.evaluation_dataset_package.v1",
+  "dataset_id": "mmlu.vision.dev.v1",
+  "suite_id": "mmlu",
+  "task_kind": "image-text-to-text",
+  "input_modalities": ["text", "image"],
+  "version": "2026-04-07",
+  "sample_count": 1,
+  "split": "validation"
+}

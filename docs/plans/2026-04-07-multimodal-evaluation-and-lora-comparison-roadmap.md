@@ -14,7 +14,7 @@
 
 - `eval` currently proves fixed-suite correctness for `text-generation` targets only.
 - Persisted evaluation summaries and sample-level exports already exist, so the product has an evidence storage foundation.
-- Multimodal evaluation is not implemented yet even though the shared task taxonomy already includes `image-to-text` and `image-text-to-text`.
+- Repository-owned image evaluation now runs through the MLX VLM ingress for `image-to-text` and `image-text-to-text` targets, including checked-in fixture coverage and sample-level media evidence.
 - LoRA comparison is possible today only as a manual serial workflow against activated derived `--model-id` targets.
 - `few_shot`, `seed`, `scoring_mode`, and `code_exec_policy` are mostly recorded as metadata today rather than fully enforced runtime or scoring semantics.
 - `humaneval` and `mbpp` currently do not prove true code-execution correctness.
@@ -310,9 +310,9 @@ New probes required by this roadmap:
 - Modify: `services/mlx-worker-python/fixtures/evaluation/*`
 - Modify: `services/mlx-worker-python/tests/test_evaluation_schemas.py`
 
-- [ ] Extend dataset package manifests with task kind and media-awareness metadata.
-- [ ] Add one vision-grounded fixture family under `services/mlx-worker-python/fixtures/evaluation/`.
-- [ ] Add schema tests that preserve dataset identity, media identity, and task kind fields.
+- [x] Extend dataset package manifests with task kind and media-awareness metadata.
+- [x] Add one vision-grounded fixture family under `services/mlx-worker-python/fixtures/evaluation/`.
+- [x] Add schema tests that preserve dataset identity, media identity, and task kind fields.
 
 **Verification**
 
@@ -356,8 +356,8 @@ New probes required by this roadmap:
 - Modify: `services/mlx-worker-python/tests/test_evaluation_core.py`
 
 - [ ] Load multimodal fixtures through one shared suite loader.
-- [ ] Reuse the existing vision-capable runtime ingress for `image-to-text` and `image-text-to-text`.
-- [ ] Persist media-backed sample rows with raw response, parsed response, and parse status.
+- [x] Reuse the existing vision-capable runtime ingress for `image-to-text` and `image-text-to-text`.
+- [x] Persist media-backed sample rows with raw response, parsed response, and parse status.
 - [ ] Add scorer coverage for exact match, normalized match, and multiple-choice style multimodal tasks.
 
 **Verification**
@@ -378,8 +378,8 @@ New probes required by this roadmap:
 - Modify: `apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift`
 - Modify: `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`
 
-- [ ] Extend `melix eval run` so multimodal-capable targets resolve to supported task kinds.
-- [ ] Surface multimodal suite metadata in evaluation history and export flows.
+- [x] Extend `melix eval run` so multimodal-capable targets resolve to supported task kinds.
+- [x] Surface multimodal suite metadata in evaluation history and export flows.
 - [ ] Keep UI language explicit about text-only versus multimodal suite selection.
 
 **Verification**

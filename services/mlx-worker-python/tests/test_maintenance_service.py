@@ -2210,6 +2210,101 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
     assert response.results[0].metrics[0].value == 1.0
 
 
+def test_run_evaluation_uses_checked_in_multimodal_fixture_when_dataset_root_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / "mmlu.vision.dev.v1"
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}::images={num_images}"
+
+    captured_prompts: list[str] = []
+    captured_image_paths: list[str] = []
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        captured_prompts.append(prompt)
+        captured_image_paths.extend(list(image or []))
+        yield SimpleNamespace(
+            text="Answer: red",
+            prompt_tokens=12,
+            generation_tokens=1,
+            prompt_tps=42.0,
+            generation_tps=21.0,
+            peak_memory=2048.0,
+        )
+
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        mlx_vlm_runtime=MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=fake_apply_chat_template,
+            )
+        ),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+    loaded = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="google/paligemma2-3b-ft-docci-448",
+            model_path="google/paligemma2-3b-ft-docci-448",
+            model_kind="vlm",
+            revision="main",
+            tokenizer_hash="hf.google.paligemma2-3b-ft-docci-448",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                "melix.vlm.backend_id": "mlx_vlm",
+                "vision_family_id": "paligemma-v1",
+                "vision_prompt_profile_id": "paligemma-caption-v1",
+                "vision_tokenization_mode": "prefix",
+                "vision_max_images_per_prompt": "1",
+                "vision_supports_tool_calls": "false",
+                "melix.multimodal_adapter_hash": "vision-family-paligemma-v1",
+            },
+        )
+    )
+
+    assert fixture_root.exists() is True
+    monkeypatch.chdir(repo_root)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=loaded.handle,
+            suite_id="mmlu",
+            dataset_id="mmlu.vision.dev.v1",
+            sample_size=1,
+            task_kind="image-text-to-text",
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.dataset_id == "mmlu.vision.dev.v1"
+    assert response.job.task_kind == "image-text-to-text"
+    assert captured_prompts
+    assert "Return only the final short answer." in captured_prompts[0]
+    assert "What color is the square?" in captured_prompts[0]
+    assert captured_image_paths
+    assert Path(captured_image_paths[0]).suffix == ".ppm"
+
+
 def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitted(
     tmp_path: Path,
 ) -> None:
@@ -2883,6 +2978,125 @@ def test_bench_events_vlm_latency_suite_produces_percentile_metrics(tmp_path: Pa
     metric_names = [event.metric.name for event in events if event.HasField("metric")]
     assert "bench.latency.image_p50_ms" in metric_names
     assert "bench.latency.image_p95_ms" in metric_names
+
+
+def test_run_evaluation_supports_relative_image_paths_with_mlx_vlm_runtime(tmp_path: Path) -> None:
+    asset_root = tmp_path / "datasets" / "mmlu.vision.dev.v1"
+    asset_root.mkdir(parents=True, exist_ok=True)
+    image_path = asset_root / "sample.ppm"
+    image_path.write_text("P3\n1 1\n255\n255 0 0\n", encoding="utf-8")
+    (asset_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.evaluation_dataset_package.v1",
+                "dataset_id": "mmlu.vision.dev.v1",
+                "suite_id": "mmlu",
+                "task_kind": "image-text-to-text",
+                "input_modalities": ["text", "image"],
+                "version": "2026-04-07",
+                "sample_count": 1,
+                "split": "validation",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (asset_root / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "vision-1",
+                "prompt": "What color is the square?",
+                "expected": "red",
+                "image_uri": "sample.ppm",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = kwargs
+        return f"formatted::{prompt}::images={num_images}"
+
+    captured_image_paths: list[str] = []
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = kwargs
+        assert prompt.startswith("formatted::")
+        assert "Return only the final short answer." in prompt
+        assert "What color is the square?" in prompt
+        assert prompt.endswith("::images=1")
+        captured_image_paths.extend(list(image or []))
+        yield SimpleNamespace(
+            text="Answer: red",
+            prompt_tokens=12,
+            generation_tokens=1,
+            prompt_tps=42.0,
+            generation_tps=21.0,
+            peak_memory=2048.0,
+        )
+
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        mlx_vlm_runtime=MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=fake_apply_chat_template,
+            )
+        ),
+        model_catalog=WorkerModelCatalog(),
+    )
+    service = build_service(tmp_path, registry=registry)
+    loaded = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="google/paligemma2-3b-ft-docci-448",
+            model_path="google/paligemma2-3b-ft-docci-448",
+            model_kind="vlm",
+            revision="main",
+            tokenizer_hash="hf.google.paligemma2-3b-ft-docci-448",
+            quant_profile_id="q8",
+            parser_mode="text",
+            reasoning_mode="off",
+            max_context=4096,
+            ext={
+                "melix.vlm.backend_id": "mlx_vlm",
+                "vision_family_id": "paligemma-v1",
+                "vision_prompt_profile_id": "paligemma-caption-v1",
+                "vision_tokenization_mode": "prefix",
+                "vision_max_images_per_prompt": "1",
+                "vision_supports_tool_calls": "false",
+                "melix.multimodal_adapter_hash": "vision-family-paligemma-v1",
+            },
+        )
+    )
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=loaded.handle,
+            suite_id="mmlu",
+            dataset_id="mmlu.vision.dev.v1",
+            dataset_root=str(asset_root),
+            sample_size=1,
+            task_kind="image-text-to-text",
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.task_kind == "image-text-to-text"
+    assert response.results[0].suite_id == "mmlu"
+    assert captured_image_paths
+    assert Path(captured_image_paths[0]).suffix == ".ppm"
 
 
 def test_bench_events_image_generation_mode_produces_image_metrics(tmp_path: Path) -> None:

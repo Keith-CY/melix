@@ -89,7 +89,11 @@ Melix benchmark and evaluation targets use the following task-aligned values:
 
 `bench` may support all task kinds.
 
-`eval` v1 is intentionally limited to `text-generation`.
+`eval` v1 supports:
+
+- `text-generation`
+- `image-to-text`
+- `image-text-to-text`
 
 ## Performance Benchmark Contract
 
@@ -374,6 +378,11 @@ Optional evaluation controls:
 - `scoring_mode`
 - `code_exec_policy`
 
+Evaluation dataset overrides may also provide:
+
+- `dataset_id`
+- `dataset_root`
+
 ### Normalized Input Fields
 
 The canonical normalized request shape is:
@@ -401,6 +410,9 @@ The first canonical `eval` suite set is:
 - `gsm8k`
 - `humaneval`
 - `mbpp`
+
+Multimodal evaluation datasets must package media alongside `manifest.json` and `samples.jsonl`.
+Relative media references are resolved against `dataset_root`.
 
 ### Evaluation Summary Outputs
 
@@ -433,6 +445,7 @@ Absence of category support must be represented by omission rather than an empty
 Each sample-level row must include:
 
 - `id`
+- `task_kind`
 - `correct`
 - `expected`
 - `predicted`
@@ -440,6 +453,8 @@ Each sample-level row must include:
 - `raw_response`
 - `time_s`
 - `parse_status`
+- `input_modalities`
+- `media_references`
 
 `parse_status` is required in Melix even when the source benchmark does not expose it directly. This field provides operator-visible debugging for extraction failures and scorer fallbacks.
 
@@ -466,6 +481,7 @@ Each sample-level row must include:
 - `job_id`
 - `suite_id`
 - `id`
+- `task_kind`
 - `correct`
 - `expected`
 - `predicted`
@@ -473,6 +489,8 @@ Each sample-level row must include:
 - `raw_response`
 - `time_s`
 - `parse_status`
+- `input_modalities`
+- `media_references`
 
 `eval export-samples-jsonl` must emit the same sample-level fields as line-delimited JSON objects.
 

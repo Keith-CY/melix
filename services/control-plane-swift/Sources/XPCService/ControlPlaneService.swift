@@ -1195,11 +1195,15 @@ public actor ControlPlaneService {
         }
 
         let taskKind = benchmarkTaskKind(for: evaluationModel)
-        guard taskKind == BenchmarkTaskKind.textGeneration.rawValue else {
+        guard [
+            BenchmarkTaskKind.textGeneration.rawValue,
+            BenchmarkTaskKind.imageToText.rawValue,
+            BenchmarkTaskKind.imageTextToText.rawValue,
+        ].contains(taskKind) else {
             return errorResponse(
                 for: request,
                 code: "unsupported_task_family",
-                message: "Evaluation currently supports text-generation targets only. Resolved task_kind=\(taskKind)."
+                message: "Evaluation supports only text-generation, image-to-text, and image-text-to-text targets. Resolved task_kind=\(taskKind)."
             )
         }
 

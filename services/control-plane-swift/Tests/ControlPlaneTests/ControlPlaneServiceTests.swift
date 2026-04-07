@@ -4768,21 +4768,95 @@ struct ControlPlaneServiceTests {
                 ]
             )
         )
-        let unsupportedService = ControlPlaneService(
+        let importedImageEvalClient = ScriptedModelOperationsWorkerClient()
+        await importedImageEvalClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "google/paligemma2-3b-ft-docci-448",
+                modelName: "paligemma2-3b-ft-docci-448",
+                pipelineTag: "image-to-text",
+                tags: ["paligemma", "image-to-text", "mlx"],
+                siblingFiles: [
+                    "config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                ]
+            )
+        )
+        await importedImageEvalClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job.jobID = "eval-image-1"
+            response.job.modelID = "google/paligemma2-3b-ft-docci-448"
+            response.job.taskKind = "image-to-text"
+            response.job.sourceRepo = "google/paligemma2-3b-ft-docci-448"
+            response.job.suiteID = "mmlu"
+            response.job.datasetID = "mmlu.vision.dev.v1"
+            response.job.sampleSize = 1
+            response.job.status = "completed"
+            return response
+        }())
+        let importedImageRuntimeClient = ScriptedChatWorkerClient(events: [])
+        let importedImageEvalService = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
             workerRegistry: WorkerRegistry(
                 defaultTextClient: NullWorkerClient(),
-                modelOperationsClient: unsupportedClient
+                pythonCompatibilityClient: importedImageRuntimeClient,
+                modelOperationsClient: importedImageEvalClient
             )
         )
 
-        let unsupportedResponse = try await unsupportedService.execute(
-            makeRunEvaluationRequest(modelID: "", hfRepoID: "google/paligemma2-3b-ft-docci-448")
+        let importedImageResponse = try await importedImageEvalService.execute(
+            makeRunEvaluationRequest(
+                modelID: "",
+                hfRepoID: "google/paligemma2-3b-ft-docci-448",
+                suiteID: "mmlu",
+                datasetID: "mmlu.vision.dev.v1"
+            )
+        )
+        let importedImageLoadRequest = try #require(await importedImageRuntimeClient.lastLoadModelRequest)
+        let importedImageEvalRequest = try #require(await importedImageEvalClient.lastEvaluationRequest)
+
+        #expect(importedImageResponse.ok == true)
+        #expect(importedImageLoadRequest.model.modelKind == "vlm")
+        #expect(importedImageLoadRequest.model.ext["vision_family_id"] == "paligemma-v1")
+        #expect(importedImageEvalRequest.taskKind == "image-to-text")
+        #expect(importedImageEvalRequest.sourceRepo == "google/paligemma2-3b-ft-docci-448")
+        #expect(importedImageResponse.ops.evaluationJob.taskKind == "image-to-text")
+
+        let unsupportedImageGenerationClient = ScriptedModelOperationsWorkerClient()
+        await unsupportedImageGenerationClient.setHubModelCardResponse(
+            makeBenchmarkHubModelCardResponse(
+                repoID: "mlx-community/FLUX.1-schnell-4bit",
+                modelName: "FLUX.1-schnell-4bit",
+                pipelineTag: "text-to-image",
+                tags: ["mlx", "text-to-image"],
+                siblingFiles: [
+                    "config.json",
+                    "model.safetensors",
+                ]
+            )
+        )
+        let unsupportedImageGenerationService = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: unsupportedImageGenerationClient
+            )
         )
 
-        #expect(unsupportedResponse.ok == false)
-        #expect(unsupportedResponse.error.code == "unsupported_task_family")
-        #expect(unsupportedResponse.error.message.contains("Resolved task_kind=image-to-text"))
+        let unsupportedImageGenerationResponse = try await unsupportedImageGenerationService.execute(
+            makeRunEvaluationRequest(
+                modelID: "",
+                hfRepoID: "mlx-community/FLUX.1-schnell-4bit"
+            )
+        )
+
+        #expect(unsupportedImageGenerationResponse.ok == false)
+        #expect(unsupportedImageGenerationResponse.error.code == "unsupported_task_family")
+        #expect(
+            unsupportedImageGenerationResponse.error.message
+                .contains("Evaluation supports only text-generation, image-to-text, and image-text-to-text targets.")
+        )
 
         let missingService = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
@@ -7702,7 +7776,9 @@ struct ControlPlaneServiceTests {
 
     private func makeRunEvaluationRequest(
         modelID: String = "melix-dev-text",
-        hfRepoID: String = ""
+        hfRepoID: String = "",
+        suiteID: String = "qa_smoke",
+        datasetID: String = "qa_smoke.dev.v1"
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-evaluation"
@@ -7711,8 +7787,8 @@ struct ControlPlaneServiceTests {
         request.ops.runEvaluation = Melix_Controlplane_V1_RunEvaluation()
         request.ops.runEvaluation.modelID = modelID
         request.ops.runEvaluation.hfRepoID = hfRepoID
-        request.ops.runEvaluation.suiteID = "qa_smoke"
-        request.ops.runEvaluation.datasetID = "qa_smoke.dev.v1"
+        request.ops.runEvaluation.suiteID = suiteID
+        request.ops.runEvaluation.datasetID = datasetID
         request.ops.runEvaluation.sampleSize = 8
         request.ops.runEvaluation.fewShot = 4
         request.ops.runEvaluation.seed = 7
