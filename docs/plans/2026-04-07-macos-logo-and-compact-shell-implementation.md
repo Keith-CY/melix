@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship repository-owned Melix branding across the workspace header, packaged Dock icon, and tray icon while replacing the current two-row desktop chrome with a tighter single-row shell bar and a denser audio setup notice.
+**Goal:** Ship repository-owned Melix branding across packaged Dock and tray surfaces while replacing the current in-content workspace chrome with native macOS title-bar tabs, a trailing command-center action, and a denser audio setup notice.
 
-**Architecture:** Keep shell composition anchored in `DesktopWorkspaceShellView`, but extract the compact shell chrome into focused helpers so the huge workspace file does not grow further. Introduce a small branding resource layer in the Swift package, add an explicit menu-bar presentation contract so packaged builds can run in `Dock + tray`, and wire bundle resources deterministically from the packaging scripts instead of doing runtime asset conversion.
+**Architecture:** Keep workspace content composition anchored in `DesktopWorkspaceShellView`, but move primary navigation into the `DesktopFoundationRootView` toolbar so the tabs live in the native macOS title bar beside the standard traffic-light controls. Introduce a small branding resource layer in the Swift package, add an explicit menu-bar presentation contract so packaged builds can run in `Dock + tray`, and wire bundle resources deterministically from the packaging scripts instead of doing runtime asset conversion.
 
 **Tech Stack:** Swift Package Manager resources, SwiftUI/AppKit, Python packaging helpers, Swift Testing, pytest, repository changed-line coverage scripts.
 
@@ -13,8 +13,7 @@
 ## Scope
 
 - [ ] Commit the provided SVG as the repository source asset and add deterministic derived assets for workspace, tray, and Dock usage.
-- [ ] Show the Melix logo at the top-left of the workspace shell.
-- [ ] Replace the existing two-row shell header with one compact row containing left brand, centered tabs, and one icon-only command-center action.
+- [ ] Replace the in-content workspace shell header with native title-bar tabs and one trailing icon-only command-center action.
 - [ ] Remove the custom in-shell close action and the root-level `Refresh` toolbar action.
 - [ ] Rewrite the Tools audio setup remediation into a shorter single-row notice with non-wrapping action labels.
 - [ ] Make the packaged app launch in `Dock + tray`, keep development-time behavior explicitly configurable, and package the app icon into `Info.plist`.
@@ -28,7 +27,7 @@
 - [ ] Tray probe:
   - `StatusMenu` renders a template image on the `NSStatusItem` button and exposes the runtime title through tooltip/accessibility text instead of text-only chrome.
 - [ ] Workspace chrome probe:
-  - the shell renders `Melix`, `Chat`, `Image`, `Server`, `Tools`, `API`, and the compact audio setup action in one-line controls, and root `Refresh` is absent.
+  - the workspace window title is `Melix`, the native title bar renders `Chat`, `Image`, `Server`, `Tools`, and `API`, the command-center affordance is trailing, and root `Refresh` is absent.
 - [ ] Packaging probe:
   - the unsigned bundle copies the app icon into `Contents/Resources`, writes `CFBundleIconFile`, and no longer writes tray-only `LSUIElement = true`.
 - [ ] Coverage probe:
@@ -53,11 +52,11 @@
 - `apps/macos-menubar/Sources/AppMain/MenuBar/StatusMenu.swift`
   - tray image rendering and tooltip/title behavior.
 - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift`
-  - compact shell bar, brand cluster, centered tabs, and icon-only command-center affordance.
+  - reusable title-bar tab strip and trailing command-center toolbar button.
 - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`
-  - replace the old two-row shell composition and tighten the audio setup notice/button layout.
+  - remove the in-content shell chrome and tighten the audio setup notice/button layout.
 - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift`
-  - remove the root toolbar refresh action.
+  - host native title-bar tabs and remove the root toolbar refresh action.
 - `apps/macos-menubar/Tests/MenuBarTests/AppMainBootstrapTests.swift`
   - presentation mode and activation-policy tests.
 - `apps/macos-menubar/Tests/MenuBarTests/StatusMenuTests.swift`

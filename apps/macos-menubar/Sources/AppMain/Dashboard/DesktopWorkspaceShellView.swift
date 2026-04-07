@@ -16,13 +16,6 @@ struct DesktopWorkspaceShellView: View {
                 }
             }
 
-            DesktopShellChromeView(viewModel: viewModel)
-                .padding(.horizontal, 18)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
-
-            Divider()
-
             Group {
                 switch viewModel.selectedSurface {
                 case .chat:

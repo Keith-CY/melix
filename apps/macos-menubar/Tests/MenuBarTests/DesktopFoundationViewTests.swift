@@ -21,6 +21,20 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .chat)
     }
 
+    @Test("root view renders workspace content without in-content shell chrome")
+    @MainActor
+    func rootViewRendersWorkspaceContentWithoutInContentShellChrome() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopFoundationRootView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Melix") == false)
+    }
+
     @Test("workspace server surface renders projected gateway config state")
     @MainActor
     func workspaceServerSurfaceRendersProjectedGatewayConfigState() async throws {

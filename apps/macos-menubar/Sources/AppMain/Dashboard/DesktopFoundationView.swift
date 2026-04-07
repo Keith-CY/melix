@@ -10,7 +10,18 @@ public struct DesktopFoundationRootView: View {
 
     public var body: some View {
         DesktopWorkspaceShellView(viewModel: viewModel)
-        .frame(minWidth: 980, minHeight: 680)
+            .frame(minWidth: 980, minHeight: 680)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
+                }
+
+                ToolbarItem(placement: .primaryAction) {
+                    DesktopWorkspaceTitleBarCommandCenterButton(
+                        openCommandCenter: viewModel.openCommandCenter
+                    )
+                }
+            }
     }
 }
 

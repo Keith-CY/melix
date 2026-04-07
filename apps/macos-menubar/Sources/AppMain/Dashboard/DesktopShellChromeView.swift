@@ -1,65 +1,34 @@
 import SwiftUI
 
-struct DesktopShellChromeView: View {
+struct DesktopWorkspaceTitleBarTabsView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        HStack(spacing: 16) {
-            DesktopShellBrandView()
-
-            Spacer(minLength: 12)
-
-            DesktopShellTabStripView(
-                selectedSurface: viewModel.selectedSurface,
-                selectSurface: viewModel.selectSurface
-            )
-
-            Spacer(minLength: 12)
-
-            Button(action: viewModel.openCommandCenter) {
-                Image(systemName: "command.circle")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 30, height: 30)
-                    .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("Open Command Center")
-            .accessibilityLabel("Open Command Center")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        DesktopShellTabStripView(
+            selectedSurface: viewModel.selectedSurface,
+            selectSurface: viewModel.selectSurface
         )
     }
 }
 
-private struct DesktopShellBrandView: View {
+struct DesktopWorkspaceTitleBarCommandCenterButton: View {
+    let openCommandCenter: () -> Void
+
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-
-                Image(nsImage: MelixBranding.workspaceLogo())
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .padding(4)
-            }
-            .frame(width: 28, height: 28)
-
-            Text(MelixBranding.productName)
-                .font(.headline.weight(.semibold))
-                .lineLimit(1)
+        Button(action: openCommandCenter) {
+            Image(systemName: "command.circle")
+                .font(.title3.weight(.semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
+        .buttonStyle(.plain)
+        .help("Open Command Center")
+        .accessibilityLabel("Open Command Center")
         .fixedSize(horizontal: true, vertical: false)
     }
 }
 
-private struct DesktopShellTabStripView: View {
+struct DesktopShellTabStripView: View {
     let selectedSurface: DesktopSurface
     let selectSurface: (DesktopSurface) -> Void
 
@@ -72,8 +41,8 @@ private struct DesktopShellTabStripView: View {
                     Text(surface.rawValue)
                         .font(.subheadline.weight(selectedSurface == surface ? .semibold : .medium))
                         .lineLimit(1)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
                         .background(
                             selectedSurface == surface
                             ? Color.accentColor.opacity(0.18)

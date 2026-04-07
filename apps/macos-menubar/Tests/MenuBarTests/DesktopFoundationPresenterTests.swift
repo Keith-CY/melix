@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 
 @testable import AppMain
@@ -76,6 +77,24 @@ struct DesktopFoundationPresenterTests {
 
         workspaceWindow.show()
         commandCenterWindow.show()
+    }
+
+    @Test("live workspace window uses Melix title and unified compact toolbar")
+    @MainActor
+    func liveWorkspaceWindowUsesMelixTitleAndUnifiedCompactToolbar() async throws {
+        guard !MenuBarTestEnvironment.isHeadlessCI else { return }
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let workspaceWindow = LiveDesktopFoundationWindow(viewModel: viewModel)
+        let mirror = Mirror(reflecting: workspaceWindow)
+        let windowController = try #require(mirror.descendant("windowController") as? NSWindowController)
+        let window = try #require(windowController.window)
+
+        #expect(window.title == "Melix")
+        #expect(window.toolbar != nil)
+        #expect(window.toolbarStyle == .unifiedCompact)
     }
 }
 
