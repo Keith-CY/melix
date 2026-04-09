@@ -7,6 +7,7 @@ import signal
 import subprocess
 from functools import lru_cache
 from pathlib import Path
+import sys
 import uuid
 
 from tests.integration.helpers import LiveMelixStack
@@ -48,6 +49,52 @@ def run_cli(
 
 def run_cli_json(repo_root: Path, args: list[str], *, env_overrides: dict[str, str]) -> object:
     completed = run_cli(repo_root, args, env_overrides=env_overrides)
+    return json.loads(completed.stdout)
+
+
+def run_python_script(
+    repo_root: Path,
+    script_relative_path: str,
+    args: list[str],
+    *,
+    env_overrides: dict[str, str],
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update(env_overrides)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_segments = [segment for segment in existing_pythonpath.split(os.pathsep) if segment]
+    pythonpath_segments.extend(
+        [
+            str(repo_root),
+            str(repo_root / "services/mlx-worker-python"),
+        ]
+    )
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
+    env["MELIX_REPO_ROOT"] = str(repo_root)
+    return subprocess.run(
+        [sys.executable, str(repo_root / script_relative_path), *args],
+        cwd=repo_root,
+        check=check,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def run_python_script_json(
+    repo_root: Path,
+    script_relative_path: str,
+    args: list[str],
+    *,
+    env_overrides: dict[str, str],
+) -> object:
+    completed = run_python_script(
+        repo_root,
+        script_relative_path,
+        args,
+        env_overrides=env_overrides,
+    )
     return json.loads(completed.stdout)
 
 
@@ -370,3 +417,140 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
         assert chat_receipt["request_id"]
     finally:
         stack.stop()
+
+
+def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    source_dir = tmp_path / "fixture-model"
+    melix_home = tmp_path / "melix-home"
+    managed_root = tmp_path / "managed-models"
+    write_local_model_fixture(source_dir)
+
+    stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+        },
+    )
+    stack.start()
+    try:
+        env = {
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
+            "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
+            "MELIX_CLI": str(build_cli_binary(repo_root)),
+        }
+
+        created_state = run_cli_json(
+            repo_root,
+            [
+                "server",
+                "session",
+                "create",
+                "--title",
+                "Primary Session",
+                "--model-id",
+                "melix-dev-text",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+
+        payload = run_python_script_json(
+            repo_root,
+            "scripts/phase8_acceptance_bundle.py",
+            [
+                "--model-id",
+                "melix-dev-qwen-local",
+                "--local-model-path",
+                str(source_dir),
+                "--training-fixture",
+                "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                "--bench-suite",
+                "smoke",
+                "--bench-suite",
+                "latency",
+                "--matrix-suite",
+                "smoke",
+                "--evaluation-suite",
+                "mmlu",
+                "--evaluation-dataset",
+                "mmlu.dev.v1",
+                "--server-session-id",
+                "server-session-1",
+                "--timestamp",
+                "2026-04-09T120000Z",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+
+        bundle = payload["bundle"]
+        bundle_path = Path(payload["bundle_path"])
+        assert bundle_path.is_file()
+        assert bundle["schema_version"] == "melix.phase8.acceptance_bundle.v1"
+        assert bundle["model"]["model_id"] == "melix-dev-qwen-local"
+        assert bundle["model"]["source_kind"] == "local_path"
+        assert Path(bundle["model"]["managed_model_path"]).is_dir()
+        assert bundle["datasets"]["training_fixture"] == "melix-dev-dataset.v1"
+        assert bundle["chats"]["base"]["assistant_text"] == "Echo: Reply with BASE_OK"
+        assert bundle["chats"]["derived"]["assistant_text"] == "Echo: Reply with DERIVED_OK"
+        assert bundle["jobs"]["lora_train_job_id"]
+        assert bundle["jobs"]["bench_job_id"]
+        assert bundle["jobs"]["bench_matrix_job_id"]
+        assert bundle["jobs"]["evaluation_job_id"]
+        assert Path(bundle["exports"]["bench_csv"]).is_file()
+        assert Path(bundle["exports"]["matrix_summary_csv"]).is_file()
+        assert Path(bundle["exports"]["evaluation_summary_csv"]).is_file()
+        assert Path(bundle["exports"]["evaluation_samples_jsonl"]).is_file()
+
+        snapshot = run_cli_json(
+            repo_root,
+            [
+                "model",
+                "roots",
+                "rescan",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert any(
+            derived_model["model_id"] == bundle["derived_model"]["model_id"]
+            and derived_model["derived_model_alias"] == bundle["derived_model"]["alias"]
+            for derived_model in snapshot["derived_models"]
+        )
+    finally:
+        stack.stop()
+
+
+def test_phase8_acceptance_bundle_requires_local_model_path_when_not_live(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    completed = run_python_script(
+        repo_root,
+        "scripts/phase8_acceptance_bundle.py",
+        [
+            "--model-id",
+            "melix-dev-qwen-local",
+            "--training-fixture",
+            "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ],
+        env_overrides={
+            "MELIX_HOME": str(tmp_path / "melix-home"),
+        },
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "--local-model-path is required" in completed.stderr

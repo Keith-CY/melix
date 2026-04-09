@@ -4,6 +4,7 @@ import json
 import plistlib
 from pathlib import Path
 
+import worker.productization.install_assets as install_assets
 from worker.productization.install_assets import (
     build_launch_agent_specs,
     build_local_product_layout,
@@ -108,6 +109,23 @@ def test_build_launch_agent_specs_default_to_real_backends(tmp_path: Path) -> No
 
     python_spec = specs["io.melix.python-worker"]
     assert python_spec.program_arguments[-2:] == ["--backend-mode", "auto"]
+
+
+def test_build_launch_agent_specs_uses_absolute_uv_binary_when_available(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    layout = build_local_product_layout(repo_root=repo_root, home_dir=home_dir)
+    monkeypatch.setattr(install_assets.shutil, "which", lambda command: "/Users/test/.local/bin/uv" if command == "uv" else None)
+
+    specs = {spec.label: spec for spec in build_launch_agent_specs(layout)}
+
+    python_spec = specs["io.melix.python-worker"]
+    assert python_spec.program_arguments[:2] == ["/Users/test/.local/bin/uv", "run"]
 
 
 def test_build_launch_agent_specs_include_sidecar_instance_labels_and_tooling_roots(tmp_path: Path) -> None:

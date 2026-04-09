@@ -11,6 +11,72 @@
 
 ## 2026-04-09
 
+- Closed the Phase 8 Stage 3 CLI acceptance slice so the public `melix` contract now closes the
+  deterministic LoRA, derived-chat, benchmark, matrix benchmark, evaluation, export, and evidence
+  bundle path in one repository-owned runner:
+  - added `scripts/phase8_acceptance_bundle.py` plus `make phase8-acceptance` so one CLI-owned
+    entrypoint materializes or imports the model, rebinds the server session, runs base and
+    derived chats, executes LoRA train plus activate, runs bench, matrix bench, and eval, exports
+    the resulting artifacts, and writes a machine-readable evidence bundle under
+    `MELIX_HOME/acceptance/phase8/cli/<timestamp>/`
+  - added deterministic LoRA and benchmark fixtures in the Python worker so the Stage 3 E2E can
+    prove the full CLI orchestration path without a live network dependency
+  - fixed the Swift process bridge deadlock for large unary payloads by draining `stdout` and
+    `stderr` concurrently, and added a regression test that proves `export-results` style payloads
+    no longer hang
+  - compacted the deterministic text backend to emit one chunk per response so deterministic
+    matrix benchmark acceptance finishes in seconds instead of appearing stalled for ~80 seconds
+  - fixed local-product launch-agent rendering so the Python worker launch agent resolves the
+    absolute `uv` executable path at install time instead of depending on launchd's default `PATH`
+    containing `uv`; this unblocked the real CLI acceptance run on the local product install
+  - expanded positive and negative Python unit coverage around acceptance-bundle parsing,
+    subprocess failures, helper validation, deterministic LoRA artifact materialization, and
+    deterministic benchmark dataset fetches, while keeping the deterministic CLI E2E as the end-
+    to-end closure for base chat, derived chat, LoRA, bench, eval, and export outputs
+- Verification summary for Phase 8 Stage 3:
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter PythonBridgeWorkerClientTests`: `52 tests in 1 suite passed after 0.847 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift services/control-plane-swift/Tests/WorkerClientTests/PythonBridgeWorkerClientTests.swift`: `100.00%` (`40/40`)
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_runtime_edges.py tests/test_phase8_acceptance_bundle.py -q`: `47 passed in 0.22s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_install_assets.py services/mlx-worker-python/tests/test_install_local_product_script.py -q`: `13 passed in 0.05s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/p8_s3_py.coverage --source=scripts,services/mlx-worker-python/worker,tests -m pytest services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_deterministic_backend.py services/mlx-worker-python/tests/test_install_assets.py services/mlx-worker-python/tests/test_install_local_product_script.py tests/test_phase8_acceptance_bundle.py tests/integration/test_phase8_cli_acceptance.py -q`: `69 passed in 55.96s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/p8_s3_py.coverage -o /tmp/p8_s3_py_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/p8_s3_py_coverage.json scripts/phase8_acceptance_bundle.py services/mlx-worker-python/worker/grpc_server.py services/mlx-worker-python/worker/model_ops/deterministic_lora_runner.py services/mlx-worker-python/worker/productization/install_assets.py services/mlx-worker-python/worker/runtime/deterministic_backend.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_deterministic_backend.py services/mlx-worker-python/tests/test_install_assets.py tests/test_phase8_acceptance_bundle.py tests/integration/test_phase8_cli_acceptance.py`: `99.47%` (`564/567`)
+  - `python3 scripts/install_local_product.py --json`: pass
+  - `launchctl bootstrap gui/501 /Users/ChenYu/Library/LaunchAgents/io.melix.swift-text-worker.plist`: pass
+  - `launchctl bootstrap gui/501 /Users/ChenYu/Library/LaunchAgents/io.melix.python-worker.plist`: pass after the `install_assets.py` absolute-`uv` fix and a `launchctl bootout`/`bootstrap` restart cycle
+  - `launchctl bootstrap gui/501 /Users/ChenYu/Library/LaunchAgents/io.melix.control-plane.plist`: pass
+  - `source "/Users/ChenYu/Library/Application Support/Melix/melix-product-env.sh" && MELIX_HOME="/Users/ChenYu/Library/Application Support/Melix" MELIX_CLI="$(pwd)/.build/arm64-apple-macosx/debug/melix" make phase8-acceptance PHASE8_ACCEPTANCE_ARGS="--live --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --training-fixture services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1 --bench-suite smoke --bench-suite latency --matrix-suite smoke --evaluation-suite mmlu --evaluation-dataset mmlu.dev.v1 --server-session-id server-session-1 --json"`: pass with a real evidence bundle at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/cli/2026-04-09T162920Z/bundle.json`
+- Metrics report for Phase 8 Stage 3:
+  - Swift process-bridge touched-scope changed-line coverage: `100.00%` (`40/40`)
+  - Python worker, acceptance runner, and deterministic CLI E2E touched-scope changed-line
+    coverage: `99.47%` (`564/567`)
+  - the Stage 3 acceptance bundle now records repository-owned orchestration probes:
+    - `phase8.cli.managed_materialize_ms`
+    - `phase8.cli.session_rebind_ms`
+    - `phase8.cli.base_chat_roundtrip_ms`
+    - `phase8.cli.derived_chat_roundtrip_ms`
+    - `phase8.cli.chat_roundtrip_ms`
+    - `phase8.cli.lora_train_ms`
+    - `phase8.cli.lora_activate_ms`
+    - `phase8.cli.bench_run_ms`
+    - `phase8.cli.bench_matrix_run_ms`
+    - `phase8.cli.evaluation_run_ms`
+    - `phase8.cli.acceptance_bundle_write_ms`
+  - live CLI evidence captured in `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/cli/2026-04-09T162920Z/bundle.json` records:
+    - `base chat assistant_text = BASE_OK`
+    - `derived chat assistant_text = Derived_OK`
+    - `lora_train_job_id = model-ops-0013`
+    - `bench_job_id = model-ops-0024`
+    - `bench_matrix_job_id = model-ops-0029`
+    - `evaluation_job_id = eval-0001`
+    - `phase8.cli.managed_materialize_ms = 129039.66`
+    - `phase8.cli.lora_train_ms = 9959.67`
+    - `phase8.cli.bench_run_ms = 11100.63`
+    - `phase8.cli.bench_matrix_run_ms = 7424.38`
+    - `phase8.cli.evaluation_run_ms = 4295.66`
+  - the deterministic Stage 3 E2E now proves the full CLI contract
+    `model import -> registry rescan -> server start -> base chat -> lora train -> lora activate -> derived chat -> bench -> matrix bench -> eval -> export` and verifies the emitted evidence bundle paths exist
+
 - Closed the Phase 8 Stage 1 CLI materialization slice so managed hub downloads and local-path
   imports now share one machine-readable receipt contract and a deterministic CLI acceptance path:
   - added `melix model import` parser and runner support, including a shared managed-model receipt

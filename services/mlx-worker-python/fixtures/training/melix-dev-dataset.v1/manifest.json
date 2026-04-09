@@ -1,9 +1,7 @@
 {
-  "schema_version": "melix.training_dataset_manifest.v1",
+  "schema_version": "melix.training_dataset_package.v1",
   "dataset_id": "melix-dev-dataset.v1",
-  "task_kind": "chat_sft",
-  "format": "jsonl",
+  "format": "chat_messages",
   "sample_count": 2,
-  "chat_feature": "messages",
-  "text_feature": "text"
+  "version": "1"
 }

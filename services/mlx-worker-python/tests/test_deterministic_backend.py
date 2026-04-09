@@ -26,6 +26,23 @@ def test_deterministic_backend_reports_model_metadata_and_tokens() -> None:
     assert "".join(tokens) == "Echo: hello live path"
 
 
+def test_deterministic_backend_compacts_large_prompts_into_one_chunk() -> None:
+    backend = DeterministicTextBackend()
+    model_spec = ModelSpec("melix-dev-text", "models/melix-dev-text")
+    prompt = " ".join(["token"] * 1024)
+
+    tokens = list(
+        backend.generate_tokens(
+            backend.load_model(model_spec),
+            prompt,
+            sampling=None,
+            cancel_event=Event(),
+        )
+    )
+
+    assert tokens == [f"Echo: {prompt}"]
+
+
 def test_deterministic_backend_honors_cancellation() -> None:
     backend = DeterministicTextBackend()
     model_spec = ModelSpec("melix-dev-text", "models/melix-dev-text")

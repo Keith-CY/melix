@@ -17,12 +17,17 @@ from worker.grpc_server import (
     WorkerInferenceService,
     WorkerMaintenanceService,
     WorkerRuntimeService,
+    _deterministic_benchmark_fetch_json,
     _elapsed_milliseconds_from_origin,
     _elapsed_milliseconds_since,
+    build_maintenance_service,
     build_registry_for_backend,
     build_server,
     main,
 )
+from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
+from worker.model_ops.mlx_lm_runner import ActivationRequest, TrainingRequest
+from worker.model_ops.training_config import LoRATrainingConfig
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.registry import WorkerRegistry
@@ -818,6 +823,195 @@ def test_build_registry_for_backend_reads_process_memory_budget_env(monkeypatch)
     stats = registry.runtime_stats()
 
     assert stats.memory_headroom_bytes == 512
+
+
+def test_build_maintenance_service_uses_deterministic_lora_runner() -> None:
+    service = build_maintenance_service(
+        build_registry_for_backend("deterministic"),
+        jobs_root=Path("/tmp/melix-test-maintenance"),
+        backend_mode="deterministic",
+    )
+
+    assert isinstance(service._core._lora_training_pipeline._runner, DeterministicLoRARunner)
+    assert isinstance(service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner)
+    suite = service._core._benchmark_suite_catalog.resolve_suite(
+        "smoke",
+        jobs_root=Path("/tmp/melix-test-maintenance"),
+        parameters={},
+        task_kind="text-generation",
+    )
+    assert suite.prompt_batches
+    assert "Say hi." in suite.prompt_batches[0]
+
+
+def test_build_maintenance_service_keeps_default_lora_runner_for_auto_backend() -> None:
+    service = build_maintenance_service(
+        build_registry(),
+        jobs_root=Path("/tmp/melix-test-maintenance-auto"),
+        backend_mode="auto",
+    )
+
+    assert not isinstance(service._core._lora_training_pipeline._runner, DeterministicLoRARunner)
+    assert not isinstance(service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner)
+
+
+def _deterministic_training_config() -> LoRATrainingConfig:
+    return LoRATrainingConfig(
+        training_mode="lora",
+        quantization_mode="none",
+        family_id="llama",
+        rank=8,
+        alpha=16.0,
+        dropout=0.0,
+        target_modules=["q_proj"],
+        expanded_target_modules=["model.layers.0.self_attn.q_proj"],
+        backend_target_modules=["layers.0.self_attn.q_proj"],
+        selected_layer_indices=[0],
+        total_layer_count=1,
+        num_layers=1,
+        learning_rate=1e-5,
+        batch_size=1,
+        epochs=1,
+        iters=1,
+        response_only=False,
+        gradient_checkpointing=False,
+        mask_prompt=False,
+        max_seq_length=128,
+        steps_per_report=1,
+        steps_per_eval=0,
+        steps_per_save=1,
+        validation_strategy="none",
+        validation_split="",
+        validation_sample_count=0,
+        desired_derived_model_alias="deterministic-derived",
+        adapter_name="phase8-acceptance",
+        target_repo="",
+    )
+
+
+def test_deterministic_lora_runner_train_native_writes_adapter_artifacts(tmp_path: Path) -> None:
+    runner = DeterministicLoRARunner()
+    request = TrainingRequest(
+        job_id="job-1",
+        base_model_id="melix-dev-qwen-local",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "output" / "adapter",
+        normalized_dataset_dir=tmp_path / "dataset",
+        config=_deterministic_training_config(),
+        dataset_format="chat_messages",
+    )
+
+    result = runner.train_native(request)
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert result.weights_path.read_bytes() == b"melix-deterministic-adapter"
+    assert adapter_config["fine_tune_type"] == "lora"
+    assert adapter_config["num_layers"] == 1
+    assert adapter_config["lora_parameters"]["rank"] == 8
+    assert result.metrics.tokens_seen == 1024
+    assert result.execution_backend == "native"
+
+
+def test_deterministic_lora_runner_activate_native_copies_runtime_bundle(tmp_path: Path) -> None:
+    runner = DeterministicLoRARunner()
+    source_root = tmp_path / "base-model"
+    source_root.mkdir(parents=True, exist_ok=True)
+    (source_root / "config.json").write_text('{"model_type":"llama"}\n', encoding="utf-8")
+    (source_root / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
+    (source_root / "model.safetensors").write_bytes(b"base-model")
+
+    request = ActivationRequest(
+        job_id="job-2",
+        base_model_id="melix-dev-qwen-local",
+        model_path=source_root,
+        adapter_dir=tmp_path / "adapter",
+        adapter_manifest_path=tmp_path / "adapter" / "manifest.json",
+        derived_model_dir=tmp_path / "derived-model",
+        activation_mode="fuse",
+    )
+
+    result = runner.activate_native(request)
+
+    assert (result.derived_model_dir / "config.json").read_text(encoding="utf-8") == '{"model_type":"llama"}\n'
+    assert (result.derived_model_dir / "tokenizer.json").read_text(encoding="utf-8") == '{"version":"1.0"}\n'
+    assert (result.derived_model_dir / "model.safetensors").read_bytes() == b"base-model"
+    assert json.loads(result.manifest_path.read_text(encoding="utf-8")) == {
+        "schema_version": "melix.derived_text_model.v1"
+    }
+    assert result.execution_backend == "native"
+
+
+def test_deterministic_lora_runner_activate_native_writes_fallback_bundle_when_source_files_missing(
+    tmp_path: Path,
+) -> None:
+    runner = DeterministicLoRARunner()
+    source_root = tmp_path / "empty-model"
+    source_root.mkdir(parents=True, exist_ok=True)
+    request = ActivationRequest(
+        job_id="job-3",
+        base_model_id="melix-dev-qwen-local",
+        model_path=source_root,
+        adapter_dir=tmp_path / "adapter",
+        adapter_manifest_path=tmp_path / "adapter" / "manifest.json",
+        derived_model_dir=tmp_path / "derived-model",
+        activation_mode="fuse",
+    )
+
+    result = runner.activate_native(request)
+
+    assert (result.derived_model_dir / "config.json").read_text(encoding="utf-8") == (
+        '{"model_type":"melix-deterministic"}\n'
+    )
+    assert (result.derived_model_dir / "tokenizer.json").read_text(encoding="utf-8") == '{"version":"1.0"}\n'
+    assert (result.derived_model_dir / "model.safetensors").read_bytes() == b"melix-deterministic-model"
+
+
+def test_deterministic_benchmark_fetch_json_returns_ultrachat_rows_and_splits() -> None:
+    rows = _deterministic_benchmark_fetch_json(
+        "rows",
+        {"dataset": "HuggingFaceH4/ultrachat_200k", "offset": "0"},
+    )
+    splits = _deterministic_benchmark_fetch_json(
+        "splits",
+        {"dataset": "HuggingFaceH4/ultrachat_200k"},
+    )
+
+    assert rows["rows"][0]["row"]["messages"][0]["content"] == "Say hi."
+    assert splits["splits"][0]["split"] == "train_sft"
+
+
+def test_deterministic_benchmark_fetch_json_returns_dolly_rows_and_splits() -> None:
+    rows = _deterministic_benchmark_fetch_json(
+        "rows",
+        {"dataset": "databricks/databricks-dolly-15k", "offset": "0"},
+    )
+    splits = _deterministic_benchmark_fetch_json(
+        "splits",
+        {"dataset": "databricks/databricks-dolly-15k"},
+    )
+
+    assert rows["rows"][0]["row"]["instruction"] == "List two colors."
+    assert splits["splits"][0]["split"] == "train"
+
+
+def test_deterministic_benchmark_fetch_json_returns_image_rows_and_empty_offsets() -> None:
+    rows = _deterministic_benchmark_fetch_json(
+        "rows",
+        {"dataset": "huggingface/documentation-images", "offset": "0"},
+    )
+    offset_rows = _deterministic_benchmark_fetch_json(
+        "rows",
+        {"dataset": "huggingface/documentation-images", "offset": "4"},
+    )
+
+    assert rows["rows"][0]["row"]["image"]["src"] == "https://example.com/doc-image-1.jpg"
+    assert offset_rows == {"rows": []}
+
+
+def test_deterministic_benchmark_fetch_json_rejects_unknown_datasets() -> None:
+    with pytest.raises(AssertionError, match="Unexpected deterministic benchmark fetch"):
+        _deterministic_benchmark_fetch_json("rows", {"dataset": "unknown/demo", "offset": "0"})
 
 
 def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:

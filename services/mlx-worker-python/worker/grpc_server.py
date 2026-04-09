@@ -32,7 +32,11 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.rerank_core import RerankCore
 from worker.engine.speech_core import SpeechCore
 from worker.engine.transcription_core import TranscriptionCore
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
+from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.hub_catalog import HubCatalog
+from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -237,9 +241,19 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         evaluation_jobs_root: Path | str | None = None,
         evaluation_core: EvaluationCore | None = None,
         hub_catalog: HubCatalog | None = None,
+        lora_training_pipeline: LoRATrainingPipeline | None = None,
+        adapter_activation_pipeline: AdapterActivationPipeline | None = None,
+        benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
     ) -> None:
         root = Path(jobs_root or ".runtime/model-ops")
-        self._core = MaintenanceCore(registry, jobs_root=root, hub_catalog=hub_catalog)
+        self._core = MaintenanceCore(
+            registry,
+            jobs_root=root,
+            hub_catalog=hub_catalog,
+            lora_training_pipeline=lora_training_pipeline,
+            adapter_activation_pipeline=adapter_activation_pipeline,
+            benchmark_suite_catalog=benchmark_suite_catalog,
+        )
         self._evaluation_jobs_root = Path(evaluation_jobs_root or root / "evaluation").resolve()
         # Stage the evaluation runner at service construction time so the later RPC path
         # can reuse the same file-backed jobs root without additional wiring changes.
@@ -454,6 +468,90 @@ def build_registry_for_backend(backend_mode: str) -> WorkerRegistry:
     )
 
 
+def _deterministic_benchmark_fetch_json(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+    dataset = params.get("dataset", "")
+    offset = params.get("offset", "0")
+    if endpoint == "rows" and offset != "0":
+        return {"rows": []}
+
+    if dataset == "HuggingFaceH4/ultrachat_200k":
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {
+                        "row": {
+                            "messages": [
+                                {"role": "user", "content": "Say hi."},
+                                {"role": "assistant", "content": "Hi."},
+                            ]
+                        }
+                    },
+                    {
+                        "row": {
+                            "messages": [
+                                {"role": "user", "content": "Say bye."},
+                                {"role": "assistant", "content": "Bye."},
+                            ]
+                        }
+                    },
+                ]
+            }
+        return {"splits": [{"dataset": dataset, "config": "default", "split": "train_sft"}]}
+
+    if dataset == "databricks/databricks-dolly-15k":
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {"row": {"instruction": "List two colors.", "response": "Red and blue."}},
+                    {"row": {"instruction": "List two animals.", "response": "Cat and dog."}},
+                ]
+            }
+        return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
+    if dataset == "huggingface/documentation-images":
+        if endpoint == "rows":
+            return {
+                "rows": [
+                    {"row": {"image": {"src": "https://example.com/doc-image-1.jpg"}}},
+                    {"row": {"image": {"src": "https://example.com/doc-image-2.jpg"}}},
+                ]
+            }
+        return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+
+    raise AssertionError(f"Unexpected deterministic benchmark fetch: endpoint={endpoint} dataset={dataset}")
+
+
+def build_maintenance_service(
+    registry: WorkerRegistry,
+    *,
+    jobs_root: Path | str | None = None,
+    evaluation_jobs_root: Path | str | None = None,
+    backend_mode: str = "auto",
+    evaluation_core: EvaluationCore | None = None,
+    hub_catalog: HubCatalog | None = None,
+) -> WorkerMaintenanceService:
+    lora_training_pipeline = None
+    adapter_activation_pipeline = None
+    benchmark_suite_catalog = None
+    if backend_mode == "deterministic":
+        runner = DeterministicLoRARunner()
+        lora_training_pipeline = LoRATrainingPipeline(runner=runner)
+        adapter_activation_pipeline = AdapterActivationPipeline(runner=runner)
+        benchmark_suite_catalog = BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=_deterministic_benchmark_fetch_json
+        )
+    return WorkerMaintenanceService(
+        registry,
+        jobs_root=jobs_root,
+        evaluation_jobs_root=evaluation_jobs_root,
+        evaluation_core=evaluation_core,
+        hub_catalog=hub_catalog,
+        lora_training_pipeline=lora_training_pipeline,
+        adapter_activation_pipeline=adapter_activation_pipeline,
+        benchmark_suite_catalog=benchmark_suite_catalog,
+    )
+
+
 def build_server(
     socket_path: str,
     registry: WorkerRegistry | None = None,
@@ -475,10 +573,11 @@ def build_server(
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    maintenance_service = WorkerMaintenanceService(
+    maintenance_service = build_maintenance_service(
         registry,
         jobs_root=_resolved_env_path("MELIX_MODEL_OPS_JOBS_ROOT"),
         evaluation_jobs_root=_resolved_env_path("MELIX_EVALUATION_JOBS_ROOT"),
+        backend_mode=backend_mode,
     )
     cache_service = WorkerCacheService(registry)
     runtime_pb2_grpc.add_RuntimeServiceServicer_to_server(runtime_service, server)

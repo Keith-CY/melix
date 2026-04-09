@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -154,6 +155,38 @@ def build_launch_agent_specs(
     python_backend_mode: str = "auto",
     dev_text_model_path: str = "",
 ) -> list[LaunchAgentSpec]:
+    python_launcher = shutil.which("uv")
+    python_program_arguments = (
+        [
+            python_launcher,
+            "run",
+            "--project",
+            str(layout.repo_root / "services/mlx-worker-python"),
+            "python",
+            "-m",
+            "worker.bootstrap",
+            "--socket-path",
+            str(layout.python_socket_path),
+            "--backend-mode",
+            python_backend_mode,
+        ]
+        if python_launcher
+        else [
+            "/usr/bin/env",
+            "uv",
+            "run",
+            "--project",
+            str(layout.repo_root / "services/mlx-worker-python"),
+            "python",
+            "-m",
+            "worker.bootstrap",
+            "--socket-path",
+            str(layout.python_socket_path),
+            "--backend-mode",
+            python_backend_mode,
+        ]
+    )
+
     common_swift_environment = {
         "HOME": str(layout.swift_home_dir),
         "CLANG_MODULE_CACHE_PATH": str(layout.module_cache_dir),
@@ -218,20 +251,7 @@ def build_launch_agent_specs(
         LaunchAgentSpec(
             label=f"{label_prefix}.python-worker",
             plist_path=layout.launch_agents_dir / f"{label_prefix}.python-worker.plist",
-            program_arguments=[
-                "/usr/bin/env",
-                "uv",
-                "run",
-                "--project",
-                str(layout.repo_root / "services/mlx-worker-python"),
-                "python",
-                "-m",
-                "worker.bootstrap",
-                "--socket-path",
-                str(layout.python_socket_path),
-                "--backend-mode",
-                python_backend_mode,
-            ],
+            program_arguments=python_program_arguments,
             environment=python_environment,
             working_directory=layout.repo_root,
             stdout_path=layout.python_worker_stdout_path,

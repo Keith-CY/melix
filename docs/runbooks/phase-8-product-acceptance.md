@@ -73,12 +73,14 @@ do not blur code-complete surfaces, pending live validation, and open product ga
 Treat regressions in these flows as bugs, not as future roadmap work:
 
 - [x] Hugging Face search, model-card inspection, MLX-only filtering, and managed-import download.
+- [x] First-class local model import into managed storage with a shared machine-readable managed-model receipt shape.
 - [x] Ordered registry-root management, including `list`, `add`, `remove`, `move`, `rescan`, and managed-root precedence.
 - [x] Registry-driven model library flows for `list`, `inspect`, `load`, and `unload`.
 - [x] Download-queue hydration, status rendering, and resumable download recovery.
 - [x] Serveable-model filtering for `Server Session` binding and start-time validation.
 - [x] `Server Session` create, update, remove, select, start, pause, resume, wake, stop, and unavailable-binding preservation.
-- [x] Shared CLI-core execution for LoRA train and activate, benchmark, matrix benchmark, evaluation, and export actions.
+- [x] CLI-first server-session rebinding and `chat run` execution against managed base or derived models without `MELIX_DEV_TEXT_MODEL_PATH`.
+- [x] Shared CLI-core execution for LoRA train and activate, benchmark, matrix benchmark, evaluation, export, and acceptance-bundle orchestration.
 
 ### Bucket 2: Implemented But Pending Live Acceptance Revalidation
 
@@ -86,16 +88,20 @@ These flows exist in code, but still need fresh real-runtime acceptance evidence
 release sign-off:
 
 - [ ] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` using a downloaded Hugging Face text model without fallback environment model-path injection.
-- [ ] Capture one base-model chat run and one derived-model chat run against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
-- [ ] Re-run live LoRA training, matrix benchmark, evaluation, and export flows against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` and retain screenshots, job IDs, and output paths as acceptance evidence.
-- [ ] Record the exact model ID `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`, dataset ID, benchmark suites, evaluation suite, and exported artifact paths in the acceptance evidence bundle.
+
+### Live CLI Evidence Captured
+
+- [x] The repository-owned CLI acceptance bundle was re-run live on `2026-04-09T162920Z`.
+- [x] The live CLI bundle records one base-model chat run and one derived-model chat run against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- [x] The live CLI bundle records the exact model ID, dataset ID, benchmark suites, evaluation suite, LoRA job ID, matrix benchmark job ID, evaluation job ID, and exported artifact paths for the real acceptance run.
+- [x] Live LoRA training, benchmark, matrix benchmark, evaluation, and export flows completed through the public `melix` CLI contract; see `progress.md` for the exact evidence path and measured timings.
 
 ### Bucket 3: Open Product Gaps
 
 These remain roadmap items rather than closed product behavior:
 
 - [ ] Add a native desktop workflow that rebinds the primary text model after the operator selects and downloads a Hugging Face text model, without requiring `MELIX_DEV_TEXT_MODEL_PATH`.
-- [ ] Add a first-class local import workflow that materializes operator-selected local models into managed storage instead of relying only on registry-root scanning.
+- [ ] Route the remaining Window UI Phase 8 write-path workflows through the CLI-first shell and preserve acceptance evidence from that UI surface.
 
 ## Final Metrics Report
 

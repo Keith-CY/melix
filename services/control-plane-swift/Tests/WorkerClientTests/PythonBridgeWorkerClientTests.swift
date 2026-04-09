@@ -1552,6 +1552,26 @@ struct PythonBridgeWorkerClientTests {
         }
     }
 
+    @Test("process bridge runner drains large unary payloads without deadlocking")
+    func processBridgeRunnerDrainsLargeUnaryPayloadsWithoutDeadlocking() async throws {
+        let fixtureRoot = try makeProcessBridgeFixtureRepo()
+        let runner = ProcessWorkerBridgeRunner(
+            repoRoot: fixtureRoot.path,
+            environment: ProcessInfo.processInfo.environment
+        )
+
+        let line = try await runner.runUnary(
+            command: BridgeCommand(
+                kind: .exportResults,
+                socketPath: "/tmp/unused.sock",
+                requestData: Data("large-unary".utf8)
+            )
+        )
+
+        #expect(line.contains("\"kind\""))
+        #expect(line.count > 70_000)
+    }
+
     @Test("process bridge runner preserves unary error payloads from non-zero exits")
     func processBridgeRunnerPreservesUnaryErrorPayloadsFromNonZeroExits() async throws {
         let fixtureRoot = try makeProcessBridgeFixtureRepo()
@@ -1762,6 +1782,9 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"first").decode("ascii")}), flush=True)
         time.sleep(0.01)
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"second").decode("ascii")}), flush=True)
+    elif payload == b"large-unary":
+        huge = base64.b64encode(b"x" * 70000).decode("ascii")
+        print(json.dumps({"kind": "message", "message_b64": huge}), flush=True)
     elif args.command == "handshake":
         print(json.dumps({"kind": "message", "message_b64": ""}), flush=True)
     elif payload == b"rpc-error":

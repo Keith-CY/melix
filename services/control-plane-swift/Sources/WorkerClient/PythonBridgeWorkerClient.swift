@@ -1281,13 +1281,24 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         process.standardError = stderr
 
         try process.run()
+        let stdoutTask = Task {
+            try String(decoding: stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        }
+        let stderrTask = Task {
+            try String(decoding: stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        }
+        defer {
+            stdoutTask.cancel()
+            stderrTask.cancel()
+        }
+
         _ = await waitForTermination(
             of: process,
             state: terminationState
         )
 
-        let output = String(decoding: try stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
-        _ = String(decoding: try stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        let output = try await stdoutTask.value
+        _ = try await stderrTask.value
 
         guard let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
@@ -1307,6 +1318,9 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         try process.run()
 
         return AsyncThrowingStream { continuation in
+            let stderrTask = Task {
+                try stderr.fileHandleForReading.readToEnd()
+            }
             let task = Task {
                 do {
                     for try await line in stdout.fileHandleForReading.bytes.lines {
@@ -1317,9 +1331,10 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
                         state: terminationState
                     )
                     if terminationStatus == 0 {
+                        _ = try await stderrTask.value
                         continuation.finish()
                     } else {
-                        _ = try stderr.fileHandleForReading.readToEnd()
+                        _ = try await stderrTask.value
                         continuation.finish(throwing: WorkerClientError.unavailable)
                     }
                 } catch {
@@ -1329,6 +1344,7 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
 
             continuation.onTermination = { _ in
                 task.cancel()
+                stderrTask.cancel()
                 if process.isRunning {
                     process.terminate()
                 }
