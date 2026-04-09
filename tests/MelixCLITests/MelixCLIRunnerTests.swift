@@ -157,6 +157,156 @@ struct MelixCLIRunnerTests {
         #expect(payload["source_locator"] as? String == "/tmp/qwen-local-model")
     }
 
+    @Test("chat run collects streamed assistant text and returns a typed json receipt")
+    func chatRunCollectsStreamedAssistantTextAndReturnsATypedJSONReceipt() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "chat-run-1",
+            modelID: "melix-dev-qwen-local",
+            events: [
+                .tokenDelta("Echo: "),
+                .tokenDelta("Reply with BASE_OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .chatRun(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    message: "Reply with BASE_OK",
+                    systemPrompt: "Be terse.",
+                    serverSessionID: "server-session-1",
+                    json: true
+                )
+            )
+        )
+        let request = try #require(await client.lastChatRequest)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(
+            request ==
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-qwen-local",
+                    messages: [
+                        .init(role: "system", content: "Be terse."),
+                        .init(role: "user", content: "Reply with BASE_OK"),
+                    ]
+                )
+        )
+        #expect(payload["model_id"] as? String == "melix-dev-qwen-local")
+        #expect(payload["server_session_id"] as? String == "server-session-1")
+        #expect(payload["assistant_text"] as? String == "Echo: Reply with BASE_OK")
+        #expect(payload["finish_reason"] as? String == "stop")
+        #expect(payload["request_id"] as? String == "chat-run-1")
+    }
+
+    @Test("chat run surfaces stream failures as runtime errors")
+    func chatRunSurfacesStreamFailuresAsRuntimeErrors() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "chat-run-failed",
+            modelID: "melix-dev-qwen-local",
+            events: [
+                .failed(code: "unavailable", message: "server session is not ready"),
+            ]
+        )
+
+        await #expect(throws: MelixCLIError.runtime("melix chat run failed [unavailable]: server session is not ready")) {
+            try await MelixCLIRunner(client: client).run(
+                .chatRun(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        message: "Reply with BASE_OK",
+                        systemPrompt: "",
+                        serverSessionID: "server-session-1",
+                        json: true
+                    )
+                )
+            )
+        }
+    }
+
+    @Test("chat run returns plain text output when json is disabled")
+    func chatRunReturnsPlainTextOutputWhenJSONIsDisabled() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "chat-run-plain",
+            modelID: "melix-dev-qwen-local",
+            events: [
+                .tokenDelta("Echo: Reply with BASE_OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .chatRun(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    message: "Reply with BASE_OK",
+                    systemPrompt: "",
+                    serverSessionID: "server-session-1",
+                    json: false
+                )
+            )
+        )
+
+        #expect(output == "Echo: Reply with BASE_OK\n")
+    }
+
+    @Test("chat run tolerates non-terminal events and falls back to streamed text when completion is omitted")
+    func chatRunFallsBackToStreamedTextWhenCompletionIsOmitted() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "chat-run-fallback",
+            modelID: "melix-dev-qwen-local",
+            events: [
+                .heartbeat,
+                .tokenDelta("Echo: Reply with BASE_OK"),
+            ]
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .chatRun(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    message: "Reply with BASE_OK",
+                    systemPrompt: "",
+                    serverSessionID: "server-session-1",
+                    json: false
+                )
+            )
+        )
+
+        #expect(output == "Echo: Reply with BASE_OK\n")
+    }
+
+    @Test("chat run rejects completed streams without any assistant text")
+    func chatRunRejectsCompletedStreamsWithoutAnyAssistantText() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "chat-run-empty",
+            modelID: "melix-dev-qwen-local",
+            events: [
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+
+        await #expect(throws: MelixCLIError.runtime("melix chat run did not produce assistant text.")) {
+            try await MelixCLIRunner(client: client).run(
+                .chatRun(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        message: "Reply with BASE_OK",
+                        systemPrompt: "",
+                        serverSessionID: "server-session-1",
+                        json: true
+                    )
+                )
+            )
+        }
+    }
+
     @Test("model import forwards the managed root override when configured")
     func modelImportForwardsTheManagedRootOverrideWhenConfigured() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1922,6 +2072,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var lastServerAction: ServerAction?
     private(set) var lastIdlePolicyCall: IdlePolicyCall?
     private(set) var lastModelOperationCall: ModelOperationCall?
+    private(set) var lastChatRequest: ControlPlaneChatRequest?
     private(set) var lastGatewayConfigApplyRequest: GatewayConfigApplyCall?
     private(set) var lastServingDefaultsApplyRequest: ServingDefaultsApplyCall?
     private(set) var lastBenchRequest: ControlPlaneBenchRequest?
@@ -1941,6 +2092,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
+    private var chatRequestID = "stub-chat"
+    private var chatModelID = "melix-dev-text"
+    private var chatEvents: [ControlPlaneChatStreamEvent] = []
 
     func setServerSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) {
         self.snapshot = snapshot
@@ -1978,6 +2132,16 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         modelInfoByID[modelID] = info
     }
 
+    func setChatExecution(
+        requestID: String,
+        modelID: String,
+        events: [ControlPlaneChatStreamEvent]
+    ) {
+        self.chatRequestID = requestID
+        self.chatModelID = modelID
+        self.chatEvents = events
+    }
+
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
         Melix_Controlplane_V1_HandshakeResponse()
     }
@@ -1990,11 +2154,15 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
-        _ = request
+        lastChatRequest = request
+        let events = chatEvents
         return ControlPlaneChatExecution(
-            requestID: "stub-chat",
-            modelID: "melix-dev-text",
+            requestID: chatRequestID,
+            modelID: chatModelID,
             stream: AsyncThrowingStream { continuation in
+                for event in events {
+                    continuation.yield(event)
+                }
                 continuation.finish()
             }
         )

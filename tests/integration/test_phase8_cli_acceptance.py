@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 import uuid
 
+from tests.integration.helpers import LiveMelixStack
 from tests.integration.helpers import wait_for_worker_handshake
 
 
@@ -211,3 +212,161 @@ def test_cli_local_import_rejects_missing_source_directory(tmp_path: Path) -> No
 
         assert completed.returncode != 0
         assert "existing source directory" in completed.stderr
+
+
+def test_cli_chat_run_rejects_missing_message_argument(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    melix_home = tmp_path / "melix-home"
+    managed_root = tmp_path / "managed-models"
+    env = {
+        "MELIX_HOME": str(melix_home),
+        "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+    }
+
+    completed = run_cli(
+        repo_root,
+        [
+            "chat",
+            "run",
+            "--model-id",
+            "melix-dev-qwen-local",
+        ],
+        env_overrides=env,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "--message is required for melix chat run." in completed.stderr
+
+
+def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    source_dir = tmp_path / "fixture-model"
+    melix_home = tmp_path / "melix-home"
+    managed_root = tmp_path / "managed-models"
+    write_local_model_fixture(source_dir)
+
+    stack = LiveMelixStack(
+        repo_root,
+        environment_overrides={
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+        },
+    )
+    stack.start()
+    try:
+        env = {
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
+            "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
+        }
+        assert "MELIX_DEV_TEXT_MODEL_PATH" not in env
+
+        receipt = run_cli_json(
+            repo_root,
+            [
+                "model",
+                "import",
+                "--path",
+                str(source_dir),
+                "--model-id",
+                "melix-dev-qwen-local",
+                "--model-kind",
+                "text",
+                "--revision",
+                "main",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+
+        created_state = run_cli_json(
+            repo_root,
+            [
+                "server",
+                "session",
+                "create",
+                "--title",
+                "Primary Session",
+                "--model-id",
+                "melix-dev-text",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+
+        run_cli_json(
+            repo_root,
+            [
+                "model",
+                "roots",
+                "rescan",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        run_cli_json(
+            repo_root,
+            [
+                "server",
+                "session",
+                "update",
+                "--server-session-id",
+                "server-session-1",
+                "--model-id",
+                receipt["model_id"],
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        selected_state = run_cli_json(
+            repo_root,
+            [
+                "server",
+                "session",
+                "select",
+                "--server-session-id",
+                "server-session-1",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert selected_state["selected_server_session_id"] == "server-session-1"
+
+        snapshot = run_cli_json(
+            repo_root,
+            [
+                "server",
+                "start",
+                "--server-session-id",
+                "server-session-1",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert snapshot["server_state"] == "server_ready"
+
+        chat_receipt = run_cli_json(
+            repo_root,
+            [
+                "chat",
+                "run",
+                "--model-id",
+                receipt["model_id"],
+                "--message",
+                "Reply with BASE_OK",
+                "--server-session-id",
+                "server-session-1",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert chat_receipt["model_id"] == receipt["model_id"]
+        assert chat_receipt["server_session_id"] == "server-session-1"
+        assert chat_receipt["finish_reason"] == "stop"
+        assert chat_receipt["assistant_text"] == "Echo: Reply with BASE_OK"
+        assert chat_receipt["request_id"]
+    finally:
+        stack.stop()

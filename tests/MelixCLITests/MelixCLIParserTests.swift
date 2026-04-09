@@ -147,6 +147,64 @@ struct MelixCLIParserTests {
         }
     }
 
+    @Test("parses chat run command and rejects missing message")
+    func parsesChatRunCommandAndRejectsMissingMessage() throws {
+        let chatCommand = try MelixCLIParser.parse([
+            "chat",
+            "run",
+            "--model-id", "melix-dev-qwen-local",
+            "--message", "Reply with BASE_OK",
+            "--system", "Be terse.",
+            "--server-session-id", "server-session-1",
+            "--json",
+        ])
+
+        #expect(
+            chatCommand ==
+                .chatRun(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        message: "Reply with BASE_OK",
+                        systemPrompt: "Be terse.",
+                        serverSessionID: "server-session-1",
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("--message is required for melix chat run.")) {
+            try MelixCLIParser.parse([
+                "chat",
+                "run",
+                "--model-id", "melix-dev-qwen-local",
+            ])
+        }
+    }
+
+    @Test("chat parser rejects missing subcommand missing model id and unknown actions")
+    func chatParserRejectsMissingSubcommandMissingModelIDAndUnknownActions() throws {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            try MelixCLIParser.parse([
+                "chat",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--model-id is required for melix chat run.")) {
+            try MelixCLIParser.parse([
+                "chat",
+                "run",
+                "--message", "Reply with BASE_OK",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            try MelixCLIParser.parse([
+                "chat",
+                "inspect",
+            ])
+        }
+    }
+
     @Test("parses server session create update remove and select commands")
     func parsesServerSessionCRUDCommands() throws {
         let createCommand = try MelixCLIParser.parse([

@@ -38,6 +38,34 @@
     booting only the Python model-ops worker subprocess and exercising `model import` plus
     registry visibility through the `melix` CLI surface
 
+- Closed the Phase 8 Stage 2 CLI session-rebinding and base-chat slice so the approved Stage 1
+  managed-model receipt can drive one deterministic text-serving acceptance path entirely through
+  the public `melix` CLI contract:
+  - added `melix chat run` parser and runner support with typed JSON receipts, plain-text output,
+    stream-fallback transcript collection, and stable runtime errors for failed or empty chat
+    executions
+  - kept the rebinding workflow CLI-first by composing `model roots rescan`, `server session
+    update`, `server session select`, `server start`, and `chat run` instead of adding a second
+    app-owned binding path
+  - added positive and negative Swift unit coverage for chat parsing and runtime execution, plus
+    positive and negative process-level deterministic CLI E2E coverage for the rebinding path and
+    chat argument validation
+- Verification summary for Phase 8 Stage 2:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `96 tests in 2 suites passed after 0.016 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata Sources/MelixCLICore/MelixCLI.swift tests/MelixCLITests/MelixCLIParserTests.swift tests/MelixCLITests/MelixCLIRunnerTests.swift`: `99.67%` (`305/306`)
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_phase8_cli_acceptance.py -q`: `4 passed in 54.87s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/p8_s2_py.coverage --source=tests/integration -m pytest tests/integration/test_phase8_cli_acceptance.py -q`: `4 passed in 104.68s (0:01:44)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/p8_s2_py.coverage -o /tmp/p8_s2_py_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/p8_s2_py_coverage.json tests/integration/test_phase8_cli_acceptance.py`: `100.00%` (`36/36`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter MelixCLITests`: blocked by the pre-existing `SessionLifecycleSmokeRunnerTests` environment failure (`requestFailed(code: "unavailable", message: "Model operation worker request failed: unavailable")`); the focused Stage 2 changed-scope command above passed and was used for coverage gating
+- Metrics report for Phase 8 Stage 2:
+  - CLI touched-scope changed-line coverage: `99.67%` (`305/306`)
+  - deterministic CLI E2E touched-scope changed-line coverage: `100.00%` (`36/36`)
+  - deterministic Stage 2 evidence now proves the full rebinding contract without
+    `MELIX_DEV_TEXT_MODEL_PATH` by exercising `model import -> model roots rescan -> server session
+    update -> server session select -> server start -> chat run` through the shipping `melix`
+    executable
+
 ## 2026-04-06
 
 - Audited milestone-bookkeeping accuracy and aligned the roadmap wording with the implemented

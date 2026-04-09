@@ -484,6 +484,52 @@ public struct ManagedModelReceipt: Codable, Equatable, Sendable {
     }
 }
 
+public struct ChatRunOptions: Equatable, Sendable {
+    public let modelID: String
+    public let message: String
+    public let systemPrompt: String
+    public let serverSessionID: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        message: String,
+        systemPrompt: String = "",
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.message = message
+        self.systemPrompt = systemPrompt
+        self.serverSessionID = serverSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : serverSessionID
+        self.json = json
+    }
+}
+
+public struct ChatRunReceipt: Codable, Equatable, Sendable {
+    public let modelID: String
+    public let serverSessionID: String
+    public let assistantText: String
+    public let finishReason: String
+    public let requestID: String
+
+    public init(
+        modelID: String,
+        serverSessionID: String,
+        assistantText: String,
+        finishReason: String,
+        requestID: String
+    ) {
+        self.modelID = modelID
+        self.serverSessionID = serverSessionID
+        self.assistantText = assistantText
+        self.finishReason = finishReason
+        self.requestID = requestID
+    }
+}
+
 public struct ModelRootsListOptions: Equatable, Sendable {
     public let json: Bool
 
@@ -626,6 +672,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case serverWake(ServerControlOptions)
     case serverStop(ServerControlOptions)
     case serverSetIdlePolicy(ServerIdlePolicyOptions)
+    case chatRun(ChatRunOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
     case loraActivate(LoraActivateOptions)
@@ -676,6 +723,8 @@ public enum MelixCLIParser {
             return try parseModel(tail)
         case "server":
             return try parseServer(tail)
+        case "chat":
+            return try parseChat(tail)
         case "lora":
             return try parseLora(tail)
         case "bench":
@@ -715,6 +764,7 @@ public enum MelixCLIParser {
       melix server wake [--server-session-id ID] [--json]
       melix server stop [--server-session-id ID] [--json]
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
+      melix chat run --model-id MODEL_ID --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
@@ -1001,6 +1051,33 @@ public enum MelixCLIParser {
                 throw MelixCLIError.missingRequired("--server-session-id is required for melix server session select.")
             }
             return .serverSessionSelect(.init(serverSessionID: serverSessionID, json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseChat(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "run":
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix chat run.")
+            }
+            guard let message = values.single["--message"], !message.isEmpty else {
+                throw MelixCLIError.missingRequired("--message is required for melix chat run.")
+            }
+            return .chatRun(
+                .init(
+                    modelID: modelID,
+                    message: message,
+                    systemPrompt: values.single["--system"] ?? "",
+                    serverSessionID: values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID,
+                    json: values.flags.contains("--json")
+                )
+            )
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -2087,6 +2164,25 @@ public actor MelixCLIRunner {
                 deepSleepAfterSeconds: options.deepSleepAfterSeconds
             )
             return try renderServerSnapshot(snapshot, json: options.json)
+        case .chatRun(let options):
+            let execution = try await client.startChat(
+                ControlPlaneChatRequest(
+                    modelID: options.modelID,
+                    messages: buildChatMessages(options: options)
+                )
+            )
+            let result = try await collectChatResult(from: execution)
+            let receipt = ChatRunReceipt(
+                modelID: execution.modelID,
+                serverSessionID: options.serverSessionID,
+                assistantText: result.assistantText,
+                finishReason: result.finishReason,
+                requestID: execution.requestID
+            )
+            if options.json {
+                return try prettyJSON(receipt)
+            }
+            return receipt.assistantText + "\n"
         case .loraList(let options):
             let modelID = try await resolveModelID(preferred: options.modelID)
             let result = try await performModelOperation(
@@ -2305,6 +2401,7 @@ public actor MelixCLIRunner {
              .modelUnload,
              .serverSnapshot,
              .serverStart,
+             .chatRun,
              .loraList,
              .loraTrain,
              .loraActivate,
@@ -2363,6 +2460,43 @@ public actor MelixCLIRunner {
             return session
         }
         throw MelixCLIError.runtime("Server session \(resolvedID) is not configured.")
+    }
+
+    private func buildChatMessages(options: ChatRunOptions) -> [ControlPlaneChatRequest.Message] {
+        var messages: [ControlPlaneChatRequest.Message] = []
+        let systemPrompt = options.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if systemPrompt.isEmpty == false {
+            messages.append(.init(role: "system", content: systemPrompt))
+        }
+        messages.append(.init(role: "user", content: options.message))
+        return messages
+    }
+
+    private func collectChatResult(
+        from execution: ControlPlaneChatExecution
+    ) async throws -> (assistantText: String, finishReason: String) {
+        var fallbackAssistant = ""
+        for try await event in execution.stream {
+            switch event {
+            case .tokenDelta(let delta):
+                fallbackAssistant += delta
+            case .completed(let finishReason, let assistantText, _):
+                let resolvedAssistant = assistantText.isEmpty ? fallbackAssistant : assistantText
+                guard resolvedAssistant.isEmpty == false else {
+                    throw MelixCLIError.runtime("melix chat run did not produce assistant text.")
+                }
+                return (resolvedAssistant, finishReason.isEmpty ? "unknown" : finishReason)
+            case .failed(let code, let message):
+                throw MelixCLIError.runtime("melix chat run failed [\(code)]: \(message)")
+            default:
+                continue
+            }
+        }
+
+        guard fallbackAssistant.isEmpty == false else {
+            throw MelixCLIError.runtime("melix chat run did not complete.")
+        }
+        return (fallbackAssistant, "unknown")
     }
 
     private func configuredServerSessionIfAvailable(
