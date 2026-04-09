@@ -267,10 +267,28 @@ enum RegistrySnapshotSync {
                 metadata["melix.derived_from_model_id"] = normalizedSourceModel
             }
         }
+        if let sourceModelRevision = payload["source_model_revision"] as? String {
+            let normalizedSourceModelRevision = sourceModelRevision.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedSourceModelRevision.isEmpty {
+                metadata["melix.derived_from_model_revision"] = normalizedSourceModelRevision
+            }
+        }
         if let alias = payload["derived_model_alias"] as? String {
             let normalizedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
             if !normalizedAlias.isEmpty {
                 metadata["melix.derived_model_alias"] = normalizedAlias
+            }
+        }
+        if let activationMode = payload["activation_mode"] as? String {
+            let normalizedActivationMode = activationMode.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedActivationMode.isEmpty {
+                metadata["melix.activation_mode"] = normalizedActivationMode
+            }
+        }
+        if let adapterManifestPath = payload["adapter_manifest_path"] as? String {
+            let normalizedAdapterManifestPath = adapterManifestPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedAdapterManifestPath.isEmpty {
+                metadata["melix.adapter_manifest_path"] = normalizedAdapterManifestPath
             }
         }
         if let adapterSetHash = payload["adapter_set_hash"] as? String {
@@ -278,6 +296,9 @@ enum RegistrySnapshotSync {
             if !normalizedAdapterSetHash.isEmpty {
                 metadata["melix.adapter_set_hash"] = normalizedAdapterSetHash
             }
+        }
+        if payload["remove_supported"] != nil {
+            metadata["melix.remove_supported"] = boolValue(from: payload["remove_supported"]) ? "true" : "false"
         }
         if metadata["melix.capability.class"] == nil {
             metadata["melix.capability.class"] = "text"

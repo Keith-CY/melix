@@ -7,7 +7,7 @@ import sys
 import types
 from urllib.error import HTTPError, URLError
 
-from packages.protocol.python.worker.v1 import maintenance_pb2
+from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
 from worker.engine.maintenance_core import MaintenanceCore
@@ -31,6 +31,8 @@ from worker.model_ops.training_dataset import (
 )
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.deterministic_backend import DeterministicTextBackend
+from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
 def _write_dataset_package(
@@ -68,6 +70,7 @@ class SuccessfulRunner(MLXLMRunner):
         self.native_activation_calls = 0
         self.subprocess_activation_calls = 0
         self.last_train_request: TrainingRequest | None = None
+        self.last_activation_request: ActivationRequest | None = None
 
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.native_train_calls += 1
@@ -114,6 +117,7 @@ class SuccessfulRunner(MLXLMRunner):
 
     def activate_native(self, request: ActivationRequest) -> ActivationResult:
         self.native_activation_calls += 1
+        self.last_activation_request = request
         request.derived_model_dir.mkdir(parents=True, exist_ok=True)
         (request.derived_model_dir / "config.json").write_text(
             json.dumps({"model_type": "llama"}) + "\n",
@@ -134,6 +138,7 @@ class SuccessfulRunner(MLXLMRunner):
 
     def activate_subprocess(self, request: ActivationRequest, reason: Exception) -> ActivationResult:
         self.subprocess_activation_calls += 1
+        self.last_activation_request = request
         return self.activate_native(request)
 
 
@@ -182,7 +187,10 @@ class NativeUnavailableRunner(SuccessfulRunner):
 
 
 def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceService:
-    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
     service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
     service._core = MaintenanceCore(
         registry,
@@ -1002,6 +1010,272 @@ def test_activate_adapter_produces_derived_model_and_registry_activation_state(t
     assert snapshot_payload["adapters"][0]["derived_model_id"] == activation_payload["derived_model_id"]
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
     assert snapshot_payload["derived_models"][0]["adapter_manifest_path"] == train_events[-1].completed.output_path
+
+
+def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alias(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "derived_model_alias": "Preferred Alias",
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "activation_mode": "adapter_backed_runtime",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    assert runner.native_activation_calls == 0
+    assert activation_payload["activation_mode"] == "adapter_backed_runtime"
+    assert activation_payload["derived_model_alias"] == "Preferred Alias"
+    assert activation_payload["base_model_repo_id"] == "melix-dev-text"
+    assert activation_payload["adapter_manifest_path"] == adapter_manifest_path
+    assert activation_payload["adapter_weights_path"].endswith("adapters.safetensors")
+    assert activation_payload["derived_model_path"] == source_model.model_path
+    assert activation_payload["remove_supported"] is True
+    assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
+    assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
+
+
+def test_activate_adapter_rejects_unknown_activation_mode(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "activation_mode": "mystery_mode",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert activate_events[-1].failed.error.code == "activation_failure"
+
+
+def test_remove_derived_model_deletes_artifacts_and_prunes_registry_snapshot(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "Removable Alias",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    loaded_handle = service._core._registry.load_model(
+        common_pb2.ModelSpec(
+            model_id=activation_payload["derived_model_id"],
+            model_path=activation_payload["derived_model_path"],
+            model_kind="text",
+            revision="derived",
+            max_context=4096,
+        )
+    ).handle
+    assert loaded_handle in service._core._registry.list_loaded_models()
+
+    remove_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "remove"),
+                generate_manifest=True,
+                ext={
+                    "operation": "remove_derived_model",
+                    "derived_model_id": activation_payload["derived_model_id"],
+                },
+            ),
+            context=None,
+        )
+    )
+
+    removal_payload = json.loads(
+        next(event.manifest for event in remove_events if event.HasField("manifest")).manifest_json
+    )
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert removal_payload["derived_model_id"] == activation_payload["derived_model_id"]
+    assert removal_payload["activation_mode"] == "fused_derived_model"
+    assert removal_payload["unloaded"] is True
+    assert not Path(activation_payload["derived_model_path"]).exists()
+    assert service._core._registry.list_loaded_models() == []
+    assert snapshot_payload["derived_models"] == []
+    assert snapshot_payload["adapters"][0]["activation_status"] == "removed"
+
+
+def test_remove_derived_model_requires_a_known_target(tmp_path: Path) -> None:
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    missing_target_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "remove"),
+                ext={"operation": "remove_derived_model"},
+            ),
+            context=None,
+        )
+    )
+    assert missing_target_events[-1].failed.error.code == "invalid_argument"
+
+    unknown_target_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "remove-missing"),
+                ext={
+                    "operation": "remove_derived_model",
+                    "derived_model_id": "missing-derived-model",
+                },
+            ),
+            context=None,
+        )
+    )
+    assert unknown_target_events[-1].failed.error.code == "not_found"
 
 
 def test_activate_native_passes_repo_id_strings_to_save(monkeypatch, tmp_path: Path) -> None:

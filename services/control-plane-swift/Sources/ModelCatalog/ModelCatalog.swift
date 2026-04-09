@@ -426,6 +426,23 @@ public actor ModelCatalog {
         return model
     }
 
+    @discardableResult
+    public func removeModel(
+        id: String,
+        reason: String = "catalog_removed"
+    ) -> Bool {
+        guard seedModelIDs.contains(id) == false, models[id] != nil else {
+            return false
+        }
+
+        models.removeValue(forKey: id)
+        dispatchHandles.removeValue(forKey: id)
+        residencyLedger.removeValue(forKey: id)
+        registryModelIDs.remove(id)
+        _ = reason
+        return true
+    }
+
     public func evictionPlanForLoad(id targetID: String) -> EvictionPlan {
         guard let targetModel = models[targetID] else {
             return EvictionPlan()

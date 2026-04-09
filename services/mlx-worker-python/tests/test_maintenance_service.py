@@ -1656,6 +1656,134 @@ def test_job_registry_restores_completed_lora_jobs_from_jobs_root(tmp_path: Path
     assert next_job.job_id == "model-ops-0017"
 
 
+def test_job_registry_snapshot_hides_removed_derived_models_and_marks_adapter_removed() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-removable",
+                "adapter_set_hash": "adapter-hash-remove",
+                "dataset_uri": "/runtime/dataset",
+            }
+        ),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-removable",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_set_hash": "adapter-hash-remove",
+                "derived_model_id": "melix-dev-text-lora-removable",
+                "derived_model_path": "/runtime/activate/melix-dev-text-lora-removable",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, "/runtime/activate/melix-dev-text-lora-removable/manifest.json")
+
+    removal_job = registry.start("remove_derived_model", "melix-dev-text", "/runtime/remove")
+    registry.attach_manifest(
+        removal_job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-text-lora-removable",
+                "adapter_manifest_path": adapter_manifest_path,
+                "activation_job_id": activation_job.job_id,
+                "activation_mode": "fused_derived_model",
+                "removed": True,
+            }
+        ),
+    )
+    registry.complete(removal_job.job_id, "/runtime/remove/remove_derived_model.lifecycle.json")
+
+    snapshot = registry.snapshot()
+
+    assert snapshot["derived_models"] == []
+    assert snapshot["adapters"][0]["activation_status"] == "removed"
+    assert snapshot["adapters"][0]["derived_model_id"] == ""
+    assert snapshot["adapters"][0]["derived_model_path"] == ""
+
+
+def test_job_registry_restores_completed_remove_derived_jobs_from_jobs_root(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    train_dir = jobs_root / "train_lora" / "model-ops-0012"
+    train_dir.mkdir(parents=True)
+    adapter_manifest_path = train_dir / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-0012",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+                "adapter_name": "adapter-removable",
+                "adapter_set_hash": "adapter-hash-remove",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    derived_dir = jobs_root / "activate_adapter" / "model-ops-0016" / "melix-dev-text-lora-removable"
+    derived_dir.mkdir(parents=True)
+    (derived_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.derived_text_model.v1",
+                "job_id": "model-ops-0016",
+                "operation": "activate_adapter",
+                "source_model": "melix-dev-text",
+                "adapter_manifest_path": str(adapter_manifest_path),
+                "adapter_name": "adapter-removable",
+                "adapter_set_hash": "adapter-hash-remove",
+                "source_adapter_job_id": "model-ops-0012",
+                "derived_model_id": "melix-dev-text-lora-removable",
+                "derived_model_path": str(derived_dir),
+                "activation_mode": "fused_derived_model",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    removal_dir = jobs_root / "remove_derived_model" / "model-ops-0017"
+    removal_dir.mkdir(parents=True)
+    (removal_dir / "remove_derived_model.lifecycle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.derived_model_removal.v1",
+                "job_id": "model-ops-0017",
+                "operation": "remove_derived_model",
+                "derived_model_id": "melix-dev-text-lora-removable",
+                "adapter_manifest_path": str(adapter_manifest_path),
+                "activation_job_id": "model-ops-0016",
+                "activation_mode": "fused_derived_model",
+                "removed": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+    snapshot = registry.snapshot()
+
+    assert snapshot["derived_models"] == []
+    assert snapshot["adapters"][0]["activation_status"] == "removed"
+    next_job = registry.start("registry_snapshot", "melix-dev-model-ops", str(jobs_root / "registry_snapshot"))
+    assert next_job.job_id == "model-ops-0018"
+
+
 def test_job_registry_snapshot_rewrites_non_finite_metrics_to_null() -> None:
     registry = ModelOpsJobRegistry()
 

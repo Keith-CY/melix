@@ -100,6 +100,13 @@ class ModelOpsJobRegistry:
             manifest_paths=self._jobs_root.glob("activate_adapter/model-ops-*/*/manifest.json"),
             pct=0.95,
         )
+        self._restore_manifest_jobs(
+            operation="remove_derived_model",
+            manifest_paths=self._jobs_root.glob(
+                "remove_derived_model/model-ops-*/remove_derived_model.lifecycle.json"
+            ),
+            pct=0.95,
+        )
         self._next_id = max(self._next_id, self._max_numeric_job_id() + 1)
 
     def _restore_manifest_jobs(
@@ -153,7 +160,62 @@ class ModelOpsJobRegistry:
     def _resolved_output_dir_for_restore(operation: str, manifest_path: Path) -> Path:
         if operation == "activate_adapter":
             return manifest_path.parents[1]
+        if operation == "remove_derived_model":
+            return manifest_path.parent
         return manifest_path.parent
+
+    def resolve_derived_model_target(
+        self,
+        *,
+        derived_model_id: str = "",
+        manifest_path: str = "",
+    ) -> dict[str, Any] | None:
+        normalized_model_id = derived_model_id.strip()
+        normalized_manifest_path = ""
+        if manifest_path.strip():
+            normalized_manifest_path = str(Path(manifest_path).expanduser().resolve())
+        if not normalized_model_id and not normalized_manifest_path:
+            return None
+
+        with self._lock:
+            jobs = [
+                self._snapshot_job(job)
+                for job in sorted(self._jobs.values(), key=self._job_sort_key, reverse=True)
+            ]
+
+        removed_targets = self._removed_derived_targets(jobs)
+        removed_model_ids = removed_targets["model_ids"]
+        removed_manifest_paths = removed_targets["manifest_paths"]
+        removed_activation_job_ids = removed_targets["activation_job_ids"]
+
+        for job in jobs:
+            if job["operation"] != "activate_adapter" or job["status"] != "completed":
+                continue
+            if job["job_id"] in removed_activation_job_ids:
+                continue
+            activation_manifest_path = str(
+                Path(str(job.get("output_path", ""))).expanduser().resolve()
+            )
+            manifest = job.get("manifest") or {}
+            candidate_model_id = str(manifest.get("derived_model_id", "")).strip()
+            if candidate_model_id in removed_model_ids or activation_manifest_path in removed_manifest_paths:
+                continue
+            if normalized_model_id and candidate_model_id != normalized_model_id:
+                continue
+            if normalized_manifest_path and activation_manifest_path != normalized_manifest_path:
+                continue
+            return {
+                "activation_job_id": job["job_id"],
+                "activation_manifest_path": activation_manifest_path,
+                "output_dir": str(job.get("output_dir", "")),
+                "source_model": str(manifest.get("source_model", "")),
+                "derived_model_id": candidate_model_id,
+                "derived_model_path": str(manifest.get("derived_model_path", "")),
+                "derived_model_alias": str(manifest.get("derived_model_alias", "")),
+                "activation_mode": str(manifest.get("activation_mode", "")),
+                "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+            }
+        return None
 
     def _max_numeric_job_id(self) -> int:
         max_job_id = 0
@@ -220,6 +282,10 @@ class ModelOpsJobRegistry:
         publish_by_path: dict[str, dict[str, Any]] = {}
         activation_by_hash: dict[str, dict[str, Any]] = {}
         activation_by_path: dict[str, dict[str, Any]] = {}
+        removed_targets = ModelOpsJobRegistry._removed_derived_targets(jobs)
+        removed_model_ids = removed_targets["model_ids"]
+        removed_adapter_manifest_paths = removed_targets["adapter_manifest_paths"]
+        removed_activation_job_ids = removed_targets["activation_job_ids"]
 
         for job in jobs:
             if job["operation"] != "upload" or job["status"] != "completed":
@@ -244,6 +310,8 @@ class ModelOpsJobRegistry:
         for job in jobs:
             if job["operation"] != "activate_adapter" or job["status"] != "completed":
                 continue
+            if job["job_id"] in removed_activation_job_ids:
+                continue
             manifest = job.get("manifest") or {}
             activation = {
                 "job_id": job["job_id"],
@@ -252,9 +320,12 @@ class ModelOpsJobRegistry:
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
             }
+            if activation["derived_model_id"] in removed_model_ids:
+                continue
             adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
             adapter_manifest_path = str(manifest.get("adapter_manifest_path", ""))
             if adapter_set_hash:
@@ -273,9 +344,12 @@ class ModelOpsJobRegistry:
             adapter_set_hash = str(manifest.get("adapter_set_hash", ""))
             publish = publish_by_path.get(output_path) or publish_by_name.get(adapter_name)
             activation = activation_by_path.get(output_path) or activation_by_hash.get(adapter_set_hash)
+            removal_applied = output_path in removed_adapter_manifest_paths
 
             if publish:
                 status = "published"
+            elif removal_applied:
+                status = job["status"]
             elif activation:
                 status = "activated"
             else:
@@ -308,14 +382,14 @@ class ModelOpsJobRegistry:
                     "published_repo": publish["target_repo"] if publish else "",
                     "publish_job_id": publish["job_id"] if publish else "",
                     "status": status,
-                    "activation_status": activation["status"] if activation else "pending_activation",
-                    "derived_model_id": activation["derived_model_id"] if activation else "",
-                    "derived_model_path": activation["derived_model_path"] if activation else "",
-                    "derived_model_alias": activation["derived_model_alias"] if activation else "",
-                    "activation_job_id": activation["job_id"] if activation else "",
+                    "activation_status": "removed" if removal_applied else activation["status"] if activation else "pending_activation",
+                    "derived_model_id": "" if removal_applied else activation["derived_model_id"] if activation else "",
+                    "derived_model_path": "" if removal_applied else activation["derived_model_path"] if activation else "",
+                    "derived_model_alias": "" if removal_applied else activation["derived_model_alias"] if activation else "",
+                    "activation_job_id": "" if removal_applied else activation["job_id"] if activation else "",
                     "adapter_manifest_path": activation["adapter_manifest_path"] if activation else output_path,
                     "source_adapter_job_id": activation["source_adapter_job_id"] if activation else job["job_id"],
-                    "activation_duration_ms": activation["activation_duration_ms"] if activation else 0.0,
+                    "activation_duration_ms": 0.0 if removal_applied else activation["activation_duration_ms"] if activation else 0.0,
                     "exportable_state": "ready",
                     "published_state": "published" if publish else "not_published",
                     "response_only": bool(manifest.get("response_only", False)),
@@ -329,15 +403,23 @@ class ModelOpsJobRegistry:
 
     @staticmethod
     def _derived_model_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        removed_targets = ModelOpsJobRegistry._removed_derived_targets(jobs)
+        removed_model_ids = removed_targets["model_ids"]
+        removed_activation_job_ids = removed_targets["activation_job_ids"]
         derived_models: list[dict[str, Any]] = []
         for job in jobs:
             if job["operation"] != "activate_adapter" or job["status"] != "completed":
                 continue
+            if job["job_id"] in removed_activation_job_ids:
+                continue
             manifest = job.get("manifest") or {}
+            derived_model_id = str(manifest.get("derived_model_id", ""))
+            if derived_model_id in removed_model_ids:
+                continue
             derived_models.append(
                 {
                     "job_id": job["job_id"],
-                    "model_id": str(manifest.get("derived_model_id", "")),
+                    "model_id": derived_model_id,
                     "model_path": str(manifest.get("derived_model_path", "")),
                     "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
                     "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
@@ -350,6 +432,37 @@ class ModelOpsJobRegistry:
                 }
             )
         return derived_models
+
+    @staticmethod
+    def _removed_derived_targets(jobs: list[dict[str, Any]]) -> dict[str, set[str]]:
+        removed_model_ids: set[str] = set()
+        removed_manifest_paths: set[str] = set()
+        removed_adapter_manifest_paths: set[str] = set()
+        removed_activation_job_ids: set[str] = set()
+
+        for job in jobs:
+            if job["operation"] != "remove_derived_model" or job["status"] != "completed":
+                continue
+            manifest = job.get("manifest") or {}
+            derived_model_id = str(manifest.get("derived_model_id", "")).strip()
+            if derived_model_id:
+                removed_model_ids.add(derived_model_id)
+            activation_manifest_path = str(manifest.get("activation_manifest_path", "")).strip()
+            if activation_manifest_path:
+                removed_manifest_paths.add(activation_manifest_path)
+            adapter_manifest_path = str(manifest.get("adapter_manifest_path", "")).strip()
+            if adapter_manifest_path:
+                removed_adapter_manifest_paths.add(adapter_manifest_path)
+            activation_job_id = str(manifest.get("activation_job_id", "")).strip()
+            if activation_job_id:
+                removed_activation_job_ids.add(activation_job_id)
+
+        return {
+            "model_ids": removed_model_ids,
+            "manifest_paths": removed_manifest_paths,
+            "adapter_manifest_paths": removed_adapter_manifest_paths,
+            "activation_job_ids": removed_activation_job_ids,
+        }
 
     @staticmethod
     def _download_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:

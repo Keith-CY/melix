@@ -2396,6 +2396,9 @@ public actor ControlPlaneService {
             if command.operation == "activate_adapter" {
                 await registerActivatedDerivedModel(from: operation.manifestJson)
             }
+            if command.operation == "remove_derived_model" {
+                await removeDerivedModelFromCatalog(using: operation.manifestJson)
+            }
             do {
                 try await finalizeAudioModelOperation(command: command, operation: &operation)
             } catch {
@@ -3235,7 +3238,6 @@ public actor ControlPlaneService {
             let data = manifestJSON.data(using: .utf8),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             (payload["schema_version"] as? String) == "melix.derived_text_model.v1",
-            (payload["activation_mode"] as? String) == "fused_derived_model",
             let modelID = payload["derived_model_id"] as? String,
             !modelID.isEmpty,
             let modelPath = payload["derived_model_path"] as? String,
@@ -3244,6 +3246,8 @@ public actor ControlPlaneService {
             return
         }
 
+        let activationMode = (payload["activation_mode"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "fused_derived_model"
         let sourceModelID = (payload["source_model"] as? String) ?? "melix-dev-text"
         let sourceModel = await modelCatalog.model(id: sourceModelID)
 
@@ -3262,6 +3266,10 @@ public actor ControlPlaneService {
             model.features = sourceModel.features
             model.maxContext = sourceModel.maxContext
             model.quantProfileID = sourceModel.quantProfileID
+            model.capabilityClass = sourceModel.capabilityClass
+            model.routeClass = sourceModel.routeClass
+            model.supportedModalities = sourceModel.supportedModalities
+            model.supportedTasks = sourceModel.supportedTasks
             model.settings = sourceModel.settings
         } else {
             model.features = ["chat"]
@@ -3279,12 +3287,38 @@ public actor ControlPlaneService {
         model.settings.ext["melix.derived_from_adapter"] = "true"
         model.settings.ext["melix.derived_from_model_id"] = sourceModelID
         model.settings.ext["melix.derived_from_model_revision"] = (payload["source_model_revision"] as? String) ?? ""
-        model.settings.ext["melix.activation_mode"] = "fused_derived_model"
+        model.settings.ext["melix.activation_mode"] = activationMode
         if let adapterSetHash = payload["adapter_set_hash"] as? String, !adapterSetHash.isEmpty {
             model.settings.ext["melix.adapter_set_hash"] = adapterSetHash
         }
+        if let adapterManifestPath = payload["adapter_manifest_path"] as? String, !adapterManifestPath.isEmpty {
+            model.settings.ext["melix.adapter_manifest_path"] = adapterManifestPath
+        }
+        if let derivedModelAlias = payload["derived_model_alias"] as? String, !derivedModelAlias.isEmpty {
+            model.settings.ext["melix.derived_model_alias"] = derivedModelAlias
+        }
+        if activationMode == "adapter_backed_runtime" {
+            model.routeClass = .workerRoutePythonTextCompatibility
+        }
 
         _ = await modelCatalog.registerModel(model, reason: "adapter_activation")
+    }
+
+    private func removeDerivedModelFromCatalog(using manifestJSON: String) async {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (payload["schema_version"] as? String) == "melix.derived_model_removal.v1",
+            let modelID = payload["derived_model_id"] as? String,
+            modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else {
+            return
+        }
+
+        _ = await modelCatalog.removeModel(
+            id: modelID,
+            reason: "derived_model_removed"
+        )
     }
 
     private func memoryPolicy(for rawValue: String) -> Melix_Controlplane_V1_MemoryResidencyPolicy {

@@ -101,7 +101,14 @@ class AdapterActivationPipeline:
             execution_backend = "internal"
 
         emit("write_manifest", 0.95)
-        derived_model_alias = request_ext.get("derived_model_alias", "").strip()
+        derived_model_alias = request_ext.get("derived_model_alias", "").strip() or str(
+            adapter_manifest.get("desired_derived_model_alias", "")
+        ).strip()
+        derived_model_path = (
+            source_model.model_path
+            if activation_mode == "adapter_backed_runtime"
+            else str(derived_model_dir)
+        )
         manifest = {
             "schema_version": "melix.derived_text_model.v1",
             "job_id": job_id,
@@ -111,13 +118,16 @@ class AdapterActivationPipeline:
             "source_model": source_model.model_id,
             "source_model_revision": source_model.revision,
             "source_model_path": source_model.model_path,
+            "base_model_repo_id": source_model.model_id,
             "adapter_manifest_path": str(adapter_manifest_path),
+            "adapter_weights_path": str(adapter_manifest.get("weights_path", "")),
             "adapter_name": adapter_manifest.get("adapter_name", ""),
             "adapter_set_hash": adapter_set_hash,
             "source_adapter_job_id": str(adapter_manifest.get("job_id", "")),
             "derived_model_id": derived_model_id,
-            "derived_model_path": str(derived_model_dir),
+            "derived_model_path": derived_model_path,
             "activation_duration_ms": activation_duration_ms,
+            "remove_supported": True,
             "melix.derived_from_adapter": True,
         }
         if derived_model_alias:

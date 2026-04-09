@@ -281,6 +281,22 @@ struct ModelCatalogTests {
         #expect(loaded.settings.ext["melix.adapter_set_hash"] == "adapter-derived")
     }
 
+    @Test("removeModel deletes registered derived entries without touching seed models")
+    func removeModelDeletesRegisteredDerivedEntriesWithoutTouchingSeedModels() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var derived = ModelCatalog.devTextModel()
+        derived.modelID = "melix-dev-text-lora-remove-me"
+        derived.settings.ext["melix.model_path"] = "/tmp/melix-derived/remove-me"
+        derived.settings.ext["melix.derived_from_adapter"] = "true"
+
+        await catalog.registerModel(derived, reason: "test_registration")
+        let removed = await catalog.removeModel(id: "melix-dev-text-lora-remove-me", reason: "test_removal")
+
+        #expect(removed)
+        #expect(await catalog.model(id: "melix-dev-text-lora-remove-me") == nil)
+        #expect(await catalog.model(id: "melix-dev-text") != nil)
+    }
+
     @Test("syncRegistryModels replaces prior registry-discovered entries while preserving seed models")
     func syncRegistryModelsReplacesPriorRegistryDiscoveredEntriesWhilePreservingSeedModels() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

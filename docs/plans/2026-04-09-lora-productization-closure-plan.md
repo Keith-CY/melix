@@ -43,6 +43,32 @@ Metrics report:
   validation, dataset materialization, manifest persistence, and acceptance-fixture pinning. The
   repository-owned LoRA product metrics command is scheduled in Task 8.
 
+## Phase 2 Status
+
+Status on 2026-04-09: completed and ready for phase-exit squash merge into local `main`.
+
+Verification evidence:
+
+- Targeted worker lifecycle tests:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_maintenance_service.py -q`
+  -> `99 passed in 34.64s`
+- Targeted Swift lifecycle and catalog suites:
+  `swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'PythonBridgeWorkerClientTests|ControlPlaneServiceTests|ModelCatalogTests'`
+  -> `267 tests in 3 suites passed`
+- Changed-scope Python coverage for `adapter_activation_pipeline.py`, `job_registry.py`, and
+  `maintenance_core.py`: `96%`
+- Changed-line Swift spot checks confirm the new lines in `ModelCatalog.swift`,
+  `RegistrySnapshotSync.swift`, and `ControlPlaneService.swift` all executed at least once in the
+  Phase 2 verification suite, including `source_model_revision`, `activation_mode`,
+  `adapter_manifest_path`, `remove_supported`, adapter-backed catalog registration, and
+  remove-derived catalog pruning.
+
+Metrics report:
+
+- `N/A` for a dedicated Phase 2 LoRA lifecycle metrics command. This phase closes worker removal
+  orchestration, registry snapshot hydration, and control-plane catalog correctness. The
+  repository-owned LoRA product metrics command is still scheduled in Task 8.
+
 ## File Map
 
 ### Worker and productization
@@ -155,11 +181,11 @@ Verification commands:
 - Modify: `services/mlx-worker-python/tests/test_lora_model_ops.py`
 - Modify: `services/mlx-worker-python/tests/test_maintenance_service.py`
 
-- [ ] Write failing positive and negative pytest coverage for `adapter_backed_runtime`, `remove_derived_model`, invalid activation mode, and missing derived targets.
-- [ ] Run the targeted pytest files and verify the failures are caused by missing lifecycle support rather than broken fixtures.
-- [ ] Implement adapter-backed activation manifests, lifecycle artifacts, and removal orchestration that unloads, deletes product-owned artifacts, and refreshes registry state.
-- [ ] Persist the new lifecycle metadata into registry snapshots and make repeated or invalid removal attempts fail with typed errors.
-- [ ] Re-run the targeted worker tests until the lifecycle slice is green.
+- [x] Write failing positive and negative pytest coverage for `adapter_backed_runtime`, `remove_derived_model`, invalid activation mode, and missing derived targets.
+- [x] Run the targeted pytest files and verify the failures are caused by missing lifecycle support rather than broken fixtures.
+- [x] Implement adapter-backed activation manifests, lifecycle artifacts, and removal orchestration that unloads, deletes product-owned artifacts, and refreshes registry state.
+- [x] Persist the new lifecycle metadata into registry snapshots and make repeated or invalid removal attempts fail with typed errors.
+- [x] Re-run the targeted worker tests until the lifecycle slice is green.
 
 Verification commands:
 
@@ -176,10 +202,10 @@ Verification commands:
 - Modify: `services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`
 - Modify: `services/control-plane-swift/Tests/ControlPlaneTests/ModelCatalogTests.swift`
 
-- [ ] Write failing Swift tests for adapter-backed derived models, remove-derived orchestration, and snapshot hydration of the new metadata.
-- [ ] Run the targeted Swift tests to verify the new expectations fail against the current snapshot sync path.
-- [ ] Implement control-plane request forwarding, derived-summary hydration, catalog refresh, and adapter-aware load behavior for both activation modes.
-- [ ] Re-run the targeted Swift test groups and keep them passing before moving on.
+- [x] Write failing Swift tests for adapter-backed derived models, remove-derived orchestration, and snapshot hydration of the new metadata.
+- [x] Run the targeted Swift tests to verify the new expectations fail against the current snapshot sync path.
+- [x] Implement control-plane request forwarding, derived-summary hydration, catalog refresh, and adapter-aware load behavior for both activation modes.
+- [x] Re-run the targeted Swift test groups and keep them passing before moving on.
 
 Verification commands:
 

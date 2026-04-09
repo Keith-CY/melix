@@ -1031,6 +1031,30 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 
+    @Test("bootstrap worker preparation preserves adapter-backed runtime metadata for activated derived models")
+    func bootstrapWorkerPreparationPreservesAdapterBackedRuntimeMetadataForActivatedDerivedModels() throws {
+        var summary = ModelCatalog.devTextModel()
+        summary.modelID = "melix-dev-text-lora-runtime"
+        summary.settings.alias = "Runtime Adapter"
+        summary.settings.ext["melix.model_path"] = "models/dev-text"
+        summary.settings.ext["melix.model_revision"] = "dev"
+        summary.settings.ext["melix.parser_mode"] = "text"
+        summary.settings.ext["melix.reasoning_mode"] = "off"
+        summary.settings.ext["melix.adapter_set_hash"] = "adapter-runtime-alpha"
+        summary.settings.ext["melix.derived_from_adapter"] = "true"
+        summary.settings.ext["melix.derived_from_model_id"] = "melix-dev-text"
+        summary.settings.ext["melix.activation_mode"] = "adapter_backed_runtime"
+        summary.settings.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "melix-dev-text-lora-runtime")
+        #expect(spec.modelPath == "models/dev-text")
+        #expect(spec.ext["melix.activation_mode"] == "adapter_backed_runtime")
+        #expect(spec.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
+        #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
+    }
+
     @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
         let summary = ModelCatalog.devOCRModel()

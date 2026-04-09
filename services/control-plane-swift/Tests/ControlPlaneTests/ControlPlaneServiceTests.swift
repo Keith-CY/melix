@@ -1540,8 +1540,12 @@ struct ControlPlaneServiceTests {
                     "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora-acbb3307",
                     "model_path": "/tmp/melix-derived/model",
                     "source_model": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "source_model_revision": "registry",
                     "derived_model_alias": "melix-qwen35-acceptance",
                     "adapter_set_hash": "acbb330795d89f65",
+                    "activation_mode": "adapter_backed_runtime",
+                    "adapter_manifest_path": "/tmp/melix-adapters/train_lora.adapter.json",
+                    "remove_supported": true,
                     "status": "activated",
                 ],
             ]
@@ -1592,6 +1596,10 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "melix-qwen35-acceptance")
         #expect(derived.settings.ext["melix.adapter_set_hash"] == "acbb330795d89f65")
+        #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
+        #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-adapters/train_lora.adapter.json")
+        #expect(derived.settings.ext["melix.derived_from_model_revision"] == "registry")
+        #expect(derived.settings.ext["melix.remove_supported"] == "true")
     }
 
     @Test("registry snapshot text families preserve compatibility routing and parser metadata")
@@ -3154,6 +3162,126 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_set_hash"] == "adapter-alpha")
         #expect(derived.settings.ext["melix.derived_from_adapter"] == "true")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+    }
+
+    @Test("execute registers adapter-backed derived models into the catalog with compatibility routing")
+    func executeRegistersAdapterBackedDerivedModelsIntoTheCatalogWithCompatibilityRouting() async throws {
+        let manifestJSON = """
+        {"schema_version":"melix.derived_text_model.v1","activation_mode":"adapter_backed_runtime","source_model":"melix-dev-text","source_model_revision":"dev","adapter_name":"melix-dev-adapter","adapter_set_hash":"adapter-beta","derived_model_id":"melix-dev-text-lora-adapter-runtime","derived_model_path":"models/dev-text","adapter_manifest_path":"/tmp/melix-train/train_lora.adapter.json","derived_model_alias":"Runtime Alias"}
+        """
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-activate-runtime-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-derived/runtime/manifest.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "activate_adapter",
+                outputDir: "/tmp/melix-derived-runtime",
+                ext: [
+                    "artifact_path": "/tmp/melix-train/train_lora.adapter.json",
+                    "activation_mode": "adapter_backed_runtime",
+                ]
+            )
+        )
+        let derived = try #require(await catalog.model(id: "melix-dev-text-lora-adapter-runtime"))
+
+        #expect(response.ok)
+        #expect(response.model.operation.operation == "activate_adapter")
+        #expect(derived.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(derived.capabilityClass == .modelCapabilityText)
+        #expect(derived.settings.ext["melix.model_path"] == "models/dev-text")
+        #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
+        #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
+        #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
+        #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+    }
+
+    @Test("execute prunes removed derived models from the catalog after remove-derived completes")
+    func executePrunesRemovedDerivedModelsFromTheCatalogAfterRemoveDerivedCompletes() async throws {
+        let removalManifestJSON = """
+        {"schema_version":"melix.derived_model_removal.v1","operation":"remove_derived_model","source_model":"melix-dev-text","derived_model_id":"melix-dev-text-lora-adapter","activation_mode":"fused_derived_model","activation_job_id":"job-activate-123","activation_manifest_path":"/tmp/melix-derived/model/manifest.json","adapter_manifest_path":"/tmp/melix-train/train_lora.adapter.json"}
+        """
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-remove-derived-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = removalManifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-remove/remove_derived_model.lifecycle.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        var derived = ModelCatalog.devTextModel()
+        derived.modelID = "melix-dev-text-lora-adapter"
+        derived.settings.alias = "Derived Adapter"
+        derived.settings.ext["melix.model_path"] = "/tmp/melix-derived/model"
+        derived.settings.ext["melix.derived_from_adapter"] = "true"
+        derived.settings.ext["melix.activation_mode"] = "fused_derived_model"
+        await catalog.registerModel(derived, reason: "test_setup")
+
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "remove_derived_model",
+                outputDir: "/tmp/melix-remove",
+                ext: ["derived_model_id": "melix-dev-text-lora-adapter"]
+            )
+        )
+
+        #expect(response.ok)
+        #expect(response.model.operation.operation == "remove_derived_model")
+        #expect(await catalog.model(id: "melix-dev-text-lora-adapter") == nil)
     }
 
     @Test("execute preserves download operation state when the worker returns a terminal failure")

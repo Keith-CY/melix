@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
+import shutil
 from threading import Event
 import time
-from typing import Iterator
+from typing import Any, Iterator
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
@@ -63,6 +64,12 @@ class ImageBenchSample:
     latency_ms: float
     artifact_publish_ms: float
     output_bytes: int
+
+
+@dataclass(frozen=True)
+class ModelOperationManifestResult:
+    manifest: dict[str, Any]
+    manifest_path: Path
 
 
 def _split_capability_values(raw_value: str) -> list[str]:
@@ -258,7 +265,16 @@ class MaintenanceCore:
         if not operation:
             operation = "quantize" if request.weight_quant or request.kv_quant else "convert"
 
-        if operation not in {"convert", "quantize", "download", "upload", "train_lora", "activate_adapter", "registry_snapshot"}:
+        if operation not in {
+            "convert",
+            "quantize",
+            "download",
+            "upload",
+            "train_lora",
+            "activate_adapter",
+            "remove_derived_model",
+            "registry_snapshot",
+        }:
             yield maintenance_pb2.ConvertModelEvent(
                 failed=maintenance_pb2.ConvertFailed(
                     error=common_pb2.ErrorStatus(
@@ -527,7 +543,7 @@ class MaintenanceCore:
                 )
                 return
 
-            if operation in {"train_lora", "activate_adapter"}:
+            if operation in {"train_lora", "activate_adapter", "remove_derived_model"}:
                 try:
                     pipeline_result, progress_events = self._run_specialized_model_operation(
                         operation=operation,
@@ -549,7 +565,11 @@ class MaintenanceCore:
                     )
                     return
                 except Exception as exc:
-                    error_code = "activation_failure" if operation == "activate_adapter" else "backend_training_failure"
+                    error_code = {
+                        "train_lora": "backend_training_failure",
+                        "activate_adapter": "activation_failure",
+                        "remove_derived_model": "removal_failure",
+                    }.get(operation, "runtime_error")
                     self._job_registry.fail(job.job_id, error_code, str(exc))
                     yield maintenance_pb2.ConvertModelEvent(
                         failed=maintenance_pb2.ConvertFailed(
@@ -1518,6 +1538,7 @@ class MaintenanceCore:
             "upload": "upload.receipt.json",
             "train_lora": "train_lora.adapter.json",
             "activate_adapter": "activate_adapter.derived_model.json",
+            "remove_derived_model": "remove_derived_model.lifecycle.json",
             "registry_snapshot": "registry_snapshot.json",
         }[operation]
         return output_dir / filename
@@ -1528,7 +1549,7 @@ class MaintenanceCore:
         request: maintenance_pb2.ConvertModelRequest,
         job_id: str,
     ) -> Path:
-        if operation in {"train_lora", "activate_adapter"}:
+        if operation in {"train_lora", "activate_adapter", "remove_derived_model"}:
             return (self._jobs_root / operation / job_id).resolve()
         return Path(request.output_dir or self._jobs_root / operation).resolve()
 
@@ -1555,6 +1576,14 @@ class MaintenanceCore:
             return request.ext.get("artifact_path", "") or request.source_model or operation
         if operation == "activate_adapter":
             return request.ext.get("artifact_path", "") or request.source_model or operation
+        if operation == "remove_derived_model":
+            return (
+                request.ext.get("derived_model_id", "")
+                or request.ext.get("manifest_path", "")
+                or request.ext.get("derived_model_manifest_path", "")
+                or request.source_model
+                or operation
+            )
         return request.source_model or operation
 
     def _run_specialized_model_operation(
@@ -1565,6 +1594,20 @@ class MaintenanceCore:
         request: maintenance_pb2.ConvertModelRequest,
         output_dir: Path,
     ):
+        if operation == "remove_derived_model":
+            progress_events: list[tuple[str, float]] = []
+
+            def record_progress(stage: str, pct: float) -> None:
+                progress_events.append((stage, pct))
+
+            result = self._run_remove_derived_model_operation(
+                job_id=job_id,
+                request_ext=dict(request.ext),
+                output_dir=output_dir,
+                progress=record_progress,
+            )
+            return result, progress_events
+
         source_model = self._registry.model_catalog.get(request.source_model)
         if source_model is None:
             raise ModelOperationError(
@@ -1597,6 +1640,82 @@ class MaintenanceCore:
             progress=record_progress,
         )
         return result, progress_events
+
+    def _run_remove_derived_model_operation(
+        self,
+        *,
+        job_id: str,
+        request_ext: dict[str, str],
+        output_dir: Path,
+        progress,
+    ) -> ModelOperationManifestResult:
+        started_at = time.perf_counter()
+        derived_model_id = request_ext.get("derived_model_id", "").strip()
+        activation_manifest_path = (
+            request_ext.get("manifest_path", "").strip()
+            or request_ext.get("derived_model_manifest_path", "").strip()
+            or request_ext.get("artifact_path", "").strip()
+        )
+        if not derived_model_id and not activation_manifest_path:
+            raise ModelOperationError(
+                code="invalid_argument",
+                message="remove_derived_model requires derived_model_id or manifest_path.",
+            )
+
+        progress("resolve_target", 0.2)
+        target = self._job_registry.resolve_derived_model_target(
+            derived_model_id=derived_model_id,
+            manifest_path=activation_manifest_path,
+        )
+        if target is None:
+            raise ModelOperationError(
+                code="not_found",
+                message="Derived model target was not found.",
+                details={
+                    "derived_model_id": derived_model_id,
+                    "manifest_path": activation_manifest_path,
+                },
+            )
+
+        progress("unload_runtime", 0.55)
+        unloaded_handles: list[str] = []
+        for handle in list(self._registry.list_loaded_models()):
+            loaded_model = self._registry.get_loaded_model(handle)
+            if loaded_model is None:
+                continue
+            if loaded_model.spec.model_id != target["derived_model_id"]:
+                continue
+            if self._registry.unload_model(handle):
+                unloaded_handles.append(handle)
+
+        progress("remove_artifacts", 0.8)
+        removed_paths: list[str] = []
+        managed_dir = Path(target["activation_manifest_path"]).expanduser().resolve().parent
+        if managed_dir.exists():
+            shutil.rmtree(managed_dir)
+            removed_paths.append(str(managed_dir))
+
+        manifest = {
+            "schema_version": "melix.derived_model_removal.v1",
+            "job_id": job_id,
+            "operation": "remove_derived_model",
+            "source_model": target["source_model"],
+            "derived_model_id": target["derived_model_id"],
+            "derived_model_alias": target["derived_model_alias"],
+            "activation_mode": target["activation_mode"],
+            "activation_job_id": target["activation_job_id"],
+            "activation_manifest_path": target["activation_manifest_path"],
+            "adapter_manifest_path": target["adapter_manifest_path"],
+            "removed": True,
+            "unloaded": bool(unloaded_handles),
+            "unloaded_handles": unloaded_handles,
+            "removed_paths": removed_paths,
+            "remove_duration_ms": (time.perf_counter() - started_at) * 1000.0,
+        }
+        manifest_path = self._artifact_path("remove_derived_model", output_dir)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        progress("write_manifest", 0.95)
+        return ModelOperationManifestResult(manifest=manifest, manifest_path=manifest_path)
 
     @staticmethod
     def _linked_quantization_metadata(
