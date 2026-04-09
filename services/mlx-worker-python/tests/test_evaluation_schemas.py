@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from worker.productization.evaluation_schemas import (
     build_dataset_package_manifest,
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_sample_record,
+    build_evaluation_compare_summary_record,
     build_evaluation_job_record,
     build_evaluation_result_record,
     build_evaluation_sample_record,
@@ -153,3 +156,70 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "input_modalities": ["text", "image"],
         "media_references": ["/tmp/cat.png"],
     }
+
+
+def test_build_evaluation_compare_records_preserve_target_metadata() -> None:
+    job = build_evaluation_compare_job_record(
+        job_id="eval-compare-1",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-a", "melix-dev-text-lora-b"),
+        task_kind="text-generation",
+        source_repo="test/source",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir="/tmp/melix/evaluation/runs/eval-compare-1",
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    summary = build_evaluation_compare_summary_record(
+        job_id="eval-compare-1",
+        base_model_id="melix-dev-text",
+        target_model_id="melix-dev-text-lora-a",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=1,
+        loss_count=0,
+        tie_count=1,
+        regression_count=0,
+        base_accuracy=0.5,
+        target_accuracy=1.0,
+        delta_accuracy=0.5,
+        duration_seconds=0.25,
+        metrics={"eval.compare.win_count": 1.0, "eval.compare.delta_accuracy": 0.5},
+        report_path="/tmp/melix/evaluation/runs/eval-compare-1/evaluation-compare-report.md",
+    )
+    sample = build_evaluation_compare_sample_record(
+        job_id="eval-compare-1",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        target_model_id="melix-dev-text-lora-a",
+        question="2+2?",
+        expected="4",
+        base_predicted="4",
+        target_predicted="4",
+        base_raw_response="Answer: 4",
+        target_raw_response="Answer: 4",
+        base_correct=True,
+        target_correct=True,
+        outcome="tie",
+        regression=False,
+        base_time_s=0.01,
+        target_time_s=0.02,
+        base_parse_status="parsed_answer_prefix",
+        target_parse_status="parsed_answer_prefix",
+    )
+
+    assert job.to_dict()["target_model_ids"] == ["melix-dev-text-lora-a", "melix-dev-text-lora-b"]
+    assert summary.to_dict()["target_model_id"] == "melix-dev-text-lora-a"
+    assert summary.to_dict()["metrics"][0]["name"] == "eval.compare.delta_accuracy"
+    assert sample.to_dict()["base_predicted"] == "4"
+    assert sample.to_dict()["target_predicted"] == "4"
+    assert sample.to_dict()["outcome"] == "tie"
+    assert sample.to_dict()["regression"] is False

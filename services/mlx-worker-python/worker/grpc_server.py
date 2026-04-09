@@ -299,7 +299,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         response = maintenance_pb2.RunEvaluationResponse(ok=True)
         response.job.schema_version = run.job.schema_version
         response.job.job_id = run.job.job_id
-        response.job.model_id = run.job.model_id
+        response.job.model_id = getattr(run.job, "model_id", getattr(run.job, "base_model_id", ""))
         response.job.task_kind = run.job.task_kind
         response.job.source_repo = run.job.source_repo
         response.job.suite_id = run.job.suite_id
@@ -312,18 +312,24 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         response.job.created_at_unix_ms = run.job.created_at_unix_ms
         response.job.updated_at_unix_ms = run.job.updated_at_unix_ms
 
-        result = response.results.add()
-        result.schema_version = run.result.schema_version
-        result.job_id = run.result.job_id
-        result.suite_id = run.result.suite_id
-        result.dataset_id = run.result.dataset_id
-        result.sample_size = run.result.sample_size
-        result.report_path = run.result.report_path
-        for metric in run.result.metrics:
-            metric_message = result.metrics.add()
-            metric_message.name = metric.name
-            metric_message.value = metric.value
-            metric_message.unit = metric.unit
+        for run_result in run.results:
+            result = response.results.add()
+            result.schema_version = run_result.schema_version
+            result.job_id = run_result.job_id
+            target_model_id = getattr(run_result, "target_model_id", "")
+            result.suite_id = (
+                f"{run_result.suite_id}:{target_model_id}"
+                if target_model_id
+                else run_result.suite_id
+            )
+            result.dataset_id = run_result.dataset_id
+            result.sample_size = run_result.sample_size
+            result.report_path = run_result.report_path
+            for metric in run_result.metrics:
+                metric_message = result.metrics.add()
+                metric_message.name = metric.name
+                metric_message.value = metric.value
+                metric_message.unit = metric.unit
         return response
 
     def ExportResults(self, request, context):

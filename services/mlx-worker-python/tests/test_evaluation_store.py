@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 
 from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_sample_record,
+    build_evaluation_compare_summary_record,
     build_evaluation_job_record,
     build_evaluation_result_record,
     build_evaluation_sample_record,
@@ -129,3 +132,89 @@ def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:
     assert '"quoted ""response"""' in csv_payload
     assert '"text,image"' in csv_payload
     assert '"/tmp/a,1.png,/tmp/b""2"".png"' in csv_payload
+
+
+def test_persist_compare_result_writes_expected_compare_artifact_names_and_payloads(
+    tmp_path: Path,
+) -> None:
+    store = EvaluationStore()
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-compare-1"
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-1",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-a",),
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    compare_summary = build_evaluation_compare_summary_record(
+        job_id="eval-compare-1",
+        base_model_id="melix-dev-text",
+        target_model_id="melix-dev-text-lora-a",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=1,
+        loss_count=0,
+        tie_count=1,
+        regression_count=0,
+        base_accuracy=0.5,
+        target_accuracy=1.0,
+        delta_accuracy=0.5,
+        duration_seconds=0.25,
+        metrics={"eval.compare.win_count": 1.0, "eval.compare.delta_accuracy": 0.5},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    compare_sample = build_evaluation_compare_sample_record(
+        job_id="eval-compare-1",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        target_model_id="melix-dev-text-lora-a",
+        question="2+2?",
+        expected="4",
+        base_predicted="4",
+        target_predicted="4",
+        base_raw_response="Answer: 4",
+        target_raw_response="Answer: 4",
+        base_correct=True,
+        target_correct=True,
+        outcome="tie",
+        regression=False,
+        base_time_s=0.01,
+        target_time_s=0.02,
+        base_parse_status="parsed_answer_prefix",
+        target_parse_status="parsed_answer_prefix",
+    )
+
+    persisted = store.persist_compare_result(
+        jobs_root=jobs_root,
+        job=compare_job,
+        summaries=(compare_summary,),
+        samples=(compare_sample,),
+    )
+
+    assert persisted["job"] == run_root / "evaluation-compare-job.json"
+    assert persisted["summary_json"] == run_root / "evaluation-compare-summary.json"
+    assert persisted["summary_csv"] == run_root / "evaluation-compare-summary.csv"
+    assert persisted["samples_jsonl"] == run_root / "evaluation-compare-samples.jsonl"
+    assert persisted["report_markdown"] == run_root / "evaluation-compare-report.md"
+    assert json.loads(persisted["job"].read_text(encoding="utf-8")) == compare_job.to_dict()
+    summary_payload = json.loads(persisted["summary_json"].read_text(encoding="utf-8"))
+    assert summary_payload["job_id"] == "eval-compare-1"
+    assert summary_payload["target_summaries"][0]["target_model_id"] == "melix-dev-text-lora-a"
+    assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == compare_sample.to_dict()
+    assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
+        "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds,created_at_unix_ms\n"
+    )
+    assert persisted["report_markdown"].read_text(encoding="utf-8").startswith("# Melix Evaluation Compare\n")

@@ -7,6 +7,9 @@ _EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION = "melix.evaluation_dataset_package.v
 _EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v1"
 _EVALUATION_RESULT_SCHEMA_VERSION = "melix.evaluation_result.v1"
 _EVALUATION_SAMPLE_SCHEMA_VERSION = "melix.evaluation_sample.v1"
+_EVALUATION_COMPARE_JOB_SCHEMA_VERSION = "melix.evaluation_compare_job.v1"
+_EVALUATION_COMPARE_SUMMARY_SCHEMA_VERSION = "melix.evaluation_compare_summary.v1"
+_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION = "melix.evaluation_compare_sample.v1"
 
 
 @dataclass(frozen=True)
@@ -159,6 +162,136 @@ class EvaluationSample:
         }
 
 
+@dataclass(frozen=True)
+class EvaluationCompareJob:
+    schema_version: str
+    job_id: str
+    base_model_id: str
+    target_model_ids: tuple[str, ...]
+    task_kind: str
+    source_repo: str
+    suite_id: str
+    dataset_id: str
+    sample_size: int
+    scoring_mode: str
+    parameters: dict[str, str]
+    status: str
+    output_dir: str
+    created_at_unix_ms: int
+    updated_at_unix_ms: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "base_model_id": self.base_model_id,
+            "target_model_ids": list(self.target_model_ids),
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
+            "suite_id": self.suite_id,
+            "dataset_id": self.dataset_id,
+            "sample_size": self.sample_size,
+            "scoring_mode": self.scoring_mode,
+            "parameters": dict(self.parameters),
+            "status": self.status,
+            "output_dir": self.output_dir,
+            "created_at_unix_ms": self.created_at_unix_ms,
+            "updated_at_unix_ms": self.updated_at_unix_ms,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationCompareSummary:
+    schema_version: str
+    job_id: str
+    base_model_id: str
+    target_model_id: str
+    suite_id: str
+    dataset_id: str
+    sample_size: int
+    scoring_mode: str
+    win_count: int
+    loss_count: int
+    tie_count: int
+    regression_count: int
+    base_accuracy: float
+    target_accuracy: float
+    delta_accuracy: float
+    duration_seconds: float
+    metrics: tuple[EvaluationMetricValue, ...]
+    report_path: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "base_model_id": self.base_model_id,
+            "target_model_id": self.target_model_id,
+            "suite_id": self.suite_id,
+            "dataset_id": self.dataset_id,
+            "sample_size": self.sample_size,
+            "scoring_mode": self.scoring_mode,
+            "win_count": self.win_count,
+            "loss_count": self.loss_count,
+            "tie_count": self.tie_count,
+            "regression_count": self.regression_count,
+            "base_accuracy": self.base_accuracy,
+            "target_accuracy": self.target_accuracy,
+            "delta_accuracy": self.delta_accuracy,
+            "duration_seconds": self.duration_seconds,
+            "metrics": [metric.to_dict() for metric in self.metrics],
+            "report_path": self.report_path,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationCompareSample:
+    schema_version: str
+    job_id: str
+    suite_id: str
+    dataset_id: str
+    sample_id: str
+    target_model_id: str
+    question: str
+    expected: str
+    base_predicted: str
+    target_predicted: str
+    base_raw_response: str
+    target_raw_response: str
+    base_correct: bool
+    target_correct: bool
+    outcome: str
+    regression: bool
+    base_time_s: float
+    target_time_s: float
+    base_parse_status: str
+    target_parse_status: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "suite_id": self.suite_id,
+            "dataset_id": self.dataset_id,
+            "sample_id": self.sample_id,
+            "target_model_id": self.target_model_id,
+            "question": self.question,
+            "expected": self.expected,
+            "base_predicted": self.base_predicted,
+            "target_predicted": self.target_predicted,
+            "base_raw_response": self.base_raw_response,
+            "target_raw_response": self.target_raw_response,
+            "base_correct": self.base_correct,
+            "target_correct": self.target_correct,
+            "outcome": self.outcome,
+            "regression": self.regression,
+            "base_time_s": self.base_time_s,
+            "target_time_s": self.target_time_s,
+            "base_parse_status": self.base_parse_status,
+            "target_parse_status": self.target_parse_status,
+        }
+
+
 def build_dataset_package_manifest(
     *,
     dataset_id: str,
@@ -290,4 +423,134 @@ def build_evaluation_sample_record(
         task_kind=task_kind,
         input_modalities=tuple(input_modalities),
         media_references=tuple(media_references),
+    )
+
+
+def build_evaluation_compare_job_record(
+    *,
+    job_id: str,
+    base_model_id: str,
+    target_model_ids: tuple[str, ...],
+    task_kind: str,
+    source_repo: str,
+    suite_id: str,
+    dataset_id: str,
+    sample_size: int,
+    scoring_mode: str,
+    parameters: dict[str, str],
+    status: str,
+    output_dir: str = "",
+    created_at_unix_ms: int = 0,
+    updated_at_unix_ms: int = 0,
+) -> EvaluationCompareJob:
+    return EvaluationCompareJob(
+        schema_version=_EVALUATION_COMPARE_JOB_SCHEMA_VERSION,
+        job_id=job_id,
+        base_model_id=base_model_id,
+        target_model_ids=tuple(target_model_ids),
+        task_kind=task_kind,
+        source_repo=source_repo,
+        suite_id=suite_id,
+        dataset_id=dataset_id,
+        sample_size=sample_size,
+        scoring_mode=scoring_mode,
+        parameters=dict(parameters),
+        status=status,
+        output_dir=output_dir,
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=updated_at_unix_ms,
+    )
+
+
+def build_evaluation_compare_summary_record(
+    *,
+    job_id: str,
+    base_model_id: str,
+    target_model_id: str,
+    suite_id: str,
+    dataset_id: str,
+    sample_size: int,
+    scoring_mode: str,
+    win_count: int,
+    loss_count: int,
+    tie_count: int,
+    regression_count: int,
+    base_accuracy: float,
+    target_accuracy: float,
+    delta_accuracy: float,
+    duration_seconds: float,
+    metrics: dict[str, float],
+    report_path: str,
+    units: dict[str, str] | None = None,
+) -> EvaluationCompareSummary:
+    metric_units = units or {}
+    ordered_metrics = tuple(
+        EvaluationMetricValue(name=name, value=float(value), unit=metric_units.get(name, ""))
+        for name, value in sorted(metrics.items())
+    )
+    return EvaluationCompareSummary(
+        schema_version=_EVALUATION_COMPARE_SUMMARY_SCHEMA_VERSION,
+        job_id=job_id,
+        base_model_id=base_model_id,
+        target_model_id=target_model_id,
+        suite_id=suite_id,
+        dataset_id=dataset_id,
+        sample_size=sample_size,
+        scoring_mode=scoring_mode,
+        win_count=win_count,
+        loss_count=loss_count,
+        tie_count=tie_count,
+        regression_count=regression_count,
+        base_accuracy=float(base_accuracy),
+        target_accuracy=float(target_accuracy),
+        delta_accuracy=float(delta_accuracy),
+        duration_seconds=float(duration_seconds),
+        metrics=ordered_metrics,
+        report_path=report_path,
+    )
+
+
+def build_evaluation_compare_sample_record(
+    *,
+    job_id: str,
+    suite_id: str,
+    dataset_id: str,
+    sample_id: str,
+    target_model_id: str,
+    question: str,
+    expected: str,
+    base_predicted: str,
+    target_predicted: str,
+    base_raw_response: str,
+    target_raw_response: str,
+    base_correct: bool,
+    target_correct: bool,
+    outcome: str,
+    regression: bool,
+    base_time_s: float,
+    target_time_s: float,
+    base_parse_status: str,
+    target_parse_status: str,
+) -> EvaluationCompareSample:
+    return EvaluationCompareSample(
+        schema_version=_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION,
+        job_id=job_id,
+        suite_id=suite_id,
+        dataset_id=dataset_id,
+        sample_id=sample_id,
+        target_model_id=target_model_id,
+        question=question,
+        expected=expected,
+        base_predicted=base_predicted,
+        target_predicted=target_predicted,
+        base_raw_response=base_raw_response,
+        target_raw_response=target_raw_response,
+        base_correct=base_correct,
+        target_correct=target_correct,
+        outcome=outcome,
+        regression=regression,
+        base_time_s=float(base_time_s),
+        target_time_s=float(target_time_s),
+        base_parse_status=base_parse_status,
+        target_parse_status=target_parse_status,
     )

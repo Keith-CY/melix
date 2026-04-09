@@ -3,7 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from worker.productization.evaluation_schemas import EvaluationJob, EvaluationResult, EvaluationSample
+from worker.productization.evaluation_reports import build_evaluation_compare_report_markdown
+from worker.productization.evaluation_schemas import (
+    EvaluationCompareJob,
+    EvaluationCompareSample,
+    EvaluationCompareSummary,
+    EvaluationJob,
+    EvaluationResult,
+    EvaluationSample,
+)
 
 
 class EvaluationStore:
@@ -63,6 +71,56 @@ class EvaluationStore:
             persisted["samples_csv"] = csv_path
         return persisted
 
+    def persist_compare_result(
+        self,
+        *,
+        jobs_root: Path,
+        job: EvaluationCompareJob,
+        summaries: tuple[EvaluationCompareSummary, ...],
+        samples: tuple[EvaluationCompareSample, ...] = (),
+    ) -> dict[str, Path]:
+        run_root = Path(job.output_dir) if job.output_dir else jobs_root
+        run_root.mkdir(parents=True, exist_ok=True)
+
+        job_path = run_root / "evaluation-compare-job.json"
+        job_path.write_text(
+            json.dumps(job.to_dict(), indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        summary_payload = self._compare_summary_payload(job=job, summaries=summaries)
+        summary_json_path = run_root / "evaluation-compare-summary.json"
+        summary_json_path.write_text(
+            json.dumps(summary_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        summary_csv_path = run_root / "evaluation-compare-summary.csv"
+        summary_csv_path.write_text(
+            self._compare_summary_csv(job=job, summaries=summaries),
+            encoding="utf-8",
+        )
+
+        samples_jsonl_path = run_root / "evaluation-compare-samples.jsonl"
+        samples_jsonl_path.write_text(
+            "\n".join(json.dumps(sample.to_dict()) for sample in samples) + ("\n" if samples else ""),
+            encoding="utf-8",
+        )
+
+        report_markdown_path = run_root / "evaluation-compare-report.md"
+        report_markdown_path.write_text(
+            build_evaluation_compare_report_markdown(job=job, summaries=summaries),
+            encoding="utf-8",
+        )
+
+        return {
+            "job": job_path,
+            "summary_json": summary_json_path,
+            "summary_csv": summary_csv_path,
+            "samples_jsonl": samples_jsonl_path,
+            "report_markdown": report_markdown_path,
+        }
+
     @staticmethod
     def _summary_payload(*, job: EvaluationJob, result: EvaluationResult) -> dict[str, object]:
         return {
@@ -120,6 +178,71 @@ class EvaluationStore:
                 ]
             )
         )
+        return "\n".join(rows) + "\n"
+
+    @staticmethod
+    def _compare_summary_payload(
+        *,
+        job: EvaluationCompareJob,
+        summaries: tuple[EvaluationCompareSummary, ...],
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "melix.evaluation_compare_summary_bundle.v1",
+            "job_id": job.job_id,
+            "base_model_id": job.base_model_id,
+            "suite_id": job.suite_id,
+            "dataset_id": job.dataset_id,
+            "sample_size": job.sample_size,
+            "created_at_unix_ms": job.created_at_unix_ms,
+            "target_summaries": [summary.to_dict() for summary in summaries],
+        }
+
+    @staticmethod
+    def _compare_summary_csv(
+        *,
+        job: EvaluationCompareJob,
+        summaries: tuple[EvaluationCompareSummary, ...],
+    ) -> str:
+        header = [
+            "job_id",
+            "base_model_id",
+            "target_model_id",
+            "suite_id",
+            "dataset_id",
+            "sample_size",
+            "win_count",
+            "loss_count",
+            "tie_count",
+            "regression_count",
+            "base_accuracy",
+            "target_accuracy",
+            "delta_accuracy",
+            "duration_seconds",
+            "created_at_unix_ms",
+        ]
+        rows = [",".join(header)]
+        for summary in summaries:
+            rows.append(
+                ",".join(
+                    [
+                        EvaluationStore._csv_field(job.job_id),
+                        EvaluationStore._csv_field(job.base_model_id),
+                        EvaluationStore._csv_field(summary.target_model_id),
+                        EvaluationStore._csv_field(job.suite_id),
+                        EvaluationStore._csv_field(job.dataset_id),
+                        EvaluationStore._csv_field(str(job.sample_size)),
+                        EvaluationStore._csv_field(str(summary.win_count)),
+                        EvaluationStore._csv_field(str(summary.loss_count)),
+                        EvaluationStore._csv_field(str(summary.tie_count)),
+                        EvaluationStore._csv_field(str(summary.regression_count)),
+                        EvaluationStore._csv_field(str(summary.base_accuracy)),
+                        EvaluationStore._csv_field(str(summary.target_accuracy)),
+                        EvaluationStore._csv_field(str(summary.delta_accuracy)),
+                        EvaluationStore._csv_field(str(summary.duration_seconds)),
+                        EvaluationStore._csv_field(str(job.created_at_unix_ms)),
+                    ]
+                )
+            )
         return "\n".join(rows) + "\n"
 
     @staticmethod

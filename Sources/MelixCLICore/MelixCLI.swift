@@ -18,6 +18,7 @@ public struct LoraTrainOptions: Equatable, Sendable {
     public let datasetURI: String
     public let adapterName: String
     public let targetRepo: String
+    public let trainingMode: String
     public let parameters: [String: String]
     public let json: Bool
 
@@ -27,6 +28,7 @@ public struct LoraTrainOptions: Equatable, Sendable {
         datasetURI: String,
         adapterName: String,
         targetRepo: String = "",
+        trainingMode: String = "",
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
@@ -35,6 +37,7 @@ public struct LoraTrainOptions: Equatable, Sendable {
         self.datasetURI = datasetURI
         self.adapterName = adapterName
         self.targetRepo = targetRepo
+        self.trainingMode = trainingMode
         self.parameters = parameters
         self.json = json
     }
@@ -44,17 +47,39 @@ public struct LoraActivateOptions: Equatable, Sendable {
     public let modelID: String
     public let adapterPath: String
     public let derivedModelAlias: String
+    public let activationMode: String
     public let json: Bool
 
     public init(
         modelID: String,
         adapterPath: String,
         derivedModelAlias: String = "",
+        activationMode: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
         self.adapterPath = adapterPath
         self.derivedModelAlias = derivedModelAlias
+        self.activationMode = activationMode
+        self.json = json
+    }
+}
+
+public struct LoraRemoveDerivedOptions: Equatable, Sendable {
+    public let modelID: String
+    public let derivedModelID: String
+    public let manifestPath: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        derivedModelID: String = "",
+        manifestPath: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.derivedModelID = derivedModelID
+        self.manifestPath = manifestPath
         self.json = json
     }
 }
@@ -205,6 +230,37 @@ public struct EvalRunOptions: Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
+        self.suites = suites
+        self.datasetID = datasetID
+        self.sampleSize = sampleSize
+        self.parameters = parameters
+        self.json = json
+    }
+}
+
+public struct EvalCompareOptions: Equatable, Sendable {
+    public let modelID: String
+    public let hfRepoID: String
+    public let targetModelIDs: [String]
+    public let suites: [String]
+    public let datasetID: String
+    public let sampleSize: UInt32
+    public let parameters: [String: String]
+    public let json: Bool
+
+    public init(
+        modelID: String = "",
+        hfRepoID: String = "",
+        targetModelIDs: [String] = [],
+        suites: [String] = [],
+        datasetID: String = "",
+        sampleSize: UInt32 = 0,
+        parameters: [String: String] = [:],
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.hfRepoID = hfRepoID
+        self.targetModelIDs = targetModelIDs.filter { $0.isEmpty == false }
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
@@ -520,6 +576,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
     case loraActivate(LoraActivateOptions)
+    case loraRemoveDerived(LoraRemoveDerivedOptions)
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
@@ -528,6 +585,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case benchMatrixExportSummaryCSV(BenchExportCSVOptions)
     case benchMatrixExportRequestsCSV(BenchExportCSVOptions)
     case evalRun(EvalRunOptions)
+    case evalCompare(EvalCompareOptions)
     case evalList(EvalListOptions)
     case evalExportSummaryCSV(EvalExportOptions)
     case evalExportSamplesCSV(EvalExportOptions)
@@ -604,8 +662,9 @@ public enum MelixCLIParser {
       melix server stop [--server-session-id ID] [--json]
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
-      melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
+      melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
@@ -614,6 +673,7 @@ public enum MelixCLIParser {
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy MODE] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -930,6 +990,10 @@ public enum MelixCLIParser {
                     parameters[normalizedParameterKey(option)] = value
                 }
             }
+            let trainingMode = values.single["--training-mode"] ?? ""
+            if !trainingMode.isEmpty, ["lora", "qlora"].contains(trainingMode) == false {
+                throw MelixCLIError.usage("Invalid value for --training-mode. Expected one of: lora, qlora.")
+            }
             for flag in ["--response-only", "--mask-prompt", "--gradient-checkpointing"] where values.flags.contains(flag) {
                 parameters[normalizedParameterKey(flag)] = "true"
             }
@@ -940,6 +1004,7 @@ public enum MelixCLIParser {
                     datasetURI: datasetURI,
                     adapterName: adapterName,
                     targetRepo: values.single["--target-repo"] ?? "",
+                    trainingMode: trainingMode,
                     parameters: parameters,
                     json: values.flags.contains("--json")
                 )
@@ -952,11 +1017,39 @@ public enum MelixCLIParser {
             guard let adapterPath = values.single["--adapter-path"], !adapterPath.isEmpty else {
                 throw MelixCLIError.missingRequired("--adapter-path is required for melix lora activate.")
             }
+            let activationMode = values.single["--activation-mode"] ?? ""
+            if !activationMode.isEmpty,
+               ["fused_derived_model", "adapter_backed_runtime"].contains(activationMode) == false {
+                throw MelixCLIError.usage(
+                    "Invalid value for --activation-mode. Expected one of: fused_derived_model, adapter_backed_runtime."
+                )
+            }
             return .loraActivate(
                 LoraActivateOptions(
                     modelID: modelID,
                     adapterPath: adapterPath,
                     derivedModelAlias: values.single["--alias"] ?? "",
+                    activationMode: activationMode,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "remove-derived":
+            let values = try cursor.parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix lora remove-derived.")
+            }
+            let derivedModelID = values.single["--derived-model-id"] ?? ""
+            let manifestPath = values.single["--manifest-path"] ?? ""
+            guard !derivedModelID.isEmpty || !manifestPath.isEmpty else {
+                throw MelixCLIError.missingRequired(
+                    "Either --derived-model-id or --manifest-path is required for melix lora remove-derived."
+                )
+            }
+            return .loraRemoveDerived(
+                LoraRemoveDerivedOptions(
+                    modelID: modelID,
+                    derivedModelID: derivedModelID,
+                    manifestPath: manifestPath,
                     json: values.flags.contains("--json")
                 )
             )
@@ -1158,7 +1251,7 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage(usageText)
         }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
-            multiValueOptions: ["--suite"]
+            multiValueOptions: ["--suite", "--target-model-id"]
         )
         switch action {
         case "run":
@@ -1199,6 +1292,29 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "compare":
+            let modelID = values.single["--model-id"] ?? ""
+            let hfRepoID = values.single["--repo-id"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
+            }
+            let targetModelIDs = values.multi["--target-model-id"] ?? []
+            guard targetModelIDs.isEmpty == false else {
+                throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+            }
+            return .evalCompare(
+                EvalCompareOptions(
+                    modelID: modelID,
+                    hfRepoID: hfRepoID,
+                    targetModelIDs: targetModelIDs,
+                    suites: values.multi["--suite"] ?? [],
+                    datasetID: values.single["--dataset-id"] ?? "",
+                    sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
+                    parameters: parseEvalParameters(values),
+                    json: values.flags.contains("--json")
+                )
+            )
         case "list":
             return .evalList(EvalListOptions(json: values.flags.contains("--json")))
         case "export-summary-csv":
@@ -1223,6 +1339,29 @@ public enum MelixCLIParser {
             throw MelixCLIError.missingRequired("--output is required for \(command).")
         }
         return EvalExportOptions(jobID: jobID, outputPath: outputPath, json: values.flags.contains("--json"))
+    }
+
+    private static func parseEvalParameters(_ values: ParsedArguments) -> [String: String] {
+        var parameters: [String: String] = [:]
+        if let batchFactor = values.single["--batch-factor"] {
+            parameters["batch_factor"] = batchFactor
+        }
+        if let datasetRoot = values.single["--dataset-root"] {
+            parameters["dataset_root"] = datasetRoot
+        }
+        if let seed = values.single["--seed"] {
+            parameters["seed"] = seed
+        }
+        if let fewShot = values.single["--few-shot"] {
+            parameters["few_shot"] = fewShot
+        }
+        if let scoringMode = values.single["--scoring-mode"] {
+            parameters["scoring_mode"] = scoringMode
+        }
+        if let codeExecPolicy = values.single["--code-exec-policy"] {
+            parameters["code_exec_policy"] = codeExecPolicy
+        }
+        return parameters
     }
 
     private static func normalizedParameterKey(_ option: String) -> String {
@@ -1547,6 +1686,29 @@ public actor MelixCLIRunner {
         return try await runEvaluationSuites(options: options, suites: suites)
     }
 
+    public func runEvaluationCompare(_ options: EvalCompareOptions) async throws -> [ControlPlaneEvaluationResult] {
+        guard options.targetModelIDs.isEmpty == false else {
+            throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+        }
+        for targetModelID in options.targetModelIDs {
+            _ = try await client.loadModel(modelID: targetModelID)
+        }
+        var parameters = options.parameters
+        parameters["compare_mode"] = "base_vs_targets"
+        parameters["compare_target_model_ids"] = options.targetModelIDs.joined(separator: ",")
+        return try await runEvaluations(
+            EvalRunOptions(
+                modelID: options.modelID,
+                hfRepoID: options.hfRepoID,
+                suites: options.suites,
+                datasetID: options.datasetID,
+                sampleSize: options.sampleSize,
+                parameters: parameters,
+                json: options.json
+            )
+        )
+    }
+
     public func run(_ command: MelixCLICommand) async throws -> String {
         if commandRequiresConfiguredRegistryRootPriming(command) {
             try await primeConfiguredRegistryRootsIfNeeded()
@@ -1837,6 +1999,9 @@ public actor MelixCLIRunner {
             if !options.targetRepo.isEmpty {
                 ext["target_repo"] = options.targetRepo
             }
+            if !options.trainingMode.isEmpty {
+                ext["training_mode"] = options.trainingMode
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "train_lora",
@@ -1849,9 +2014,27 @@ public actor MelixCLIRunner {
             if !options.derivedModelAlias.isEmpty {
                 ext["derived_model_alias"] = options.derivedModelAlias
             }
+            if !options.activationMode.isEmpty {
+                ext["activation_mode"] = options.activationMode
+            }
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "activate_adapter",
+                outputDir: "",
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath
+        case .loraRemoveDerived(let options):
+            var ext: [String: String] = [:]
+            if !options.derivedModelID.isEmpty {
+                ext["derived_model_id"] = options.derivedModelID
+            }
+            if !options.manifestPath.isEmpty {
+                ext["manifest_path"] = options.manifestPath
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "remove_derived_model",
                 outputDir: "",
                 ext: ext
             )
@@ -1958,6 +2141,12 @@ public actor MelixCLIRunner {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
             return renderEvaluationRuns(results)
+        case .evalCompare(let options):
+            let results = try await runEvaluationCompare(options)
+            if options.json {
+                return try prettyJSON(results.map(makeEvaluationPayload))
+            }
+            return renderEvaluationRuns(results)
         case .evalList(let options):
             let bundle = try await fetchBenchmarkExportBundle()
             let entries = bundle.evaluationHistoryEntries()
@@ -2012,9 +2201,11 @@ public actor MelixCLIRunner {
              .loraList,
              .loraTrain,
              .loraActivate,
+             .loraRemoveDerived,
              .benchRun,
              .benchMatrixRun,
-             .evalRun:
+             .evalRun,
+             .evalCompare:
             return true
         default:
             return false
@@ -2559,14 +2750,22 @@ public actor MelixCLIRunner {
         guard runs.isEmpty == false else {
             return "No evaluation runs completed.\n"
         }
-        let lines = runs.map { run in
-            let metrics = run.results
-                .flatMap(\.metrics)
+        let lines = runs.flatMap { run in
+            let resultRows = run.results.isEmpty ? [nil] : run.results.map(Optional.some)
+            return resultRows.map { result in
+                let metrics = (result?.metrics ?? [])
                 .map { metric in
                     metric.unit.isEmpty ? "\(metric.name)=\(metric.value)" : "\(metric.name)=\(metric.value)\(metric.unit)"
                 }
                 .joined(separator: ", ")
-            return [run.job.jobID, run.job.suiteID, run.job.datasetID, run.job.status, metrics].joined(separator: "\t")
+                return [
+                    run.job.jobID,
+                    result?.suiteID ?? run.job.suiteID,
+                    result?.datasetID ?? run.job.datasetID,
+                    run.job.status,
+                    metrics,
+                ].joined(separator: "\t")
+            }
         }
         return (["job_id\tsuite\tdataset\tstatus\tmetrics"] + lines).joined(separator: "\n") + "\n"
     }

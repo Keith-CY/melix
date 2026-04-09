@@ -11,10 +11,20 @@ from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
+from worker.productization.evaluation_compare import (
+    build_compare_samples,
+    build_compare_summary,
+    parse_compare_target_model_ids,
+    resolve_compare_target_models,
+)
 from worker.productization.evaluation_schemas import (
+    EvaluationCompareJob,
+    EvaluationCompareSample,
+    EvaluationCompareSummary,
     EvaluationJob,
     EvaluationResult,
     EvaluationSample,
+    build_evaluation_compare_job_record,
     build_evaluation_job_record,
     build_evaluation_result_record,
     build_evaluation_sample_record,
@@ -45,10 +55,14 @@ _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
 
 @dataclass(frozen=True)
 class EvaluationRun:
-    job: EvaluationJob
-    result: EvaluationResult
-    samples: tuple[EvaluationSample, ...]
+    job: EvaluationJob | EvaluationCompareJob
+    results: tuple[EvaluationResult | EvaluationCompareSummary, ...]
+    samples: tuple[EvaluationSample | EvaluationCompareSample, ...]
     persisted_paths: dict[str, Path]
+
+    @property
+    def result(self) -> EvaluationResult | EvaluationCompareSummary:
+        return self.results[0]
 
 
 class EvaluationCore:
@@ -121,7 +135,6 @@ class EvaluationCore:
             else (parameters or {}).get("code_exec_policy", "")
         )
         created_at_unix_ms = int(time.time() * 1000)
-        started_at = time.perf_counter()
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
         loaded_model = self._loaded_model_for_execution(model_handle)
@@ -140,6 +153,36 @@ class EvaluationCore:
         resolved_model_id = (
             getattr(getattr(loaded_model, "spec", None), "model_id", "") if loaded_model is not None else ""
         ) or model_id
+        job_parameters = {"dataset_root": str(dataset_root)}
+        if parameters:
+            job_parameters.update(parameters)
+        job_parameters.setdefault("task_kind", resolved_task_kind)
+        job_parameters["few_shot"] = str(resolved_few_shot)
+        job_parameters["seed"] = str(resolved_seed)
+        job_parameters["scoring_mode"] = resolved_scoring_mode
+        job_parameters["code_exec_policy"] = resolved_code_exec_policy
+
+        compare_mode = str(job_parameters.get("compare_mode", "")).strip()
+        if compare_mode:
+            return self._run_compare_suite(
+                model_id=model_id,
+                resolved_model_id=resolved_model_id,
+                suite_id=suite_id,
+                dataset_id=str(manifest["dataset_id"]),
+                score_name=score_name,
+                resolved_scoring_mode=resolved_scoring_mode,
+                resolved_task_kind=resolved_task_kind,
+                manifest_input_modalities=manifest_input_modalities,
+                dataset_root=dataset_root,
+                selected=selected,
+                loaded_model=loaded_model,
+                job_id=job_id,
+                run_root=run_root,
+                job_parameters=job_parameters,
+                created_at_unix_ms=created_at_unix_ms,
+            )
+
+        started_at = time.perf_counter()
         sample_records_list: list[EvaluationSample] = []
         for index, sample in enumerate(selected, start=1):
             sample_records_list.append(
@@ -162,14 +205,6 @@ class EvaluationCore:
         correct = sum(1 for sample in sample_records if sample.correct)
         incorrect = len(sample_records) - correct
         accuracy = round(correct / max(len(sample_records), 1), 4)
-        job_parameters = {"dataset_root": str(dataset_root)}
-        if parameters:
-            job_parameters.update(parameters)
-        job_parameters.setdefault("task_kind", resolved_task_kind)
-        job_parameters["few_shot"] = str(resolved_few_shot)
-        job_parameters["seed"] = str(resolved_seed)
-        job_parameters["scoring_mode"] = resolved_scoring_mode
-        job_parameters["code_exec_policy"] = resolved_code_exec_policy
         job_parameters.setdefault("sample_size", str(len(sample_records)))
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
@@ -251,7 +286,187 @@ class EvaluationCore:
                 status="completed",
                 updated_at_unix_ms=int(time.time() * 1000),
             )
-        return EvaluationRun(job=job, result=result, samples=sample_records, persisted_paths=persisted_paths)
+        return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
+
+    def _run_compare_suite(
+        self,
+        *,
+        model_id: str,
+        resolved_model_id: str,
+        suite_id: str,
+        dataset_id: str,
+        score_name: str,
+        resolved_scoring_mode: str,
+        resolved_task_kind: str,
+        manifest_input_modalities: tuple[str, ...],
+        dataset_root: Path,
+        selected: list[dict[str, object]],
+        loaded_model,
+        job_id: str,
+        run_root: Path,
+        job_parameters: dict[str, str],
+        created_at_unix_ms: int,
+    ) -> EvaluationRun:
+        _ = score_name
+        target_model_ids = parse_compare_target_model_ids(job_parameters)
+        target_models = resolve_compare_target_models(
+            registry=self._registry,
+            target_model_ids=target_model_ids,
+        )
+        for target_model in target_models.values():
+            self._validate_live_multimodal_execution(
+                loaded_model=target_model,
+                manifest_input_modalities=manifest_input_modalities,
+                samples=selected,
+                task_kind=resolved_task_kind,
+            )
+
+        started_at = time.perf_counter()
+        base_samples = self._sample_records_for_model(
+            job_id=job_id,
+            suite_id=suite_id,
+            dataset_id=dataset_id,
+            task_kind=resolved_task_kind,
+            manifest_input_modalities=manifest_input_modalities,
+            dataset_root=dataset_root,
+            selected=selected,
+            loaded_model=loaded_model,
+            request_label=f"base:{resolved_model_id}",
+        )
+        compare_samples: list[EvaluationCompareSample] = []
+        compare_summaries: list[EvaluationCompareSummary] = []
+        report_path = run_root / "evaluation-compare-report.md" if self._jobs_root is not None else dataset_root / "evaluation-compare-report.md"
+        for target_model_id in target_model_ids:
+            target_loaded_model = target_models[target_model_id]
+            target_samples = self._sample_records_for_model(
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=dataset_id,
+                task_kind=resolved_task_kind,
+                manifest_input_modalities=manifest_input_modalities,
+                dataset_root=dataset_root,
+                selected=selected,
+                loaded_model=target_loaded_model,
+                request_label=f"target:{target_model_id}",
+            )
+            target_compare_samples = build_compare_samples(
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=dataset_id,
+                target_model_id=target_model_id,
+                base_samples=base_samples,
+                target_samples=target_samples,
+            )
+            compare_samples.extend(target_compare_samples)
+            compare_summaries.append(
+                build_compare_summary(
+                    job_id=job_id,
+                    base_model_id=resolved_model_id,
+                    target_model_id=target_model_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    sample_size=len(base_samples),
+                    scoring_mode=resolved_scoring_mode,
+                    base_samples=base_samples,
+                    compare_samples=target_compare_samples,
+                    duration_seconds=round(time.perf_counter() - started_at, 6),
+                    report_path=str(report_path),
+                )
+            )
+
+        compare_job_parameters = dict(job_parameters)
+        compare_job_parameters.setdefault("sample_size", str(len(base_samples)))
+        output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
+        compare_job = build_evaluation_compare_job_record(
+            job_id=job_id,
+            base_model_id=resolved_model_id,
+            target_model_ids=target_model_ids,
+            task_kind=compare_job_parameters.get("task_kind", resolved_task_kind),
+            source_repo=compare_job_parameters.get("source_repo", ""),
+            suite_id=suite_id,
+            dataset_id=dataset_id,
+            sample_size=len(base_samples),
+            scoring_mode=resolved_scoring_mode,
+            parameters=compare_job_parameters,
+            status="completed",
+            output_dir=output_dir,
+            created_at_unix_ms=created_at_unix_ms,
+            updated_at_unix_ms=created_at_unix_ms,
+        )
+        persisted_paths: dict[str, Path] = {}
+        if self._jobs_root is not None:
+            queue_root = self._jobs_root / "queue"
+            queued_at = created_at_unix_ms
+            self._queue_store.enqueue(
+                queue_root=queue_root,
+                record=BenchmarkQueueRecord(
+                    queue_item_id=compare_job.job_id,
+                    job_kind="evaluation",
+                    model_id=model_id,
+                    suite_ids=(suite_id,),
+                    parameters=compare_job_parameters,
+                    status="queued",
+                    created_at_unix_ms=queued_at,
+                    updated_at_unix_ms=queued_at,
+                ),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=compare_job.job_id,
+                status="running",
+                updated_at_unix_ms=queued_at + 1,
+            )
+            persisted_paths = self._store.persist_compare_result(
+                jobs_root=self._jobs_root,
+                job=compare_job,
+                summaries=tuple(compare_summaries),
+                samples=tuple(compare_samples),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=compare_job.job_id,
+                status="completed",
+                updated_at_unix_ms=int(time.time() * 1000),
+            )
+        return EvaluationRun(
+            job=compare_job,
+            results=tuple(compare_summaries),
+            samples=tuple(compare_samples),
+            persisted_paths=persisted_paths,
+        )
+
+    def _sample_records_for_model(
+        self,
+        *,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        task_kind: str,
+        manifest_input_modalities: tuple[str, ...],
+        dataset_root: Path,
+        selected: list[dict[str, object]],
+        loaded_model,
+        request_label: str = "",
+    ) -> tuple[EvaluationSample, ...]:
+        sample_records_list: list[EvaluationSample] = []
+        for index, sample in enumerate(selected, start=1):
+            sample_records_list.append(
+                self._build_sample_record(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    task_kind=task_kind,
+                    manifest_input_modalities=manifest_input_modalities,
+                    dataset_root=dataset_root,
+                    index=index,
+                    sample=sample,
+                    loaded_model=loaded_model,
+                    request_label=request_label,
+                )
+            )
+            if loaded_model is not None:
+                self._release_runtime_memory()
+        return tuple(sample_records_list)
 
     def _result_path(self, run_root: Path) -> Path:
         if self._jobs_root is not None:
@@ -350,6 +565,7 @@ class EvaluationCore:
         index: int,
         sample: dict[str, object],
         loaded_model=None,
+        request_label: str = "",
     ) -> EvaluationSample:
         prompt = str(sample.get("prompt", sample.get("question", "")))
         expected = str(sample.get("expected", sample.get("answer", ""))).strip()
@@ -376,7 +592,12 @@ class EvaluationCore:
                     media_references=media_references,
                 ),
                 expected=expected,
-                request_id=f"eval:{job_id}:{suite_id}:{sample.get('id', index)}",
+                request_id=self._request_id(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    sample_id=str(sample.get("id", index)),
+                    request_label=request_label,
+                ),
             )
             predicted, parse_status = EvaluationCore._parse_prediction(
                 suite_id=suite_id,
@@ -408,6 +629,18 @@ class EvaluationCore:
             input_modalities=input_modalities,
             media_references=media_references,
         )
+
+    @staticmethod
+    def _request_id(
+        *,
+        job_id: str,
+        suite_id: str,
+        sample_id: str,
+        request_label: str = "",
+    ) -> str:
+        if request_label:
+            return f"eval:{job_id}:{suite_id}:{request_label}:{sample_id}"
+        return f"eval:{job_id}:{suite_id}:{sample_id}"
 
     @staticmethod
     def _deterministic_answer(prompt: str) -> str:

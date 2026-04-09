@@ -556,6 +556,7 @@ struct MelixCLIRunnerTests {
                     datasetSourceKind: "hf_dataset",
                     datasetURI: "",
                     adapterName: "hf-demo-adapter",
+                    trainingMode: "qlora",
                     parameters: [
                         "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
                         "hf_dataset_name": "default",
@@ -582,6 +583,7 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["hf_dataset_revision"] == "main")
         #expect(call.ext["hf_train_split"] == "train_sft")
         #expect(call.ext["hf_valid_split"] == "test_sft")
+        #expect(call.ext["training_mode"] == "qlora")
         #expect(call.ext["sample_limit"] == "8")
         #expect(call.ext["text_feature"] == "messages")
         #expect(call.ext["response_only"] == "true")
@@ -626,7 +628,8 @@ struct MelixCLIRunnerTests {
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     adapterPath: "/tmp/melix/adapters/demo-adapter.json",
-                    derivedModelAlias: "melix-qwen35-acceptance"
+                    derivedModelAlias: "melix-qwen35-acceptance",
+                    activationMode: "adapter_backed_runtime"
                 )
             )
         )
@@ -637,6 +640,7 @@ struct MelixCLIRunnerTests {
         #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(call.ext["artifact_path"] == "/tmp/melix/adapters/demo-adapter.json")
         #expect(call.ext["derived_model_alias"] == "melix-qwen35-acceptance")
+        #expect(call.ext["activation_mode"] == "adapter_backed_runtime")
     }
 
     @Test("lora activate returns manifest json when requested without an alias")
@@ -660,6 +664,50 @@ struct MelixCLIRunnerTests {
 
         #expect(call.ext["derived_model_alias"] == nil)
         #expect(output == #"{"job_id":"job-2","status":"completed"}"#)
+    }
+
+    @Test("lora remove-derived forwards the derived model target")
+    func loraRemoveDerivedForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/remove_derived_model/job-3"))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraRemoveDerived(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    derivedModelID: "melix-qwen35-acceptance"
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix/remove_derived_model/job-3")
+        #expect(call.operation == "remove_derived_model")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.ext["derived_model_id"] == "melix-qwen35-acceptance")
+        #expect(call.ext["manifest_path"] == nil)
+    }
+
+    @Test("lora remove-derived forwards the manifest path target")
+    func loraRemoveDerivedForwardsManifestPathPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/remove_derived_model/job-4"))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraRemoveDerived(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    manifestPath: "/tmp/melix/activate_adapter/job-2/activate_adapter.derived_model.json"
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix/remove_derived_model/job-4")
+        #expect(call.operation == "remove_derived_model")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.ext["derived_model_id"] == nil)
+        #expect(call.ext["manifest_path"] == "/tmp/melix/activate_adapter/job-2/activate_adapter.derived_model.json")
     }
 
     @Test("bench run loads the explicit model and returns JSON output")
@@ -1247,6 +1295,117 @@ struct MelixCLIRunnerTests {
         #expect(request.datasetID == "mmlu.dev.v1")
         #expect(output.contains("job_id\tsuite\tdataset\tstatus\tmetrics"))
         #expect(output.contains("eval-1\tmmlu\tmmlu.dev.v1\tcompleted\teval.mmlu.accuracy=0.75ratio"))
+    }
+
+    @Test("eval compare preloads target models and forwards comparison parameters")
+    func evalComparePreloadsTargetsAndReturnsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-compare-1",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.compare.win_rate",
+                metricValue: 0.5
+            ),
+        ])
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora-a", "melix-dev-text-lora-b"],
+                    suites: ["mmlu"],
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 8,
+                    parameters: [
+                        "batch_factor": "2",
+                        "dataset_root": "/tmp/mmlu-split-01",
+                        "few_shot": "4",
+                        "seed": "7",
+                        "scoring_mode": "multiple_choice_accuracy",
+                        "code_exec_policy": "sandboxed",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let requests = await client.evaluationRequests
+        let payload = try #require(parseJSONArray(output))
+        let firstRun = try #require(payload.first as? [String: Any])
+        let firstJob = try #require(firstRun["job"] as? [String: Any])
+
+        #expect(await client.loadedModelIDs == ["melix-dev-text-lora-a", "melix-dev-text-lora-b"])
+        #expect(requests.count == 1)
+        #expect(requests[0].modelID == "melix-dev-text")
+        #expect(requests[0].suiteID == "mmlu")
+        #expect(requests[0].datasetID == "mmlu.dev.v1")
+        #expect(requests[0].sampleSize == 8)
+        #expect(requests[0].parameters["compare_mode"] == "base_vs_targets")
+        #expect(requests[0].parameters["compare_target_model_ids"] == "melix-dev-text-lora-a,melix-dev-text-lora-b")
+        #expect(requests[0].parameters["batch_factor"] == "2")
+        #expect(requests[0].parameters["dataset_root"] == "/tmp/mmlu-split-01")
+        #expect(requests[0].parameters["few_shot"] == "4")
+        #expect(requests[0].parameters["seed"] == "7")
+        #expect(requests[0].parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(requests[0].parameters["code_exec_policy"] == "sandboxed")
+        #expect(firstJob["job_id"] as? String == "eval-compare-1")
+        #expect(firstJob["suite_id"] as? String == "mmlu")
+    }
+
+    @Test("eval compare rejects requests without target models before dispatch")
+    func evalCompareRejectsMissingTargetsBeforeDispatch() async throws {
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .evalCompare(
+                    .init(
+                        modelID: "melix-dev-text",
+                        suites: ["mmlu"],
+                        datasetID: "mmlu.dev.v1",
+                        sampleSize: 8
+                    )
+                )
+            )
+            Issue.record("Expected eval compare to fail when no target models are provided.")
+        } catch let error as MelixCLIError {
+            #expect(error == .missingRequired("At least one --target-model-id is required for melix eval compare."))
+        }
+
+        #expect(await client.loadedModelIDs.isEmpty)
+        #expect(await client.evaluationRequests.isEmpty)
+    }
+
+    @Test("eval compare renders one text row per comparison result")
+    func evalCompareRendersTextOutputRows() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-2",
+                baseSuiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                targets: [
+                    ("melix-dev-text-lora-a", 0.625),
+                    ("melix-dev-text-lora-b", 0.375),
+                ]
+            ),
+        ])
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora-a", "melix-dev-text-lora-b"],
+                    suites: ["mmlu"],
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 8
+                )
+            )
+        )
+
+        #expect(output.contains("job_id\tsuite\tdataset\tstatus\tmetrics"))
+        #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-a\tmmlu.dev.v1\tcompleted\teval.compare.win_rate=0.625ratio"))
+        #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-b\tmmlu.dev.v1\tcompleted\teval.compare.win_rate=0.375ratio"))
     }
 
     @Test("eval list renders history rows and returns JSON when requested")
@@ -2257,4 +2416,45 @@ private func makeEvaluationRunResult(
     result.metrics = [metric]
     result.reportPath = "/tmp/melix/evaluation/runs/\(jobID)/evaluation-result.json"
     return ControlPlaneEvaluationResult(job: job, results: [result])
+}
+
+private func makeEvaluationCompareResult(
+    jobID: String,
+    baseSuiteID: String,
+    datasetID: String,
+    targets: [(modelID: String, metricValue: Double)]
+) -> ControlPlaneEvaluationResult {
+    var job = Melix_Controlplane_V1_EvaluationJobSummary()
+    job.schemaVersion = "melix.evaluation_job.v1"
+    job.jobID = jobID
+    job.modelID = "melix-dev-text"
+    job.taskKind = "text-generation"
+    job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
+    job.suiteID = baseSuiteID
+    job.datasetID = datasetID
+    job.sampleSize = 8
+    job.scoringMode = "multiple_choice_accuracy"
+    job.status = "completed"
+    job.outputDir = "/tmp/melix/evaluation/runs/\(jobID)"
+    job.createdAtUnixMs = 1712400000000
+    job.updatedAtUnixMs = 1712400005000
+
+    let results = targets.map { target in
+        var metric = Melix_Controlplane_V1_BenchmarkMetricValue()
+        metric.name = "eval.compare.win_rate"
+        metric.value = target.metricValue
+        metric.unit = "ratio"
+
+        var result = Melix_Controlplane_V1_EvaluationResultSummary()
+        result.schemaVersion = "melix.evaluation_result.v1"
+        result.jobID = jobID
+        result.suiteID = "\(baseSuiteID):\(target.modelID)"
+        result.datasetID = datasetID
+        result.sampleSize = 8
+        result.metrics = [metric]
+        result.reportPath = "/tmp/melix/evaluation/runs/\(jobID)/\(target.modelID)-result.json"
+        return result
+    }
+
+    return ControlPlaneEvaluationResult(job: job, results: results)
 }

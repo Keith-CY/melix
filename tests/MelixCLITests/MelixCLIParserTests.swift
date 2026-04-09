@@ -344,6 +344,7 @@ struct MelixCLIParserTests {
             "--prompt-feature", "prompt",
             "--completion-feature", "completion",
             "--chat-feature", "messages",
+            "--training-mode", "qlora",
             "--adapter-name", "hf-demo-adapter",
             "--mask-prompt",
             "--derived-model-alias", "melix-dev-text-ultrachat",
@@ -369,6 +370,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["chat_feature"] == "messages")
         #expect(options.parameters["mask_prompt"] == "true")
         #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
+        #expect(options.trainingMode == "qlora")
     }
 
     @Test("parses bench run with an explicit model target suites and tuning parameters")
@@ -831,6 +833,46 @@ struct MelixCLIParserTests {
         #expect(options.parameters["code_exec_policy"] == "sandboxed")
     }
 
+    @Test("parses eval compare with target model ids and comparison controls")
+    func parsesEvalCompareCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-model-id", "melix-dev-text-lora-a",
+            "--target-model-id", "melix-dev-text-lora-b",
+            "--suite", "mmlu",
+            "--dataset-id", "mmlu.dev.v1",
+            "--dataset-root", "/tmp/mmlu-split-01",
+            "--sample-size", "8",
+            "--batch-factor", "2",
+            "--few-shot", "4",
+            "--seed", "7",
+            "--scoring-mode", "multiple_choice_accuracy",
+            "--code-exec-policy", "sandboxed",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.hfRepoID.isEmpty)
+        #expect(options.targetModelIDs == ["melix-dev-text-lora-a", "melix-dev-text-lora-b"])
+        #expect(options.suites == ["mmlu"])
+        #expect(options.datasetID == "mmlu.dev.v1")
+        #expect(options.sampleSize == 8)
+        #expect(options.parameters["dataset_root"] == "/tmp/mmlu-split-01")
+        #expect(options.parameters["batch_factor"] == "2")
+        #expect(options.parameters["few_shot"] == "4")
+        #expect(options.parameters["seed"] == "7")
+        #expect(options.parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(options.parameters["code_exec_policy"] == "sandboxed")
+        #expect(options.json)
+    }
+
     @Test("parses eval list and export commands")
     func parsesEvalListAndExportCommands() throws {
         let listCommand = try MelixCLIParser.parse([
@@ -881,6 +923,7 @@ struct MelixCLIParserTests {
             "activate",
             "--model-id", "melix-dev-text",
             "--adapter-path", "/tmp/melix/adapter/train_lora.adapter.json",
+            "--activation-mode", "adapter_backed_runtime",
             "--alias", "melix-dev-text-lora",
         ])
 
@@ -892,6 +935,28 @@ struct MelixCLIParserTests {
         #expect(options.modelID == "melix-dev-text")
         #expect(options.adapterPath == "/tmp/melix/adapter/train_lora.adapter.json")
         #expect(options.derivedModelAlias == "melix-dev-text-lora")
+        #expect(options.activationMode == "adapter_backed_runtime")
+    }
+
+    @Test("parses lora remove-derived with an explicit derived model id")
+    func parsesLoraRemoveDerivedCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora",
+            "remove-derived",
+            "--model-id", "melix-dev-text",
+            "--derived-model-id", "melix-dev-text-lora",
+            "--json",
+        ])
+
+        guard case .loraRemoveDerived(let options) = command else {
+            Issue.record("Expected loraRemoveDerived command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.derivedModelID == "melix-dev-text-lora")
+        #expect(options.manifestPath.isEmpty)
+        #expect(options.json)
     }
 
     @Test("surfaces usage and missing required parser errors")
@@ -913,8 +978,42 @@ struct MelixCLIParserTests {
             equals: .missingRequired("--adapter-name is required for melix lora train.")
         )
         try assertError(
+            for: [
+                "lora", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "demo",
+                "--training-mode", "mystery",
+            ],
+            equals: .usage("Invalid value for --training-mode. Expected one of: lora, qlora.")
+        )
+        try assertError(
+            for: [
+                "lora", "activate",
+                "--adapter-path", "/tmp/melix/adapter/train_lora.adapter.json",
+            ],
+            equals: .missingRequired("--model-id is required for melix lora activate.")
+        )
+        try assertError(
             for: ["lora", "activate", "--model-id", "melix-dev-text"],
             equals: .missingRequired("--adapter-path is required for melix lora activate.")
+        )
+        try assertError(
+            for: [
+                "lora", "activate",
+                "--model-id", "melix-dev-text",
+                "--adapter-path", "/tmp/melix/adapter/train_lora.adapter.json",
+                "--activation-mode", "mystery_mode",
+            ],
+            equals: .usage("Invalid value for --activation-mode. Expected one of: fused_derived_model, adapter_backed_runtime.")
+        )
+        try assertError(
+            for: ["lora", "remove-derived", "--derived-model-id", "melix-dev-text-lora"],
+            equals: .missingRequired("--model-id is required for melix lora remove-derived.")
+        )
+        try assertError(
+            for: ["lora", "remove-derived", "--model-id", "melix-dev-text"],
+            equals: .missingRequired("Either --derived-model-id or --manifest-path is required for melix lora remove-derived.")
         )
         try assertError(
             for: ["bench", "run"],
@@ -969,6 +1068,19 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["eval", "run", "--model-id", "melix-dev-text", "--repo-id", "repo"],
             equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+        )
+        try assertError(
+            for: ["eval", "compare", "--model-id", "melix-dev-text"],
+            equals: .missingRequired("At least one --target-model-id is required for melix eval compare.")
+        )
+        try assertError(
+            for: [
+                "eval", "compare",
+                "--model-id", "melix-dev-text",
+                "--repo-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "--target-model-id", "melix-dev-text-lora-a",
+            ],
+            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
         )
         try assertError(for: ["eval"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["eval", "oops"], equals: .usage(MelixCLIParser.usageText))

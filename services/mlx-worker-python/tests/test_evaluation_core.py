@@ -40,32 +40,82 @@ class ScriptedEvaluationBackend:
         yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
 
 
+class ModelAwareComparisonBackend:
+    runtime_name = "model-aware-comparison"
+
+    def __init__(self, responses_by_model_id: dict[str, tuple[str, ...]]) -> None:
+        self._responses_by_model_id = {
+            model_id: list(responses)
+            for model_id, responses in responses_by_model_id.items()
+        }
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        _ = model_spec
+        return 1024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = prompt
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        model_id = str(loaded_model.get("model_id", ""))
+        text = self._responses_by_model_id[model_id].pop(0)
+        yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
+
+
 class FakeEvaluationRegistry:
-    def __init__(self, *, runtime, model_id: str = "melix-dev-text", runtime_kind: str = "text") -> None:
-        self._runtime = runtime
-        self._loaded_model = SimpleNamespace(
-            handle=f"{model_id}::test",
-            runtime_kind=runtime_kind,
-            runtime_model={"model_id": model_id},
-            spec=SimpleNamespace(model_id=model_id, ext={"melix.source_repo": "test/source"}),
-            runtime=runtime,
-        )
+    def __init__(
+        self,
+        *,
+        runtime,
+        model_id: str = "melix-dev-text",
+        runtime_kind: str = "text",
+        additional_models: dict[str, tuple[object, str]] | None = None,
+    ) -> None:
+        self._primary_model_id = model_id
+        self._loaded_models_by_handle: dict[str, object] = {}
+        self._handles_by_model_id: dict[str, str] = {}
+        self._register_loaded_model(model_id=model_id, runtime=runtime, runtime_kind=runtime_kind)
+        for additional_model_id, (additional_runtime, additional_runtime_kind) in (additional_models or {}).items():
+            self._register_loaded_model(
+                model_id=additional_model_id,
+                runtime=additional_runtime,
+                runtime_kind=additional_runtime_kind,
+            )
         self.started_requests: list[tuple[str, str]] = []
         self.finished_requests: list[str] = []
         self.vision_probes: list[tuple[str, object]] = []
 
     @property
     def handle(self) -> str:
-        return self._loaded_model.handle
+        return self.handle_for(self._primary_model_id)
+
+    def handle_for(self, model_id: str) -> str:
+        return self._handles_by_model_id[model_id]
+
+    def _register_loaded_model(self, *, model_id: str, runtime, runtime_kind: str) -> None:
+        handle = f"{model_id}::test"
+        loaded_model = SimpleNamespace(
+            handle=handle,
+            runtime_kind=runtime_kind,
+            runtime_model={"model_id": model_id},
+            spec=SimpleNamespace(model_id=model_id, ext={"melix.source_repo": "test/source"}),
+            runtime=runtime,
+        )
+        self._loaded_models_by_handle[handle] = loaded_model
+        self._handles_by_model_id[model_id] = handle
 
     def get_loaded_model(self, handle: str):
-        if handle == self._loaded_model.handle:
-            return self._loaded_model
-        return None
+        return self._loaded_models_by_handle.get(handle)
+
+    def list_loaded_models(self) -> list[str]:
+        return sorted(self._loaded_models_by_handle)
 
     def runtime_for_loaded_model(self, loaded_model):
-        _ = loaded_model
-        return self._runtime
+        return loaded_model.runtime
 
     def start_request(self, request_id: str, runtime_kind: str = "text"):
         self.started_requests.append((request_id, runtime_kind))
@@ -138,6 +188,29 @@ class ScriptedVisionEvaluationRuntime:
 
     def last_probe_snapshot(self):
         return self._probe
+
+
+class ScriptedComparisonRuntime:
+    def __init__(self, responses: tuple[str, ...]) -> None:
+        self._responses = list(responses)
+        self.prompts: list[str] = []
+
+    def render_prompt(self, messages, loaded_model=None, execution_ext=None):
+        _ = loaded_model
+        _ = execution_ext
+        prompt = "\n".join(part.text for message in messages for part in message.parts if part.text)
+        self.prompts.append(prompt)
+        return prompt
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = execution_ext
+        if cancel_event.is_set():
+            return
+        text = self._responses.pop(0)
+        yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
 
 
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
@@ -473,6 +546,132 @@ def test_run_local_suite_supports_imagenette_multimodal_accuracy(tmp_path: Path)
     assert run.samples[0].media_references == (str(image_path),)
 
 
+def test_run_local_suite_compares_base_against_target_models_and_persists_compare_artifacts(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"id": "sample-1", "prompt": "2+2?", "expected": "4"},
+            {"id": "sample-2", "prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    jobs_root = tmp_path / "runs" / "compare"
+    registry = FakeEvaluationRegistry(
+        runtime=ScriptedComparisonRuntime(("Answer: 4", "Answer: 5")),
+        model_id="melix-dev-text",
+        additional_models={
+            "melix-dev-text-lora-a": (ScriptedComparisonRuntime(("Answer: 4", "Answer: 6")), "text"),
+            "melix-dev-text-lora-b": (ScriptedComparisonRuntime(("Answer: 3", "Answer: 5")), "text"),
+        },
+    )
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="melix-dev-text",
+        model_handle=registry.handle_for("melix-dev-text"),
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-a,melix-dev-text-lora-b",
+            "scoring_mode": "multiple_choice_accuracy",
+        },
+    )
+
+    compare_results = {result.target_model_id: result for result in run.results}
+    assert run.job.base_model_id == "melix-dev-text"
+    assert run.job.target_model_ids == ("melix-dev-text-lora-a", "melix-dev-text-lora-b")
+    assert compare_results["melix-dev-text-lora-a"].win_count == 1
+    assert compare_results["melix-dev-text-lora-a"].loss_count == 0
+    assert compare_results["melix-dev-text-lora-a"].tie_count == 1
+    assert compare_results["melix-dev-text-lora-a"].regression_count == 0
+    assert compare_results["melix-dev-text-lora-a"].delta_accuracy == 0.5
+    assert compare_results["melix-dev-text-lora-b"].win_count == 0
+    assert compare_results["melix-dev-text-lora-b"].loss_count == 1
+    assert compare_results["melix-dev-text-lora-b"].tie_count == 1
+    assert compare_results["melix-dev-text-lora-b"].regression_count == 1
+    assert compare_results["melix-dev-text-lora-b"].delta_accuracy == -0.5
+    assert run.persisted_paths["job"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-job.json"
+    assert run.persisted_paths["summary_json"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-summary.json"
+    assert run.persisted_paths["summary_csv"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-summary.csv"
+    assert run.persisted_paths["samples_jsonl"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-samples.jsonl"
+    assert run.persisted_paths["report_markdown"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-report.md"
+    summary_payload = json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))
+    assert summary_payload["job_id"] == "eval-0001"
+    assert len(summary_payload["target_summaries"]) == 2
+    compare_samples = [
+        json.loads(line)
+        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(compare_samples) == 4
+    assert any(
+        row["target_model_id"] == "melix-dev-text-lora-b"
+        and row["sample_id"] == "sample-1"
+        and row["outcome"] == "loss"
+        and row["regression"] is True
+        for row in compare_samples
+    )
+    report_markdown = run.persisted_paths["report_markdown"].read_text(encoding="utf-8")
+    assert "# Melix Evaluation Compare" in report_markdown
+    assert "melix-dev-text-lora-a" in report_markdown
+    assert "melix-dev-text-lora-b" in report_markdown
+
+
+def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
+    )
+    runner = EvaluationCore()
+
+    with pytest.raises(ValueError, match="compare_target_model_ids must include at least one target model ID"):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            suite_id="mmlu",
+            dataset_root=dataset_root,
+            sample_size=1,
+            parameters={"compare_mode": "base_vs_targets"},
+        )
+
+
+def test_run_local_suite_compare_rejects_unknown_target_models(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
+    )
+    registry = FakeEvaluationRegistry(
+        runtime=ScriptedComparisonRuntime(("Answer: 4",)),
+        model_id="melix-dev-text",
+    )
+    runner = EvaluationCore(registry=registry)
+
+    with pytest.raises(ValueError, match="Unknown comparison target model IDs: missing-target"):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            model_handle=registry.handle_for("melix-dev-text"),
+            suite_id="mmlu",
+            dataset_root=dataset_root,
+            sample_size=1,
+            parameters={
+                "compare_mode": "base_vs_targets",
+                "compare_target_model_ids": "missing-target",
+            },
+        )
+
+
 def test_sample_declares_image_media_detects_supported_image_fields() -> None:
     assert EvaluationCore._sample_declares_image_media({"image_uri": "/tmp/cat.png"}) is True
     assert EvaluationCore._sample_declares_image_media({"image_uris": ["", "/tmp/dog.png"]}) is True
@@ -690,6 +889,99 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert len(backend.prompts) == 1
     assert "capital of france?" in backend.prompts[0]
     assert "Return only the final short answer." in backend.prompts[0]
+
+
+def test_worker_maintenance_service_run_evaluation_maps_compare_results(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"id": "sample-1", "prompt": "2+2?", "expected": "4"},
+            {"id": "sample-2", "prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    backend = ModelAwareComparisonBackend(
+        {
+            "melix-dev-text": ("Answer: 4", "Answer: 5"),
+            "melix-dev-text-lora-a": ("Answer: 4", "Answer: 6"),
+            "melix-dev-text-lora-b": ("Answer: 3", "Answer: 5"),
+        }
+    )
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_catalog=WorkerModelCatalog(),
+    )
+    base_loaded_model = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            model_path=str(tmp_path / "models" / "melix-dev-text"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    _ = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text-lora-a",
+            model_path=str(tmp_path / "models" / "melix-dev-text-lora-a"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    _ = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text-lora-b",
+            model_path=str(tmp_path / "models" / "melix-dev-text-lora-b"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=base_loaded_model.handle,
+            suite_id="mmlu",
+            dataset_id="mmlu-dev",
+            dataset_root=str(dataset_root),
+            sample_size=2,
+            task_kind="text-generation",
+            parameters={
+                "compare_mode": "base_vs_targets",
+                "compare_target_model_ids": "melix-dev-text-lora-a,melix-dev-text-lora-b",
+            },
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert response.job.model_id == "melix-dev-text"
+    assert response.job.parameters["compare_mode"] == "base_vs_targets"
+    assert len(response.results) == 2
+    assert {result.suite_id for result in response.results} == {
+        "mmlu:melix-dev-text-lora-a",
+        "mmlu:melix-dev-text-lora-b",
+    }
+    result_metrics = {
+        result.suite_id: {metric.name: metric.value for metric in result.metrics}
+        for result in response.results
+    }
+    assert result_metrics["mmlu:melix-dev-text-lora-a"]["eval.compare.win_count"] == 1.0
+    assert result_metrics["mmlu:melix-dev-text-lora-b"]["eval.compare.loss_count"] == 1.0
 
 
 def _write_dataset_package(

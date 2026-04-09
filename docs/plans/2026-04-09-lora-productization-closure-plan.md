@@ -69,6 +69,48 @@ Metrics report:
   orchestration, registry snapshot hydration, and control-plane catalog correctness. The
   repository-owned LoRA product metrics command is still scheduled in Task 8.
 
+## Phase 3 Status
+
+Status on 2026-04-09: completed and ready for phase-exit squash merge into local `main`.
+
+Verification evidence:
+
+- Targeted Swift CLI suites:
+  `swift test --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`
+  -> `82 tests in 2 suites passed`
+- Targeted Swift CLI coverage suite:
+  `swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`
+  -> `82 tests in 2 suites passed`
+- `MelixCLI.swift` line coverage in `.build/arm64-apple-macosx/debug/codecov/melix.json`:
+  `81.64%` for the whole file. Changed-line `llvm-cov` spot checks confirm the new Phase 3 lines
+  all execute, including:
+  `--training-mode` validation and forwarding (`993-1009`), `--model-id` / `--adapter-path`
+  negative activation validation (`1014-1018`), `--activation-mode` validation (`1020-1033`),
+  remove-derived parser guards (`1036-1045`), `eval compare` target invariants (`1296-1317`),
+  compare preload guard and parameter injection (`1689-1699`), runner forwarding for
+  `training_mode`, `activation_mode`, `derived_model_id`, and `manifest_path` (`1992-2038`), and
+  compare text and JSON render paths (`2144-2149`).
+- Targeted compare worker suites:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py -q`
+  -> `32 passed in 0.34s`
+- Targeted compare worker coverage suite:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py -q`
+  -> `32 passed in 0.37s`
+- Changed-scope Python coverage:
+  `evaluation_core.py` `95.79%`, `evaluation_compare.py` `95.45%`,
+  `evaluation_reports.py` `100%`, `evaluation_schemas.py` `100%`, and
+  `evaluation_store.py` `100%`.
+- `grpc_server.py` remains `45%` at the whole-file level because the targeted suite only exercises
+  the new compare path, but the fresh JSON coverage report at
+  `/tmp/melix-phase3-python-coverage.json` confirms the newly added compare ingress lines
+  `299-333` execute.
+
+Metrics report:
+
+- `N/A` for a dedicated Phase 3 compare-specific metrics command. This phase closes CLI surface
+  completion, compare orchestration, compare exports, and deterministic reporting. The
+  repository-owned LoRA product metrics command remains scheduled in Task 8.
+
 ## File Map
 
 ### Worker and productization
@@ -221,10 +263,10 @@ Verification commands:
 - Modify: `Tests/MelixCLITests/MelixCLIParserTests.swift`
 - Modify: `Tests/MelixCLITests/MelixCLIRunnerTests.swift`
 
-- [ ] Write failing parser and runner tests for `--training-mode qlora`, `--hf-valid-split`, `--activation-mode adapter_backed_runtime`, `lora remove-derived`, and `eval compare`.
-- [ ] Run the targeted CLI test files and verify the failures are feature gaps rather than parser mistakes.
-- [ ] Implement parser, options models, client dispatch, and human-readable output for the new LoRA lifecycle and compare commands.
-- [ ] Re-run the targeted CLI tests and keep JSON and text output stable.
+- [x] Write failing parser and runner tests for `--training-mode qlora`, `--hf-valid-split`, `--activation-mode adapter_backed_runtime`, `lora remove-derived`, and `eval compare`.
+- [x] Run the targeted CLI test files and verify the failures are feature gaps rather than parser mistakes.
+- [x] Implement parser, options models, client dispatch, and human-readable output for the new LoRA lifecycle and compare commands.
+- [x] Re-run the targeted CLI tests and keep JSON and text output stable.
 
 Verification commands:
 
@@ -243,10 +285,10 @@ Verification commands:
 - Modify: `services/mlx-worker-python/tests/test_evaluation_schemas.py`
 - Modify: `services/mlx-worker-python/tests/test_evaluation_store.py`
 
-- [ ] Write failing positive and negative pytest coverage for compare-job validation, paired sample persistence, regression counting, and export generation.
-- [ ] Run the targeted evaluation pytest files and verify the failures reflect missing compare support.
-- [ ] Implement serial compare execution over one fixed suite bundle and one frozen control set, then persist deltas, paired rows, win/loss/tie counts, regression counts, and report bundles.
-- [ ] Re-run the targeted evaluation tests and keep export formats deterministic.
+- [x] Write failing positive and negative pytest coverage for compare-job validation, paired sample persistence, regression counting, and export generation.
+- [x] Run the targeted evaluation pytest files and verify the failures reflect missing compare support.
+- [x] Implement serial compare execution over one fixed suite bundle and one frozen control set, then persist deltas, paired rows, win/loss/tie counts, regression counts, and report bundles.
+- [x] Re-run the targeted evaluation tests and keep export formats deterministic.
 
 Verification commands:
 
