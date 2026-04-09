@@ -11,6 +11,7 @@ let package = Package(
         .executable(name: "melix-menubar", targets: ["AppMain"]),
     ],
     dependencies: [
+        .package(path: "../.."),
         .package(path: "../../services/control-plane-swift"),
         .package(path: "../../packages/protocol/swift"),
     ],
@@ -18,6 +19,7 @@ let package = Package(
         .executableTarget(
             name: "AppMain",
             dependencies: [
+                .product(name: "MelixCLICore", package: "melix"),
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
             ],
@@ -30,6 +32,7 @@ let package = Package(
             name: "MenuBarTests",
             dependencies: [
                 "AppMain",
+                .product(name: "MelixCLICore", package: "melix"),
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
             ],

@@ -33,6 +33,8 @@ make py-test
 MELIX_RUNTIME_DIR=.runtime/phase6-ops bash scripts/dev_up.sh
 ```
 
+This starts the default real backend path. Deterministic execution remains available only as an explicit fixture when you need repeatable isolation.
+
 3. Confirm that the control plane exposes the expected local models.
 
 ```bash
@@ -102,11 +104,12 @@ The matching `metrics` payload includes:
 MELIX_RUNTIME_DIR=.runtime/phase6-ops bash scripts/dev_down.sh
 ```
 
-2. Reboot the deterministic path and rerun the metrics command.
+2. If live-model availability is the suspected blocker, reboot with explicit deterministic overrides and rerun the metrics command.
 
 ```bash
 MELIX_RUNTIME_DIR=.runtime/phase6-ops \
 MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=deterministic \
+MELIX_BACKEND_MODE=deterministic \
 bash scripts/dev_up.sh
 make phase6-metrics
 ```

@@ -107,3 +107,44 @@ def test_main_forwards_service_instance_name_to_layout_builder(
     assert payload["packaging_target_id"] == "launch_agents_checkout"
     assert payload["service_instance_name"] == "team-a"
     assert payload["ready_probe_url"] == "http://127.0.0.1:18443/v1/models"
+
+
+def test_main_defaults_install_local_product_to_real_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_install_local_product_module()
+    seen: dict[str, object] = {}
+    fake_layout = SimpleNamespace(
+        launch_agents_dir=tmp_path / "LaunchAgents",
+        install_manifest_path=tmp_path / "install-manifest.json",
+        environment_script_path=tmp_path / "melix-env.sh",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "build_local_product_layout",
+        lambda **kwargs: fake_layout,
+    )
+
+    def fake_write_local_product_artifacts(
+        layout,
+        *,
+        swift_backend_mode: str,
+        python_backend_mode: str,
+        dev_text_model_path: str,
+    ):
+        seen["layout"] = layout
+        seen["swift_backend_mode"] = swift_backend_mode
+        seen["python_backend_mode"] = python_backend_mode
+        seen["dev_text_model_path"] = dev_text_model_path
+        return {"bootstrap_commands": [], "ready_probe_url": "http://127.0.0.1:11434/v1/models"}
+
+    monkeypatch.setattr(module, "write_local_product_artifacts", fake_write_local_product_artifacts)
+    monkeypatch.setattr(module.sys, "argv", ["install_local_product.py"])
+
+    assert module.main() == 0
+    assert seen["layout"] is fake_layout
+    assert seen["swift_backend_mode"] == "swift"
+    assert seen["python_backend_mode"] == "auto"
+    assert seen["dev_text_model_path"] == ""

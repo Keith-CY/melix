@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,14 @@ class DownloadPipeline:
         output_dir: Path,
     ) -> DownloadPipelineResult:
         ext = dict(request.ext)
+        if self._is_managed_hub_repo_import(ext):
+            return self._run_managed_hub_repo_import(
+                request=request,
+                job_id=job_id,
+                output_dir=output_dir,
+                ext=ext,
+            )
+
         output_path = output_dir / "download.artifact"
         partial_path = output_dir / "download.artifact.partial"
         state_path = output_dir / "download.state.json"
@@ -231,6 +240,56 @@ class DownloadPipeline:
                     ) from exc
                 retry_count += 1
 
+    def _run_managed_hub_repo_import(
+        self,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        output_dir: Path,
+        ext: dict[str, str],
+    ) -> DownloadPipelineResult:
+        repo_id = ext.get("melix.hf_repo_id", "").strip() or request.source_model.strip()
+        if "/" not in repo_id:
+            raise ModelOperationError(
+                code="invalid_argument",
+                message="managed hub import requires melix.hf_repo_id in org/repo format.",
+            )
+        revision = ext.get("melix.hf_revision", "").strip() or "main"
+        managed_root = ext.get("melix.managed_root", "").strip() or os.environ.get("MELIX_MANAGED_MODEL_ROOT", "").strip()
+        if not managed_root:
+            raise ModelOperationError(
+                code="invalid_argument",
+                message="managed hub import requires MELIX_MANAGED_MODEL_ROOT.",
+            )
+
+        source_dir = self._resolve_managed_hub_source_path(output_dir=output_dir, ext=ext, repo_id=repo_id, revision=revision)
+        materialized_dir = self._materialize_managed_hub_repo(
+            source_dir=source_dir,
+            managed_root=Path(managed_root),
+            repo_id=repo_id,
+            revision=revision,
+            ext=ext,
+        )
+        total_bytes = self._directory_size(materialized_dir)
+        state_path = output_dir / "download.state.json"
+        manifest_json = self._build_managed_import_manifest_json(
+            request=request,
+            job_id=job_id,
+            output_dir=output_dir,
+            output_path=materialized_dir,
+            state_path=state_path,
+            repo_id=repo_id,
+            revision=revision,
+            total_bytes=total_bytes,
+        )
+        return DownloadPipelineResult(
+            output_path=materialized_dir,
+            snapshots=[
+                DownloadSnapshot(stage="prepare", pct=0.0, manifest_json=manifest_json),
+                DownloadSnapshot(stage="materialize", pct=1.0, manifest_json=manifest_json),
+            ],
+        )
+
     @staticmethod
     def _resume_from_bytes(*, partial_path: Path, total_bytes: int) -> int:
         if not partial_path.exists():
@@ -275,6 +334,174 @@ class DownloadPipeline:
         ).encode("utf-8")
         synthetic_source.write_bytes(payload)
         return synthetic_source
+
+    @staticmethod
+    def _is_managed_hub_repo_import(ext: dict[str, str]) -> bool:
+        return (
+            ext.get("melix.managed_import", "").strip().lower() in {"1", "true", "yes", "on"}
+            and ext.get("melix.source_kind", "").strip() == "hub_repo"
+        )
+
+    def _resolve_managed_hub_source_path(
+        self,
+        *,
+        output_dir: Path,
+        ext: dict[str, str],
+        repo_id: str,
+        revision: str,
+    ) -> Path:
+        source_path_raw = ext.get("source_path", "").strip()
+        if source_path_raw:
+            source_path = Path(source_path_raw).expanduser().resolve()
+            if source_path.is_dir():
+                return source_path
+            raise ModelOperationError(
+                code="invalid_argument",
+                message="managed hub import requires ext.source_path to be a directory snapshot.",
+            )
+
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise ModelOperationError(
+                code="unavailable",
+                message="huggingface_hub is required for managed hub imports.",
+            ) from exc
+
+        cache_dir = output_dir / "hf-cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        downloaded = snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            local_dir_use_symlinks=False,
+            cache_dir=os.fspath(cache_dir),
+        )
+        return Path(downloaded).resolve()
+
+    def _materialize_managed_hub_repo(
+        self,
+        *,
+        source_dir: Path,
+        managed_root: Path,
+        repo_id: str,
+        revision: str,
+        ext: dict[str, str],
+    ) -> Path:
+        organization_id, model_name = repo_id.split("/", maxsplit=1)
+        materialized_dir = managed_root / "huggingface" / organization_id / model_name / revision
+        materialized_dir.parent.mkdir(parents=True, exist_ok=True)
+        if materialized_dir.exists():
+            shutil.rmtree(materialized_dir)
+        shutil.copytree(source_dir, materialized_dir)
+        manifest_path = materialized_dir / "manifest.json"
+        manifest_payload = self._managed_registry_manifest_payload(
+            repo_id=repo_id,
+            revision=revision,
+            model_path=materialized_dir,
+            ext=ext,
+        )
+        manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        return materialized_dir
+
+    @staticmethod
+    def _managed_registry_manifest_payload(
+        *,
+        repo_id: str,
+        revision: str,
+        model_path: Path,
+        ext: dict[str, str],
+    ) -> dict[str, Any]:
+        organization_id, model_name = repo_id.split("/", maxsplit=1)
+        model_kind = ext.get("melix.model_kind", "").strip() or "text"
+        max_context = DownloadPipeline._int(ext.get("melix.max_context"), default=0)
+        parser_mode = ext.get("melix.parser_mode", "").strip() or "text"
+        reasoning_mode = ext.get("melix.reasoning_mode", "").strip() or "off"
+        tokenizer_hash = ext.get("melix.tokenizer_hash", "").strip() or f"hf.{repo_id.replace('/', '.')}"
+        quant_profile_id = ext.get("melix.quant_profile_id", "").strip()
+        capability_tasks = ext.get("melix.capability.supported_tasks", "").strip() or (
+            "vlm,generate" if model_kind == "vlm" else "generate"
+        )
+        capability_modalities = ext.get("melix.capability.supported_modalities", "").strip() or (
+            "text,image" if model_kind == "vlm" else "text"
+        )
+        return {
+            "schema_version": "melix.model_registry_manifest.v1",
+            "model_id": repo_id,
+            "model_kind": model_kind,
+            "revision": revision,
+            "tokenizer_hash": tokenizer_hash,
+            "quant_profile_id": quant_profile_id,
+            "parser_mode": parser_mode,
+            "reasoning_mode": reasoning_mode,
+            "max_context": max_context,
+            "provider_id": "huggingface",
+            "organization_id": organization_id,
+            "model_name": model_name,
+            "variant_id": revision,
+            "ext": {
+                "melix.source_kind": "hub_repo",
+                "melix.hf_repo_id": repo_id,
+                "melix.hf_revision": revision,
+                "melix.managed_import": "true",
+                "melix.model_path": str(model_path),
+                "melix.capability.supported_tasks": capability_tasks,
+                "melix.capability.supported_modalities": capability_modalities,
+            },
+        }
+
+    def _build_managed_import_manifest_json(
+        self,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        output_dir: Path,
+        output_path: Path,
+        state_path: Path,
+        repo_id: str,
+        revision: str,
+        total_bytes: int,
+    ) -> str:
+        payload = {
+            "schema_version": "melix.download_job.v1",
+            "job_id": job_id,
+            "operation": "download",
+            "source_model": request.source_model,
+            "output_dir": str(output_dir),
+            "status": "completed",
+            "terminal_state": "completed",
+            "stage": "materialize",
+            "pct": 1.0,
+            "source_path": request.ext.get("source_path", ""),
+            "output_path": str(output_path),
+            "partial_path": "",
+            "state_path": str(state_path),
+            "selected_mirror": "https://huggingface.co",
+            "downloaded_bytes": total_bytes,
+            "total_bytes": total_bytes,
+            "resume_used": False,
+            "resume_from_bytes": 0,
+            "retry_count": 0,
+            "stall_detection_count": 0,
+            "stall_reason": "",
+            "ext": {
+                **dict(request.ext),
+                "melix.hf_repo_id": repo_id,
+                "melix.hf_revision": revision,
+                "melix.source_kind": "hub_repo",
+                "melix.managed_import": "true",
+            },
+            "metrics": {
+                "download.resume_success_rate": 0.0,
+                "download.retry_count": 0,
+                "download.stall_detection_count": 0,
+            },
+        }
+        self._write_json_atomically(state_path, payload)
+        return json.dumps(payload, sort_keys=True)
+
+    @staticmethod
+    def _directory_size(path: Path) -> int:
+        return sum(file_path.stat().st_size for file_path in path.rglob("*") if file_path.is_file())
 
     @staticmethod
     def _int(raw_value: str | None, *, default: int) -> int:

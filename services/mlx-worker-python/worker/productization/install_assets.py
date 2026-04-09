@@ -150,8 +150,8 @@ def build_local_product_layout(
 def build_launch_agent_specs(
     layout: LocalProductLayout,
     *,
-    swift_backend_mode: str = "deterministic",
-    python_backend_mode: str = "deterministic",
+    swift_backend_mode: str = "swift",
+    python_backend_mode: str = "auto",
     dev_text_model_path: str = "",
 ) -> list[LaunchAgentSpec]:
     common_swift_environment = {
@@ -275,8 +275,8 @@ def render_launch_agent_plist(spec: LaunchAgentSpec) -> str:
 def write_local_product_artifacts(
     layout: LocalProductLayout,
     *,
-    swift_backend_mode: str = "deterministic",
-    python_backend_mode: str = "deterministic",
+    swift_backend_mode: str = "swift",
+    python_backend_mode: str = "auto",
     dev_text_model_path: str = "",
 ) -> dict[str, Any]:
     specs = build_launch_agent_specs(

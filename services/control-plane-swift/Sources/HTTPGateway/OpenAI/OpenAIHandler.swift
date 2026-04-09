@@ -423,7 +423,8 @@ public struct OpenAIHandler: Sendable {
         await RegistrySnapshotSync.syncModelsIfAvailable(
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            rescan: true
         )
         let models = await modelCatalog.listModels().map { model in
             OpenAIModelDescriptor(
@@ -1425,6 +1426,12 @@ public struct OpenAIHandler: Sendable {
         guard normalized.stream else {
             throw HTTPRequestHandlingError.streamRequired
         }
+        await RegistrySnapshotSync.syncModelsIfAvailable(
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            rescan: true
+        )
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(

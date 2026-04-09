@@ -534,6 +534,73 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
+def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-models"
+    source_dir = tmp_path / "hub-source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                output_dir=str(tmp_path / "download-managed"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "melix.managed_root": str(managed_root),
+                    "source_path": str(source_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest = json.loads((tmp_path / "download-managed" / "download.state.json").read_text(encoding="utf-8"))
+    materialized_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main"
+    registry_manifest = json.loads((materialized_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert events[-1].completed.output_path == str(materialized_dir)
+    assert manifest["ext"]["melix.source_kind"] == "hub_repo"
+    assert manifest["ext"]["melix.hf_repo_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert manifest["ext"]["melix.hf_revision"] == "main"
+    assert manifest["ext"]["melix.managed_import"] == "true"
+    assert registry_manifest["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert registry_manifest["provider_id"] == "huggingface"
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-after-download"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    discovered_ids = [model["model_id"] for model in snapshot_payload["model_registry"]["models"]]
+
+    assert "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" in discovered_ids
+
+
 def test_download_job_resumes_from_partial_state_and_records_resume_metadata(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     source_path, source_bytes = _write_download_source_file(tmp_path, size=3072)
@@ -1232,6 +1299,61 @@ def test_registry_snapshot_respects_explicit_root_override_and_rescan_flag(tmp_p
     assert payload["model_registry"]["models"][0]["ext"]["melix.registry_root_order"] == "1"
 
 
+def test_registry_snapshot_does_not_embed_prior_registry_snapshot_manifests(tmp_path: Path) -> None:
+    registry_root = tmp_path / "registry-root"
+    _write_registry_manifest(
+        registry_root / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
+        ext={"source_root": "registry-root"},
+    )
+
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MODEL_ROOTS": str(registry_root),
+            }
+        )
+    )
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+
+    first_snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-a"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    first_snapshot_manifest = next(
+        event.manifest for event in first_snapshot_events if event.HasField("manifest")
+    )
+    first_payload = json.loads(first_snapshot_manifest.manifest_json)
+    assert first_payload["model_registry"]["models"][0]["model_id"] == "mlx-community/Qwen2.5-7B-Instruct/4bit"
+
+    second_snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-b"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    second_snapshot_manifest = next(
+        event.manifest for event in second_snapshot_events if event.HasField("manifest")
+    )
+    second_payload = json.loads(second_snapshot_manifest.manifest_json)
+
+    assert second_payload["model_registry"]["models"][0]["model_id"] == "mlx-community/Qwen2.5-7B-Instruct/4bit"
+    prior_snapshot_job = next(job for job in second_payload["jobs"] if job["operation"] == "registry_snapshot")
+    assert prior_snapshot_job["manifest"] == {}
+
+
 def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -> None:
     registry = ModelOpsJobRegistry()
 
@@ -1470,6 +1592,160 @@ def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_lin
     assert derived_model["model_id"] == "melix-dev-text-lora-adapter"
     assert derived_model["adapter_manifest_path"] == adapter_manifest_path
     assert derived_model["source_adapter_job_id"] == train_job.job_id
+
+
+def test_job_registry_restores_completed_lora_jobs_from_jobs_root(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    train_dir = jobs_root / "train_lora" / "model-ops-0012"
+    train_dir.mkdir(parents=True)
+    adapter_manifest_path = train_dir / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": "model-ops-0012",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+                "adapter_name": "adapter-restored",
+                "dataset_uri": "hf://melix/demo-hf?config=default&split=train",
+                "dataset_source_kind": "hf_dataset",
+                "dataset_id": "melix/demo-hf:default:train@main",
+                "dataset_format": "chat_messages",
+                "adapter_set_hash": "adapter-hash-b",
+                "target_repo": "melix/adapters/adapter-restored",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    derived_dir = jobs_root / "activate_adapter" / "model-ops-0016" / "melix-dev-text-lora-adapter"
+    derived_dir.mkdir(parents=True)
+    activation_manifest_path = derived_dir / "manifest.json"
+    activation_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.derived_text_model.v1",
+                "job_id": "model-ops-0016",
+                "operation": "activate_adapter",
+                "source_model": "melix-dev-text",
+                "adapter_manifest_path": str(adapter_manifest_path),
+                "adapter_name": "adapter-restored",
+                "adapter_set_hash": "adapter-hash-b",
+                "source_adapter_job_id": "model-ops-0012",
+                "derived_model_id": "melix-dev-text-lora-adapter",
+                "derived_model_path": str(derived_dir),
+                "derived_model_alias": "restored-alias",
+                "activation_mode": "fused_derived_model",
+                "activation_duration_ms": 456.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+    snapshot = registry.snapshot()
+
+    assert snapshot["adapters"][0]["adapter_name"] == "adapter-restored"
+    assert snapshot["adapters"][0]["derived_model_id"] == "melix-dev-text-lora-adapter"
+    assert snapshot["derived_models"][0]["model_id"] == "melix-dev-text-lora-adapter"
+    assert snapshot["derived_models"][0]["derived_model_alias"] == "restored-alias"
+
+    next_job = registry.start("registry_snapshot", "melix-dev-model-ops", str(jobs_root / "registry_snapshot"))
+    assert next_job.job_id == "model-ops-0017"
+
+
+def test_job_registry_snapshot_rewrites_non_finite_metrics_to_null() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": train_job.job_id,
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+                "adapter_name": "adapter-nan",
+                "loss_final": float("nan"),
+                "loss_best": float("inf"),
+            }
+        ),
+    )
+    registry.complete(train_job.job_id, "/runtime/train/train_lora.adapter.json")
+
+    snapshot = registry.snapshot()
+
+    assert snapshot["jobs"][0]["manifest"]["loss_final"] is None
+    assert snapshot["jobs"][0]["manifest"]["loss_best"] is None
+    json.dumps(snapshot, allow_nan=False)
+
+
+def test_registry_snapshot_restores_lora_history_after_worker_restart(tmp_path: Path) -> None:
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    runner = DeterministicLoRARunner()
+    service = build_service(tmp_path, runner=runner)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "Restart Alias",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    restarted_service = build_service(tmp_path, runner=DeterministicLoRARunner())
+    snapshot_events = list(
+        restarted_service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert snapshot_events[0].started.job_id == "model-ops-0003"
+    assert snapshot_payload["adapters"][0]["adapter_name"] == "melix-dev-adapter"
+    assert snapshot_payload["adapters"][0]["activation_status"] == "activated"
+    assert snapshot_payload["adapters"][0]["derived_model_id"] == activation_payload["derived_model_id"]
+    assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
+    assert snapshot_payload["derived_models"][0]["derived_model_alias"] == "Restart Alias"
 
 
 def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 
 @Suite("Operator Session Persistence Smoke", .serialized)
 struct OperatorSessionPersistenceSmokeTests {
@@ -29,8 +30,8 @@ struct OperatorSessionPersistenceSmokeTests {
         let persistedPayload = try #require(
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedPayload["selected_surface"] as? String == DesktopSurface.tools.rawValue)
-        #expect(persistedPayload["selected_tool_section"] as? String == DesktopToolSection.diagnostics.rawValue)
+        #expect(persistedPayload["selected_surface"] as? String == "tools")
+        #expect(persistedPayload["selected_tool_section"] as? String == "diagnostics")
 
         var persistMetricValues: [String: Double] = [:]
         for _ in 0..<100 {
@@ -54,7 +55,7 @@ struct OperatorSessionPersistenceSmokeTests {
             "operator.session_restore_ms": restoredMetricValues["operator.session_restore_ms"] ?? -1,
             "operator.session_persist_write_ms": persistMetricValues["operator.session_persist_write_ms"] ?? -1,
             "operator.session_tool_section_persisted": persistedPayload["selected_tool_section"] as? String
-                == DesktopToolSection.diagnostics.rawValue ? 1 : 0,
+                == "diagnostics" ? 1 : 0,
             "operator.session_tool_section_restored": restoredViewModel.selectedToolSection == .diagnostics ? 1 : 0,
             "operator.session_root_permissions_ok": try posixPermissions(at: melixHome.rootURL) == 0o700 ? 1 : 0,
             "operator.session_state_directory_permissions_ok": try posixPermissions(at: melixHome.stateDirectoryURL) == 0o700 ? 1 : 0,
@@ -74,6 +75,51 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(payload["operator.session_state_directory_permissions_ok"] == 1)
         #expect(payload["operator.session_file_permissions_ok"] == 1)
         #expect(payload["operator.offline_asset_external_reference_count"] == 0)
+    }
+
+    @Test("app operator session store round-trips through shared core store")
+    func appOperatorSessionStoreRoundTripsThroughSharedCoreStore() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-shared-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let appStore = OperatorSessionStore(melixHome: melixHome)
+        let sharedStore = MelixOperatorSessionStore(melixHome: melixHome)
+
+        try appStore.save(
+            OperatorSessionState(
+                selectedSurface: .server,
+                selectedToolSection: .diagnostics,
+                selectedServerSessionID: "server-session-shared",
+                serverSessions: [
+                    DesktopServerSessionState(
+                        id: "server-session-shared",
+                        title: "Shared Server",
+                        modelID: "melix-dev-vlm",
+                        lifecycle: .paused,
+                        autoSleepEnabled: true,
+                        lightSleepAfterSeconds: 60,
+                        deepSleepAfterSeconds: 600
+                    )
+                ],
+                dismissedBannerIDs: ["banner-1"],
+                downloadQueue: [],
+                registryRoots: ["/tmp/models-a", "/tmp/models-b"]
+            )
+        )
+
+        let sharedState = try #require(try sharedStore.load())
+
+        #expect(sharedState.selectedSurfaceID == "server")
+        #expect(sharedState.selectedToolSectionID == "diagnostics")
+        #expect(sharedState.selectedServerSessionID == "server-session-shared")
+        #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
+        #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)
+        #expect(sharedState.serverSessions.first?.lightSleepAfterSeconds == 60)
+        #expect(sharedState.serverSessions.first?.deepSleepAfterSeconds == 600)
+        #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
     }
 }
 

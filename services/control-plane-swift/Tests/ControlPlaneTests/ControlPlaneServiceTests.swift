@@ -386,6 +386,66 @@ struct ControlPlaneServiceTests {
         #expect(response.server.snapshot.runtimeSessions.first?.powerState == .active)
     }
 
+    @Test("execute syncs imported registry models before server snapshots")
+    func executeSyncsImportedRegistryModelsBeforeServerSnapshots() async throws {
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let importedModelPath = "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": importedModelID,
+                    "model_path": importedModelPath,
+                    "model_kind": "text",
+                    "revision": "main",
+                    "tokenizer_hash": "hf.mlx-community.Qwen3.5-0.8B-OptiQ-4bit",
+                    "quant_profile_id": "",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 8192,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/managed-root",
+                        "melix.registry_relative_path": "huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                        "melix.model_path": importedModelPath,
+                        "melix.hf_repo_id": importedModelID,
+                        "melix.capability.class": "text",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                    ],
+                ],
+            ]
+        )
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let imported = try #require(
+            response.server.snapshot.models.first(where: { $0.modelID == importedModelID })
+        )
+
+        #expect(response.ok)
+        #expect(lastRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastRequest.ext["melix.registry_rescan"] == "true")
+        #expect(imported.kind == "text")
+        #expect(imported.settings.ext["melix.model_path"] == importedModelPath)
+    }
+
     @Test("execute projects typed gateway config state through server snapshots")
     func executeProjectsTypedGatewayConfigStateThroughServerSnapshots() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -1461,12 +1521,77 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok)
         #expect(lastRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastRequest.ext["melix.registry_rescan"] == "true")
         #expect(lastRequest.generateManifest)
         #expect(discovered.state == .modelDiscovered)
         #expect(discovered.maxContext == 16384)
         #expect(discovered.settings.ext["melix.registry_root_id"] == "root-1")
         #expect(discovered.settings.ext["melix.registry_relative_path"] == "mlx-community/Qwen2.5-7B-Instruct/4bit")
         #expect(discovered.settings.ext["melix.model_path"] == "/tmp/registry-root/mlx-community/Qwen2.5-7B-Instruct/4bit")
+    }
+
+    @Test("execute handles model.list by syncing activated derived models from registry snapshots")
+    func executeHandlesModelListBySyncingActivatedDerivedModelsFromRegistrySnapshots() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [],
+            derivedModels: [
+                [
+                    "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora-acbb3307",
+                    "model_path": "/tmp/melix-derived/model",
+                    "source_model": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "derived_model_alias": "melix-qwen35-acceptance",
+                    "adapter_set_hash": "acbb330795d89f65",
+                    "status": "activated",
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "registry-snapshot-derived-1"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/registry_snapshot.json"
+                return event
+            }(),
+        ])
+
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            )
+        )
+
+        let response = try await service.execute(makeListModelsRequest())
+        let derived = try #require(
+            response.model.models.first(where: { $0.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora-acbb3307" })
+        )
+
+        #expect(response.ok)
+        #expect(derived.kind == "text")
+        #expect(derived.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(derived.capabilityClass == .modelCapabilityText)
+        #expect(derived.supportedTasks == ["generate"])
+        #expect(derived.settings.ext["melix.model_path"] == "/tmp/melix-derived/model")
+        #expect(derived.settings.ext["melix.derived_from_adapter"] == "true")
+        #expect(derived.settings.ext["melix.derived_from_model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(derived.settings.ext["melix.derived_model_alias"] == "melix-qwen35-acceptance")
+        #expect(derived.settings.ext["melix.adapter_set_hash"] == "acbb330795d89f65")
     }
 
     @Test("registry snapshot text families preserve compatibility routing and parser metadata")
@@ -1745,7 +1870,7 @@ struct ControlPlaneServiceTests {
 
         #expect(listResponse.ok)
         #expect(listRequest.ext["melix.registry_roots_json"] == overrideJSON)
-        #expect((listRequest.ext["melix.registry_rescan"] ?? "").isEmpty)
+        #expect(listRequest.ext["melix.registry_rescan"] == "true")
     }
 
     @Test("model.list preserves an explicit empty registry-root override instead of falling back to environment roots")
@@ -2688,6 +2813,80 @@ struct ControlPlaneServiceTests {
         #expect(response.model.info.detectedIdentitySource == "explicit_override")
     }
 
+    @Test("execute syncs imported registry models before model.get_info")
+    func executeSyncsImportedRegistryModelsBeforeModelGetInfo() async throws {
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let importedModelPath = "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+        let registryManifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": importedModelID,
+                    "model_path": importedModelPath,
+                    "model_kind": "text",
+                    "revision": "main",
+                    "tokenizer_hash": "hf.mlx-community.Qwen3.5-0.8B-OptiQ-4bit",
+                    "quant_profile_id": "",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 8192,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/managed-root",
+                        "melix.registry_relative_path": "huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                        "melix.model_path": importedModelPath,
+                        "melix.hf_repo_id": importedModelID,
+                        "melix.capability.class": "text",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                    ],
+                ],
+            ]
+        )
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = registryManifestJSON
+                return event
+            }(),
+        ])
+        await modelOpsClient.setInfoResponse({
+            var response = Melix_Worker_V1_GetModelInfoResponse()
+            response.ok = true
+            response.modelKind = "text"
+            response.maxContext = 8192
+            response.supportedModalities = ["text"]
+            response.supportedTasks = ["generate", "chat"]
+            response.backendID = "mlx_lm"
+            response.modelPath = importedModelPath
+            response.modelRevision = "main"
+            return response
+        }())
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedChatWorkerClient(events: []),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeGetModelInfoRequest(modelID: importedModelID))
+        let lastConvertRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let lastInfoRequest = try #require(await modelOpsClient.lastInfoRequest)
+
+        #expect(response.ok)
+        #expect(lastConvertRequest.sourceModel == "melix-dev-text")
+        #expect(lastConvertRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastConvertRequest.ext["melix.registry_rescan"] == "true")
+        #expect(lastInfoRequest.sourceModel == importedModelID)
+        #expect(response.model.info.ok)
+        #expect(response.model.info.modelKind == "text")
+        #expect(response.model.info.modelPath == importedModelPath)
+    }
+
     @Test("execute handles model.run_operation through the model-operations worker")
     func executeHandlesModelRunOperationThroughTheModelOperationsWorker() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -2800,6 +2999,58 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.artifact.manifestBytes == 128)
         #expect(response.model.operation.artifact.smokeTestRequested)
         #expect(response.model.operation.artifact.smokeTestPassed)
+    }
+
+    @Test("execute allows managed hub import downloads for unknown model ids")
+    func executeAllowsManagedHubImportDownloadsForUnknownModelIDs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-hub-import-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                operation: "download",
+                outputDir: "/tmp/melix-downloads/qwen35",
+                ext: [
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                ]
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.sourceModel == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(lastRequest.ext["operation"] == "download")
+        #expect(lastRequest.ext["melix.source_kind"] == "hub_repo")
+        #expect(lastRequest.ext["melix.hf_repo_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(lastRequest.ext["melix.hf_revision"] == "main")
+        #expect(lastRequest.ext["melix.managed_import"] == "true")
+        #expect(response.model.operation.operation == "download")
+        #expect(response.model.operation.jobID == "job-hub-import-123")
+        #expect(response.model.operation.outputPath == "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main")
     }
 
     @Test("execute prefers explicit quant profile selection for quantize operations")
@@ -2966,6 +3217,94 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.stage == "download")
         #expect(response.model.operation.pct == 0.25)
         #expect(response.model.operation.manifestJson == manifestJSON)
+    }
+
+    @Test("execute syncs imported registry models before train_lora operations")
+    func executeSyncsImportedRegistryModelsBeforeTrainLoraOperations() async throws {
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let importedModelPath = "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+        let registryManifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": importedModelID,
+                    "model_path": importedModelPath,
+                    "model_kind": "text",
+                    "revision": "main",
+                    "tokenizer_hash": "hf.mlx-community.Qwen3.5-0.8B-OptiQ-4bit",
+                    "quant_profile_id": "",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 8192,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/managed-root",
+                        "melix.registry_relative_path": "huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                        "melix.model_path": importedModelPath,
+                        "melix.hf_repo_id": importedModelID,
+                        "melix.capability.class": "text",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                    ],
+                ],
+            ]
+        )
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = registryManifestJSON
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-train-lora-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-train/train_lora.adapter.json"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: importedModelID,
+                operation: "train_lora",
+                outputDir: "/tmp/melix-train",
+                ext: [
+                    "dataset_source_kind": "hf_dataset",
+                    "hf_dataset_path": "neuralmagic/ultrachat_2k",
+                    "hf_train_split": "train_sft",
+                    "chat_feature": "messages",
+                ]
+            )
+        )
+        let requests = await modelOpsClient.convertRequests
+        #expect(requests.count == 2)
+        let syncRequest = try #require(requests.first)
+        let lastRequest = try #require(requests.last)
+
+        #expect(response.ok)
+        #expect(syncRequest.sourceModel == "melix-dev-model-ops")
+        #expect(syncRequest.ext["operation"] == "registry_snapshot")
+        #expect(syncRequest.ext["melix.registry_rescan"] == "true")
+        #expect(lastRequest.sourceModel == importedModelID)
+        #expect(lastRequest.ext["operation"] == "train_lora")
+        #expect(response.model.operation.jobID == "job-train-lora-123")
+        #expect(response.model.operation.outputPath == "/tmp/melix-train/train_lora.adapter.json")
     }
 
     @Test("execute install_audio_runtime records shared audio runtime pack metadata")
@@ -8102,10 +8441,12 @@ struct ControlPlaneServiceTests {
     }
 
     private func makeRegistrySnapshotManifestJSON(
-        models: [[String: Any]]? = nil
+        models: [[String: Any]]? = nil,
+        derivedModels: [[String: Any]] = []
     ) throws -> String {
         let payload: [String: Any] = [
             "operation": "registry_snapshot",
+            "derived_models": derivedModels,
             "model_registry": [
                 "scanned_at_unix_ms": 1_711_955_200_000,
                 "roots": [
@@ -8820,6 +9161,7 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
 private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOperationsWorkerClientProtocol {
     private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
+    private(set) var convertRequests: [Melix_Worker_V1_ConvertModelRequest] = []
     private(set) var lastDoctorRequest: Melix_Worker_V1_RunDoctorRequest?
     private(set) var lastHubSearchRequest: Melix_Worker_V1_SearchHubModelsRequest?
     private(set) var lastHubModelCardRequest: Melix_Worker_V1_GetHubModelCardRequest?
@@ -8956,6 +9298,7 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
         request: Melix_Worker_V1_ConvertModelRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
         lastConvertRequest = request
+        convertRequests.append(request)
         if let convertError {
             throw convertError
         }

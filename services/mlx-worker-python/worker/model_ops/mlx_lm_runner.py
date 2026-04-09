@@ -184,7 +184,7 @@ class MLXLMRunner:
                 model.update_modules(tree_unflatten(fused_linears))
             save(
                 request.derived_model_dir,
-                request.model_path,
+                str(request.model_path),
                 model,
                 tokenizer,
                 config,

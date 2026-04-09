@@ -94,6 +94,22 @@ def test_build_launch_agent_specs_capture_expected_commands_and_environment(tmp_
     assert control_spec.environment["MELIX_AUDIO_RUNTIME_PACK_ROOT"] == str(layout.audio_runtime_packs_dir)
 
 
+def test_build_launch_agent_specs_default_to_real_backends(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    layout = build_local_product_layout(repo_root=repo_root, home_dir=home_dir)
+
+    specs = {spec.label: spec for spec in build_launch_agent_specs(layout)}
+
+    swift_spec = specs["io.melix.swift-text-worker"]
+    assert swift_spec.environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] == "swift"
+
+    python_spec = specs["io.melix.python-worker"]
+    assert python_spec.program_arguments[-2:] == ["--backend-mode", "auto"]
+
+
 def test_build_launch_agent_specs_include_sidecar_instance_labels_and_tooling_roots(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -218,6 +234,27 @@ def test_write_local_product_artifacts_writes_sidecar_service_instance_into_env(
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in env_script
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in env_script
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in env_script
+
+
+def test_write_local_product_artifacts_defaults_to_real_backends(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    launch_agents_dir = tmp_path / "LaunchAgents"
+    layout = build_local_product_layout(
+        repo_root=repo_root,
+        home_dir=home_dir,
+        launch_agents_dir=launch_agents_dir,
+    )
+
+    write_local_product_artifacts(layout)
+
+    swift_plist = plistlib.loads((launch_agents_dir / "io.melix.swift-text-worker.plist").read_bytes())
+    python_plist = plistlib.loads((launch_agents_dir / "io.melix.python-worker.plist").read_bytes())
+
+    assert swift_plist["EnvironmentVariables"]["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] == "swift"
+    assert python_plist["ProgramArguments"][-2:] == ["--backend-mode", "auto"]
 
 
 def test_build_local_product_layout_can_auto_select_an_available_http_port(tmp_path: Path) -> None:

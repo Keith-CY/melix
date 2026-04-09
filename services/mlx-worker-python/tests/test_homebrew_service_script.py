@@ -127,3 +127,25 @@ def test_run_command_invokes_service_bundle(
     assert module.main() == 17
     assert seen["layout"] is fake_layout
     assert seen["specs"] is fake_specs
+
+
+def test_main_defaults_homebrew_service_to_real_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_homebrew_service_module()
+    seen: dict[str, object] = {}
+    fake_layout = SimpleNamespace(service_instance_name="homebrew")
+    fake_specs = []
+
+    def fake_build_homebrew_service_specs(**kwargs):
+        seen["kwargs"] = kwargs
+        return fake_layout, fake_specs
+
+    monkeypatch.setattr(module, "build_homebrew_service_specs", fake_build_homebrew_service_specs)
+    monkeypatch.setattr(module, "ensure_runtime_directories", lambda layout: None)
+    monkeypatch.setattr(module, "build_homebrew_service_manifest", lambda layout, specs: {"services": []})
+    monkeypatch.setattr(module.sys, "argv", ["melix_homebrew_service.py", "manifest"])
+
+    assert module.main() == 0
+    assert seen["kwargs"]["swift_backend_mode"] == "swift"
+    assert seen["kwargs"]["python_backend_mode"] == "auto"

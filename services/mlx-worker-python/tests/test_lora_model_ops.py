@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import pytest
+import sys
+import types
 from urllib.error import HTTPError, URLError
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
@@ -845,3 +847,57 @@ def test_activate_adapter_produces_derived_model_and_registry_activation_state(t
     assert snapshot_payload["adapters"][0]["derived_model_id"] == activation_payload["derived_model_id"]
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
     assert snapshot_payload["derived_models"][0]["adapter_manifest_path"] == train_events[-1].completed.output_path
+
+
+def test_activate_native_passes_repo_id_strings_to_save(monkeypatch, tmp_path: Path) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_load(model_path: str, *, adapter_path: str, return_config: bool):
+        recorded["load_model_path"] = model_path
+        recorded["load_adapter_path"] = adapter_path
+        recorded["return_config"] = return_config
+
+        class FakeModel:
+            def named_modules(self):
+                return []
+
+            def update_modules(self, modules):
+                recorded["updated_modules"] = modules
+
+        return FakeModel(), object(), {"model_type": "llama"}
+
+    def fake_save(output_dir, repo_id_or_path, model, tokenizer, config, donate_model=False):
+        recorded["save_output_dir"] = output_dir
+        recorded["save_base_model"] = repo_id_or_path
+        recorded["save_donate_model"] = donate_model
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx.utils",
+        types.SimpleNamespace(tree_unflatten=lambda items: items),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx_lm.utils",
+        types.SimpleNamespace(load=fake_load, save=fake_save),
+    )
+
+    runner = MLXLMRunner()
+    request = ActivationRequest(
+        job_id="model-ops-activate-1",
+        base_model_id="melix-dev-text",
+        model_path=Path("mlx-community/Qwen3.5-0.8B-OptiQ-4bit"),
+        adapter_dir=tmp_path / "adapter",
+        adapter_manifest_path=tmp_path / "adapter" / "train_lora.adapter.json",
+        derived_model_dir=tmp_path / "derived",
+        activation_mode="fused_derived_model",
+    )
+    request.adapter_dir.mkdir(parents=True, exist_ok=True)
+    request.adapter_manifest_path.write_text("{}", encoding="utf-8")
+
+    result = runner.activate_native(request)
+
+    assert recorded["load_model_path"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert recorded["save_base_model"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert isinstance(recorded["save_base_model"], str)
+    assert result.manifest_path == request.derived_model_dir / "manifest.json"

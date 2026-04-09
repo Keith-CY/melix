@@ -1,4 +1,5 @@
 import Foundation
+import MelixCLICore
 
 public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
@@ -8,15 +9,17 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var serverSessions: [DesktopServerSessionState]
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [RuntimeDownloadQueueEntryState]
+    public var registryRoots: [String]
 
     public init(
-        schemaVersion: Int = 3,
+        schemaVersion: Int = 4,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
         serverSessions: [DesktopServerSessionState],
         dismissedBannerIDs: [String] = [],
-        downloadQueue: [RuntimeDownloadQueueEntryState] = []
+        downloadQueue: [RuntimeDownloadQueueEntryState] = [],
+        registryRoots: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.selectedSurface = selectedSurface
@@ -25,6 +28,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         self.serverSessions = serverSessions
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
+        self.registryRoots = registryRoots
     }
 
     enum CodingKeys: String, CodingKey {
@@ -35,23 +39,35 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case serverSessions = "server_sessions"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
+        case registryRoots = "registry_roots"
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        selectedSurface = try container.decode(DesktopSurface.self, forKey: .selectedSurface)
-        selectedToolSection = try container.decodeIfPresent(
-            DesktopToolSection.self,
-            forKey: .selectedToolSection
-        ) ?? .modelsLibrary
-        selectedServerSessionID = try container.decode(String.self, forKey: .selectedServerSessionID)
-        serverSessions = try container.decode([DesktopServerSessionState].self, forKey: .serverSessions)
-        dismissedBannerIDs = try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? []
-        downloadQueue = try container.decodeIfPresent(
-            [RuntimeDownloadQueueEntryState].self,
-            forKey: .downloadQueue
-        ) ?? []
+        let selectedSurfaceID = try container.decodeIfPresent(String.self, forKey: .selectedSurface) ?? "chat"
+        let selectedToolSectionID = try container.decodeIfPresent(String.self, forKey: .selectedToolSection) ?? "modelsLibrary"
+        self.init(
+            schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 4,
+            selectedSurface: DesktopSurface(operatorSessionID: selectedSurfaceID),
+            selectedToolSection: DesktopToolSection(operatorSessionID: selectedToolSectionID),
+            selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            serverSessions: try container.decodeIfPresent([DesktopServerSessionState].self, forKey: .serverSessions) ?? [],
+            dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
+            downloadQueue: try container.decodeIfPresent([RuntimeDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
+            registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? []
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(selectedSurface.operatorSessionID, forKey: .selectedSurface)
+        try container.encode(selectedToolSection.operatorSessionID, forKey: .selectedToolSection)
+        try container.encode(selectedServerSessionID, forKey: .selectedServerSessionID)
+        try container.encode(serverSessions, forKey: .serverSessions)
+        try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
+        try container.encode(downloadQueue, forKey: .downloadQueue)
+        try container.encode(registryRoots, forKey: .registryRoots)
     }
 }
 
@@ -73,37 +89,302 @@ public struct NullOperatorSessionStore: OperatorSessionStoring {
 }
 
 public struct OperatorSessionStore: OperatorSessionStoring {
-    private let melixHome: MelixHome
+    private let store: MelixOperatorSessionStore
 
     public init(melixHome: MelixHome) {
-        self.melixHome = melixHome
+        self.store = MelixOperatorSessionStore(melixHome: melixHome)
     }
 
     public func load() throws -> OperatorSessionState? {
-        let fileManager = FileManager.default
-        let fileURL = melixHome.operatorSessionFileURL
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return nil
-        }
-        let data = try Data(contentsOf: fileURL)
-        return try Self.decoder.decode(OperatorSessionState.self, from: data)
+        try store.load().map(OperatorSessionState.init(sharedState:))
     }
 
     public func save(_ state: OperatorSessionState) throws {
-        let data = try Self.encoder.encode(state)
-        try melixHome.writeAtomically(data, to: melixHome.operatorSessionFileURL)
+        try store.save(state.sharedState)
+    }
+}
+
+private extension OperatorSessionState {
+    init(sharedState: MelixOperatorSessionState) {
+        self.init(
+            schemaVersion: sharedState.schemaVersion,
+            selectedSurface: DesktopSurface(operatorSessionID: sharedState.selectedSurfaceID),
+            selectedToolSection: DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID),
+            selectedServerSessionID: sharedState.selectedServerSessionID,
+            serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),
+            dismissedBannerIDs: sharedState.dismissedBannerIDs,
+            downloadQueue: sharedState.downloadQueue.map(RuntimeDownloadQueueEntryState.init(sharedState:)),
+            registryRoots: sharedState.registryRoots
+        )
     }
 
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
+    var sharedState: MelixOperatorSessionState {
+        MelixOperatorSessionState(
+            schemaVersion: schemaVersion,
+            selectedSurfaceID: selectedSurface.operatorSessionID,
+            selectedToolSectionID: selectedToolSection.operatorSessionID,
+            selectedServerSessionID: selectedServerSessionID,
+            serverSessions: serverSessions.map(\.sharedState),
+            dismissedBannerIDs: dismissedBannerIDs,
+            downloadQueue: downloadQueue.map(\.sharedState),
+            registryRoots: registryRoots
+        )
+    }
+}
 
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
+private extension DesktopServerServingDefaultsState {
+    init(sharedState: MelixOperatorServerServingDefaultsState) {
+        self.init(
+            temperature: sharedState.temperature,
+            topP: sharedState.topP,
+            maxTokens: sharedState.maxTokens,
+            streamIntervalTokens: sharedState.streamIntervalTokens,
+            maxConcurrentRequests: sharedState.maxConcurrentRequests,
+            concurrentProcessingEnabled: sharedState.concurrentProcessingEnabled,
+            prefillBatchSize: sharedState.prefillBatchSize,
+            completionBatchSize: sharedState.completionBatchSize,
+            accelerationMode: sharedState.accelerationMode,
+            draftModelID: sharedState.draftModelID,
+            numDraftTokens: sharedState.numDraftTokens,
+            sourceText: "Operator Override"
+        )
+    }
+
+    var sharedState: MelixOperatorServerServingDefaultsState {
+        MelixOperatorServerServingDefaultsState(
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens
+        )
+    }
+}
+
+private extension DesktopServerSessionState {
+    init(sharedState: MelixOperatorServerSessionState) {
+        self.init(
+            id: sharedState.id,
+            title: sharedState.title,
+            modelID: sharedState.modelID,
+            host: sharedState.host,
+            port: sharedState.port,
+            rateLimitPerMinute: sharedState.rateLimitPerMinute,
+            timeoutSeconds: sharedState.timeoutSeconds,
+            servingDefaults: DesktopServerServingDefaultsState(sharedState: sharedState.servingDefaults),
+            lifecycle: DesktopServerSessionLifecycle(sharedState: sharedState.lifecycle),
+            autoSleepEnabled: sharedState.autoSleepEnabled,
+            lightSleepAfterSeconds: sharedState.lightSleepAfterSeconds,
+            deepSleepAfterSeconds: sharedState.deepSleepAfterSeconds,
+            lastError: sharedState.lastError,
+            lastKnownModelStateText: sharedState.lastKnownModelStateText,
+            createdAt: sharedState.createdAt,
+            updatedAt: sharedState.updatedAt
+        )
+    }
+
+    var sharedState: MelixOperatorServerSessionState {
+        MelixOperatorServerSessionState(
+            id: id,
+            title: title,
+            modelID: modelID,
+            host: host,
+            port: port,
+            rateLimitPerMinute: rateLimitPerMinute,
+            timeoutSeconds: timeoutSeconds,
+            servingDefaults: servingDefaults.sharedState,
+            autoSleepEnabled: autoSleepEnabled,
+            lightSleepAfterSeconds: lightSleepAfterSeconds,
+            deepSleepAfterSeconds: deepSleepAfterSeconds,
+            lifecycle: lifecycle.sharedState,
+            lastError: lastError,
+            lastKnownModelStateText: lastKnownModelStateText,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+private extension RuntimeDownloadQueueEntryState {
+    init(sharedState: MelixOperatorDownloadQueueEntryState) {
+        self.init(
+            jobID: sharedState.jobID,
+            sourceModel: sharedState.sourceModel,
+            status: sharedState.status,
+            stage: sharedState.stage,
+            pct: sharedState.pct,
+            outputDir: sharedState.outputDir,
+            outputPath: sharedState.outputPath,
+            partialPath: sharedState.partialPath,
+            statePath: sharedState.statePath,
+            selectedMirror: sharedState.selectedMirror,
+            downloadedBytes: sharedState.downloadedBytes,
+            totalBytes: sharedState.totalBytes,
+            resumeUsed: sharedState.resumeUsed,
+            resumeFromBytes: sharedState.resumeFromBytes,
+            retryCount: sharedState.retryCount,
+            stallDetectionCount: sharedState.stallDetectionCount,
+            stallReason: sharedState.stallReason,
+            resumeReady: sharedState.resumeReady
+        )
+    }
+
+    var sharedState: MelixOperatorDownloadQueueEntryState {
+        MelixOperatorDownloadQueueEntryState(
+            jobID: jobID,
+            sourceModel: sourceModel,
+            status: status,
+            stage: stage,
+            pct: pct,
+            outputDir: outputDir,
+            outputPath: outputPath,
+            partialPath: partialPath,
+            statePath: statePath,
+            selectedMirror: selectedMirror,
+            downloadedBytes: downloadedBytes,
+            totalBytes: totalBytes,
+            resumeUsed: resumeUsed,
+            resumeFromBytes: resumeFromBytes,
+            retryCount: retryCount,
+            stallDetectionCount: stallDetectionCount,
+            stallReason: stallReason,
+            resumeReady: resumeReady
+        )
+    }
+}
+
+private extension DesktopServerSessionLifecycle {
+    init(sharedState: MelixOperatorServerSessionLifecycle) {
+        switch sharedState {
+        case .draft:
+            self = .draft
+        case .starting:
+            self = .starting
+        case .running:
+            self = .running
+        case .paused:
+            self = .paused
+        case .sleeping:
+            self = .sleeping
+        case .stopping:
+            self = .stopping
+        case .stopped:
+            self = .stopped
+        case .error:
+            self = .error
+        case .unavailable:
+            self = .unavailable
+        }
+    }
+
+    var sharedState: MelixOperatorServerSessionLifecycle {
+        switch self {
+        case .draft:
+            return .draft
+        case .starting:
+            return .starting
+        case .running:
+            return .running
+        case .paused:
+            return .paused
+        case .sleeping:
+            return .sleeping
+        case .stopping:
+            return .stopping
+        case .stopped:
+            return .stopped
+        case .error:
+            return .error
+        case .unavailable:
+            return .unavailable
+        }
+    }
+}
+
+private extension DesktopSurface {
+    init(operatorSessionID rawValue: String) {
+        switch Self.normalizedOperatorSessionID(rawValue) {
+        case "image":
+            self = .image
+        case "server":
+            self = .server
+        case "tools":
+            self = .tools
+        case "api":
+            self = .api
+        default:
+            self = .chat
+        }
+    }
+
+    var operatorSessionID: String {
+        switch self {
+        case .chat:
+            return "chat"
+        case .image:
+            return "image"
+        case .server:
+            return "server"
+        case .tools:
+            return "tools"
+        case .api:
+            return "api"
+        }
+    }
+
+    private static func normalizedOperatorSessionID(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter(\.isLetter)
+    }
+}
+
+private extension DesktopToolSection {
+    init(operatorSessionID rawValue: String) {
+        switch Self.normalizedOperatorSessionID(rawValue) {
+        case "downloads":
+            self = .downloads
+        case "training":
+            self = .training
+        case "diagnostics":
+            self = .diagnostics
+        case "logs":
+            self = .logs
+        case "settings":
+            self = .settings
+        default:
+            self = .modelsLibrary
+        }
+    }
+
+    var operatorSessionID: String {
+        switch self {
+        case .modelsLibrary:
+            return "modelsLibrary"
+        case .downloads:
+            return "downloads"
+        case .training:
+            return "training"
+        case .diagnostics:
+            return "diagnostics"
+        case .logs:
+            return "logs"
+        case .settings:
+            return "settings"
+        }
+    }
+
+    private static func normalizedOperatorSessionID(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter(\.isLetter)
+    }
 }

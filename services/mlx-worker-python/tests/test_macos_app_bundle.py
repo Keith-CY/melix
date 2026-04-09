@@ -60,6 +60,8 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
     assert 'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"' in script
     assert 'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"' in script
     assert 'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"' in script
+    assert 'export MELIX_BACKEND_MODE="auto"' in script
+    assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
 
 
 def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -> None:
@@ -78,8 +80,10 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert 'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/python-runtime/bin/python3"' in script
     assert '"$RESOURCES_DIR/melix-text-worker-swift"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" -m worker.bootstrap' in script
+    assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
     assert '"$RESOURCES_DIR/melix-menubar" "$@"' in script
+    assert "backend-mode deterministic" not in script
 
 
 def test_resolve_python_runtime_root_resolves_from_python_executable(tmp_path: Path) -> None:

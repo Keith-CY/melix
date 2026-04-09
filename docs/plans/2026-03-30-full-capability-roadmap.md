@@ -372,6 +372,7 @@ Melix should move from environment-variable-driven model paths to a real multi-r
 - `M8.9` Add Homebrew formula and `brew services`.
 - `M8.10` Add auto-update, crash and hang detection, startup failure dialogs, and host-port management.
 - `M8.11` Add platform-specific packaging and Apple Silicon target differentiation.
+- `M8.TODO` Close the native desktop workflow so selecting and downloading a Hugging Face text model can also bind or rebind the primary text model without requiring `MELIX_DEV_TEXT_MODEL_PATH` injection for downstream chat, LoRA, benchmark, or evaluation flows.
 
 ### Exit Criteria
 

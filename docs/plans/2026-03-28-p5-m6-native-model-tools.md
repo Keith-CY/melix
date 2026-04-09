@@ -9,6 +9,7 @@ This milestone must let operators:
 - inspect model metadata and current settings
 - update per-model settings from the desktop shell
 - trigger quantize, download, and upload jobs from native desktop workflows
+- trigger the same download workflow through the shared CLI/core layer with a stable `melix model download --model-id ...` command surface
 - observe the latest operation result without leaving the app
 
 ## Non-Goals
@@ -118,6 +119,7 @@ Turn the current read-mostly desktop shell into an operator workflow for model s
 - Add a `Tools` tab beside the existing dashboard foundation tabs.
 - Extend the `Models` tab to show alias, memory policy, acceleration mode, and supported features.
 - Add native actions for settings update, quantize, download, and upload.
+- Keep model downloads addressable through the shared CLI/core command surface so Desktop and CLI invoke the same operator path.
 - Show the latest operation result and surface failures through the existing error/log state.
 
 **Verification**

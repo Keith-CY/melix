@@ -137,8 +137,8 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
             os.environ.get("MELIX_PYTHON_WORKER_METRICS_PATH", runtime_dir / "python-worker-metrics.json")
         ).expanduser(),
         http_port=os.environ.get("MELIX_HTTP_PORT", "11434"),
-        python_backend_mode=os.environ.get("MELIX_BACKEND_MODE", "deterministic"),
-        swift_text_worker_backend_mode=os.environ.get("MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE", "deterministic"),
+        python_backend_mode=os.environ.get("MELIX_BACKEND_MODE", "auto"),
+        swift_text_worker_backend_mode=os.environ.get("MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE", "swift"),
         uv_cache_dir=resolve_path(os.environ.get("UV_CACHE_DIR", repo_root / ".uv-cache")),
         swift_home=resolve_path(os.environ.get("MELIX_SWIFT_HOME", repo_root / ".swift-home")),
         clang_module_cache_path=resolve_path(

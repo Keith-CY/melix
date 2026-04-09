@@ -22,7 +22,7 @@ This roadmap defines the recommended order for the next phases. The sequence is 
 - Strengthen runtime depth before expanding endpoint breadth.
 - Improve the latency-critical text path without collapsing the control-plane/worker boundary.
 - Add new public surfaces only after the underlying routing and execution model are ready.
-- Keep deterministic execution as the default integration path until each capability family has a stable live smoke path.
+- Use real model backends as the default operator path, and keep deterministic execution only as an explicit test or debugging fixture when a live-model prerequisite would hide the failing layer.
 - Treat each phase as complete only when tests, operator workflow, and metrics evidence are in place.
 
 ## Phase Sequence
@@ -37,7 +37,7 @@ Delivered outcome:
 
 - one executable local path from HTTP request to streamed worker output
 - typed control-plane and worker protocols
-- deterministic integration path and real MLX streaming path
+- deterministic integration fixtures and real MLX streaming path
 - minimal menu bar operator shell
 
 ### Phase 1: Swift Text Worker Hot Path
@@ -66,7 +66,7 @@ Exit criteria:
 
 Delivered evidence:
 
-- deterministic local stack and runbook
+- repeatable deterministic fixture coverage and a local stack runbook
 - Swift-vs-Python hot-path comparison metrics
 - explicit Swift-worker failure-path integration coverage
 

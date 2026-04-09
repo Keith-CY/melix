@@ -177,6 +177,37 @@ def test_registry_snapshot_rescan_refreshes_discovery_and_deduplicates_empty_roo
     assert catalog.get("mlx-community/Qwen2.5-14B-Instruct/8bit") is not None
 
 
+def test_registry_snapshot_prepends_managed_root_ahead_of_configured_roots(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-root"
+    user_root = tmp_path / "user-root"
+    duplicate_id = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+
+    _write_registry_manifest(
+        managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main",
+        model_id=duplicate_id,
+        ext={"source_root": "managed"},
+    )
+    _write_registry_manifest(
+        user_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main",
+        model_id=duplicate_id,
+        ext={"source_root": "user"},
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_MODEL_ROOTS": str(user_root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert [root.root_path for root in snapshot.roots] == [str(managed_root), str(user_root)]
+    assert discovered[duplicate_id].ext["source_root"] == "managed"
+    assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
+
+
 def test_registry_snapshot_explicit_root_override_reorders_precedence_without_changing_root_identity(
     tmp_path: Path,
 ) -> None:
@@ -211,6 +242,37 @@ def test_registry_snapshot_explicit_root_override_reorders_precedence_without_ch
     assert discovered[duplicate_id].ext["melix.registry_root_id"] == _expected_root_id(root_b)
     assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
     assert initial_snapshot.roots[0].root_id == _expected_root_id(root_a)
+
+
+def test_registry_snapshot_explicit_root_override_keeps_managed_root_first(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-root"
+    user_root = tmp_path / "user-root"
+    duplicate_id = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+
+    _write_registry_manifest(
+        managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main",
+        model_id=duplicate_id,
+        ext={"source_root": "managed"},
+    )
+    _write_registry_manifest(
+        user_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main",
+        model_id=duplicate_id,
+        ext={"source_root": "user"},
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_MODEL_ROOTS": str(user_root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot(rescan=True, registry_roots=[os.fspath(user_root)])
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert [root.root_path for root in snapshot.roots] == [str(managed_root), str(user_root)]
+    assert discovered[duplicate_id].ext["source_root"] == "managed"
+    assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
 
 
 def test_registry_snapshot_derives_structured_identity_from_paths_and_sidecar_overrides(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ Use this runbook when you need to:
 
 - boot the full phase-1 local stack
 - debug the default Swift text route
-- reproduce the deterministic integration path
+- reproduce the explicit deterministic fixture path when you need to isolate live-model availability
 - capture the phase-1 metrics report
 
 ## Preconditions
@@ -30,6 +30,8 @@ make proto
 ```bash
 bash scripts/dev_up.sh
 ```
+
+This default startup path uses the real backend configuration (`MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift` and `MELIX_BACKEND_MODE=auto`). Use deterministic execution only when you explicitly need a fixture run.
 
 Use the opt-in fast path only when the Swift binaries are already built and you want to avoid `swift run` launcher overhead during repeated local restarts.
 
@@ -60,7 +62,7 @@ tail -n 50 .runtime/phase1/python-worker.log
 tail -n 50 .runtime/phase1/control-plane.log
 ```
 
-5. Run the reproducible metrics report for the deterministic stack.
+5. Run the metrics report for the current stack.
 
 ```bash
 make phase1-metrics
@@ -70,7 +72,7 @@ make phase1-metrics
 
 - The runtime directory already contains stale pid files from a previous run.
 - The Swift text worker socket path already exists because shutdown did not complete.
-- `MELIX_DEV_TEXT_MODEL_PATH` is missing while `MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift`.
+- No serveable text model is available in the managed or scanned model roots while the default real backend path is active.
 - Swift package caches or module caches were not initialized before startup.
 - `--prefer-built` or `scripts/dev_app_up.sh` was used before the Swift executables were built under `.build/.../debug`.
 
@@ -82,18 +84,21 @@ make phase1-metrics
 bash scripts/dev_down.sh
 ```
 
-2. Restart in deterministic mode to confirm the shared RPC and HTTP path are healthy.
+2. If live-model setup may be hiding the failure, restart with an explicit deterministic fixture to confirm the shared RPC and HTTP path are healthy.
 
 ```bash
+MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=deterministic \
+MELIX_BACKEND_MODE=deterministic \
 bash scripts/dev_up.sh
 make phase1-metrics
 ```
 
-3. Retry the real Swift MLX path only after the deterministic path is stable.
+3. Return to the default real backend path only after the transport layer is stable and a serveable text model source is available.
 
 ```bash
 MELIX_DEV_TEXT_MODEL_PATH="<model path or repo>" \
 MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift \
+MELIX_BACKEND_MODE=auto \
 bash scripts/dev_up.sh
 ```
 
@@ -123,6 +128,6 @@ bash scripts/dev_down.sh
 
 ## Escalation
 
-- Stop and inspect the logs if the deterministic stack cannot warm `melix-dev-text`.
-- Stop and inspect the environment if the Swift MLX path fails without `MELIX_DEV_TEXT_MODEL_PATH`.
-- Do not continue to later milestones until the deterministic metrics report and integration suite both pass.
+- Stop and inspect the logs if the default real backend path cannot warm or load `melix-dev-text`.
+- Stop and inspect the environment if no serveable text model is visible to the default real backend path.
+- Use the deterministic fixture only as a bounded debugging aid, not as the product-default signoff path for later milestones.

@@ -9,6 +9,7 @@ let package = Package(
     ],
     products: [
         .library(name: "MelixWorkspace", targets: ["MelixWorkspace"]),
+        .library(name: "MelixCLICore", targets: ["MelixCLICore"]),
         .executable(name: "melix", targets: ["MelixCLI"]),
         .executable(name: "melix-session-lifecycle-smoke", targets: ["MelixSessionLifecycleSmoke"]),
         .executable(name: "melix-disk-streaming-smoke", targets: ["MelixDiskStreamingSmoke"]),

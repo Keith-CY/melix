@@ -360,6 +360,13 @@ public protocol ControlPlaneXPCClient: Sendable {
         _ request: ControlPlaneImageDefaultsRequest
     ) async throws -> Melix_Controlplane_V1_ImageDefaultsSummary
     func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport
+    func searchHubModels(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult
+    func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult
     func runBenchMatrix(_ request: ControlPlaneBenchMatrixRequest) async throws -> ControlPlaneBenchMatrixResult
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult
@@ -493,6 +500,30 @@ public extension ControlPlaneXPCClient {
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Doctor is not implemented for this control-plane client."
+        )
+    }
+
+    func searchHubModels(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult {
+        _ = query
+        _ = pageSize
+        _ = cursor
+        _ = mlxOnly
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Hub model search is not implemented for this control-plane client."
+        )
+    }
+
+    func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
+        _ = repoID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Hub model cards are not implemented for this control-plane client."
         )
     }
 
@@ -814,6 +845,30 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     public func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
         try await execute(makeRunDoctorRequest()) { response in
             response.ops.doctor
+        }
+    }
+
+    public func searchHubModels(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult {
+        try await execute(
+            makeSearchHubModelsRequest(
+                query: query,
+                pageSize: pageSize,
+                cursor: cursor,
+                mlxOnly: mlxOnly
+            )
+        ) { response in
+            response.ops.hubSearch
+        }
+    }
+
+    public func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
+        try await execute(makeGetHubModelCardRequest(repoID: repoID)) { response in
+            response.ops.hubModelCard
         }
     }
 
@@ -1199,6 +1254,36 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.commandType = "ops.run_doctor"
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.runDoctor = Melix_Controlplane_V1_RunDoctor()
+        return request
+    }
+
+    private func makeSearchHubModelsRequest(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-search-hub-models"
+        request.commandType = "ops.search_hub_models"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.searchHubModels = Melix_Controlplane_V1_SearchHubModels()
+        request.ops.searchHubModels.query = query
+        request.ops.searchHubModels.pageSize = pageSize
+        request.ops.searchHubModels.cursor = cursor
+        request.ops.searchHubModels.mlxOnly = mlxOnly
+        return request
+    }
+
+    private func makeGetHubModelCardRequest(
+        repoID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-get-hub-model-card"
+        request.commandType = "ops.get_hub_model_card"
+        request.ops = Melix_Controlplane_V1_OpsCommand()
+        request.ops.getHubModelCard = Melix_Controlplane_V1_GetHubModelCard()
+        request.ops.getHubModelCard.repoID = repoID
         return request
     }
 

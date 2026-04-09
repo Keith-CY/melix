@@ -110,6 +110,17 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let deepSleepAfterSeconds: UInt32
     }
 
+    struct RecordedHubSearchRequest: Equatable, Sendable {
+        let query: String
+        let pageSize: UInt32
+        let cursor: String
+        let mlxOnly: Bool
+    }
+
+    struct RecordedHubModelCardRequest: Equatable, Sendable {
+        let repoID: String
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
@@ -127,6 +138,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var recordedImageEditRequests: [RecordedImageEditRequest] = []
     private(set) var recordedGatewayAccessClearRequests: [String] = []
     private(set) var recordedServerIdlePolicyRequests: [RecordedServerIdlePolicyRequest] = []
+    private(set) var recordedHubSearchRequests: [RecordedHubSearchRequest] = []
+    private(set) var recordedHubModelCardRequests: [RecordedHubModelCardRequest] = []
     private(set) var lastLoadMemoryBudgetBytes: UInt64 = 0
     private(set) var handshakeCount = 0
     private(set) var subscriptionRequests: [UInt64] = []
@@ -165,6 +178,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
     private var modelOperationResponsesByName: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
     private var doctorResponse = FakeControlPlaneXPCClient.defaultDoctorReport()
+    private var hubSearchResult = Melix_Controlplane_V1_HubSearchResult()
+    private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
     private var benchResponse = ControlPlaneBenchResult(
         reportPath: "/tmp/melix-fake/bench-report.md",
         reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
@@ -344,6 +359,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         doctorResponse.markdown = markdown
         doctorResponse.healthStatus = healthStatus
         doctorResponse.findings = findings
+    }
+
+    func configureHubSearchResult(_ result: Melix_Controlplane_V1_HubSearchResult) {
+        hubSearchResult = result
+    }
+
+    func configureHubModelCard(_ card: Melix_Controlplane_V1_HubModelCard) {
+        hubModelCard = card
     }
 
     func configureBenchResponse(_ result: ControlPlaneBenchResult) {
@@ -1088,6 +1111,30 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             throw doctorError
         }
         return doctorResponse
+    }
+
+    func searchHubModels(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult {
+        recordedActions.append("hub.search:\(query)")
+        recordedHubSearchRequests.append(
+            RecordedHubSearchRequest(
+                query: query,
+                pageSize: pageSize,
+                cursor: cursor,
+                mlxOnly: mlxOnly
+            )
+        )
+        return hubSearchResult
+    }
+
+    func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
+        recordedActions.append("hub.card:\(repoID)")
+        recordedHubModelCardRequests.append(.init(repoID: repoID))
+        return hubModelCard
     }
 
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {

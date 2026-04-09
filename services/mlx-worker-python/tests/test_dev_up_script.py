@@ -170,6 +170,15 @@ def test_compute_runtime_layout_uses_environment_overrides(monkeypatch: pytest.M
     assert layout.python_socket_path == runtime_dir / "python-worker.sock"
 
 
+def test_compute_runtime_layout_defaults_to_real_backends(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+
+    layout = dev_up.compute_runtime_layout(tmp_path)
+
+    assert layout.python_backend_mode == "auto"
+    assert layout.swift_text_worker_backend_mode == "swift"
+
+
 def test_compute_runtime_layout_uses_service_instance_name_for_sidecar_defaults(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

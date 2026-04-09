@@ -97,7 +97,7 @@ The focused image-iteration smoke should surface these HTTP payload fields direc
 MELIX_RUNTIME_DIR=.runtime/phase7-ops bash scripts/dev_down.sh
 ```
 
-2. Reboot the deterministic path and rerun the metrics command.
+2. Reboot the reproducible image fixture path and rerun the metrics command when you need a bounded debugging baseline.
 
 ```bash
 MELIX_RUNTIME_DIR=.runtime/phase7-ops \

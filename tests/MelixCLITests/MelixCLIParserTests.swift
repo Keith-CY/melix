@@ -36,6 +36,139 @@ struct MelixCLIParserTests {
         #expect(!pauseOptions.json)
     }
 
+    @Test("parses model download hub download list and roots commands")
+    func parsesModelDownloadHubDownloadListAndRootsCommands() throws {
+        let modelDownloadCommand = try MelixCLIParser.parse([
+            "model",
+            "download",
+            "--model-id", "melix-dev-text",
+            "--output-dir", "/tmp/melix-downloads/melix-dev-text",
+            "--json",
+        ])
+        let downloadCommand = try MelixCLIParser.parse([
+            "model",
+            "hub",
+            "download",
+            "--repo-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--revision", "main",
+            "--json",
+        ])
+        let listCommand = try MelixCLIParser.parse([
+            "model",
+            "list",
+            "--json",
+        ])
+        let addRootCommand = try MelixCLIParser.parse([
+            "model",
+            "roots",
+            "add",
+            "--path", "/tmp/models-a",
+        ])
+        let moveRootCommand = try MelixCLIParser.parse([
+            "model",
+            "roots",
+            "move",
+            "--path", "/tmp/models-a",
+            "--index", "1",
+        ])
+
+        guard case .modelDownload(let modelDownloadOptions) = modelDownloadCommand else {
+            Issue.record("Expected modelDownload command")
+            return
+        }
+        guard case .modelHubDownload(let downloadOptions) = downloadCommand else {
+            Issue.record("Expected modelHubDownload command")
+            return
+        }
+        guard case .modelList(let listOptions) = listCommand else {
+            Issue.record("Expected modelList command")
+            return
+        }
+        guard case .modelRootsAdd(let addOptions) = addRootCommand else {
+            Issue.record("Expected modelRootsAdd command")
+            return
+        }
+        guard case .modelRootsMove(let moveOptions) = moveRootCommand else {
+            Issue.record("Expected modelRootsMove command")
+            return
+        }
+
+        #expect(modelDownloadOptions.modelID == "melix-dev-text")
+        #expect(modelDownloadOptions.outputDir == "/tmp/melix-downloads/melix-dev-text")
+        #expect(modelDownloadOptions.json)
+        #expect(downloadOptions.repoID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(downloadOptions.revision == "main")
+        #expect(downloadOptions.json)
+        #expect(listOptions.json)
+        #expect(addOptions.path == "/tmp/models-a")
+        #expect(moveOptions.path == "/tmp/models-a")
+        #expect(moveOptions.index == 1)
+    }
+
+    @Test("parses server session create update remove and select commands")
+    func parsesServerSessionCRUDCommands() throws {
+        let createCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "create",
+            "--title", "Qwen Session",
+            "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--host", "127.0.0.1",
+            "--port", "12434",
+            "--json",
+        ])
+        let updateCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id", "server-session-qwen",
+            "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--port", "12434",
+            "--timeout-seconds", "90",
+        ])
+        let removeCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "remove",
+            "--server-session-id", "server-session-qwen",
+        ])
+        let selectCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "select",
+            "--server-session-id", "server-session-qwen",
+        ])
+
+        guard case .serverSessionCreate(let createOptions) = createCommand else {
+            Issue.record("Expected serverSessionCreate command")
+            return
+        }
+        guard case .serverSessionUpdate(let updateOptions) = updateCommand else {
+            Issue.record("Expected serverSessionUpdate command")
+            return
+        }
+        guard case .serverSessionRemove(let removeOptions) = removeCommand else {
+            Issue.record("Expected serverSessionRemove command")
+            return
+        }
+        guard case .serverSessionSelect(let selectOptions) = selectCommand else {
+            Issue.record("Expected serverSessionSelect command")
+            return
+        }
+
+        #expect(createOptions.title == "Qwen Session")
+        #expect(createOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(createOptions.host == "127.0.0.1")
+        #expect(createOptions.port == 12434)
+        #expect(createOptions.json)
+        #expect(updateOptions.serverSessionID == "server-session-qwen")
+        #expect(updateOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(updateOptions.port == 12434)
+        #expect(updateOptions.timeoutSeconds == 90)
+        #expect(removeOptions.serverSessionID == "server-session-qwen")
+        #expect(selectOptions.serverSessionID == "server-session-qwen")
+    }
+
     @Test("parses server start resume wake and stop commands")
     func parsesServerLifecycleCommands() throws {
         let startCommand = try MelixCLIParser.parse([
@@ -206,6 +339,7 @@ struct MelixCLIParserTests {
             "--hf-dataset-revision", "main",
             "--hf-train-split", "train_sft",
             "--hf-valid-split", "test_sft",
+            "--sample-limit", "8",
             "--text-feature", "messages",
             "--prompt-feature", "prompt",
             "--completion-feature", "completion",
@@ -228,6 +362,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hf_dataset_revision"] == "main")
         #expect(options.parameters["hf_train_split"] == "train_sft")
         #expect(options.parameters["hf_valid_split"] == "test_sft")
+        #expect(options.parameters["sample_limit"] == "8")
         #expect(options.parameters["text_feature"] == "messages")
         #expect(options.parameters["prompt_feature"] == "prompt")
         #expect(options.parameters["completion_feature"] == "completion")

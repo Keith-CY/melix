@@ -182,6 +182,93 @@ struct DesktopModelsTabView: View {
 
             DesktopRegistryRootsSectionView(viewModel: viewModel)
 
+            GroupBox("Hugging Face Hub") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .center, spacing: 12) {
+                        TextField(
+                            "Repo ID or keywords",
+                            text: Binding(
+                                get: { viewModel.modelHubSearchQuery },
+                                set: { viewModel.modelHubSearchQuery = $0 }
+                            )
+                        )
+                        TextField(
+                            "Revision",
+                            text: Binding(
+                                get: { viewModel.modelHubSelectedRevision },
+                                set: { viewModel.modelHubSelectedRevision = $0 }
+                            )
+                        )
+                        .frame(maxWidth: 180)
+                        Toggle(
+                            "MLX Only",
+                            isOn: Binding(
+                                get: { viewModel.modelHubSearchMLXOnly },
+                                set: { viewModel.modelHubSearchMLXOnly = $0 }
+                            )
+                        )
+                        .toggleStyle(.checkbox)
+                        Button("Search", action: searchHubModelsAction())
+                            .buttonStyle(.borderedProminent)
+                    }
+
+                    if viewModel.modelHubSearchResults.isEmpty {
+                        Text("Search Hugging Face repos and download directly into the managed model root.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(viewModel.modelHubSearchResults) { result in
+                                HStack(alignment: .top, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(result.repoID)
+                                            .font(.headline)
+                                        Text("\(result.author) • \(result.pipelineTag) • \(result.compatibilityText)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(result.downloadsText) • \(result.likesText)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    Spacer()
+                                    Button("Details", action: inspectHubModelAction(repoID: result.repoID))
+                                        .buttonStyle(.bordered)
+                                    Button("Download", action: downloadHubModelAction(repoID: result.repoID))
+                                        .buttonStyle(.borderedProminent)
+                                }
+                            }
+                        }
+                    }
+
+                    if let card = viewModel.selectedHubModelCard {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(card.repoID)
+                                .font(.headline)
+                            Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !card.summary.isEmpty {
+                                Text(card.summary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !card.tags.isEmpty {
+                                Text("Tags: \(card.tags.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            if !card.baseModels.isEmpty {
+                                Text("Base Models: \(card.baseModels.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let primaryModel = viewModel.primaryModel {
                 GroupBox("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -437,6 +524,18 @@ struct DesktopModelsTabView: View {
 
     func inspectPrimaryModelAction() -> () -> Void {
         { Task { await viewModel.inspectPrimaryModel() } }
+    }
+
+    func searchHubModelsAction() -> () -> Void {
+        { Task { await viewModel.searchModelHub() } }
+    }
+
+    func inspectHubModelAction(repoID: String) -> () -> Void {
+        { Task { await viewModel.inspectHubModel(repoID: repoID) } }
+    }
+
+    func downloadHubModelAction(repoID: String) -> () -> Void {
+        { Task { await viewModel.downloadHubModel(repoID: repoID) } }
     }
 
     func addRegistryRoot() async {

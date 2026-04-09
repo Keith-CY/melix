@@ -18,6 +18,178 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("server_ready\tserver-session-1\tready\tactive\tinitial_boot"))
     }
 
+    @Test("model hub search renders typed search results")
+    func modelHubSearchRendersTypedSearchResults() async throws {
+        let client = StubControlPlaneXPCClient()
+        var result = Melix_Controlplane_V1_HubSearchResult()
+        result.nextCursor = "cursor:page-2"
+        var model = Melix_Controlplane_V1_HubModelSummary()
+        model.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        model.pipelineTag = "text-generation"
+        model.mlxCompatible = true
+        result.models = [model]
+        await client.setHubSearchResult(result)
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelHubSearch(.init(query: "qwen3.5", pageSize: 5, cursor: "", mlxOnly: true, json: false))
+        )
+
+        #expect(output.contains("repo_id\tpipeline_tag\tcompatibility"))
+        #expect(output.contains("mlx-community/Qwen3.5-0.8B-OptiQ-4bit\ttext-generation\tmlx"))
+    }
+
+    @Test("model hub show renders typed model cards")
+    func modelHubShowRendersTypedModelCards() async throws {
+        let client = StubControlPlaneXPCClient()
+        var card = Melix_Controlplane_V1_HubModelCard()
+        card.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        card.author = "mlx-community"
+        card.modelName = "Qwen3.5-0.8B-OptiQ-4bit"
+        card.pipelineTag = "text-generation"
+        card.mlxCompatible = true
+        await client.setHubModelCard(card)
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelHubShow(.init(repoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", json: false))
+        )
+
+        #expect(output.contains("repo_id=mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
+        #expect(output.contains("author=mlx-community"))
+        #expect(output.contains("mlx_compatible=true"))
+    }
+
+    @Test("model download forwards the expected download operation payload")
+    func modelDownloadForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/melix-downloads/melix-dev-text")
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelDownload(
+                .init(
+                    modelID: "melix-dev-text",
+                    outputDir: "/tmp/melix-downloads/melix-dev-text"
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix-downloads/melix-dev-text\n")
+        #expect(call.modelID == "melix-dev-text")
+        #expect(call.operation == "download")
+        #expect(call.ext.isEmpty)
+    }
+
+    @Test("model roots rescan omits an empty registry-root override")
+    func modelRootsRescanOmitsEmptyRegistryRootOverride() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: #"{"model_registry":{"models":[],"roots":[]}}"#))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .modelRootsRescan(.init())
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.operation == "registry_snapshot")
+        #expect(call.ext["melix.registry_rescan"] == "true")
+        #expect(call.ext["melix.registry_roots_json"] == nil)
+    }
+
+    @Test("model list primes configured registry roots before fetching the server snapshot")
+    func modelListPrimesConfiguredRegistryRootsBeforeFetchingServerSnapshot() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"{"model_registry":{"models":[],"roots":[]}}"#
+        ))
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedServerSessionID: "",
+                serverSessions: [],
+                registryRoots: ["/tmp/model-root-a"]
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .modelList(.init(json: true))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let outputData = try #require(output.data(using: .utf8))
+        let models = try #require(try JSONSerialization.jsonObject(with: outputData) as? [[String: Any]])
+        let firstModel = try #require(models.first)
+        let rootsJSON = try #require(call.ext["melix.registry_roots_json"])
+        let rootsData = try #require(rootsJSON.data(using: .utf8))
+        let roots = try #require(try JSONSerialization.jsonObject(with: rootsData) as? [String])
+
+        #expect(call.operation == "registry_snapshot")
+        #expect(call.ext["melix.registry_rescan"] == "true")
+        #expect(roots == ["/tmp/model-root-a"])
+        #expect(firstModel["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("model inspect primes registry snapshot even without configured roots")
+    func modelInspectPrimesRegistrySnapshotWithoutConfiguredRoots() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"{"model_registry":{"models":[],"roots":[]}}"#
+        ))
+        await client.setModelInfo(
+            modelID: importedModelID,
+            info: {
+                var info = Melix_Controlplane_V1_ModelInfo()
+                info.ok = true
+                info.modelKind = "text"
+                info.supportedModalities = ["text"]
+                info.supportedTasks = ["generate"]
+                return info
+            }()
+        )
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .modelInspect(.init(modelID: importedModelID, json: true))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.modelID == "melix-dev-text")
+        #expect(call.operation == "registry_snapshot")
+        #expect(call.ext["melix.registry_rescan"] == "true")
+        #expect(call.ext["melix.registry_roots_json"] == nil)
+    }
+
     @Test("server lifecycle commands forward session ids and render updated snapshots")
     func serverLifecycleCommandsForwardSessionIDsAndRenderUpdatedSnapshots() async throws {
         let client = StubControlPlaneXPCClient()
@@ -95,6 +267,135 @@ struct MelixCLIRunnerTests {
         #expect(firstSession["auto_sleep_enabled"] as? Bool == true)
         #expect(firstSession["light_sleep_after_seconds"] as? Int == 60)
         #expect(firstSession["deep_sleep_after_seconds"] as? Int == 600)
+    }
+
+    @Test("server session commands persist shared operator state and start validates serveable bindings")
+    func serverSessionCommandsPersistSharedOperatorStateAndStartValidatesServeableBindings() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "melix-dev-image", kind: "image"),
+            makeModelSummary(id: "melix-dev-vlm", kind: "vlm"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Vision Session",
+                    modelID: "melix-dev-vlm",
+                    host: "127.0.0.1",
+                    port: 12434
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionSelect(.init(serverSessionID: "server-session-1"))
+        )
+        let listOutput = try await runner.run(.serverSessionList(.init(json: true)))
+
+        let payload = try #require(parseJSONObject(listOutput))
+        let selectedServerSessionID = try #require(payload["selected_server_session_id"] as? String)
+        let sessions = try #require(payload["server_sessions"] as? [[String: Any]])
+
+        #expect(selectedServerSessionID == "server-session-1")
+        #expect(sessions.count == 1)
+        #expect(sessions.first?["model_id"] as? String == "melix-dev-vlm")
+
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+
+        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.servedModelID == "melix-dev-vlm")
+        #expect(servingDefaultsCall.serverSessionID == "server-session-1")
+
+        try await store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Broken Session",
+                        modelID: "melix-dev-ocr"
+                    )
+                ]
+            )
+        )
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "melix-dev-ocr", kind: "ocr"),
+        ]))
+
+        await #expect(throws: MelixCLIError.self) {
+            _ = try await runner.run(.serverStart(.init(serverSessionID: "server-session-1")))
+        }
+    }
+
+    @Test("server start falls back to model info when the snapshot omits an imported model")
+    func serverStartFallsBackToModelInfoWhenSnapshotOmitsImportedModel() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: []))
+        await client.setModelInfo(
+            modelID: importedModelID,
+            info: {
+                var info = Melix_Controlplane_V1_ModelInfo()
+                info.ok = true
+                info.modelKind = "text"
+                info.supportedModalities = ["text"]
+                info.supportedTasks = ["generate", "chat"]
+                return info
+            }()
+        )
+
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try await store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Imported Session",
+                        modelID: importedModelID
+                    )
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(gatewayConfigCall.servedModelID == importedModelID)
+        #expect(startedAction == .start("server-session-1"))
     }
 
     @Test("server snapshot renders empty sessions and fallback labels")
@@ -261,6 +562,7 @@ struct MelixCLIRunnerTests {
                         "hf_dataset_revision": "main",
                         "hf_train_split": "train_sft",
                         "hf_valid_split": "test_sft",
+                        "sample_limit": "8",
                         "text_feature": "messages",
                         "response_only": "true",
                         "mask_prompt": "true",
@@ -280,6 +582,7 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["hf_dataset_revision"] == "main")
         #expect(call.ext["hf_train_split"] == "train_sft")
         #expect(call.ext["hf_valid_split"] == "test_sft")
+        #expect(call.ext["sample_limit"] == "8")
         #expect(call.ext["text_feature"] == "messages")
         #expect(call.ext["response_only"] == "true")
         #expect(call.ext["mask_prompt"] == "true")
@@ -1229,9 +1532,35 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let ext: [String: String]
     }
 
+    struct GatewayConfigApplyCall: Sendable, Equatable {
+        let serverSessionID: String
+        let host: String
+        let port: Int
+        let servedModelID: String
+        let rateLimitPerMinute: Int
+        let timeoutSeconds: Int
+    }
+
+    struct ServingDefaultsApplyCall: Sendable, Equatable {
+        let serverSessionID: String
+        let temperature: Double
+        let topP: Double
+        let maxTokens: Int
+        let streamIntervalTokens: Int
+        let maxConcurrentRequests: Int
+        let concurrentProcessingEnabled: Bool
+        let prefillBatchSize: Int
+        let completionBatchSize: Int
+        let accelerationMode: Melix_Controlplane_V1_AccelerationMode
+        let draftModelID: String
+        let numDraftTokens: Int
+    }
+
     private(set) var lastServerAction: ServerAction?
     private(set) var lastIdlePolicyCall: IdlePolicyCall?
     private(set) var lastModelOperationCall: ModelOperationCall?
+    private(set) var lastGatewayConfigApplyRequest: GatewayConfigApplyCall?
+    private(set) var lastServingDefaultsApplyRequest: ServingDefaultsApplyCall?
     private(set) var lastBenchRequest: ControlPlaneBenchRequest?
     private(set) var lastBenchMatrixRequest: ControlPlaneBenchMatrixRequest?
     private(set) var evaluationRequests: [ControlPlaneEvaluationRequest] = []
@@ -1244,8 +1573,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         job: makeBenchmarkMatrixJobSummary(jobID: "", modelID: "", taskKind: "", sourceRepo: ""),
         summaryRows: []
     )
+    private var hubSearchResult = Melix_Controlplane_V1_HubSearchResult()
+    private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
+    private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
 
     func setServerSnapshot(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) {
         self.snapshot = snapshot
@@ -1263,12 +1595,24 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         self.benchMatrixResult = result
     }
 
+    func setHubSearchResult(_ result: Melix_Controlplane_V1_HubSearchResult) {
+        self.hubSearchResult = result
+    }
+
+    func setHubModelCard(_ card: Melix_Controlplane_V1_HubModelCard) {
+        self.hubModelCard = card
+    }
+
     func setEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
         self.evaluationResultsQueue = results
     }
 
     func setExportResult(_ result: ControlPlaneExportResult) {
         self.exportResult = result
+    }
+
+    func setModelInfo(modelID: String, info: Melix_Controlplane_V1_ModelInfo) {
+        modelInfoByID[modelID] = info
     }
 
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
@@ -1388,8 +1732,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
-        _ = modelID
-        return Melix_Controlplane_V1_ModelInfo()
+        modelInfoByID[modelID] ?? Melix_Controlplane_V1_ModelInfo()
     }
 
     func runModelOperation(
@@ -1407,6 +1750,24 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         _ = kvQuant
         lastModelOperationCall = ModelOperationCall(modelID: modelID, operation: operation, ext: ext)
         return modelOperationResult
+    }
+
+    func searchHubModels(
+        query: String,
+        pageSize: UInt32,
+        cursor: String,
+        mlxOnly: Bool
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult {
+        _ = query
+        _ = pageSize
+        _ = cursor
+        _ = mlxOnly
+        return hubSearchResult
+    }
+
+    func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
+        _ = repoID
+        return hubModelCard
     }
 
     func generateImage(
@@ -1471,6 +1832,56 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
         _ = serverSessionID
+    }
+
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        servedModelID: String,
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        lastGatewayConfigApplyRequest = GatewayConfigApplyCall(
+            serverSessionID: serverSessionID,
+            host: host,
+            port: port,
+            servedModelID: servedModelID,
+            rateLimitPerMinute: rateLimitPerMinute,
+            timeoutSeconds: timeoutSeconds
+        )
+        return snapshot
+    }
+
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        draftModelID: String,
+        numDraftTokens: Int
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        lastServingDefaultsApplyRequest = ServingDefaultsApplyCall(
+            serverSessionID: serverSessionID,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: maxConcurrentRequests,
+            concurrentProcessingEnabled: concurrentProcessingEnabled,
+            prefillBatchSize: prefillBatchSize,
+            completionBatchSize: completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens
+        )
+        return snapshot
     }
 
     private func mutateRuntimeSession(

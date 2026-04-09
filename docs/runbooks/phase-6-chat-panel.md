@@ -32,6 +32,8 @@ make proto
 MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_up.sh
 ```
 
+This default startup path uses the real backend configuration. Only opt into deterministic mode when you need a bounded transport/debug fixture.
+
 3. Confirm the control plane can see the expected local models.
 
 ```bash
@@ -81,11 +83,12 @@ tail -n 50 .runtime/phase6/swift-text-worker.log
 MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_down.sh
 ```
 
-2. Restart the deterministic path first and confirm `/v1/models` is healthy.
+2. If live-model setup may be obscuring the failure, restart with an explicit deterministic fixture and confirm `/v1/models` is healthy.
 
 ```bash
 MELIX_RUNTIME_DIR=.runtime/phase6 \
 MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=deterministic \
+MELIX_BACKEND_MODE=deterministic \
 bash scripts/dev_up.sh
 ```
 
@@ -102,11 +105,12 @@ make swift-test
 MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_app_up.sh
 ```
 
-4. Retry the real Swift MLX path only after the deterministic desktop chat flow is stable.
+4. Return to the default real-model path only after the desktop chat plumbing is stable.
 
 ```bash
 MELIX_RUNTIME_DIR=.runtime/phase6 \
 MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE=swift \
+MELIX_BACKEND_MODE=auto \
 MELIX_DEV_TEXT_MODEL_PATH="<model path or repo>" \
 bash scripts/dev_up.sh
 ```

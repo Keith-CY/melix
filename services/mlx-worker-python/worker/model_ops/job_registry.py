@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+import math
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -21,10 +23,13 @@ class ModelOpsJob:
 
 
 class ModelOpsJobRegistry:
-    def __init__(self) -> None:
+    def __init__(self, jobs_root: str | Path | None = None) -> None:
         self._lock = Lock()
         self._next_id = 1
         self._jobs: dict[str, ModelOpsJob] = {}
+        self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
+        if self._jobs_root is not None:
+            self._restore_from_jobs_root()
 
     def start(self, operation: str, source_model: str, output_dir: str) -> ModelOpsJob:
         with self._lock:
@@ -72,12 +77,102 @@ class ModelOpsJobRegistry:
                 for job in sorted(self._jobs.values(), key=self._job_sort_key, reverse=True)
                 if job.job_id not in excluded
             ]
-        return {
+        return self._json_safe(
+            {
             "jobs": jobs,
             "adapters": self._adapter_registry(jobs),
             "derived_models": self._derived_model_registry(jobs),
             "downloads": self._download_registry(jobs),
-        }
+            }
+        )
+
+    def _restore_from_jobs_root(self) -> None:
+        if self._jobs_root is None or self._jobs_root.exists() is False:
+            return
+
+        self._restore_manifest_jobs(
+            operation="train_lora",
+            manifest_paths=self._jobs_root.glob("train_lora/model-ops-*/train_lora.adapter.json"),
+            pct=0.97,
+        )
+        self._restore_manifest_jobs(
+            operation="activate_adapter",
+            manifest_paths=self._jobs_root.glob("activate_adapter/model-ops-*/*/manifest.json"),
+            pct=0.95,
+        )
+        self._next_id = max(self._next_id, self._max_numeric_job_id() + 1)
+
+    def _restore_manifest_jobs(
+        self,
+        *,
+        operation: str,
+        manifest_paths,
+        pct: float,
+    ) -> None:
+        for manifest_path in sorted(manifest_paths):
+            payload = self._read_manifest_dict(manifest_path)
+            if not payload or str(payload.get("operation", "")).strip() != operation:
+                continue
+
+            job_id = self._resolved_job_id(manifest_path, payload)
+            if not job_id or job_id in self._jobs:
+                continue
+
+            output_dir = self._resolved_output_dir_for_restore(operation, manifest_path)
+            self._jobs[job_id] = ModelOpsJob(
+                job_id=job_id,
+                operation=operation,
+                source_model=str(payload.get("source_model", "")),
+                output_dir=str(output_dir),
+                stage_history=[("write_manifest", pct)],
+                manifest_json=json.dumps(payload, sort_keys=True),
+                output_path=str(manifest_path),
+                status="completed",
+            )
+
+    @staticmethod
+    def _read_manifest_dict(path: Path) -> dict[str, Any]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _resolved_job_id(manifest_path: Path, payload: dict[str, Any]) -> str:
+        manifest_job_id = str(payload.get("job_id", "")).strip()
+        if manifest_job_id:
+            return manifest_job_id
+
+        for candidate in manifest_path.parts[::-1]:
+            if candidate.startswith("model-ops-"):
+                return candidate
+        return ""
+
+    @staticmethod
+    def _resolved_output_dir_for_restore(operation: str, manifest_path: Path) -> Path:
+        if operation == "activate_adapter":
+            return manifest_path.parents[1]
+        return manifest_path.parent
+
+    def _max_numeric_job_id(self) -> int:
+        max_job_id = 0
+        for job_id in self._jobs:
+            try:
+                max_job_id = max(max_job_id, int(job_id.rsplit("-", maxsplit=1)[-1]))
+            except ValueError:
+                continue
+        return max_job_id
+
+    @classmethod
+    def _json_safe(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: cls._json_safe(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._json_safe(item) for item in value]
+        if isinstance(value, float) and math.isfinite(value) is False:
+            return None
+        return value
 
     @staticmethod
     def _job_sort_key(job: ModelOpsJob) -> int:
@@ -93,7 +188,7 @@ class ModelOpsJobRegistry:
             stage, pct = job.stage_history[-1]
 
         manifest: dict[str, Any] = {}
-        if job.manifest_json:
+        if job.operation != "registry_snapshot" and job.manifest_json:
             try:
                 decoded = json.loads(job.manifest_json)
             except json.JSONDecodeError:

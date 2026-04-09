@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -27,6 +28,36 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-text")
         #expect(await metrics.snapshot()["menu.handshake_ms"] != nil)
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
+    }
+
+    @Test("server session seed prefers the first serveable model even when it is vlm")
+    @MainActor
+    func serverSessionSeedPrefersFirstServeableModelEvenWhenItIsVLM() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                makeCapabilityModelSummary(
+                    modelID: "melix-dev-ocr",
+                    kind: "ocr",
+                    state: .modelWarm,
+                    features: ["ocr"]
+                ),
+                makeCapabilityModelSummary(
+                    modelID: "melix-dev-vlm",
+                    kind: "vlm",
+                    state: .modelWarm,
+                    features: ["vlm", "chat"]
+                ),
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-vlm"])
+        #expect(viewModel.selectedServerSession?.modelID == "melix-dev-vlm")
     }
 
     @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
@@ -574,8 +605,8 @@ struct RuntimeViewModelTests {
         let persistedPayload = try #require(
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedPayload["selected_surface"] as? String == DesktopSurface.tools.rawValue)
-        #expect(persistedPayload["selected_tool_section"] as? String == DesktopToolSection.diagnostics.rawValue)
+        #expect(persistedPayload["selected_surface"] as? String == "tools")
+        #expect(persistedPayload["selected_tool_section"] as? String == "diagnostics")
 
         let restoredViewModel = RuntimeViewModel(
             client: FakeControlPlaneXPCClient(),
@@ -1876,9 +1907,9 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedSurface == .server)
     }
 
-    @Test("server session sync and banner state cover fallback unavailable warning and recovery paths")
+    @Test("server session sync keeps missing bindings unavailable and surfaces recovery banners")
     @MainActor
-    func serverSessionSyncAndBannerStateCoverFallbackAndRecoveryPaths() async throws {
+    func serverSessionSyncKeepsMissingBindingsUnavailableAndSurfacesRecoveryBanners() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
@@ -1892,9 +1923,10 @@ struct RuntimeViewModelTests {
         await client.configureSnapshot(alternateTextSnapshot)
         await viewModel.refreshDesktopFoundation()
 
-        #expect(viewModel.selectedServerSession?.modelID == "melix-alt-text")
-        #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Warm")
-        #expect(viewModel.selectedChatServerSession?.modelID == "melix-alt-text")
+        #expect(viewModel.selectedServerSession?.modelID == "missing-model")
+        #expect(viewModel.selectedServerSession?.lifecycle == .unavailable)
+        #expect(viewModel.selectedServerSession?.lastKnownModelStateText == "Unavailable")
+        #expect(viewModel.selectedChatServerSession?.modelID == "missing-model")
 
         var drainingEvent = Melix_Controlplane_V1_ServerStateChanged()
         drainingEvent.state = .serverDraining
@@ -2356,6 +2388,317 @@ struct RuntimeViewModelTests {
         #expect(downloadRequest.outputDir.contains("melix-dev-text"))
         #expect(refreshRequest.operation == "registry_snapshot")
         #expect(viewModel.downloadQueue.first?.sourceModel == "melix-dev-text")
+    }
+
+    @Test("download and lora actions use the shared operator command runner when available")
+    @MainActor
+    func downloadAndLoraActionsUseSharedOperatorCommandRunnerWhenAvailable() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runner-tool-actions-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/hf-demo-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let operatorStore = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: operatorStore
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraHFDatasetPath = "neuralmagic/ultrachat_2k"
+        viewModel.loraHFTrainSplit = "train_sft"
+        viewModel.loraChatFeature = "messages"
+        viewModel.loraAdapterName = "hf-demo-adapter"
+        viewModel.loraDerivedModelAlias = "melix-dev-text-ultrachat"
+
+        await viewModel.downloadPrimaryModel()
+        await viewModel.trainPrimaryModel()
+        await viewModel.activateLatestAdapter()
+
+        let directRequests = await directClient.recordedModelOperationRequests
+        let runnerRequests = await runnerClient.recordedModelOperationRequests
+        let hasRunnerDownload = runnerRequests.contains { request in
+            request.operation == "download" && request.modelID == "melix-dev-text"
+        }
+        let hasRunnerTrain = runnerRequests.contains { request in
+            request.operation == "train_lora" && request.modelID == "melix-dev-text"
+        }
+        let hasRunnerActivate = runnerRequests.contains { request in
+            request.operation == "activate_adapter" && request.modelID == "melix-dev-text"
+        }
+
+        #expect(directRequests.isEmpty)
+        #expect(hasRunnerDownload)
+        #expect(hasRunnerTrain)
+        #expect(hasRunnerActivate)
+    }
+
+    @Test("model library and hub actions use the shared operator command runner when available")
+    @MainActor
+    func modelLibraryAndHubActionsUseSharedOperatorCommandRunnerWhenAvailable() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runner-model-hub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await directClient.configureErrors(
+            load: MenuBarTestError(description: "direct load should not run"),
+            unload: MenuBarTestError(description: "direct unload should not run"),
+            modelInfo: MenuBarTestError(description: "direct inspect should not run"),
+            modelOperation: MenuBarTestError(description: "direct download should not run")
+        )
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8_192
+        info.supportedParsers = ["text", "json"]
+        info.supportedModalities = ["text"]
+        await runnerClient.configureModelInfo(info)
+
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        searchResult.nextCursor = "cursor:page-2"
+        var searchModel = Melix_Controlplane_V1_HubModelSummary()
+        searchModel.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        searchModel.author = "mlx-community"
+        searchModel.modelName = "Qwen3.5-0.8B-OptiQ-4bit"
+        searchModel.pipelineTag = "text-generation"
+        searchModel.downloads = 1234
+        searchModel.likes = 88
+        searchModel.mlxCompatible = true
+        searchResult.models = [searchModel]
+        await runnerClient.configureHubSearchResult(searchResult)
+
+        var card = Melix_Controlplane_V1_HubModelCard()
+        card.repoID = searchModel.repoID
+        card.author = searchModel.author
+        card.modelName = searchModel.modelName
+        card.summary = "Compact Qwen acceptance model."
+        card.pipelineTag = "text-generation"
+        card.mlxCompatible = true
+        card.tags = ["mlx", "4bit"]
+        card.baseModels = ["Qwen/Qwen3.5-0.8B"]
+        await runnerClient.configureHubModelCard(card)
+
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/tmp/melix-downloads/qwen35/download.artifact",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "download-qwen35",
+                            sourceModel: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            status: "completed",
+                            stage: "materialize",
+                            pct: 1.0,
+                            outputDir: "/tmp/melix-downloads/qwen35",
+                            outputPath: "/tmp/melix-downloads/qwen35/download.artifact",
+                            partialPath: "",
+                            statePath: "/tmp/melix-downloads/qwen35/download.state.json",
+                            selectedMirror: "https://huggingface.co",
+                            downloadedBytes: 4096,
+                            totalBytes: 4096,
+                            resumeReady: false
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let sharedOperatorStore = MelixOperatorSessionStore(melixHome: melixHome)
+        let operatorStore = OperatorSessionStore(melixHome: melixHome)
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: sharedOperatorStore
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorSessionStore: operatorStore,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        await viewModel.loadModel(modelID: "melix-dev-text")
+        await viewModel.fetchModelInfo(modelID: "melix-dev-text")
+        await viewModel.unloadModel(modelID: "melix-dev-text")
+
+        viewModel.modelHubSearchQuery = "qwen3.5"
+        viewModel.modelHubSearchMLXOnly = true
+        viewModel.modelHubSelectedRevision = "main"
+
+        await viewModel.searchModelHub()
+        await viewModel.inspectHubModel(repoID: searchModel.repoID)
+        await viewModel.downloadHubModel(repoID: searchModel.repoID)
+
+        #expect(await directClient.recordedHubSearchRequests.isEmpty)
+        #expect(await directClient.recordedHubModelCardRequests.isEmpty)
+        #expect(await directClient.recordedModelOperationRequests.isEmpty)
+        #expect(await directClient.recordedActions.contains("load:melix-dev-text") == false)
+        #expect(await directClient.recordedActions.contains("unload:melix-dev-text") == false)
+        #expect(await directClient.recordedActions.contains("info:melix-dev-text") == false)
+
+        #expect(await runnerClient.recordedActions.contains("load:melix-dev-text"))
+        #expect(await runnerClient.recordedActions.contains("unload:melix-dev-text"))
+        #expect(await runnerClient.recordedActions.contains("info:melix-dev-text"))
+        #expect(await runnerClient.recordedHubSearchRequests.count == 1)
+        #expect(await runnerClient.recordedHubModelCardRequests == [.init(repoID: searchModel.repoID)])
+        #expect(await runnerClient.recordedModelOperationRequests.contains {
+            $0.operation == "download" && $0.modelID == searchModel.repoID
+        })
+
+        #expect(viewModel.selectedModelInfo?.modelID == "melix-dev-text")
+        #expect(viewModel.selectedModelInfo?.maxContext == 8_192)
+        #expect(viewModel.modelHubSearchResults.map { $0.repoID } == [searchModel.repoID])
+        #expect(viewModel.modelHubNextCursor == "cursor:page-2")
+        #expect(viewModel.selectedHubModelCard?.repoID == searchModel.repoID)
+        #expect(viewModel.lastModelOperation?.modelID == searchModel.repoID)
+        #expect(viewModel.downloadQueue.first?.sourceModel == searchModel.repoID)
+    }
+
+    @Test("server config and serving defaults use the shared operator command runner when available")
+    @MainActor
+    func serverConfigAndServingDefaultsUseSharedOperatorCommandRunnerWhenAvailable() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runner-server-config-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await directClient.configureErrors(
+            applyGatewayConfig: MenuBarTestError(description: "direct gateway apply should not run"),
+            applyServingDefaults: MenuBarTestError(description: "direct serving defaults apply should not run")
+        )
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let sharedOperatorStore = MelixOperatorSessionStore(melixHome: melixHome)
+        let operatorStore = OperatorSessionStore(melixHome: melixHome)
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: sharedOperatorStore
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            metrics: metrics,
+            operatorSessionStore: operatorStore,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.updateSelectedServerSessionHost("127.0.0.1")
+        viewModel.updateSelectedServerSessionPort(18081)
+        viewModel.updateSelectedServerSessionRateLimit(360)
+        viewModel.updateSelectedServerSessionTimeout(75)
+        viewModel.updateSelectedServerSessionTemperature(0.33)
+        viewModel.updateSelectedServerSessionTopP(0.91)
+        viewModel.updateSelectedServerSessionMaxTokens(640)
+        viewModel.updateSelectedServerSessionStreamIntervalTokens(4)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(3)
+        viewModel.updateSelectedServerSessionConcurrentProcessingEnabled(true)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(3)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(2)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(8)
+
+        await viewModel.applySelectedServerGatewayConfig()
+        await viewModel.applySelectedServerServingDefaults()
+
+        #expect(await directClient.recordedGatewayConfigApplyRequests.isEmpty)
+        #expect(await directClient.recordedServingDefaultsApplyRequests.isEmpty)
+
+        let gatewayRequest = try #require(await runnerClient.recordedGatewayConfigApplyRequests.first)
+        let servingRequest = try #require(await runnerClient.recordedServingDefaultsApplyRequests.first)
+
+        #expect(gatewayRequest.serverSessionID == serverSessionID)
+        #expect(gatewayRequest.host == "127.0.0.1")
+        #expect(gatewayRequest.port == 18081)
+        #expect(gatewayRequest.rateLimitPerMinute == 360)
+        #expect(gatewayRequest.timeoutSeconds == 75)
+        #expect(servingRequest.serverSessionID == serverSessionID)
+        #expect(servingRequest.temperature == 0.33)
+        #expect(servingRequest.topP == 0.91)
+        #expect(servingRequest.maxTokens == 640)
+        #expect(servingRequest.streamIntervalTokens == 4)
+        #expect(servingRequest.maxConcurrentRequests == 3)
+        #expect(servingRequest.concurrentProcessingEnabled == true)
+        #expect(servingRequest.prefillBatchSize == 3)
+        #expect(servingRequest.completionBatchSize == 2)
+        #expect(servingRequest.accelerationMode == .speculativeDecode)
+        #expect(servingRequest.draftModelID == "melix-dev-draft")
+        #expect(servingRequest.numDraftTokens == 8)
+        #expect(viewModel.selectedServerSession?.effectiveBaseURL == "http://127.0.0.1:18081/v1")
+        #expect(viewModel.selectedServerSession?.servingDefaults.effectiveTemperature == 0.33)
+        #expect(viewModel.selectedServerSession?.servingDefaults.effectiveTopP == 0.91)
+        #expect(viewModel.selectedServerSession?.servingDefaults.effectiveMaxTokens == 640)
+        #expect(await metrics.snapshot()["menu.gateway_config_apply_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
     }
 
     @Test("load and unload actions dispatch through the client and refresh app state")
@@ -4584,6 +4927,88 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.eval_history_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_csv_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_jsonl_ms"] != nil)
+    }
+
+    @Test("benchmark matrix evaluation and exports use the shared operator command runner when available")
+    @MainActor
+    func benchmarkMatrixEvaluationAndExportsUseSharedOperatorCommandRunnerWhenAvailable() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runner-bench-eval-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await runnerClient.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+                reportMarkdown: "# Melix Bench\n\n- bench.smoke.tokens_per_second: 61.20 tok/s\n",
+                metrics: [
+                    "bench.smoke.ttft_ms": 21.10,
+                    "bench.smoke.tokens_per_second": 61.20,
+                ]
+            )
+        )
+        await runnerClient.configureBenchMatrixResponse(
+            ControlPlaneBenchMatrixResult(
+                job: {
+                    var job = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
+                    job.jobID = "matrix-newer"
+                    job.modelID = "melix-dev-text-lora"
+                    job.taskKind = "text-generation"
+                    job.suiteIds = ["smoke"]
+                    job.status = "completed"
+                    job.outputDir = "/tmp/melix/bench/matrix-runs/matrix-newer"
+                    return job
+                }(),
+                summaryRows: []
+            )
+        )
+        await runnerClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        let operatorStore = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: operatorStore
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            metrics: metrics,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.runBench()
+        await viewModel.exportSelectedBenchmarkCSV()
+        await viewModel.runBenchMatrix()
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+        await viewModel.runEvaluation()
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+        await viewModel.exportSelectedEvaluationSamplesJSONL()
+
+        #expect(await directClient.recordedBenchRequests.isEmpty)
+        #expect(await directClient.recordedBenchMatrixRequests.isEmpty)
+        #expect(await directClient.recordedEvaluationRequests.isEmpty)
+        #expect(await directClient.recordedExportOutputDirs.isEmpty)
+
+        #expect(await runnerClient.recordedBenchRequests.isEmpty == false)
+        #expect(await runnerClient.recordedBenchMatrixRequests.isEmpty == false)
+        #expect(await runnerClient.recordedEvaluationRequests.isEmpty == false)
+        #expect(await runnerClient.recordedExportOutputDirs.isEmpty == false)
+        #expect(viewModel.lastBenchmarkCSVExport != nil)
+        #expect(viewModel.lastBenchmarkMatrixExport != nil)
+        #expect(viewModel.lastEvaluationExport != nil)
     }
 
     @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")

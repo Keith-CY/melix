@@ -50,8 +50,8 @@ def build_homebrew_service_specs(
     home_dir: str | Path | None = None,
     http_port: int = 11434,
     service_instance_name: str = DEFAULT_HOMEBREW_SERVICE_INSTANCE_NAME,
-    swift_backend_mode: str = "deterministic",
-    python_backend_mode: str = "deterministic",
+    swift_backend_mode: str = "swift",
+    python_backend_mode: str = "auto",
     dev_text_model_path: str = "",
 ) -> tuple[LocalProductLayout, list[LaunchAgentSpec]]:
     resolved_repo_root = Path(repo_root).expanduser().resolve()

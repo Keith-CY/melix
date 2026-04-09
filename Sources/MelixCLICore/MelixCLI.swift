@@ -280,8 +280,237 @@ public struct ServerIdlePolicyOptions: Equatable, Sendable {
     }
 }
 
+public struct ModelListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ModelInspectOptions: Equatable, Sendable {
+    public let modelID: String
+    public let json: Bool
+
+    public init(modelID: String, json: Bool = false) {
+        self.modelID = modelID
+        self.json = json
+    }
+}
+
+public struct ModelLoadOptions: Equatable, Sendable {
+    public let modelID: String
+    public let memoryBudgetBytes: UInt64
+    public let json: Bool
+
+    public init(modelID: String, memoryBudgetBytes: UInt64 = 0, json: Bool = false) {
+        self.modelID = modelID
+        self.memoryBudgetBytes = memoryBudgetBytes
+        self.json = json
+    }
+}
+
+public struct ModelUnloadOptions: Equatable, Sendable {
+    public let modelID: String
+    public let json: Bool
+
+    public init(modelID: String, json: Bool = false) {
+        self.modelID = modelID
+        self.json = json
+    }
+}
+
+public struct ModelHubSearchOptions: Equatable, Sendable {
+    public let query: String
+    public let pageSize: UInt32
+    public let cursor: String
+    public let mlxOnly: Bool
+    public let json: Bool
+
+    public init(
+        query: String,
+        pageSize: UInt32 = 10,
+        cursor: String = "",
+        mlxOnly: Bool = true,
+        json: Bool = false
+    ) {
+        self.query = query
+        self.pageSize = pageSize == 0 ? 10 : pageSize
+        self.cursor = cursor
+        self.mlxOnly = mlxOnly
+        self.json = json
+    }
+}
+
+public struct ModelHubShowOptions: Equatable, Sendable {
+    public let repoID: String
+    public let json: Bool
+
+    public init(repoID: String, json: Bool = false) {
+        self.repoID = repoID
+        self.json = json
+    }
+}
+
+public struct ModelHubDownloadOptions: Equatable, Sendable {
+    public let repoID: String
+    public let revision: String
+    public let json: Bool
+
+    public init(repoID: String, revision: String = "main", json: Bool = false) {
+        self.repoID = repoID
+        self.revision = revision.isEmpty ? "main" : revision
+        self.json = json
+    }
+}
+
+public struct ModelDownloadOptions: Equatable, Sendable {
+    public let modelID: String
+    public let outputDir: String
+    public let json: Bool
+
+    public init(modelID: String, outputDir: String = "", json: Bool = false) {
+        self.modelID = modelID
+        self.outputDir = outputDir
+        self.json = json
+    }
+}
+
+public struct ModelRootsListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ModelRootsMutateOptions: Equatable, Sendable {
+    public let path: String
+    public let json: Bool
+
+    public init(path: String, json: Bool = false) {
+        self.path = path
+        self.json = json
+    }
+}
+
+public struct ModelRootsMoveOptions: Equatable, Sendable {
+    public let path: String
+    public let index: Int
+    public let json: Bool
+
+    public init(path: String, index: Int, json: Bool = false) {
+        self.path = path
+        self.index = index
+        self.json = json
+    }
+}
+
+public struct ModelRootsRescanOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ServerSessionListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ServerSessionCreateOptions: Equatable, Sendable {
+    public let title: String
+    public let modelID: String
+    public let host: String
+    public let port: Int
+    public let rateLimitPerMinute: Int
+    public let timeoutSeconds: Int
+    public let json: Bool
+
+    public init(
+        title: String,
+        modelID: String,
+        host: String = "127.0.0.1",
+        port: Int = 8080,
+        rateLimitPerMinute: Int = 120,
+        timeoutSeconds: Int = 120,
+        json: Bool = false
+    ) {
+        self.title = title
+        self.modelID = modelID
+        self.host = host
+        self.port = port
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.timeoutSeconds = timeoutSeconds
+        self.json = json
+    }
+}
+
+public struct ServerSessionUpdateOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let title: String
+    public let modelID: String
+    public let host: String
+    public let port: Int
+    public let rateLimitPerMinute: Int
+    public let timeoutSeconds: Int
+    public let json: Bool
+
+    public init(
+        serverSessionID: String,
+        title: String = "",
+        modelID: String = "",
+        host: String = "",
+        port: Int = 0,
+        rateLimitPerMinute: Int = 0,
+        timeoutSeconds: Int = 0,
+        json: Bool = false
+    ) {
+        self.serverSessionID = serverSessionID
+        self.title = title
+        self.modelID = modelID
+        self.host = host
+        self.port = port
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.timeoutSeconds = timeoutSeconds
+        self.json = json
+    }
+}
+
+public struct ServerSessionIDOptions: Equatable, Sendable {
+    public let serverSessionID: String
+    public let json: Bool
+
+    public init(serverSessionID: String, json: Bool = false) {
+        self.serverSessionID = serverSessionID
+        self.json = json
+    }
+}
+
 public enum MelixCLICommand: Equatable, Sendable {
+    case modelList(ModelListOptions)
+    case modelInspect(ModelInspectOptions)
+    case modelLoad(ModelLoadOptions)
+    case modelUnload(ModelUnloadOptions)
+    case modelDownload(ModelDownloadOptions)
+    case modelHubSearch(ModelHubSearchOptions)
+    case modelHubShow(ModelHubShowOptions)
+    case modelHubDownload(ModelHubDownloadOptions)
+    case modelRootsList(ModelRootsListOptions)
+    case modelRootsAdd(ModelRootsMutateOptions)
+    case modelRootsRemove(ModelRootsMutateOptions)
+    case modelRootsMove(ModelRootsMoveOptions)
+    case modelRootsRescan(ModelRootsRescanOptions)
     case serverSnapshot(ServerSnapshotOptions)
+    case serverSessionList(ServerSessionListOptions)
+    case serverSessionCreate(ServerSessionCreateOptions)
+    case serverSessionUpdate(ServerSessionUpdateOptions)
+    case serverSessionRemove(ServerSessionIDOptions)
+    case serverSessionSelect(ServerSessionIDOptions)
     case serverStart(ServerControlOptions)
     case serverPause(ServerControlOptions)
     case serverResume(ServerControlOptions)
@@ -332,6 +561,8 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "model":
+            return try parseModel(tail)
         case "server":
             return try parseServer(tail)
         case "lora":
@@ -347,7 +578,25 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix model list [--json]
+      melix model inspect --model-id MODEL_ID [--json]
+      melix model load --model-id MODEL_ID [--memory-budget-bytes N] [--json]
+      melix model unload --model-id MODEL_ID [--json]
+      melix model download --model-id MODEL_ID [--output-dir PATH] [--json]
+      melix model hub search --query QUERY [--page-size N] [--cursor TOKEN] [--mlx-only (true|false)] [--json]
+      melix model hub show --repo-id HF_REPO [--json]
+      melix model hub download --repo-id HF_REPO [--revision REV] [--json]
+      melix model roots list [--json]
+      melix model roots add --path PATH [--json]
+      melix model roots remove --path PATH [--json]
+      melix model roots move --path PATH --index N [--json]
+      melix model roots rescan [--json]
       melix server snapshot [--json]
+      melix server session list [--json]
+      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--json]
+      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--json]
+      melix server session remove --server-session-id ID [--json]
+      melix server session select --server-session-id ID [--json]
       melix server start [--server-session-id ID] [--json]
       melix server pause [--server-session-id ID] [--json]
       melix server resume [--server-session-id ID] [--json]
@@ -355,7 +604,7 @@ public enum MelixCLIParser {
       melix server stop [--server-session-id ID] [--json]
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--alias NAME] [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
@@ -371,9 +620,135 @@ public enum MelixCLIParser {
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
     """
 
+    private static func parseModel(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        switch action {
+        case "list":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            return .modelList(.init(json: values.flags.contains("--json")))
+        case "inspect":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix model inspect.")
+            }
+            return .modelInspect(.init(modelID: modelID, json: values.flags.contains("--json")))
+        case "load":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix model load.")
+            }
+            let budget = try parseUInt64Value(values.single["--memory-budget-bytes"], option: "--memory-budget-bytes") ?? 0
+            return .modelLoad(.init(modelID: modelID, memoryBudgetBytes: budget, json: values.flags.contains("--json")))
+        case "unload":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix model unload.")
+            }
+            return .modelUnload(.init(modelID: modelID, json: values.flags.contains("--json")))
+        case "download":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix model download.")
+            }
+            return .modelDownload(
+                .init(
+                    modelID: modelID,
+                    outputDir: values.single["--output-dir"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "hub":
+            return try parseModelHub(Array(arguments.dropFirst()))
+        case "roots":
+            return try parseModelRoots(Array(arguments.dropFirst()))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseModelHub(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "search":
+            guard let query = values.single["--query"], !query.isEmpty else {
+                throw MelixCLIError.missingRequired("--query is required for melix model hub search.")
+            }
+            let pageSize = try parseUInt32Value(values.single["--page-size"], option: "--page-size", defaultValue: 10) ?? 10
+            let mlxOnly = parseBooleanValue(values.single["--mlx-only"], option: "--mlx-only") ?? true
+            return .modelHubSearch(
+                .init(
+                    query: query,
+                    pageSize: pageSize,
+                    cursor: values.single["--cursor"] ?? "",
+                    mlxOnly: mlxOnly,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            guard let repoID = values.single["--repo-id"], !repoID.isEmpty else {
+                throw MelixCLIError.missingRequired("--repo-id is required for melix model hub show.")
+            }
+            return .modelHubShow(.init(repoID: repoID, json: values.flags.contains("--json")))
+        case "download":
+            guard let repoID = values.single["--repo-id"], !repoID.isEmpty else {
+                throw MelixCLIError.missingRequired("--repo-id is required for melix model hub download.")
+            }
+            return .modelHubDownload(
+                .init(
+                    repoID: repoID,
+                    revision: values.single["--revision"] ?? "main",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseModelRoots(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "list":
+            return .modelRootsList(.init(json: values.flags.contains("--json")))
+        case "add":
+            guard let path = values.single["--path"], !path.isEmpty else {
+                throw MelixCLIError.missingRequired("--path is required for melix model roots add.")
+            }
+            return .modelRootsAdd(.init(path: path, json: values.flags.contains("--json")))
+        case "remove":
+            guard let path = values.single["--path"], !path.isEmpty else {
+                throw MelixCLIError.missingRequired("--path is required for melix model roots remove.")
+            }
+            return .modelRootsRemove(.init(path: path, json: values.flags.contains("--json")))
+        case "move":
+            guard let path = values.single["--path"], !path.isEmpty else {
+                throw MelixCLIError.missingRequired("--path is required for melix model roots move.")
+            }
+            guard let index = try parseIntValue(values.single["--index"], option: "--index") else {
+                throw MelixCLIError.missingRequired("--index is required for melix model roots move.")
+            }
+            return .modelRootsMove(.init(path: path, index: index, json: values.flags.contains("--json")))
+        case "rescan":
+            return .modelRootsRescan(.init(json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
     private static func parseServer(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
+        }
+        if action == "session" {
+            return try parseServerSession(Array(arguments.dropFirst()))
         }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
         let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
@@ -424,6 +799,82 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parseServerSession(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "list":
+            return .serverSessionList(.init(json: values.flags.contains("--json")))
+        case "create":
+            guard let title = values.single["--title"], !title.isEmpty else {
+                throw MelixCLIError.missingRequired("--title is required for melix server session create.")
+            }
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix server session create.")
+            }
+            let port = try parseIntValue(values.single["--port"], option: "--port", defaultValue: 8080) ?? 8080
+            let rateLimit = try parseIntValue(
+                values.single["--rate-limit-per-minute"],
+                option: "--rate-limit-per-minute",
+                defaultValue: 120
+            ) ?? 120
+            let timeoutSeconds = try parseIntValue(
+                values.single["--timeout-seconds"],
+                option: "--timeout-seconds",
+                defaultValue: 120
+            ) ?? 120
+            return .serverSessionCreate(
+                .init(
+                    title: title,
+                    modelID: modelID,
+                    host: values.single["--host"] ?? "127.0.0.1",
+                    port: port,
+                    rateLimitPerMinute: rateLimit,
+                    timeoutSeconds: timeoutSeconds,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "update":
+            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
+                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session update.")
+            }
+            return .serverSessionUpdate(
+                .init(
+                    serverSessionID: serverSessionID,
+                    title: values.single["--title"] ?? "",
+                    modelID: values.single["--model-id"] ?? "",
+                    host: values.single["--host"] ?? "",
+                    port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
+                    rateLimitPerMinute: try parseIntValue(
+                        values.single["--rate-limit-per-minute"],
+                        option: "--rate-limit-per-minute",
+                        defaultValue: 0
+                    ) ?? 0,
+                    timeoutSeconds: try parseIntValue(
+                        values.single["--timeout-seconds"],
+                        option: "--timeout-seconds",
+                        defaultValue: 0
+                    ) ?? 0,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "remove":
+            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
+                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session remove.")
+            }
+            return .serverSessionRemove(.init(serverSessionID: serverSessionID, json: values.flags.contains("--json")))
+        case "select":
+            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
+                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session select.")
+            }
+            return .serverSessionSelect(.init(serverSessionID: serverSessionID, json: values.flags.contains("--json")))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
@@ -463,6 +914,7 @@ public enum MelixCLIParser {
                 "--epochs",
                 "--learning-rate",
                 "--max-seq-length",
+                "--sample-limit",
                 "--hf-dataset-path",
                 "--hf-dataset-name",
                 "--hf-dataset-revision",
@@ -822,6 +1274,34 @@ public enum MelixCLIParser {
             return parsed
         }
     }
+
+    private static func parseUInt64Value(
+        _ value: String?,
+        option: String,
+        defaultValue: UInt64? = nil
+    ) throws -> UInt64? {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = UInt64(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+        }
+        return parsed
+    }
+
+    private static func parseIntValue(
+        _ value: String?,
+        option: String,
+        defaultValue: Int? = nil
+    ) throws -> Int? {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = Int(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected an integer.")
+        }
+        return parsed
+    }
 }
 
 private struct ParsedArguments {
@@ -871,12 +1351,19 @@ private struct ArgumentCursor {
 
 public actor MelixCLIRunner {
     private let client: any ControlPlaneXPCClient
+    private let operatorSessionStore: any MelixOperatorSessionStoring
+    private let environment: [String: String]
 
     public init(
         client: (any ControlPlaneXPCClient)? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        operatorSessionStore: (any MelixOperatorSessionStoring)? = nil,
         serviceBuilder: (@Sendable ([String: String]) -> any ControlPlaneExecuting)? = nil
     ) {
+        self.environment = environment
+        self.operatorSessionStore = operatorSessionStore ?? MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: environment)
+        )
         if let client {
             self.client = client
         } else {
@@ -885,13 +1372,420 @@ public actor MelixCLIRunner {
         }
     }
 
+    public func performModelOperation(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        quantProfileID: String = "",
+        weightQuant: String = "",
+        kvQuant: String = "",
+        ext: [String: String] = [:]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        try await client.runModelOperation(
+            modelID: modelID,
+            operation: operation,
+            outputDir: outputDir,
+            quantProfileID: quantProfileID,
+            weightQuant: weightQuant,
+            kvQuant: kvQuant,
+            ext: ext
+        )
+    }
+
+    public func inspectModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
+        try await client.modelInfo(modelID: modelID)
+    }
+
+    public func loadModel(
+        modelID: String,
+        memoryBudgetBytes: UInt64 = 0
+    ) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await client.loadModel(modelID: modelID, memoryBudgetBytes: memoryBudgetBytes)
+    }
+
+    public func unloadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        try await client.unloadModel(modelID: modelID)
+    }
+
+    public func searchHubModels(
+        query: String,
+        pageSize: UInt32 = 10,
+        cursor: String = "",
+        mlxOnly: Bool = true
+    ) async throws -> Melix_Controlplane_V1_HubSearchResult {
+        try await client.searchHubModels(
+            query: query,
+            pageSize: pageSize,
+            cursor: cursor,
+            mlxOnly: mlxOnly
+        )
+    }
+
+    public func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
+        try await client.getHubModelCard(repoID: repoID)
+    }
+
+    public func downloadHubModel(
+        repoID: String,
+        revision: String = "main"
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext: [String: String] = [
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": repoID,
+            "melix.hf_revision": revision.isEmpty ? "main" : revision,
+            "melix.managed_import": "true",
+        ]
+        if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
+            ext["melix.managed_root"] = managedRoot
+        }
+        return try await performModelOperation(
+            modelID: repoID,
+            operation: "download",
+            outputDir: "",
+            ext: ext
+        )
+    }
+
+    public func downloadModel(
+        modelID: String,
+        outputDir: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        try await performModelOperation(
+            modelID: modelID,
+            operation: "download",
+            outputDir: resolvedDownloadOutputDirectory(modelID: modelID, explicitOutputDir: outputDir)
+        )
+    }
+
+    public func applyConfiguredServerSessionGatewayConfig(
+        serverSessionID: String
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        let configuredSession = try loadConfiguredServerSession(id: serverSessionID)
+        return try await client.applyServerSessionGatewayConfig(
+            serverSessionID: configuredSession.id,
+            host: configuredSession.host,
+            port: configuredSession.port,
+            servedModelID: configuredSession.modelID,
+            rateLimitPerMinute: configuredSession.rateLimitPerMinute,
+            timeoutSeconds: configuredSession.timeoutSeconds
+        )
+    }
+
+    public func applyConfiguredServerSessionServingDefaults(
+        serverSessionID: String
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        let configuredSession = try loadConfiguredServerSession(id: serverSessionID)
+        return try await client.applyServerSessionServingDefaults(
+            serverSessionID: configuredSession.id,
+            temperature: configuredSession.servingDefaults.temperature,
+            topP: configuredSession.servingDefaults.topP,
+            maxTokens: configuredSession.servingDefaults.maxTokens,
+            streamIntervalTokens: configuredSession.servingDefaults.streamIntervalTokens,
+            maxConcurrentRequests: configuredSession.servingDefaults.maxConcurrentRequests,
+            concurrentProcessingEnabled: configuredSession.servingDefaults.concurrentProcessingEnabled,
+            prefillBatchSize: configuredSession.servingDefaults.prefillBatchSize,
+            completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
+            accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
+            draftModelID: configuredSession.servingDefaults.draftModelID,
+            numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+        )
+    }
+
+    public func runBenchmark(_ options: BenchRunOptions) async throws -> ControlPlaneBenchResult {
+        if !options.modelID.isEmpty {
+            _ = try await client.loadModel(modelID: options.modelID)
+        }
+        return try await client.runBench(
+            ControlPlaneBenchRequest(
+                modelID: options.modelID,
+                hfRepoID: options.hfRepoID,
+                suites: options.suites,
+                contextLengths: options.contextLengths,
+                generationLength: options.generationLength,
+                batchSizes: options.batchSizes,
+                repeats: options.repeats,
+                cacheProfile: options.cacheProfile,
+                reasoningMode: options.reasoningMode,
+                structuredOutputMode: options.structuredOutputMode,
+                parameters: options.parameters
+            )
+        )
+    }
+
+    public func runBenchmarkMatrix(_ options: BenchMatrixRunOptions) async throws -> ControlPlaneBenchMatrixResult {
+        if !options.modelID.isEmpty {
+            _ = try await client.loadModel(modelID: options.modelID)
+        }
+        return try await client.runBenchMatrix(
+            ControlPlaneBenchMatrixRequest(
+                modelID: options.modelID,
+                hfRepoID: options.hfRepoID,
+                taskKind: options.taskKind,
+                suites: options.suites,
+                contextLengths: options.contextLengths,
+                generationLengths: options.generationLengths,
+                batchSizes: options.batchSizes,
+                cacheProfiles: options.cacheProfiles,
+                reasoningModes: options.reasoningModes,
+                structuredOutputModes: options.structuredOutputModes,
+                concurrencyLevels: options.concurrencyLevels,
+                repeats: options.repeats,
+                requests: options.requests,
+                durationSeconds: options.durationSeconds,
+                allowLargeMatrix: options.allowLargeMatrix
+            )
+        )
+    }
+
+    public func fetchBenchmarkExportBundle(outputDir: String = "") async throws -> ControlPlaneBenchmarkExportBundle {
+        let export = try await client.exportResults(outputDir: outputDir)
+        return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+    }
+
+    public func runEvaluations(_ options: EvalRunOptions) async throws -> [ControlPlaneEvaluationResult] {
+        let suites = options.suites.isEmpty ? ["mmlu"] : options.suites
+        return try await runEvaluationSuites(options: options, suites: suites)
+    }
+
     public func run(_ command: MelixCLICommand) async throws -> String {
+        if commandRequiresConfiguredRegistryRootPriming(command) {
+            try await primeConfiguredRegistryRootsIfNeeded()
+        }
         switch command {
+        case .modelList(let options):
+            let snapshot = try await client.serverSnapshot()
+            if options.json {
+                return try prettyJSON(makeModelListPayload(snapshot.models))
+            }
+            return renderModelList(snapshot.models)
+        case .modelInspect(let options):
+            let info = try await client.modelInfo(modelID: options.modelID)
+            if options.json {
+                return try prettyJSON(makeModelInfoPayload(info, modelID: options.modelID))
+            }
+            return renderModelInfo(info, modelID: options.modelID)
+        case .modelLoad(let options):
+            let model = try await client.loadModel(modelID: options.modelID, memoryBudgetBytes: options.memoryBudgetBytes)
+            if options.json {
+                return try prettyJSON(makeModelSummaryPayload(model))
+            }
+            return renderModelSummary(model)
+        case .modelUnload(let options):
+            let model = try await client.unloadModel(modelID: options.modelID)
+            if options.json {
+                return try prettyJSON(makeModelSummaryPayload(model))
+            }
+            return renderModelSummary(model)
+        case .modelDownload(let options):
+            let result = try await downloadModel(modelID: options.modelID, outputDir: options.outputDir)
+            return options.json ? result.manifestJson : result.outputPath + "\n"
+        case .modelHubSearch(let options):
+            let result = try await searchHubModels(
+                query: options.query,
+                pageSize: options.pageSize,
+                cursor: options.cursor,
+                mlxOnly: options.mlxOnly
+            )
+            if options.json {
+                return try prettyJSON(makeHubSearchPayload(result))
+            }
+            return renderHubSearch(result)
+        case .modelHubShow(let options):
+            let card = try await getHubModelCard(repoID: options.repoID)
+            if options.json {
+                return try prettyJSON(makeHubModelCardPayload(card))
+            }
+            return renderHubModelCard(card)
+        case .modelHubDownload(let options):
+            let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision)
+            return options.json ? result.manifestJson : result.outputPath + "\n"
+        case .modelRootsList(let options):
+            let state = try loadOperatorState()
+            if options.json {
+                return try prettyJSON(["registry_roots": state.registryRoots])
+            }
+            return renderRegistryRoots(state.registryRoots)
+        case .modelRootsAdd(let options):
+            let state = try mutateOperatorState { current in
+                let canonical = canonicalRootPath(options.path)
+                if current.registryRoots.contains(canonical) == false {
+                    current.registryRoots.append(canonical)
+                }
+            }
+            if options.json {
+                return try prettyJSON(["registry_roots": state.registryRoots])
+            }
+            return renderRegistryRoots(state.registryRoots)
+        case .modelRootsRemove(let options):
+            let state = try mutateOperatorState { current in
+                let canonical = canonicalRootPath(options.path)
+                current.registryRoots.removeAll { $0 == canonical }
+            }
+            if options.json {
+                return try prettyJSON(["registry_roots": state.registryRoots])
+            }
+            return renderRegistryRoots(state.registryRoots)
+        case .modelRootsMove(let options):
+            let state = try mutateOperatorState { current in
+                let canonical = canonicalRootPath(options.path)
+                guard let existingIndex = current.registryRoots.firstIndex(of: canonical) else {
+                    return
+                }
+                let root = current.registryRoots.remove(at: existingIndex)
+                let targetIndex = max(0, min(options.index, current.registryRoots.count))
+                current.registryRoots.insert(root, at: targetIndex)
+            }
+            if options.json {
+                return try prettyJSON(["registry_roots": state.registryRoots])
+            }
+            return renderRegistryRoots(state.registryRoots)
+        case .modelRootsRescan(let options):
+            let state = try loadOperatorState()
+            var ext: [String: String] = [
+                "melix.registry_rescan": "true",
+            ]
+            if state.registryRoots.isEmpty == false {
+                ext["melix.registry_roots_json"] = try encodeRegistryRoots(state.registryRoots)
+            }
+            let result = try await performModelOperation(
+                modelID: "melix-dev-text",
+                operation: "registry_snapshot",
+                outputDir: "",
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath + "\n"
         case .serverSnapshot(let options):
             let snapshot = try await client.serverSnapshot()
             return try renderServerSnapshot(snapshot, json: options.json)
+        case .serverSessionList(let options):
+            let state = try loadOperatorState()
+            if options.json {
+                return try prettyJSON(state)
+            }
+            return renderServerSessions(state)
+        case .serverSessionCreate(let options):
+            let state = try mutateOperatorState { current in
+                let nextIndex = current.serverSessions.count + 1
+                let created = MelixOperatorServerSessionState(
+                    id: "server-session-\(nextIndex)",
+                    title: options.title,
+                    modelID: options.modelID,
+                    host: options.host,
+                    port: options.port,
+                    rateLimitPerMinute: options.rateLimitPerMinute,
+                    timeoutSeconds: options.timeoutSeconds,
+                    lifecycle: .draft
+                )
+                current.serverSessions.append(created)
+                current.selectedServerSessionID = created.id
+            }
+            if options.json {
+                return try prettyJSON(state)
+            }
+            return renderServerSessions(state)
+        case .serverSessionUpdate(let options):
+            let state = try mutateOperatorState { current in
+                guard let index = current.serverSessions.firstIndex(where: { $0.id == options.serverSessionID }) else {
+                    return
+                }
+                var session = current.serverSessions[index]
+                if options.title.isEmpty == false {
+                    session.title = options.title
+                }
+                if options.modelID.isEmpty == false {
+                    session.modelID = options.modelID
+                }
+                if options.host.isEmpty == false {
+                    session.host = options.host
+                }
+                if options.port > 0 {
+                    session.port = options.port
+                }
+                if options.rateLimitPerMinute > 0 {
+                    session.rateLimitPerMinute = options.rateLimitPerMinute
+                }
+                if options.timeoutSeconds > 0 {
+                    session.timeoutSeconds = options.timeoutSeconds
+                }
+                session.updatedAt = Date()
+                current.serverSessions[index] = session
+            }
+            if options.json {
+                return try prettyJSON(state)
+            }
+            return renderServerSessions(state)
+        case .serverSessionRemove(let options):
+            let state = try mutateOperatorState { current in
+                current.serverSessions.removeAll { $0.id == options.serverSessionID }
+                if current.selectedServerSessionID == options.serverSessionID {
+                    current.selectedServerSessionID = current.serverSessions.first?.id ?? ""
+                }
+            }
+            if options.json {
+                return try prettyJSON(state)
+            }
+            return renderServerSessions(state)
+        case .serverSessionSelect(let options):
+            let state = try mutateOperatorState { current in
+                if current.serverSessions.contains(where: { $0.id == options.serverSessionID }) {
+                    current.selectedServerSessionID = options.serverSessionID
+                }
+            }
+            if options.json {
+                return try prettyJSON(state)
+            }
+            return renderServerSessions(state)
         case .serverStart(let options):
-            let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+            guard let configuredSession = try configuredServerSessionIfAvailable(id: options.serverSessionID) else {
+                let snapshot = try await client.startServerSession(serverSessionID: options.serverSessionID)
+                return try renderServerSnapshot(snapshot, json: options.json)
+            }
+            let serverSnapshot = try await client.serverSnapshot()
+            guard try await boundServerStartModelIsAvailable(
+                modelID: configuredSession.modelID,
+                serverSnapshot: serverSnapshot
+            ) else {
+                try markServerSessionUnavailable(
+                    id: configuredSession.id,
+                    message: "Unavailable",
+                    lastError: "Bound model \(configuredSession.modelID) is missing."
+                )
+                throw MelixCLIError.runtime("Bound model \(configuredSession.modelID) is missing.")
+            }
+            guard try await boundServerStartModelIsServeable(
+                modelID: configuredSession.modelID,
+                serverSnapshot: serverSnapshot
+            ) else {
+                try markServerSessionUnavailable(
+                    id: configuredSession.id,
+                    message: "Unavailable",
+                    lastError: "Bound model \(configuredSession.modelID) is not serveable."
+                )
+                throw MelixCLIError.runtime("Bound model \(configuredSession.modelID) is not serveable.")
+            }
+            _ = try await client.applyServerSessionGatewayConfig(
+                serverSessionID: configuredSession.id,
+                host: configuredSession.host,
+                port: configuredSession.port,
+                servedModelID: configuredSession.modelID,
+                rateLimitPerMinute: configuredSession.rateLimitPerMinute,
+                timeoutSeconds: configuredSession.timeoutSeconds
+            )
+            _ = try await client.applyServerSessionServingDefaults(
+                serverSessionID: configuredSession.id,
+                temperature: configuredSession.servingDefaults.temperature,
+                topP: configuredSession.servingDefaults.topP,
+                maxTokens: configuredSession.servingDefaults.maxTokens,
+                streamIntervalTokens: configuredSession.servingDefaults.streamIntervalTokens,
+                maxConcurrentRequests: configuredSession.servingDefaults.maxConcurrentRequests,
+                concurrentProcessingEnabled: configuredSession.servingDefaults.concurrentProcessingEnabled,
+                prefillBatchSize: configuredSession.servingDefaults.prefillBatchSize,
+                completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
+                accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
+                draftModelID: configuredSession.servingDefaults.draftModelID,
+                numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+            )
+            let snapshot = try await client.startServerSession(serverSessionID: configuredSession.id)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverPause(let options):
             let snapshot = try await client.pauseServerSession(serverSessionID: options.serverSessionID)
@@ -906,6 +1800,17 @@ public actor MelixCLIRunner {
             let snapshot = try await client.stopServerSession(serverSessionID: options.serverSessionID)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverSetIdlePolicy(let options):
+            if let configuredSession = try configuredServerSessionIfAvailable(id: options.serverSessionID) {
+                _ = try mutateOperatorState { state in
+                    guard let index = state.serverSessions.firstIndex(where: { $0.id == configuredSession.id }) else {
+                        return
+                    }
+                    state.serverSessions[index].autoSleepEnabled = options.autoSleepEnabled
+                    state.serverSessions[index].lightSleepAfterSeconds = Int(options.lightSleepAfterSeconds)
+                    state.serverSessions[index].deepSleepAfterSeconds = Int(options.deepSleepAfterSeconds)
+                    state.serverSessions[index].updatedAt = Date()
+                }
+            }
             let snapshot = try await client.updateServerIdlePolicy(
                 serverSessionID: options.serverSessionID,
                 autoSleepEnabled: options.autoSleepEnabled,
@@ -915,13 +1820,10 @@ public actor MelixCLIRunner {
             return try renderServerSnapshot(snapshot, json: options.json)
         case .loraList(let options):
             let modelID = try await resolveModelID(preferred: options.modelID)
-            let result = try await client.runModelOperation(
+            let result = try await performModelOperation(
                 modelID: modelID,
                 operation: "registry_snapshot",
                 outputDir: "",
-                quantProfileID: "",
-                weightQuant: "",
-                kvQuant: "",
                 ext: [:]
             )
             return options.json ? result.manifestJson : renderRegistrySnapshot(result.manifestJson)
@@ -935,13 +1837,10 @@ public actor MelixCLIRunner {
             if !options.targetRepo.isEmpty {
                 ext["target_repo"] = options.targetRepo
             }
-            let result = try await client.runModelOperation(
+            let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "train_lora",
                 outputDir: "",
-                quantProfileID: "",
-                weightQuant: "",
-                kvQuant: "",
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
@@ -950,35 +1849,15 @@ public actor MelixCLIRunner {
             if !options.derivedModelAlias.isEmpty {
                 ext["derived_model_alias"] = options.derivedModelAlias
             }
-            let result = try await client.runModelOperation(
+            let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "activate_adapter",
                 outputDir: "",
-                quantProfileID: "",
-                weightQuant: "",
-                kvQuant: "",
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
         case .benchRun(let options):
-            if !options.modelID.isEmpty {
-                _ = try await client.loadModel(modelID: options.modelID)
-            }
-            let result = try await client.runBench(
-                ControlPlaneBenchRequest(
-                    modelID: options.modelID,
-                    hfRepoID: options.hfRepoID,
-                    suites: options.suites,
-                    contextLengths: options.contextLengths,
-                    generationLength: options.generationLength,
-                    batchSizes: options.batchSizes,
-                    repeats: options.repeats,
-                    cacheProfile: options.cacheProfile,
-                    reasoningMode: options.reasoningMode,
-                    structuredOutputMode: options.structuredOutputMode,
-                    parameters: options.parameters
-                )
-            )
+            let result = try await runBenchmark(options)
             if options.json {
                 return try prettyJSON(
                     [
@@ -990,14 +1869,14 @@ public actor MelixCLIRunner {
             }
             return result.reportMarkdown.isEmpty ? result.reportPath : result.reportMarkdown
         case .benchList(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let entries = bundle.benchmarkHistoryEntries()
             if options.json {
                 return try prettyJSON(entries)
             }
             return renderBenchmarkHistory(entries)
         case .benchExportCSV(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let rows = bundle.benchmarkCSVRows(jobID: options.jobID)
             guard rows.isEmpty == false else {
                 throw MelixCLIError.runtime("No benchmark metrics were found for job \(options.jobID).")
@@ -1021,41 +1900,20 @@ public actor MelixCLIRunner {
             }
             return outputURL.path + "\n"
         case .benchMatrixRun(let options):
-            if !options.modelID.isEmpty {
-                _ = try await client.loadModel(modelID: options.modelID)
-            }
-            let result = try await client.runBenchMatrix(
-                ControlPlaneBenchMatrixRequest(
-                    modelID: options.modelID,
-                    hfRepoID: options.hfRepoID,
-                    taskKind: options.taskKind,
-                    suites: options.suites,
-                    contextLengths: options.contextLengths,
-                    generationLengths: options.generationLengths,
-                    batchSizes: options.batchSizes,
-                    cacheProfiles: options.cacheProfiles,
-                    reasoningModes: options.reasoningModes,
-                    structuredOutputModes: options.structuredOutputModes,
-                    concurrencyLevels: options.concurrencyLevels,
-                    repeats: options.repeats,
-                    requests: options.requests,
-                    durationSeconds: options.durationSeconds,
-                    allowLargeMatrix: options.allowLargeMatrix
-                )
-            )
+            let result = try await runBenchmarkMatrix(options)
             if options.json {
                 return try prettyJSON(makeBenchmarkMatrixPayload(result))
             }
             return renderBenchmarkMatrixRun(result)
         case .benchMatrixList(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let entries = bundle.benchmarkMatrixHistoryEntries()
             if options.json {
                 return try prettyJSON(entries)
             }
             return renderBenchmarkMatrixHistory(entries)
         case .benchMatrixExportSummaryCSV(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let rows = bundle.benchmarkMatrixSummaryCSVRows(jobID: options.jobID)
             guard rows.isEmpty == false else {
                 throw MelixCLIError.runtime("No benchmark matrix summary rows were found for job \(options.jobID).")
@@ -1075,7 +1933,7 @@ public actor MelixCLIRunner {
             }
             return outputURL.path + "\n"
         case .benchMatrixExportRequestsCSV(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let rows = bundle.benchmarkMatrixRequestRows(jobID: options.jobID)
             guard rows.isEmpty == false else {
                 throw MelixCLIError.runtime("No benchmark matrix request rows were found for job \(options.jobID).")
@@ -1095,14 +1953,13 @@ public actor MelixCLIRunner {
             }
             return outputURL.path + "\n"
         case .evalRun(let options):
-            let suites = options.suites.isEmpty ? ["mmlu"] : options.suites
-            let results = try await runEvaluationSuites(options: options, suites: suites)
+            let results = try await runEvaluations(options)
             if options.json {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
             return renderEvaluationRuns(results)
         case .evalList(let options):
-            let bundle = try await benchmarkExportBundle()
+            let bundle = try await fetchBenchmarkExportBundle()
             let entries = bundle.evaluationHistoryEntries()
             if options.json {
                 return try prettyJSON(entries)
@@ -1140,6 +1997,360 @@ public actor MelixCLIRunner {
         throw MelixCLIError.missingRequired("No model is available in the current server snapshot.")
     }
 
+    private func loadOperatorState() throws -> MelixOperatorSessionState {
+        try operatorSessionStore.load() ?? MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+    }
+
+    private func commandRequiresConfiguredRegistryRootPriming(_ command: MelixCLICommand) -> Bool {
+        switch command {
+        case .modelList,
+             .modelInspect,
+             .modelLoad,
+             .modelUnload,
+             .serverSnapshot,
+             .serverStart,
+             .loraList,
+             .loraTrain,
+             .loraActivate,
+             .benchRun,
+             .benchMatrixRun,
+             .evalRun:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func primeConfiguredRegistryRootsIfNeeded() async throws {
+        let state = loadOperatorStateForRegistryPriming()
+        var ext: [String: String] = [
+            "melix.registry_rescan": "true",
+        ]
+        if state.registryRoots.isEmpty == false {
+            ext["melix.registry_roots_json"] = try encodeRegistryRoots(state.registryRoots)
+        }
+        _ = try await performModelOperation(
+            modelID: "melix-dev-text",
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: ext
+        )
+    }
+
+    private func loadOperatorStateForRegistryPriming() -> MelixOperatorSessionState {
+        do {
+            return try loadOperatorState()
+        } catch CocoaError.fileReadNoPermission,
+                CocoaError.fileReadNoSuchFile {
+            return MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+        } catch {
+            return MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+        }
+    }
+
+    @discardableResult
+    private func mutateOperatorState(
+        _ update: (inout MelixOperatorSessionState) throws -> Void
+    ) throws -> MelixOperatorSessionState {
+        var state = try loadOperatorState()
+        try update(&state)
+        try operatorSessionStore.save(state)
+        return state
+    }
+
+    private func loadConfiguredServerSession(id: String) throws -> MelixOperatorServerSessionState {
+        let state = try loadOperatorState()
+        let resolvedID = id.isEmpty ? state.selectedServerSessionID : id
+        if let session = state.serverSessions.first(where: { $0.id == resolvedID }) {
+            return session
+        }
+        throw MelixCLIError.runtime("Server session \(resolvedID) is not configured.")
+    }
+
+    private func configuredServerSessionIfAvailable(
+        id: String
+    ) throws -> MelixOperatorServerSessionState? {
+        do {
+            return try loadConfiguredServerSession(id: id)
+        } catch let error as MelixCLIError {
+            if case .runtime = error {
+                return nil
+            }
+            throw error
+        } catch CocoaError.fileReadNoPermission {
+            return nil
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
+        } catch {
+            throw error
+        }
+    }
+
+    private func markServerSessionUnavailable(
+        id: String,
+        message: String,
+        lastError: String
+    ) throws {
+        _ = try mutateOperatorState { state in
+            guard let index = state.serverSessions.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            state.serverSessions[index].lifecycle = .unavailable
+            state.serverSessions[index].lastKnownModelStateText = message
+            state.serverSessions[index].lastError = lastError
+            state.serverSessions[index].updatedAt = Date()
+        }
+    }
+
+    private func encodeRegistryRoots(_ roots: [String]) throws -> String {
+        let data = try JSONEncoder().encode(roots)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func canonicalRootPath(_ rawPath: String) -> String {
+        URL(fileURLWithPath: rawPath).standardizedFileURL.path
+    }
+
+    private func resolvedDownloadOutputDirectory(modelID: String, explicitOutputDir: String) -> String {
+        let trimmedOutputDir = explicitOutputDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedOutputDir.isEmpty == false {
+            return canonicalRootPath(trimmedOutputDir)
+        }
+
+        let sanitizedNamespace = sanitizedDownloadPathComponent("melix-downloads", fallback: "melix-downloads")
+        let sanitizedModelID = sanitizedDownloadPathComponent(modelID, fallback: "model")
+        return URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent(sanitizedNamespace, isDirectory: true)
+            .appendingPathComponent(sanitizedModelID, isDirectory: true)
+            .path
+    }
+
+    private func sanitizedDownloadPathComponent(_ rawValue: String, fallback: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return fallback
+        }
+        let sanitized = trimmed.map { character -> Character in
+            if character.isLetter || character.isNumber || character == "-" || character == "_" || character == "." {
+                return character
+            }
+            return "-"
+        }
+        let normalized = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
+        return normalized.isEmpty ? fallback : normalized
+    }
+
+    private func isServeableModel(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+        MelixServeableModelRules.isServeable(kind: model.kind, features: model.features)
+    }
+
+    private func isServeableModel(_ info: Melix_Controlplane_V1_ModelInfo) -> Bool {
+        let normalizedTasks = info.supportedTasks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let normalizedModalities = info.supportedModalities.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if MelixServeableModelRules.isServeable(kind: info.modelKind) {
+            return true
+        }
+        let taskSet = Set(normalizedTasks)
+        let modalitySet = Set(normalizedModalities)
+        let supportsTextServing = modalitySet.contains("text")
+            && (taskSet.contains("chat") || taskSet.contains("generate"))
+        let excludesImageServing = taskSet.contains("image_generate") || taskSet.contains("image_edit")
+        return supportsTextServing && !excludesImageServing
+    }
+
+    private func boundServerStartModelIsAvailable(
+        modelID: String,
+        serverSnapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) async throws -> Bool {
+        if serverSnapshot.models.contains(where: { $0.modelID == modelID }) {
+            return true
+        }
+        do {
+            _ = try await client.modelInfo(modelID: modelID)
+            return true
+        } catch let error as ControlPlaneXPCClientError {
+            if case .requestFailed(let code, _) = error, code == "not_found" {
+                return false
+            }
+            throw error
+        }
+    }
+
+    private func boundServerStartModelIsServeable(
+        modelID: String,
+        serverSnapshot: Melix_Controlplane_V1_ServerSnapshot
+    ) async throws -> Bool {
+        if let model = serverSnapshot.models.first(where: { $0.modelID == modelID }) {
+            return isServeableModel(model)
+        }
+        let info = try await client.modelInfo(modelID: modelID)
+        return isServeableModel(info)
+    }
+
+    private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "baseline":
+            return .baseline
+        case "speculative_decode":
+            return .speculativeDecode
+        case "accelerated_prefill":
+            return .acceleratedPrefill
+        case "active_kv_quantized":
+            return .activeKvQuantized
+        case "sparse_prefill":
+            return .sparsePrefill
+        default:
+            return .unspecified
+        }
+    }
+
+    private func renderModelList(_ models: [Melix_Controlplane_V1_ModelSummary]) -> String {
+        guard models.isEmpty == false else {
+            return "No models found.\n"
+        }
+        let rows = models
+            .sorted { $0.modelID < $1.modelID }
+            .map { model in
+                "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))"
+            }
+        return (["model_id\tkind\tstate"] + rows).joined(separator: "\n") + "\n"
+    }
+
+    private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\n"
+    }
+
+    private func renderModelInfo(_ info: Melix_Controlplane_V1_ModelInfo, modelID: String) -> String {
+        [
+            "model_id=\(modelID)",
+            "model_kind=\(info.modelKind)",
+            "backend_id=\(info.backendID)",
+            "family_id=\(info.familyID)",
+            "max_context=\(info.maxContext)",
+            "supported_tasks=\(info.supportedTasks.joined(separator: ","))",
+        ].joined(separator: "\n") + "\n"
+    }
+
+    private func renderHubSearch(_ result: Melix_Controlplane_V1_HubSearchResult) -> String {
+        guard result.models.isEmpty == false else {
+            return "No hub models found.\n"
+        }
+        let lines = result.models.map { model in
+            "\(model.repoID)\t\(model.pipelineTag)\t\(model.mlxCompatible ? "mlx" : "generic")"
+        }
+        return (["repo_id\tpipeline_tag\tcompatibility"] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderHubModelCard(_ card: Melix_Controlplane_V1_HubModelCard) -> String {
+        [
+            "repo_id=\(card.repoID)",
+            "author=\(card.author)",
+            "model_name=\(card.modelName)",
+            "pipeline_tag=\(card.pipelineTag)",
+            "mlx_compatible=\(card.mlxCompatible ? "true" : "false")",
+        ].joined(separator: "\n") + "\n"
+    }
+
+    private func renderRegistryRoots(_ roots: [String]) -> String {
+        guard roots.isEmpty == false else {
+            return "No registry roots configured.\n"
+        }
+        return roots.enumerated().map { index, root in
+            "\(index + 1)\t\(root)"
+        }.joined(separator: "\n") + "\n"
+    }
+
+    private func renderServerSessions(_ state: MelixOperatorSessionState) -> String {
+        guard state.serverSessions.isEmpty == false else {
+            return "No server sessions configured.\n"
+        }
+        let rows = state.serverSessions.map { session in
+            let selectedMarker = session.id == state.selectedServerSessionID ? "*" : ""
+            return "\(selectedMarker)\(session.id)\t\(session.title)\t\(session.modelID)\t\(session.lifecycle.rawValue)"
+        }
+        return (["server_session_id\ttitle\tmodel_id\tlifecycle"] + rows).joined(separator: "\n") + "\n"
+    }
+
+    private func makeModelSummaryPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
+        [
+            "model_id": model.modelID,
+            "kind": model.kind,
+            "state": modelStateLabel(model.state),
+            "features": model.features,
+        ]
+    }
+
+    private func makeModelListPayload(_ models: [Melix_Controlplane_V1_ModelSummary]) -> [[String: Any]] {
+        models.sorted { $0.modelID < $1.modelID }.map(makeModelSummaryPayload)
+    }
+
+    private func makeModelInfoPayload(
+        _ info: Melix_Controlplane_V1_ModelInfo,
+        modelID: String
+    ) -> [String: Any] {
+        [
+            "model_id": modelID,
+            "model_kind": info.modelKind,
+            "backend_id": info.backendID,
+            "family_id": info.familyID,
+            "max_context": Int(info.maxContext),
+            "supported_tasks": info.supportedTasks,
+            "supported_modalities": info.supportedModalities,
+            "supported_parsers": info.supportedParsers,
+        ]
+    }
+
+    private func makeHubSearchPayload(_ result: Melix_Controlplane_V1_HubSearchResult) -> [String: Any] {
+        [
+            "next_cursor": result.nextCursor,
+            "models": result.models.map { model in
+                [
+                    "repo_id": model.repoID,
+                    "author": model.author,
+                    "model_name": model.modelName,
+                    "pipeline_tag": model.pipelineTag,
+                    "downloads": NSNumber(value: model.downloads),
+                    "likes": NSNumber(value: model.likes),
+                    "mlx_compatible": model.mlxCompatible,
+                ]
+            },
+        ]
+    }
+
+    private func makeHubModelCardPayload(_ card: Melix_Controlplane_V1_HubModelCard) -> [String: Any] {
+        [
+            "repo_id": card.repoID,
+            "author": card.author,
+            "model_name": card.modelName,
+            "summary": card.summary,
+            "pipeline_tag": card.pipelineTag,
+            "mlx_compatible": card.mlxCompatible,
+            "tags": card.tags,
+            "base_models": card.baseModels,
+        ]
+    }
+
+    private func modelStateLabel(_ value: Melix_Controlplane_V1_ModelState) -> String {
+        switch value {
+        case .modelDiscovered:
+            return "discovered"
+        case .modelLoading:
+            return "loading"
+        case .modelWarm:
+            return "warm"
+        case .modelPinned:
+            return "pinned"
+        case .modelEvicting:
+            return "evicting"
+        case .modelUnloaded:
+            return "unloaded"
+        case .modelFailed:
+            return "failed"
+        default:
+            return "unspecified"
+        }
+    }
+
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {
         guard
             let data = manifestJSON.data(using: .utf8),
@@ -1158,11 +2369,6 @@ public actor MelixCLIRunner {
             return "\(name)\t\(status)\t\(sourceModel)"
         }
         return (["adapter\tstatus\tsource_model"] + lines).joined(separator: "\n") + "\n"
-    }
-
-    private func benchmarkExportBundle() async throws -> ControlPlaneBenchmarkExportBundle {
-        let export = try await client.exportResults(outputDir: "")
-        return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
     }
 
     private func runEvaluationSuites(
@@ -1189,7 +2395,7 @@ public actor MelixCLIRunner {
         rowCount: (ControlPlaneBenchmarkExportBundle) throws -> Int,
         contents: (ControlPlaneBenchmarkExportBundle) throws -> String
     ) async throws -> String {
-        let bundle = try await benchmarkExportBundle()
+        let bundle = try await fetchBenchmarkExportBundle()
         let rows = try rowCount(bundle)
         guard rows > 0 else {
             throw MelixCLIError.runtime("No evaluation rows were found for job \(options.jobID).")

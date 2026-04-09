@@ -1,4 +1,5 @@
 import Foundation
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 import Observation
@@ -21,6 +22,7 @@ public actor MenuBarMetricsStore {
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
+    public let features: [String]
     public let supportedTasks: [String]
     public let state: Melix_Controlplane_V1_ModelState
     public let stateText: String
@@ -47,6 +49,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public init(
         modelID: String,
         kind: String,
+        features: [String] = [],
         supportedTasks: [String] = [],
         state: Melix_Controlplane_V1_ModelState,
         stateText: String,
@@ -72,6 +75,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.kind = kind
+        self.features = features
         self.supportedTasks = supportedTasks
         self.state = state
         self.stateText = stateText
@@ -107,6 +111,10 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         default:
             return false
         }
+    }
+
+    public var isServeableServerModel: Bool {
+        MelixServeableModelRules.isServeable(kind: kind, features: features)
     }
 }
 
@@ -279,6 +287,67 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.generationConfigTopPText = generationConfigTopPText
         self.generationConfigMaxTokensText = generationConfigMaxTokensText
         self.ocrStopSequencesText = ocrStopSequencesText
+    }
+}
+
+public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let repoID: String
+    public let author: String
+    public let modelName: String
+    public let pipelineTag: String
+    public let compatibilityText: String
+    public let downloadsText: String
+    public let likesText: String
+
+    public init(
+        repoID: String,
+        author: String,
+        modelName: String,
+        pipelineTag: String,
+        compatibilityText: String,
+        downloadsText: String,
+        likesText: String
+    ) {
+        self.id = repoID
+        self.repoID = repoID
+        self.author = author
+        self.modelName = modelName
+        self.pipelineTag = pipelineTag
+        self.compatibilityText = compatibilityText
+        self.downloadsText = downloadsText
+        self.likesText = likesText
+    }
+}
+
+public struct RuntimeHubModelCardState: Equatable, Sendable {
+    public let repoID: String
+    public let author: String
+    public let modelName: String
+    public let summary: String
+    public let pipelineTag: String
+    public let compatibilityText: String
+    public let tags: [String]
+    public let baseModels: [String]
+
+    public init(
+        repoID: String,
+        author: String,
+        modelName: String,
+        summary: String,
+        pipelineTag: String,
+        compatibilityText: String,
+        tags: [String],
+        baseModels: [String]
+    ) {
+        self.repoID = repoID
+        self.author = author
+        self.modelName = modelName
+        self.summary = RichOutputSanitizer.sanitized(summary)
+        self.pipelineTag = pipelineTag
+        self.compatibilityText = compatibilityText
+        self.tags = tags
+        self.baseModels = baseModels
     }
 }
 
@@ -999,6 +1068,9 @@ public final class RuntimeViewModel {
     public private(set) var daemonInstanceID = ""
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
+    public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = []
+    public private(set) var selectedHubModelCard: RuntimeHubModelCardState?
+    public private(set) var modelHubNextCursor = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
@@ -1039,6 +1111,9 @@ public final class RuntimeViewModel {
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
+    public var modelHubSearchQuery = ""
+    public var modelHubSearchMLXOnly = true
+    public var modelHubSelectedRevision = "main"
     public var modelSettingsAliasDraft = ""
     public var modelSettingsTypeOverrideDraft = ""
     public var modelSettingsTTLDraft = ""
@@ -1154,9 +1229,14 @@ public final class RuntimeViewModel {
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
+    public var serveableModels: [RuntimeModelRow] {
+        models.filter(\.isServeableServerModel)
+    }
+
     private let client: any ControlPlaneXPCClient
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
+    private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -1367,12 +1447,14 @@ public final class RuntimeViewModel {
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
+        operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
         self.client = client
         self.metrics = metrics
         self.operatorSessionStore = operatorSessionStore
+        self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
         self.productInstallStateProvider = productInstallStateProvider
     }
@@ -1504,13 +1586,37 @@ public final class RuntimeViewModel {
     }
 
     public func createServerSession() {
-        let modelID = models.first(where: { $0.kind == "text" })?.modelID ?? selectedChatModelID
+        let modelID = serveableModels.first?.modelID ?? selectedChatModelID
         let nextIndex = serverSessions.count + 1
+        let title = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
+        let port = 8080 + max(0, serverSessions.count)
+        if let operatorCommandRunner {
+            Task {
+                do {
+                    _ = try await operatorCommandRunner.run(
+                        .serverSessionCreate(
+                            .init(title: title, modelID: modelID, host: "127.0.0.1", port: port)
+                        )
+                    )
+                    restoreOperatorSessionState()
+                    syncServerSessionsWithModels()
+                    refreshAgentIntegrationExports()
+                    selectedSurface = .server
+                    if chatSessions.isEmpty {
+                        createChatSession()
+                    }
+                } catch {
+                    recordLocalError(String(describing: error))
+                }
+                notifyStateChanged()
+            }
+            return
+        }
         let session = DesktopServerSessionState(
             id: "server-session-\(UUID().uuidString)",
-            title: nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)",
+            title: title,
             modelID: modelID,
-            port: 8080 + max(0, serverSessions.count),
+            port: port,
             lifecycle: .draft
         )
         persistedServerSessions.append(session)
@@ -1526,6 +1632,22 @@ public final class RuntimeViewModel {
 
     public func selectServerSession(id: String) {
         guard serverSessions.contains(where: { $0.id == id }) else {
+            return
+        }
+        if let operatorCommandRunner {
+            Task {
+                do {
+                    _ = try await operatorCommandRunner.run(.serverSessionSelect(.init(serverSessionID: id)))
+                    restoreOperatorSessionState()
+                    syncServerSessionsWithModels()
+                    refreshAgentIntegrationExports()
+                } catch {
+                    recordLocalError(String(describing: error))
+                }
+                selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
+                maybeApplyStoredGatewayAccessForSelectedRunningSession()
+                notifyStateChanged()
+            }
             return
         }
         selectedServerSessionID = id
@@ -1790,10 +1912,29 @@ public final class RuntimeViewModel {
         guard let serverSession = selectedServerSession else {
             return
         }
+        if await executeServerLifecycleCommand(
+            .serverSetIdlePolicy(
+                .init(
+                    serverSessionID: serverSession.id,
+                    autoSleepEnabled: serverSession.autoSleepEnabled,
+                    lightSleepAfterSeconds: UInt32(max(0, serverSession.lightSleepAfterSeconds)),
+                    deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds))
+                )
+            ),
+            metricName: "menu.server_idle_policy_ms"
+        ) {
+            return
+        }
         await performServerIdlePolicyUpdate(serverSessionID: serverSession.id)
     }
 
     public func startServerSession(id serverSessionID: String) async {
+        if await executeServerLifecycleCommand(
+            .serverStart(.init(serverSessionID: serverSessionID)),
+            metricName: "menu.server_start_ms"
+        ) {
+            return
+        }
         guard await persistGatewayConfig(for: serverSessionID) else {
             return
         }
@@ -1809,6 +1950,12 @@ public final class RuntimeViewModel {
     }
 
     public func pauseServerSession(id serverSessionID: String) async {
+        if await executeServerLifecycleCommand(
+            .serverPause(.init(serverSessionID: serverSessionID)),
+            metricName: "menu.server_pause_ms"
+        ) {
+            return
+        }
         await performServerLifecycleAction(
             serverSessionID: serverSessionID,
             metricName: "menu.server_pause_ms"
@@ -1818,6 +1965,12 @@ public final class RuntimeViewModel {
     }
 
     public func resumeServerSession(id serverSessionID: String) async {
+        if await executeServerLifecycleCommand(
+            .serverResume(.init(serverSessionID: serverSessionID)),
+            metricName: "menu.server_resume_ms"
+        ) {
+            return
+        }
         await performServerLifecycleAction(
             serverSessionID: serverSessionID,
             metricName: "menu.server_resume_ms"
@@ -1827,6 +1980,12 @@ public final class RuntimeViewModel {
     }
 
     public func wakeServerSession(id serverSessionID: String) async {
+        if await executeServerLifecycleCommand(
+            .serverWake(.init(serverSessionID: serverSessionID)),
+            metricName: "menu.server_wake_ms"
+        ) {
+            return
+        }
         await performServerLifecycleAction(
             serverSessionID: serverSessionID,
             metricName: "menu.server_wake_ms"
@@ -1836,6 +1995,12 @@ public final class RuntimeViewModel {
     }
 
     public func stopServerSession(id serverSessionID: String) async {
+        if await executeServerLifecycleCommand(
+            .serverStop(.init(serverSessionID: serverSessionID)),
+            metricName: "menu.server_stop_ms"
+        ) {
+            return
+        }
         await performServerLifecycleAction(
             serverSessionID: serverSessionID,
             metricName: "menu.server_stop_ms"
@@ -2033,9 +2198,6 @@ public final class RuntimeViewModel {
                 )
             )
         }
-        if let selectedServerBanner = selectedServerSession?.lifecycleBannerState {
-            signals.append(selectedServerBanner)
-        }
         if serverStateText == "Degraded" || serverStateText == "Draining" || connectionStateText == "Reconnecting" {
             signals.append(
                 DesktopBannerState(
@@ -2045,6 +2207,11 @@ public final class RuntimeViewModel {
                     severity: .warning
                 )
             )
+        }
+        if let selectedServerBanner = selectedServerSession?.lifecycleBannerState,
+           selectedServerSession?.lifecycle != .unavailable
+        {
+            signals.append(selectedServerBanner)
         }
         if let audioSetupAction = audioSetupActions.first {
             signals.append(
@@ -2455,10 +2622,18 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let requestedMemoryBudgetBytes = resolvedModelLoadMemoryBudgetBytes(for: modelID)
-            let model = try await client.loadModel(
-                modelID: modelID,
-                memoryBudgetBytes: requestedMemoryBudgetBytes
-            )
+            let model: Melix_Controlplane_V1_ModelSummary
+            if let operatorCommandRunner {
+                model = try await operatorCommandRunner.loadModel(
+                    modelID: modelID,
+                    memoryBudgetBytes: requestedMemoryBudgetBytes
+                )
+            } else {
+                model = try await client.loadModel(
+                    modelID: modelID,
+                    memoryBudgetBytes: requestedMemoryBudgetBytes
+                )
+            }
             await metrics.record(
                 name: "menu.model_load_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -2930,7 +3105,12 @@ public final class RuntimeViewModel {
     public func unloadModel(modelID: String) async {
         let startedAt = Date()
         do {
-            let model = try await client.unloadModel(modelID: modelID)
+            let model: Melix_Controlplane_V1_ModelSummary
+            if let operatorCommandRunner {
+                model = try await operatorCommandRunner.unloadModel(modelID: modelID)
+            } else {
+                model = try await client.unloadModel(modelID: modelID)
+            }
             await metrics.record(
                 name: "menu.model_unload_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -3179,7 +3359,12 @@ public final class RuntimeViewModel {
     public func fetchModelInfo(modelID: String) async {
         let startedAt = Date()
         do {
-            let info = try await client.modelInfo(modelID: modelID)
+            let info: Melix_Controlplane_V1_ModelInfo
+            if let operatorCommandRunner {
+                info = try await operatorCommandRunner.inspectModel(modelID: modelID)
+            } else {
+                info = try await client.modelInfo(modelID: modelID)
+            }
             let snapshotModel = latestSnapshot.models.first(where: { $0.modelID == modelID })
             await metrics.record(
                 name: "menu.model_info_ms",
@@ -3317,6 +3502,113 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func searchModelHub() async {
+        let query = modelHubSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.isEmpty == false else {
+            modelHubSearchResults = []
+            modelHubNextCursor = ""
+            selectedHubModelCard = nil
+            notifyStateChanged()
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            let result: Melix_Controlplane_V1_HubSearchResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.searchHubModels(
+                    query: query,
+                    mlxOnly: modelHubSearchMLXOnly
+                )
+            } else {
+                result = try await client.searchHubModels(
+                    query: query,
+                    pageSize: 10,
+                    cursor: "",
+                    mlxOnly: modelHubSearchMLXOnly
+                )
+            }
+            modelHubSearchResults = result.models.map { Self.makeHubModelSearchResultState(from: $0) }
+            modelHubNextCursor = result.nextCursor
+            await metrics.record(
+                name: "menu.model_hub_search_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func inspectHubModel(repoID: String) async {
+        let normalizedRepoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedRepoID.isEmpty == false else {
+            return
+        }
+        let startedAt = Date()
+        do {
+            let card: Melix_Controlplane_V1_HubModelCard
+            if let operatorCommandRunner {
+                card = try await operatorCommandRunner.getHubModelCard(repoID: normalizedRepoID)
+            } else {
+                card = try await client.getHubModelCard(repoID: normalizedRepoID)
+            }
+            selectedHubModelCard = Self.makeHubModelCardState(from: card)
+            await metrics.record(
+                name: "menu.model_hub_show_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
+    public func downloadHubModel(repoID: String) async {
+        let normalizedRepoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedRepoID.isEmpty == false else {
+            return
+        }
+        let startedAt = Date()
+        do {
+            let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
+            let result: Melix_Controlplane_V1_ModelOperationResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.downloadHubModel(
+                    repoID: normalizedRepoID,
+                    revision: revision
+                )
+            } else {
+                result = try await client.runModelOperation(
+                    modelID: normalizedRepoID,
+                    operation: "download",
+                    outputDir: "",
+                    quantProfileID: "",
+                    weightQuant: "",
+                    kvQuant: "",
+                    ext: [
+                        "melix.source_kind": "hub_repo",
+                        "melix.hf_repo_id": normalizedRepoID,
+                        "melix.hf_revision": revision,
+                        "melix.managed_import": "true",
+                    ]
+                )
+            }
+            await applyModelOperationResult(
+                result,
+                modelID: normalizedRepoID,
+                startedAt: startedAt,
+                metricName: "menu.model_hub_download_ms",
+                refreshProductToolingState: false
+            )
+            await refreshDownloadQueueState(notify: false, surfaceErrors: false)
+            await refreshDesktopFoundation()
+        } catch {
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
     public func inspectPrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return
@@ -3336,59 +3628,89 @@ public final class RuntimeViewModel {
     ) async {
         let startedAt = Date()
         do {
-            let result = try await client.runModelOperation(
-                modelID: modelID,
-                operation: operation,
-                outputDir: outputDir,
-                quantProfileID: quantProfileID,
-                weightQuant: weightQuant,
-                kvQuant: kvQuant,
-                ext: ext
-            )
-            await metrics.record(
-                name: "menu.model_operation_ms",
-                valueMs: Date().timeIntervalSince(startedAt) * 1_000
-            )
-            let manifestPayload = Self.jsonPayload(from: result.manifestJson)
-            let compatibilityPayload = Self.dictionaryValue("compatibility", from: manifestPayload)
-            lastModelOperation = RuntimeModelOperationState(
-                modelID: modelID,
-                operation: result.operation,
-                jobID: result.jobID,
-                stage: result.stage,
-                pct: result.pct,
-                outputPath: result.outputPath,
-                manifestJson: result.manifestJson,
-                quantProfileID: result.hasQuantProfile ? result.quantProfile.quantProfileID : "",
-                artifactKind: result.hasArtifact ? result.artifact.artifactKind : "",
-                manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
-                artifactBytes: result.hasArtifact ? result.artifact.artifactBytes : 0,
-                artifactRuntime: result.hasArtifact
-                    ? result.artifact.runtime
-                    : Self.stringValue("runtime", from: compatibilityPayload),
-                servingCompatible: result.hasArtifact
-                    ? result.artifact.servingCompatible
-                    : Self.boolValue("serving_compatible", from: compatibilityPayload),
-                smokeTestRequested: result.hasArtifact
-                    ? result.artifact.smokeTestRequested
-                    : Self.boolValue("smoke_test_requested", from: compatibilityPayload),
-                smokeTestPassed: result.hasArtifact
-                    ? result.artifact.smokeTestPassed
-                    : Self.boolValue("smoke_test_passed", from: compatibilityPayload),
-                calibrationSampleCount: calibrationSampleCount(from: manifestPayload),
-                targetRepo: Self.stringValue("target_repo", from: manifestPayload),
-                sourceArtifactKind: Self.stringValue("source_artifact_kind", from: manifestPayload),
-                conversionTargetFormat: Self.stringValue("target_format", from: manifestPayload),
-                linkedQuantizationProfileID: Self.stringValue(
-                    "quant_profile_id",
-                    from: Self.dictionaryValue("linked_quantization", from: manifestPayload)
+            let result: Melix_Controlplane_V1_ModelOperationResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.performModelOperation(
+                    modelID: modelID,
+                    operation: operation,
+                    outputDir: outputDir,
+                    quantProfileID: quantProfileID,
+                    weightQuant: weightQuant,
+                    kvQuant: kvQuant,
+                    ext: ext
                 )
-            )
-            if refreshProductToolingState {
-                await refreshModelOpsProductState(modelID: modelID, notify: false)
+            } else {
+                result = try await client.runModelOperation(
+                    modelID: modelID,
+                    operation: operation,
+                    outputDir: outputDir,
+                    quantProfileID: quantProfileID,
+                    weightQuant: weightQuant,
+                    kvQuant: kvQuant,
+                    ext: ext
+                )
             }
+            await applyModelOperationResult(
+                result,
+                modelID: modelID,
+                startedAt: startedAt,
+                metricName: "menu.model_operation_ms",
+                refreshProductToolingState: refreshProductToolingState
+            )
         } catch {
             recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    private func applyModelOperationResult(
+        _ result: Melix_Controlplane_V1_ModelOperationResult,
+        modelID: String,
+        startedAt: Date,
+        metricName: String,
+        refreshProductToolingState: Bool
+    ) async {
+        await metrics.record(
+            name: metricName,
+            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+        )
+        let manifestPayload = Self.jsonPayload(from: result.manifestJson)
+        let compatibilityPayload = Self.dictionaryValue("compatibility", from: manifestPayload)
+        lastModelOperation = RuntimeModelOperationState(
+            modelID: modelID,
+            operation: result.operation,
+            jobID: result.jobID,
+            stage: result.stage,
+            pct: result.pct,
+            outputPath: result.outputPath,
+            manifestJson: result.manifestJson,
+            quantProfileID: result.hasQuantProfile ? result.quantProfile.quantProfileID : "",
+            artifactKind: result.hasArtifact ? result.artifact.artifactKind : "",
+            manifestPath: result.hasArtifact ? result.artifact.manifestPath : "",
+            artifactBytes: result.hasArtifact ? result.artifact.artifactBytes : 0,
+            artifactRuntime: result.hasArtifact
+                ? result.artifact.runtime
+                : Self.stringValue("runtime", from: compatibilityPayload),
+            servingCompatible: result.hasArtifact
+                ? result.artifact.servingCompatible
+                : Self.boolValue("serving_compatible", from: compatibilityPayload),
+            smokeTestRequested: result.hasArtifact
+                ? result.artifact.smokeTestRequested
+                : Self.boolValue("smoke_test_requested", from: compatibilityPayload),
+            smokeTestPassed: result.hasArtifact
+                ? result.artifact.smokeTestPassed
+                : Self.boolValue("smoke_test_passed", from: compatibilityPayload),
+            calibrationSampleCount: calibrationSampleCount(from: manifestPayload),
+            targetRepo: Self.stringValue("target_repo", from: manifestPayload),
+            sourceArtifactKind: Self.stringValue("source_artifact_kind", from: manifestPayload),
+            conversionTargetFormat: Self.stringValue("target_format", from: manifestPayload),
+            linkedQuantizationProfileID: Self.stringValue(
+                "quant_profile_id",
+                from: Self.dictionaryValue("linked_quantization", from: manifestPayload)
+            )
+        )
+        if refreshProductToolingState {
+            await refreshModelOpsProductState(modelID: modelID, notify: false)
         }
         notifyStateChanged()
     }
@@ -3554,6 +3876,16 @@ public final class RuntimeViewModel {
         guard !modelID.isEmpty else {
             return
         }
+        if let operatorCommandRunner {
+            do {
+                _ = try await operatorCommandRunner.run(.modelRootsRescan(.init()))
+                restoreOperatorSessionState()
+            } catch {
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
         await refreshModelOpsProductState(
             modelID: modelID,
             notify: true,
@@ -3575,6 +3907,16 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        if let operatorCommandRunner {
+            do {
+                _ = try await operatorCommandRunner.run(.modelRootsAdd(.init(path: normalizedRoot)))
+                restoreOperatorSessionState()
+            } catch {
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
         updatedRoots.append(normalizedRoot)
         await refreshModelOpsProductState(
             modelID: modelID,
@@ -3594,6 +3936,16 @@ public final class RuntimeViewModel {
         }
 
         var updatedRoots = editableRegistryRootPaths()
+        if let operatorCommandRunner {
+            do {
+                _ = try await operatorCommandRunner.run(.modelRootsRemove(.init(path: updatedRoots[index])))
+                restoreOperatorSessionState()
+            } catch {
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
         updatedRoots.remove(at: index)
         await refreshModelOpsProductState(
             modelID: modelID,
@@ -3756,20 +4108,38 @@ public final class RuntimeViewModel {
         let contextLengths = normalizedBenchContextLengths()
         let startedAt = Date()
         do {
-            let result = try await client.runBench(
-                ControlPlaneBenchRequest(
-                    modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
-                    hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
-                    suites: suites,
-                    contextLengths: contextLengths,
-                    batchSizes: normalizedBenchBatchSizes(),
-                    repeats: normalizedBenchRepeats(),
-                    cacheProfile: normalizedBenchCacheProfile(),
-                    reasoningMode: normalizedBenchReasoningMode(),
-                    structuredOutputMode: normalizedBenchStructuredOutputMode(),
-                    parameters: benchmarkParameters()
+            let result: ControlPlaneBenchResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.runBenchmark(
+                    .init(
+                        modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+                        hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
+                        suites: suites,
+                        contextLengths: contextLengths,
+                        batchSizes: normalizedBenchBatchSizes(),
+                        repeats: normalizedBenchRepeats(),
+                        cacheProfile: normalizedBenchCacheProfile(),
+                        reasoningMode: normalizedBenchReasoningMode(),
+                        structuredOutputMode: normalizedBenchStructuredOutputMode(),
+                        parameters: benchmarkParameters()
+                    )
                 )
-            )
+            } else {
+                result = try await client.runBench(
+                    ControlPlaneBenchRequest(
+                        modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+                        hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
+                        suites: suites,
+                        contextLengths: contextLengths,
+                        batchSizes: normalizedBenchBatchSizes(),
+                        repeats: normalizedBenchRepeats(),
+                        cacheProfile: normalizedBenchCacheProfile(),
+                        reasoningMode: normalizedBenchReasoningMode(),
+                        structuredOutputMode: normalizedBenchStructuredOutputMode(),
+                        parameters: benchmarkParameters()
+                    )
+                )
+            }
             await metrics.record(
                 name: "menu.ops_bench_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -3799,8 +4169,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureBenchmarkExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             let selectedJobID = selectedBenchmarkHistoryJobID.isEmpty ? nil : selectedBenchmarkHistoryJobID
             let rows = bundle.benchmarkCSVRows(jobID: selectedJobID)
@@ -3897,7 +4272,30 @@ public final class RuntimeViewModel {
 
         let startedAt = Date()
         do {
-            let result = try await client.runBenchMatrix(request)
+            let result: ControlPlaneBenchMatrixResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.runBenchmarkMatrix(
+                    .init(
+                        modelID: request.modelID,
+                        hfRepoID: request.hfRepoID,
+                        taskKind: request.taskKind,
+                        suites: request.suites,
+                        contextLengths: request.contextLengths,
+                        generationLengths: request.generationLengths,
+                        batchSizes: request.batchSizes,
+                        cacheProfiles: request.cacheProfiles,
+                        reasoningModes: request.reasoningModes,
+                        structuredOutputModes: request.structuredOutputModes,
+                        concurrencyLevels: request.concurrencyLevels,
+                        repeats: request.repeats,
+                        requests: request.requests,
+                        durationSeconds: request.durationSeconds,
+                        allowLargeMatrix: request.allowLargeMatrix
+                    )
+                )
+            } else {
+                result = try await client.runBenchMatrix(request)
+            }
             selectedBenchmarkMatrixHistoryJobID = result.job.jobID
             await metrics.record(
                 name: "menu.ops_bench_matrix_ms",
@@ -3961,18 +4359,30 @@ public final class RuntimeViewModel {
 
         let startedAt = Date()
         do {
-            for suiteID in suites {
-                let datasetID = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
-                _ = try await client.runEvaluation(
-                    ControlPlaneEvaluationRequest(
+            if let operatorCommandRunner {
+                _ = try await operatorCommandRunner.runEvaluations(
+                    .init(
                         modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
                         hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
-                        suiteID: suiteID,
-                        datasetID: datasetID,
-                        sampleSize: evaluationSampleSize(for: suiteID),
+                        suites: suites,
+                        sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
                         parameters: evaluationParameters()
                     )
                 )
+            } else {
+                for suiteID in suites {
+                    let datasetID = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
+                    _ = try await client.runEvaluation(
+                        ControlPlaneEvaluationRequest(
+                            modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
+                            hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
+                            suiteID: suiteID,
+                            datasetID: datasetID,
+                            sampleSize: evaluationSampleSize(for: suiteID),
+                            parameters: evaluationParameters()
+                        )
+                    )
+                }
             }
             await metrics.record(
                 name: "menu.ops_eval_ms",
@@ -4017,8 +4427,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
             let rows = bundle.evaluationSampleRows(jobID: selectedJobID)
@@ -4075,15 +4490,25 @@ public final class RuntimeViewModel {
             if rescan {
                 ext["melix.registry_rescan"] = "true"
             }
-            let result = try await client.runModelOperation(
-                modelID: modelID,
-                operation: "registry_snapshot",
-                outputDir: "",
-                quantProfileID: "",
-                weightQuant: "",
-                kvQuant: "",
-                ext: ext
-            )
+            let result: Melix_Controlplane_V1_ModelOperationResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.performModelOperation(
+                    modelID: modelID,
+                    operation: "registry_snapshot",
+                    outputDir: "",
+                    ext: ext
+                )
+            } else {
+                result = try await client.runModelOperation(
+                    modelID: modelID,
+                    operation: "registry_snapshot",
+                    outputDir: "",
+                    quantProfileID: "",
+                    weightQuant: "",
+                    kvQuant: "",
+                    ext: ext
+                )
+            }
             await metrics.record(
                 name: "menu.model_ops_refresh_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -4116,15 +4541,25 @@ public final class RuntimeViewModel {
         }
 
         do {
-            let result = try await client.runModelOperation(
-                modelID: modelID,
-                operation: "registry_snapshot",
-                outputDir: "",
-                quantProfileID: "",
-                weightQuant: "",
-                kvQuant: "",
-                ext: [:]
-            )
+            let result: Melix_Controlplane_V1_ModelOperationResult
+            if let operatorCommandRunner {
+                result = try await operatorCommandRunner.performModelOperation(
+                    modelID: modelID,
+                    operation: "registry_snapshot",
+                    outputDir: "",
+                    ext: [:]
+                )
+            } else {
+                result = try await client.runModelOperation(
+                    modelID: modelID,
+                    operation: "registry_snapshot",
+                    outputDir: "",
+                    quantProfileID: "",
+                    weightQuant: "",
+                    kvQuant: "",
+                    ext: [:]
+                )
+            }
             applyModelOpsSnapshot(manifestJSON: result.manifestJson)
         } catch {
             if surfaceErrors {
@@ -4276,14 +4711,21 @@ public final class RuntimeViewModel {
 
         let startedAt = Date()
         do {
-            let snapshot = try await client.applyServerSessionGatewayConfig(
-                serverSessionID: serverSession.id,
-                host: serverSession.host,
-                port: serverSession.port,
-                servedModelID: serverSession.modelID,
-                rateLimitPerMinute: serverSession.rateLimitPerMinute,
-                timeoutSeconds: serverSession.timeoutSeconds
-            )
+            let snapshot: Melix_Controlplane_V1_ServerSnapshot
+            if let operatorCommandRunner {
+                snapshot = try await operatorCommandRunner.applyConfiguredServerSessionGatewayConfig(
+                    serverSessionID: serverSession.id
+                )
+            } else {
+                snapshot = try await client.applyServerSessionGatewayConfig(
+                    serverSessionID: serverSession.id,
+                    host: serverSession.host,
+                    port: serverSession.port,
+                    servedModelID: serverSession.modelID,
+                    rateLimitPerMinute: serverSession.rateLimitPerMinute,
+                    timeoutSeconds: serverSession.timeoutSeconds
+                )
+            }
             await metrics.record(
                 name: "menu.gateway_config_apply_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -4305,22 +4747,29 @@ public final class RuntimeViewModel {
 
         let startedAt = Date()
         do {
-            let snapshot = try await client.applyServerSessionServingDefaults(
-                serverSessionID: serverSession.id,
-                temperature: serverSession.servingDefaults.temperature,
-                topP: serverSession.servingDefaults.topP,
-                maxTokens: serverSession.servingDefaults.maxTokens,
-                streamIntervalTokens: serverSession.servingDefaults.streamIntervalTokens,
-                maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests,
-                concurrentProcessingEnabled: serverSession.servingDefaults.concurrentProcessingEnabled,
-                prefillBatchSize: serverSession.servingDefaults.prefillBatchSize,
-                completionBatchSize: serverSession.servingDefaults.completionBatchSize,
-                accelerationMode: servingDefaultsAccelerationMode(
-                    from: serverSession.servingDefaults.accelerationMode
-                ),
-                draftModelID: serverSession.servingDefaults.draftModelID,
-                numDraftTokens: serverSession.servingDefaults.numDraftTokens
-            )
+            let snapshot: Melix_Controlplane_V1_ServerSnapshot
+            if let operatorCommandRunner {
+                snapshot = try await operatorCommandRunner.applyConfiguredServerSessionServingDefaults(
+                    serverSessionID: serverSession.id
+                )
+            } else {
+                snapshot = try await client.applyServerSessionServingDefaults(
+                    serverSessionID: serverSession.id,
+                    temperature: serverSession.servingDefaults.temperature,
+                    topP: serverSession.servingDefaults.topP,
+                    maxTokens: serverSession.servingDefaults.maxTokens,
+                    streamIntervalTokens: serverSession.servingDefaults.streamIntervalTokens,
+                    maxConcurrentRequests: serverSession.servingDefaults.maxConcurrentRequests,
+                    concurrentProcessingEnabled: serverSession.servingDefaults.concurrentProcessingEnabled,
+                    prefillBatchSize: serverSession.servingDefaults.prefillBatchSize,
+                    completionBatchSize: serverSession.servingDefaults.completionBatchSize,
+                    accelerationMode: servingDefaultsAccelerationMode(
+                        from: serverSession.servingDefaults.accelerationMode
+                    ),
+                    draftModelID: serverSession.servingDefaults.draftModelID,
+                    numDraftTokens: serverSession.servingDefaults.numDraftTokens
+                )
+            }
             await metrics.record(
                 name: "menu.serving_defaults_apply_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -4430,9 +4879,7 @@ public final class RuntimeViewModel {
     }
 
     private func syncServerSessionsWithModels() {
-        let textModels = models.filter { row in
-            row.kind == "text" || latestSnapshot.models.first(where: { $0.modelID == row.modelID })?.features.contains("chat") == true
-        }
+        let textModels = serveableModels
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
             let seededServerSessionID = latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
@@ -4477,12 +4924,6 @@ public final class RuntimeViewModel {
                     case .stopping:
                         updated.lifecycle = model.isLoaded ? .stopping : .stopped
                     }
-                }
-            } else if let fallbackModel = textModels.first {
-                updated.modelID = fallbackModel.modelID
-                updated.lastKnownModelStateText = fallbackModel.stateText
-                if runtimeSession == nil {
-                    updated.lifecycle = session.lifecycle == .stopped ? .stopped : .running
                 }
             } else {
                 updated.lifecycle = .unavailable
@@ -4551,6 +4992,8 @@ public final class RuntimeViewModel {
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
+            registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
+            registryHasConfiguredRootOverride = registryConfiguredRootPaths.isEmpty == false
             if restoredState.serverSessions.isEmpty == false {
                 persistedServerSessions = restoredState.serverSessions
                 serverSessions = restoredState.serverSessions
@@ -4569,7 +5012,8 @@ public final class RuntimeViewModel {
             selectedServerSessionID: selectedServerSessionID,
             serverSessions: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
-            downloadQueue: downloadQueue
+            downloadQueue: downloadQueue,
+            registryRoots: registryConfiguredRootPaths
         )
     }
 
@@ -4594,6 +5038,30 @@ public final class RuntimeViewModel {
         } catch {
             recordLocalError("Operator session persistence failed: \(error)")
         }
+    }
+
+    private func executeServerLifecycleCommand(
+        _ command: MelixCLICommand,
+        metricName: String
+    ) async -> Bool {
+        guard let operatorCommandRunner else {
+            return false
+        }
+
+        let startedAt = Date()
+        do {
+            _ = try await operatorCommandRunner.run(command)
+            restoreOperatorSessionState()
+            await refreshDesktopFoundation()
+            await metrics.record(
+                name: metricName,
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+        return true
     }
 
     private func maybeApplyStoredGatewayAccessForSelectedRunningSession() {
@@ -4837,8 +5305,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureBenchmarkExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             let elapsedMs = Date().timeIntervalSince(startedAt) * 1_000
             await metrics.record(name: "menu.bench_history_refresh_ms", valueMs: elapsedMs)
@@ -4857,8 +5330,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             await metrics.record(
                 name: "menu.eval_history_refresh_ms",
@@ -5134,8 +5612,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureBenchmarkExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             let selectedJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty ? nil : selectedBenchmarkMatrixHistoryJobID
             let (rowCount, payload) = builder(bundle, selectedJobID)
@@ -5173,8 +5656,13 @@ public final class RuntimeViewModel {
         let startedAt = Date()
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
-            let export = try await client.exportResults(outputDir: exportDirectory.path)
-            let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            let bundle: ControlPlaneBenchmarkExportBundle
+            if let operatorCommandRunner {
+                bundle = try await operatorCommandRunner.fetchBenchmarkExportBundle(outputDir: exportDirectory.path)
+            } else {
+                let export = try await client.exportResults(outputDir: exportDirectory.path)
+                bundle = try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+            }
             applyBenchmarkExportBundle(bundle)
             let selectedJobID = selectedEvaluationHistoryJobID.isEmpty ? nil : selectedEvaluationHistoryJobID
             let (rowCount, payload) = builder(bundle, selectedJobID)
@@ -5955,6 +6443,16 @@ public final class RuntimeViewModel {
 
         var updatedRoots = editableRegistryRootPaths()
         let root = updatedRoots.remove(at: index)
+        if let operatorCommandRunner {
+            do {
+                _ = try await operatorCommandRunner.run(.modelRootsMove(.init(path: root, index: destination)))
+                restoreOperatorSessionState()
+            } catch {
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
         updatedRoots.insert(root, at: destination)
         await refreshModelOpsProductState(
             modelID: modelID,
@@ -7077,6 +7575,35 @@ public final class RuntimeViewModel {
         )
     }
 
+    private static func makeHubModelSearchResultState(
+        from model: Melix_Controlplane_V1_HubModelSummary
+    ) -> RuntimeHubModelSearchResultState {
+        RuntimeHubModelSearchResultState(
+            repoID: model.repoID,
+            author: hubAuthorText(author: model.author, repoID: model.repoID),
+            modelName: model.modelName.isEmpty ? model.repoID : model.modelName,
+            pipelineTag: model.pipelineTag.isEmpty ? "unknown" : model.pipelineTag,
+            compatibilityText: hubCompatibilityText(model.mlxCompatible),
+            downloadsText: hubMetricText(model.downloads, suffix: "downloads"),
+            likesText: hubMetricText(model.likes, suffix: "likes")
+        )
+    }
+
+    private static func makeHubModelCardState(
+        from card: Melix_Controlplane_V1_HubModelCard
+    ) -> RuntimeHubModelCardState {
+        RuntimeHubModelCardState(
+            repoID: card.repoID,
+            author: hubAuthorText(author: card.author, repoID: card.repoID),
+            modelName: card.modelName.isEmpty ? card.repoID : card.modelName,
+            summary: card.summary,
+            pipelineTag: card.pipelineTag.isEmpty ? "unknown" : card.pipelineTag,
+            compatibilityText: hubCompatibilityText(card.mlxCompatible),
+            tags: card.tags,
+            baseModels: card.baseModels
+        )
+    }
+
     private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
         payload[key] as? String ?? ""
     }
@@ -7235,6 +7762,25 @@ public final class RuntimeViewModel {
         formatter.countStyle = .memory
         formatter.includesUnit = true
         return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    private static func hubAuthorText(author: String, repoID: String) -> String {
+        let normalizedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedAuthor.isEmpty == false {
+            return normalizedAuthor
+        }
+        return repoID.split(separator: "/").first.map(String.init) ?? ""
+    }
+
+    private static func hubCompatibilityText(_ mlxCompatible: Bool) -> String {
+        mlxCompatible ? "MLX" : "Generic"
+    }
+
+    private static func hubMetricText(_ value: UInt64, suffix: String) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let countText = formatter.string(from: NSNumber(value: value)) ?? String(value)
+        return "\(countText) \(suffix)"
     }
 
     private static func humanizedControlTitle(_ value: String) -> String {
@@ -7603,6 +8149,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
     return RuntimeModelRow(
         modelID: model.modelID,
         kind: model.kind,
+        features: model.features,
         supportedTasks: model.supportedTasks,
         state: model.state,
         stateText: runtimeModelStateText(

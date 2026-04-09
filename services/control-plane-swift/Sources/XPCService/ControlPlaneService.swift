@@ -447,6 +447,7 @@ public actor ControlPlaneService {
         case .restart(let restart):
             return await handleRestartServer(request: request, command: restart)
         case .getSnapshot:
+            await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
             var reply = Melix_Controlplane_V1_ServerReply()
             reply.snapshot = await buildSnapshot()
             return okResponse(for: request, server: reply)
@@ -479,12 +480,12 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         switch command.kind {
         case .list:
-            await syncRegistryModelsFromWorkerIfAvailable()
+            await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
             var reply = Melix_Controlplane_V1_ModelReply()
             reply.models = hydratedModels(await modelCatalog.listModels())
             return okResponse(for: request, model: reply)
         case .load(let load):
-            await syncRegistryModelsFromWorkerIfAvailable()
+            await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
             guard await modelCatalog.model(id: load.modelID) != nil else {
                 return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
             }
@@ -2240,6 +2241,7 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_GetModelInfo
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
+        await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
         guard await modelCatalog.model(id: command.modelID) != nil else {
             return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
         }
@@ -2292,7 +2294,9 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_RunModelOperation
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
-        guard await modelCatalog.model(id: command.modelID) != nil else {
+        await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
+        let modelExists = await modelCatalog.model(id: command.modelID) != nil
+        guard modelExists || allowsManagedHubImportDownload(for: command) else {
             return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
         }
         guard
@@ -2410,11 +2414,31 @@ public actor ControlPlaneService {
         }
     }
 
-    private func syncRegistryModelsFromWorkerIfAvailable() async {
+    private func allowsManagedHubImportDownload(
+        for command: Melix_Controlplane_V1_RunModelOperation
+    ) -> Bool {
+        guard command.operation == "download" else {
+            return false
+        }
+        guard command.ext["melix.source_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == "hub_repo" else {
+            return false
+        }
+        let managedImport = command.ext["melix.managed_import"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        guard ["1", "true", "yes", "on"].contains(managedImport) else {
+            return false
+        }
+        let repoID = command.ext["melix.hf_repo_id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return repoID.isEmpty == false
+    }
+
+    private func syncRegistryModelsFromWorkerIfAvailable(rescan: Bool = false) async {
         await RegistrySnapshotSync.syncModelsIfAvailable(
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
-            metricsStore: metricsStore
+            metricsStore: metricsStore,
+            rescan: rescan
         )
     }
 

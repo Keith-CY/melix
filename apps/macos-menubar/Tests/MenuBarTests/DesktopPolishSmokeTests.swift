@@ -114,7 +114,7 @@ struct DesktopPolishSmokeTests {
             else {
                 return false
             }
-            return downloadQueue.isEmpty == false && payload["selected_tool_section"] as? String == DesktopToolSection.downloads.rawValue
+            return downloadQueue.isEmpty == false && payload["selected_tool_section"] as? String == "downloads"
         }
 
         let persistedData = try Data(contentsOf: temporaryRoot.appendingPathComponent("state/operator-session.json"))
@@ -122,6 +122,7 @@ struct DesktopPolishSmokeTests {
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
         let persistedQueue = try #require(persistedPayload["download_queue"] as? [[String: Any]])
+        #expect(persistedPayload["selected_tool_section"] as? String == "downloads")
 
         let restoredMetrics = MenuBarMetricsStore()
         let restoredViewModel = RuntimeViewModel(

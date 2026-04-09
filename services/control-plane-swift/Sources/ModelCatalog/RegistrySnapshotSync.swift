@@ -151,8 +151,7 @@ enum RegistrySnapshotSync {
         guard
             let data = manifestJSON.data(using: .utf8),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let registryPayload = payload["model_registry"] as? [String: Any],
-            let modelPayloads = registryPayload["models"] as? [[String: Any]]
+            let registryPayload = payload["model_registry"] as? [String: Any]
         else {
             return nil
         }
@@ -163,7 +162,12 @@ enum RegistrySnapshotSync {
             .compactMap { index, payload in
                 rootState(from: payload, fallbackOrder: index + 1)
             }
-        let models = modelPayloads.compactMap(modelSummary(from:))
+        let registryModels = (registryPayload["models"] as? [[String: Any]] ?? []).compactMap(modelSummary(from:))
+        let derivedModels = (payload["derived_models"] as? [[String: Any]] ?? []).compactMap(derivedModelSummary(from:))
+        var seenModelIDs = Set<String>()
+        let models = (registryModels + derivedModels).filter { model in
+            seenModelIDs.insert(model.modelID).inserted
+        }
         return ParsedRegistrySnapshot(
             roots: roots,
             models: models,
@@ -233,6 +237,73 @@ enum RegistrySnapshotSync {
         let routeKind = metadata["melix.capability.route_kind"]
         model.capabilityClass = capabilityClass(identifier: capabilityIdentifier, kind: model.kind)
         model.routeClass = routeClass(routeKind: routeKind, kind: model.kind)
+        model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
+        model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
+        return model
+    }
+
+    private static func derivedModelSummary(
+        from payload: [String: Any]
+    ) -> Melix_Controlplane_V1_ModelSummary? {
+        guard
+            let modelID = payload["model_id"] as? String,
+            let modelPath = payload["model_path"] as? String
+        else {
+            return nil
+        }
+
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModelPath = modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedModelID.isEmpty, !normalizedModelPath.isEmpty else {
+            return nil
+        }
+
+        var metadata = stringDictionary(from: payload["ext"])
+        metadata["melix.model_path"] = normalizedModelPath
+        metadata["melix.derived_from_adapter"] = "true"
+        if let sourceModel = payload["source_model"] as? String {
+            let normalizedSourceModel = sourceModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedSourceModel.isEmpty {
+                metadata["melix.derived_from_model_id"] = normalizedSourceModel
+            }
+        }
+        if let alias = payload["derived_model_alias"] as? String {
+            let normalizedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedAlias.isEmpty {
+                metadata["melix.derived_model_alias"] = normalizedAlias
+            }
+        }
+        if let adapterSetHash = payload["adapter_set_hash"] as? String {
+            let normalizedAdapterSetHash = adapterSetHash.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedAdapterSetHash.isEmpty {
+                metadata["melix.adapter_set_hash"] = normalizedAdapterSetHash
+            }
+        }
+        if metadata["melix.capability.class"] == nil {
+            metadata["melix.capability.class"] = "text"
+        }
+        if metadata["melix.capability.route_kind"] == nil {
+            metadata["melix.capability.route_kind"] = "python_text_compatibility"
+        }
+        if metadata["melix.capability.supported_modalities"] == nil {
+            metadata["melix.capability.supported_modalities"] = "text"
+        }
+        if metadata["melix.capability.supported_tasks"] == nil {
+            metadata["melix.capability.supported_tasks"] = "generate"
+        }
+        if metadata["melix.capability.supported_parsers"] == nil {
+            metadata["melix.capability.supported_parsers"] = "text"
+        }
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = normalizedModelID
+        model.kind = "text"
+        model.state = .modelDiscovered
+        model.maxContext = uint32Value(from: payload["max_context"]) == 0 ? 8192 : uint32Value(from: payload["max_context"])
+        model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext = metadata
+        model.capabilityClass = capabilityClass(identifier: metadata["melix.capability.class"], kind: model.kind)
+        model.routeClass = routeClass(routeKind: metadata["melix.capability.route_kind"], kind: model.kind)
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
         return model

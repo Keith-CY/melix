@@ -161,7 +161,7 @@ class MaintenanceCore:
     ) -> None:
         self._registry = registry
         self._jobs_root = Path(jobs_root)
-        self._job_registry = job_registry or ModelOpsJobRegistry()
+        self._job_registry = job_registry or ModelOpsJobRegistry(self._jobs_root)
         self._hub_catalog = hub_catalog or HubCatalog()
         self._conversion_pipeline = ModelConversionPipeline(registry)
         self._quantization_pipeline = OQQuantizationPipeline(registry)
@@ -440,6 +440,9 @@ class MaintenanceCore:
                         )
                     )
                     return
+
+                if operation == "download":
+                    self._registry.model_catalog.registry_snapshot(rescan=True)
 
                 for snapshot in result.snapshots:
                     self._job_registry.progress(job.job_id, snapshot.stage, snapshot.pct)

@@ -2572,6 +2572,81 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"model_not_ready\""))
     }
 
+    @Test("responses requests sync registry snapshots before loading newly activated derived models")
+    func responsesSyncRegistrySnapshotsBeforeLoadingNewlyActivatedDerivedModels() async throws {
+        let derivedModelID = "melix-dev-text-lora-729f709c"
+        let catalog = ModelCatalog(seedModels: [])
+        let modelOpsClient = ScriptedRegistryModelOperationsWorkerClient()
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(
+                    requestID: "req-derived-response",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "READY_DERIVED"
+                ),
+            ],
+            loadModelHandle: "\(derivedModelID)::swift"
+        )
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [],
+            derivedModels: [
+                [
+                    "model_id": derivedModelID,
+                    "model_path": "/tmp/melix-derived/\(derivedModelID)",
+                    "source_model": "melix-dev-text",
+                    "derived_model_alias": "melix-qwen35-acceptance",
+                    "adapter_set_hash": "729f709c8b274b1c",
+                    "status": "activated",
+                ],
+            ]
+        )
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        let registry = WorkerRegistry(
+            defaultTextClient: workerClient,
+            pythonCompatibilityClient: workerClient,
+            modelOperationsClient: modelOpsClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-derived-response" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "\(derivedModelID)",
+              "stream": true,
+              "input": "Hello"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/responses", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+        let registryRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("READY_DERIVED"))
+        #expect(registryRequest.ext["operation"] == "registry_snapshot")
+        #expect(registryRequest.ext["melix.registry_rescan"] == "true")
+    }
+
     @Test("GET /v1/models returns model state from the catalog")
     func getModelsReturnsCatalogState() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -2663,6 +2738,7 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(request.ext["operation"] == "registry_snapshot")
+        #expect(request.ext["melix.registry_rescan"] == "true")
         #expect(request.generateManifest)
         #expect(discovered["melix_state"] as? String == "discovered")
         #expect(metadata["melix.registry_provider_id"] as? String == "hf-mirror")
@@ -6316,7 +6392,8 @@ struct OpenAIHandlerTests {
 }
 
 private func makeRegistrySnapshotManifestJSON(
-    models: [[String: Any]]
+    models: [[String: Any]],
+    derivedModels: [[String: Any]] = []
 ) throws -> String {
     let payload: [String: Any] = [
         "operation": "registry_snapshot",
@@ -6334,6 +6411,7 @@ private func makeRegistrySnapshotManifestJSON(
             ],
             "models": models,
         ],
+        "derived_models": derivedModels,
     ]
     let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     return String(decoding: data, as: UTF8.self)

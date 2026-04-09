@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MelixCLICore
 import MelixControlPlaneCore
 
 public enum MenuBarStartupSurface: String {
@@ -205,6 +206,7 @@ public final class MelixMenuBarBootstrap {
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         melixHome: MelixHome = MelixHome(),
         operatorSessionStore: (any OperatorSessionStoring)? = nil,
+        operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
@@ -232,11 +234,16 @@ public final class MelixMenuBarBootstrap {
         }
     ) {
         let resolvedOperatorSessionStore = operatorSessionStore ?? OperatorSessionStore(melixHome: melixHome)
+        let resolvedOperatorCommandRunner = operatorCommandRunner ?? MelixCLIRunner(
+            client: client,
+            operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+        )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
             metrics: metrics,
             operatorSessionStore: resolvedOperatorSessionStore,
+            operatorCommandRunner: resolvedOperatorCommandRunner,
             serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore
         )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
@@ -293,12 +300,17 @@ public final class MelixMenuBarBootstrap {
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry
         )
+        let localClient = LocalControlPlaneXPCClient(service: service)
         let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
         return MelixMenuBarBootstrap(
-            client: LocalControlPlaneXPCClient(service: service),
+            client: localClient,
             startupSurface: environment.startupSurface,
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
+            operatorCommandRunner: MelixCLIRunner(
+                client: localClient,
+                operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+            ),
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )

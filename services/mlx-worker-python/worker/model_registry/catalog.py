@@ -26,6 +26,7 @@ _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
 _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
 _REGISTRY_ROOTS_ENV_KEY = "MELIX_MODEL_ROOTS"
+_MANAGED_MODEL_ROOT_ENV_KEY = "MELIX_MANAGED_MODEL_ROOT"
 _REGISTRY_PROVIDER_ID_KEY = "melix.registry_provider_id"
 _REGISTRY_ORGANIZATION_ID_KEY = "melix.registry_organization_id"
 _REGISTRY_MODEL_NAME_KEY = "melix.registry_model_name"
@@ -597,7 +598,7 @@ class WorkerModelCatalog:
         rescan: bool = False,
         registry_roots: Iterable[str] | None = None,
     ) -> RegistrySnapshot:
-        roots_key = tuple(self._configured_registry_roots() if registry_roots is None else self._normalized_registry_roots(registry_roots))
+        roots_key = tuple(self._resolved_registry_roots(registry_roots))
         if rescan or roots_key not in self._registry_snapshot_cache:
             self._registry_snapshot_cache[roots_key] = self._refresh_registry_snapshot(roots_key)
         snapshot = self._registry_snapshot_cache[roots_key]
@@ -712,11 +713,26 @@ class WorkerModelCatalog:
         return roots, discovered_models
 
     def _configured_registry_roots(self) -> list[str]:
-        raw = self._environment.get(_REGISTRY_ROOTS_ENV_KEY, "")
-        if not raw.strip():
-            return []
+        configured: list[str] = []
+        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        if managed_root:
+            configured.append(managed_root)
 
-        return self._normalized_registry_roots(raw.split(os.pathsep))
+        raw = self._environment.get(_REGISTRY_ROOTS_ENV_KEY, "")
+        if raw.strip():
+            configured.extend(raw.split(os.pathsep))
+
+        return self._normalized_registry_roots(configured)
+
+    def _resolved_registry_roots(self, registry_roots: Iterable[str] | None) -> list[str]:
+        if registry_roots is None:
+            return self._configured_registry_roots()
+
+        requested_roots = list(registry_roots)
+        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        if managed_root:
+            requested_roots.insert(0, managed_root)
+        return self._normalized_registry_roots(requested_roots)
 
     def _normalized_registry_roots(self, raw_roots: Iterable[str]) -> list[str]:
         roots: list[str] = []

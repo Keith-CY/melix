@@ -350,6 +350,38 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("models tab renders Hugging Face hub ingress state")
+    @MainActor
+    func modelsTabRendersHuggingFaceHubIngressState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        var model = Melix_Controlplane_V1_HubModelSummary()
+        model.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        model.author = "mlx-community"
+        model.modelName = "Qwen3.5-0.8B-OptiQ-4bit"
+        model.pipelineTag = "text-generation"
+        model.mlxCompatible = true
+        searchResult.models = [model]
+        await client.configureHubSearchResult(searchResult)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelHubSearchQuery = "qwen3.5"
+        await viewModel.searchModelHub()
+
+        let view = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            )
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("qwen3.5"))
+        #expect(renderedTexts.contains("main"))
+        #expect(viewModel.modelHubSearchResults.count == 1)
+    }
+
     @Test("models tab exposes explicit disk streaming picker options")
     @MainActor
     func modelsTabExposesExplicitDiskStreamingPickerOptions() async throws {

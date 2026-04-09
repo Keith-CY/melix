@@ -23,6 +23,8 @@ def _write_repo_fixture(repo_root: Path) -> None:
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True, exist_ok=True)
     (repo_root / "packages/protocol/python").mkdir(parents=True, exist_ok=True)
     (repo_root / "scripts").mkdir(parents=True, exist_ok=True)
+    branding_dir = repo_root / "apps/macos-menubar/Sources/AppMain/Resources/Branding"
+    branding_dir.mkdir(parents=True, exist_ok=True)
     (repo_root / "pyproject.toml").write_text(
         '[project]\nname = "melix"\nversion = "0.8.11"\n',
         encoding="utf-8",
@@ -41,6 +43,7 @@ def _write_repo_fixture(repo_root: Path) -> None:
     )
     (repo_root / "packages/protocol/python/__init__.py").write_text("", encoding="utf-8")
     (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
+    (branding_dir / "MelixAppIcon.icns").write_bytes(b"melix-fixture-icon")
 
 
 def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path]:

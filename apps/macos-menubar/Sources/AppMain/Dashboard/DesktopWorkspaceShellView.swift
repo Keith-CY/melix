@@ -444,7 +444,7 @@ private struct DesktopServerSessionEditor: View {
                                     set: { viewModel.updateSelectedServerSessionModelID($0) }
                                 )
                             ) {
-                                ForEach(viewModel.models.filter { $0.kind == "text" }, id: \.modelID) { model in
+                                ForEach(viewModel.serveableModels, id: \.modelID) { model in
                                     Text(model.modelID).tag(model.modelID)
                                 }
                             }
