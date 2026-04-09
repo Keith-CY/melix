@@ -158,16 +158,17 @@ public actor MelixSubprocessCLIWorkflowRunner: MelixCLIWorkflowRunning {
                 "train",
                 "--model-id",
                 options.modelID,
-                "--dataset-source-kind",
-                options.datasetSourceKind,
-                "--dataset-uri",
-                options.datasetURI,
                 "--adapter-name",
                 options.adapterName,
             ]
+            if options.datasetSourceKind == "hf_dataset" {
+                appendOptionalValue(options.datasetURI, option: "--hf-dataset-path", to: &arguments)
+            } else {
+                appendOptionalValue(options.datasetURI, option: "--dataset-uri", to: &arguments)
+            }
             appendOptionalValue(options.targetRepo, option: "--target-repo", to: &arguments)
             appendOptionalValue(options.trainingMode, option: "--training-mode", to: &arguments)
-            appendParameters(options.parameters, to: &arguments)
+            appendLoraTrainParameters(options.parameters, to: &arguments)
             appendJSONFlag(options.json, to: &arguments)
             return arguments
         case .loraActivate(let options):
@@ -179,8 +180,21 @@ public actor MelixSubprocessCLIWorkflowRunner: MelixCLIWorkflowRunning {
                 "--adapter-path",
                 options.adapterPath,
             ]
-            appendOptionalValue(options.derivedModelAlias, option: "--derived-model-alias", to: &arguments)
+            appendOptionalValue(options.derivedModelAlias, option: "--alias", to: &arguments)
             appendOptionalValue(options.activationMode, option: "--activation-mode", to: &arguments)
+            appendJSONFlag(options.json, to: &arguments)
+            return arguments
+        case .chatRun(let options):
+            var arguments = [
+                "chat",
+                "run",
+                "--model-id",
+                options.modelID,
+                "--message",
+                options.message,
+            ]
+            appendOptionalValue(options.systemPrompt, option: "--system", to: &arguments)
+            appendOptionalValue(options.serverSessionID, option: "--server-session-id", to: &arguments)
             appendJSONFlag(options.json, to: &arguments)
             return arguments
         case .benchRun(let options):
@@ -304,6 +318,31 @@ public actor MelixSubprocessCLIWorkflowRunner: MelixCLIWorkflowRunning {
                 continue
             }
             arguments.append("--\(key.replacingOccurrences(of: "_", with: "-"))")
+            arguments.append(value)
+        }
+    }
+
+    private func appendLoraTrainParameters(
+        _ parameters: [String: String],
+        to arguments: inout [String]
+    ) {
+        let booleanFlags: Set<String> = [
+            "response_only",
+            "mask_prompt",
+            "gradient_checkpointing",
+        ]
+        for key in parameters.keys.sorted() {
+            guard let value = parameters[key], value.isEmpty == false else {
+                continue
+            }
+            let option = "--\(key.replacingOccurrences(of: "_", with: "-"))"
+            if booleanFlags.contains(key) {
+                if value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true" {
+                    arguments.append(option)
+                }
+                continue
+            }
+            arguments.append(option)
             arguments.append(value)
         }
     }

@@ -11,6 +11,59 @@
 
 ## 2026-04-09
 
+- Closed the Phase 8 Stage 5 Window UI evidence slice so the native macOS menubar app now
+  produces repository-owned live acceptance evidence from the same CLI-backed workflows used by
+  the Stage 3 CLI contract:
+  - added a dedicated `MELIX_PHASE8_WINDOW_UI_ACCEPTANCE=1` app entrypoint so
+    `melix-menubar` can be invoked non-interactively, emit snake_case JSON to `stdout`, and
+    report localized acceptance failures to `stderr`
+  - kept the Window UI as a thin wrapper over the CLI by routing LoRA train and activate,
+    benchmark, matrix benchmark, evaluation, and export flows directly through the subprocess CLI
+    workflow runner instead of depending on `RuntimeViewModel` fallback model selection or history
+    refresh state
+  - hardened adapter-manifest resolution for LoRA acceptance by preferring `artifact_path`,
+    falling back to JSON `output_path`, and otherwise deriving `train_lora.adapter.json` from the
+    emitted weights path
+  - switched live screenshot capture from `ImageRenderer` to an `NSHostingView` bitmap snapshot
+    and pinned the captured surface to `Server`, fixing the unreadable placeholder capture and
+    producing a readable native desktop screenshot
+  - expanded positive and negative Swift coverage around the acceptance entrypoint bootstrap,
+    default wiring, subprocess stderr/stdout behavior, and the default runner-factory failure path
+- Verification summary for Phase 8 Stage 5:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'MelixSubprocessCLIWorkflowRunnerTests|Phase8WindowUIAcceptanceRunnerTests|AppMainBootstrapTests'`: `46 tests in 3 suites passed after 0.431 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/AppMain.swift apps/macos-menubar/Sources/AppMain/Acceptance/Phase8WindowUIAcceptanceRunner.swift apps/macos-menubar/Sources/AppMain/CLI/MelixCLIWorkflowRunning.swift apps/macos-menubar/Sources/AppMain/CLI/MelixSubprocessCLIWorkflowRunner.swift apps/macos-menubar/Tests/MenuBarTests/AppMainBootstrapTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/MelixSubprocessCLIWorkflowRunnerTests.swift`: `95.22%` (`1354/1422`)
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_phase8_window_ui_acceptance.py -q`: `2 passed in 292.65s (0:04:52)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/p8_s5_py.coverage --source=tests/integration -m pytest tests/integration/test_phase8_window_ui_acceptance.py -q`: `2 passed in 260.51s (0:04:20)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/p8_s5_py.coverage -o /tmp/p8_s5_py_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/p8_s5_py_coverage.json tests/integration/test_phase8_window_ui_acceptance.py`: `N/A` for Stage 5 Python changed-line coverage because the diff-based helper reported `100.00%` (`0/0`) executable changed lines for the newly added deterministic E2E file
+  - `source "/Users/ChenYu/Library/Application Support/Melix/melix-product-env.sh" && MELIX_HOME="/Users/ChenYu/Library/Application Support/Melix" MELIX_CLI="$(pwd)/.build/arm64-apple-macosx/debug/melix" MELIX_REPO_ROOT="$(pwd)" MELIX_PHASE8_WINDOW_UI_ACCEPTANCE=1 MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_TIMESTAMP=2026-04-09T192003Z MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_MODEL_ID=mlx-community/Qwen3.5-0.8B-OptiQ-4bit MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_CLI_BUNDLE_PATH="/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/cli/2026-04-09T162920Z/bundle.json" apps/macos-menubar/.build/arm64-apple-macosx/debug/melix-menubar`: pass with a real evidence bundle at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/bundle.json` and screenshot at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/window-ui.png`
+- Metrics report for Phase 8 Stage 5:
+  - Window UI CLI-backed touched-scope changed-line coverage: `95.22%` (`1354/1422`)
+  - Python deterministic Window UI E2E changed-line coverage: `N/A` because the touched Python path for Stage 5 is a newly added deterministic E2E file and the diff-based helper reported `0/0` executable changed lines
+  - live Window UI evidence captured in `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/bundle.json` records:
+    - `model_id = mlx-community/Qwen3.5-0.8B-OptiQ-4bit`
+    - `derived_model_id = mlx-community/Qwen3.5-0.8B-OptiQ-4bit-lora-d479ed9d`
+    - `base_chat_assistant_text = BASE_OK`
+    - `derived_chat_assistant_text = DERIVED_OK`
+    - `lora_train_job_id = model-ops-0137`
+    - `lora_activate_job_id = model-ops-0141`
+    - `bench_job_id = model-ops-0149`
+    - `bench_matrix_job_id = model-ops-0154`
+    - `evaluation_job_id = eval-0004`
+    - `ui_state.selected_surface = Server`
+    - `ui_state.selected_server_session_id = server-session-1`
+    - `phase8.ui.managed_materialize_ms = 2001.05`
+    - `phase8.ui.session_rebind_ms = 452.72`
+    - `phase8.ui.base_chat_roundtrip_ms = 2682.14`
+    - `phase8.ui.lora_train_ms = 2391.22`
+    - `phase8.ui.lora_activate_ms = 2569.48`
+    - `phase8.ui.derived_chat_roundtrip_ms = 2912.88`
+    - `phase8.ui.bench_run_ms = 4466.41`
+    - `phase8.ui.bench_matrix_run_ms = 6169.73`
+    - `phase8.ui.evaluation_run_ms = 3880.67`
+    - `phase8.ui.snapshot_render_ms = 286.14`
+    - `phase8.ui.cli_bridge_ms = 27526.31`
+
 - Closed the Phase 8 Stage 4 Window UI shell slice so the macOS menubar app now routes the
   remaining Phase 8 write-path workflows through the shipping `melix` CLI instead of keeping a
   second in-process workflow authority:

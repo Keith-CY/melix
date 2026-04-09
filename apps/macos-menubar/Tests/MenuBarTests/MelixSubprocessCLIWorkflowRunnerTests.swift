@@ -73,6 +73,213 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
         }
     }
 
+    @Test("chat run shells out through the melix cli and decodes a chat receipt")
+    func chatRunShellsOutThroughTheMelixCLIAndDecodesAChatReceipt() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        await processExecutor.enqueueOutput(
+            """
+            {
+              "model_id": "melix-dev-text",
+              "server_session_id": "server-session-1",
+              "assistant_text": "BASE_OK",
+              "finish_reason": "stop",
+              "request_id": "chat-base"
+            }
+            """
+        )
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            environment: ["MELIX_HOME": "/tmp/melix-home"],
+            processExecutor: processExecutor
+        )
+
+        let receipt = try await runner.decodeJSON(
+            ChatRunReceipt.self,
+            command: .chatRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    message: "Reply with BASE_OK",
+                    systemPrompt: "You are Melix.",
+                    serverSessionID: "server-session-1",
+                    json: true
+                )
+            )
+        )
+        let invocation = try #require(await processExecutor.recordedInvocations.first)
+
+        #expect(invocation.executablePath == "/tmp/melix")
+        #expect(
+            invocation.arguments == [
+                "chat",
+                "run",
+                "--model-id",
+                "melix-dev-text",
+                "--message",
+                "Reply with BASE_OK",
+                "--system",
+                "You are Melix.",
+                "--server-session-id",
+                "server-session-1",
+                "--json",
+            ]
+        )
+        #expect(invocation.environment["MELIX_HOME"] == "/tmp/melix-home")
+        #expect(receipt.modelID == "melix-dev-text")
+        #expect(receipt.assistantText == "BASE_OK")
+    }
+
+    @Test("chat run subprocess failures are surfaced as typed process failures")
+    func chatRunSubprocessFailuresAreSurfacedAsTypedProcessFailures() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        await processExecutor.enqueueFailure(
+            .nonZeroExit(
+                executablePath: "/tmp/melix",
+                arguments: [
+                    "chat",
+                    "run",
+                    "--model-id",
+                    "melix-dev-text",
+                    "--message",
+                    "Reply with BASE_OK",
+                    "--json",
+                ],
+                exitCode: 3,
+                stderr: "chat failed"
+            )
+        )
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            processExecutor: processExecutor
+        )
+
+        do {
+            _ = try await runner.run(
+                .chatRun(
+                    .init(
+                        modelID: "melix-dev-text",
+                        message: "Reply with BASE_OK",
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected subprocess exit failure.")
+        } catch let error as MelixCLIWorkflowError {
+            switch error {
+            case .processFailed(let commandID, let surface, let exitCode, let stderr):
+                #expect(commandID == "chat.run")
+                #expect(surface == .subprocess)
+                #expect(exitCode == 3)
+                #expect(stderr == "chat failed")
+            default:
+                Issue.record("Expected processFailed, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora train shells out with parser-compatible arguments")
+    func loraTrainShellsOutWithParserCompatibleArguments() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        await processExecutor.enqueueOutput(
+            """
+            {
+              "operation": "train_lora",
+              "job_id": "model-ops-0001",
+              "output_path": "/tmp/melix-train-lora/model-ops-0001/adapters.safetensors"
+            }
+            """
+        )
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            processExecutor: processExecutor
+        )
+
+        _ = try await runner.run(
+            .loraTrain(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                    adapterName: "phase8-acceptance",
+                    trainingMode: "lora",
+                    parameters: [
+                        "derived_model_alias": "phase8-acceptance-derived",
+                        "response_only": "true",
+                        "gradient_checkpointing": "false",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let invocation = try #require(await processExecutor.recordedInvocations.first)
+
+        #expect(
+            invocation.arguments == [
+                "lora",
+                "train",
+                "--model-id",
+                "melix-dev-qwen-local",
+                "--adapter-name",
+                "phase8-acceptance",
+                "--dataset-uri",
+                "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                "--training-mode",
+                "lora",
+                "--derived-model-alias",
+                "phase8-acceptance-derived",
+                "--response-only",
+                "--json",
+            ]
+        )
+    }
+
+    @Test("lora activate shells out with alias-compatible arguments")
+    func loraActivateShellsOutWithAliasCompatibleArguments() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        await processExecutor.enqueueOutput(
+            """
+            {
+              "operation": "activate_adapter",
+              "job_id": "model-ops-0002",
+              "derived_model_id": "melix-dev-qwen-local-lora",
+              "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
+            }
+            """
+        )
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            processExecutor: processExecutor
+        )
+
+        _ = try await runner.run(
+            .loraActivate(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    adapterPath: "/tmp/melix-train-lora/model-ops-0001/train_lora.adapter.json",
+                    derivedModelAlias: "phase8-acceptance-derived",
+                    activationMode: "fused_derived_model",
+                    json: true
+                )
+            )
+        )
+        let invocation = try #require(await processExecutor.recordedInvocations.first)
+
+        #expect(
+            invocation.arguments == [
+                "lora",
+                "activate",
+                "--model-id",
+                "melix-dev-qwen-local",
+                "--adapter-path",
+                "/tmp/melix-train-lora/model-ops-0001/train_lora.adapter.json",
+                "--alias",
+                "phase8-acceptance-derived",
+                "--activation-mode",
+                "fused_derived_model",
+                "--json",
+            ]
+        )
+    }
+
     @Test("non-zero subprocess exits are surfaced as typed process failures")
     func nonZeroSubprocessExitsAreSurfacedAsTypedProcessFailures() async throws {
         let processExecutor = RecordingCLIProcessExecutor()

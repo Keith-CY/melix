@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import MelixCLICore
 import MelixControlPlaneCore
@@ -99,6 +100,13 @@ public struct LiveMenuBarApplication: MenuBarApplicationLifecycle {
 }
 
 @MainActor
+protocol Phase8WindowUIAcceptanceRunning {
+    func run() async throws -> Phase8WindowUIAcceptanceResult
+}
+
+extension Phase8WindowUIAcceptanceRunner: Phase8WindowUIAcceptanceRunning {}
+
+@MainActor
 public final class MenuBarTerminationCoordinator: NSObject {
     private let mode: MenuBarTerminationMode
     private let repoRoot: String
@@ -195,6 +203,7 @@ enum MenuBarApplicationMenuBuilder {
 @MainActor
 public final class MelixMenuBarBootstrap {
     let viewModel: RuntimeViewModel
+    let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let startupSurface: MenuBarStartupSurface
     private let desktopFoundationPresenter: any DesktopFoundationPresenting
     private let commandCenterPresenter: any DesktopFoundationPresenting
@@ -258,6 +267,7 @@ public final class MelixMenuBarBootstrap {
             commandCenterPresenter.show()
         }
         self.viewModel = viewModel
+        self.cliWorkflowRunner = cliWorkflowRunner
         self.startupSurface = startupSurface
         self.desktopFoundationPresenter = desktopFoundationPresenter
         self.commandCenterPresenter = commandCenterPresenter
@@ -286,6 +296,7 @@ public final class MelixMenuBarBootstrap {
         cliProcessExecutor: any MelixCLIProcessExecuting = LiveMelixCLIProcessExecutor(),
         terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) }
     ) -> MelixMenuBarBootstrap {
+        let processEnvironment = environment.cliEnvironment(base: ProcessInfo.processInfo.environment)
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: environment.swiftTextWorkerSocketPath
@@ -293,7 +304,7 @@ public final class MelixMenuBarBootstrap {
         let pythonCompatibilityClient = PythonBridgeWorkerClient(
             socketPath: environment.pythonWorkerSocketPath,
             repoRoot: environment.repoRoot,
-            processEnvironment: ProcessInfo.processInfo.environment
+            processEnvironment: processEnvironment
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: swiftTextWorkerClient,
@@ -308,10 +319,10 @@ public final class MelixMenuBarBootstrap {
             workerRegistry: workerRegistry
         )
         let localClient = LocalControlPlaneXPCClient(service: service)
-        let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+        let melixHome = MelixHome(environment: processEnvironment)
         let cliWorkflowRunner = MelixSubprocessCLIWorkflowRunner(
             cliExecutablePath: environment.cliExecutablePath,
-            environment: environment.cliEnvironment(base: ProcessInfo.processInfo.environment),
+            environment: processEnvironment,
             processExecutor: cliProcessExecutor
         )
         return MelixMenuBarBootstrap(
@@ -402,6 +413,12 @@ struct MenuBarBootstrapEnvironment {
         if let runtimeDirectory, runtimeDirectory.isEmpty == false {
             merged["MELIX_RUNTIME_DIR"] = runtimeDirectory
         }
+        if merged["MELIX_MANAGED_MODEL_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            let melixHome = MelixHome(environment: merged)
+            merged["MELIX_MANAGED_MODEL_ROOT"] = melixHome.rootURL
+                .appendingPathComponent("models/default-managed", isDirectory: true)
+                .path
+        }
         return merged
     }
 }
@@ -473,6 +490,129 @@ enum MelixMenuBarApp {
     }
 
     static func main() {
-        launchLive()
+        main(environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func main(
+        environment: [String: String],
+        launchLiveHandler: @escaping @MainActor () -> Void = defaultMainLaunchLiveHandler,
+        phase8WindowUIAcceptanceHandler: @escaping @MainActor ([String: String]) -> Void = defaultMainPhase8WindowUIAcceptanceHandler
+    ) {
+        if environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE"] == "1" {
+            phase8WindowUIAcceptanceHandler(environment)
+            return
+        }
+        launchLiveHandler()
+    }
+
+    static func runPhase8WindowUIAcceptance(
+        environment: [String: String],
+        application: any MenuBarApplicationLifecycle = LiveMenuBarApplication(),
+        bootstrapFactory: @escaping @MainActor ([String: String]) -> MelixMenuBarBootstrap = makePhase8WindowUIAcceptanceBootstrap,
+        acceptanceRunnerFactory: @escaping @MainActor (
+            MelixMenuBarBootstrap,
+            [String: String]
+        ) throws -> any Phase8WindowUIAcceptanceRunning = makePhase8WindowUIAcceptanceRunner,
+        writeStandardOutput: @escaping @MainActor (Data) -> Void = writePhase8WindowUIAcceptanceStandardOutput,
+        writeStandardError: @escaping @MainActor (Data) -> Void = writePhase8WindowUIAcceptanceStandardError,
+        flushHandler: @escaping @MainActor () -> Void = flushPhase8WindowUIAcceptanceIO,
+        exitHandler: @escaping @MainActor (Int32) -> Void = exitPhase8WindowUIAcceptance,
+        operationScheduler: @escaping @MainActor (@escaping @MainActor @Sendable () async -> Void) -> Void = schedulePhase8WindowUIAcceptanceOperation,
+        runLoopRunner: @escaping @MainActor () -> Void = runPhase8WindowUIAcceptanceLoop
+    ) {
+        application.setActivationPolicy(.accessory)
+        operationScheduler {
+            let exitCode = await executePhase8WindowUIAcceptance(
+                environment: environment,
+                bootstrapFactory: bootstrapFactory,
+                acceptanceRunnerFactory: acceptanceRunnerFactory,
+                writeStandardOutput: writeStandardOutput,
+                writeStandardError: writeStandardError
+            )
+            flushHandler()
+            exitHandler(exitCode)
+        }
+
+        runLoopRunner()
+    }
+
+    static func executePhase8WindowUIAcceptance(
+        environment: [String: String],
+        bootstrapFactory: @escaping @MainActor ([String: String]) -> MelixMenuBarBootstrap = makePhase8WindowUIAcceptanceBootstrap,
+        acceptanceRunnerFactory: @escaping @MainActor (
+            MelixMenuBarBootstrap,
+            [String: String]
+        ) throws -> any Phase8WindowUIAcceptanceRunning = makePhase8WindowUIAcceptanceRunner,
+        writeStandardOutput: @escaping @MainActor (Data) -> Void = writePhase8WindowUIAcceptanceStandardOutput,
+        writeStandardError: @escaping @MainActor (Data) -> Void = writePhase8WindowUIAcceptanceStandardError
+    ) async -> Int32 {
+        do {
+            let bootstrap = bootstrapFactory(environment)
+            let runner = try acceptanceRunnerFactory(bootstrap, environment)
+            let result = try await runner.run()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let data = try encoder.encode(result)
+            writeStandardOutput(data)
+            writeStandardOutput(Data([0x0A]))
+            return 0
+        } catch {
+            let message = error.localizedDescription + "\n"
+            writeStandardError(Data(message.utf8))
+            return 1
+        }
+    }
+
+    private static func defaultMainLaunchLiveHandler() { launchLive() }
+
+    private static func defaultMainPhase8WindowUIAcceptanceHandler(environment: [String: String]) {
+        runPhase8WindowUIAcceptance(environment: environment)
+    }
+
+    private static func makePhase8WindowUIAcceptanceBootstrap(
+        environment: [String: String]
+    ) -> MelixMenuBarBootstrap {
+        let bootstrapEnvironment = MenuBarBootstrapEnvironment(environment: environment)
+        return MelixMenuBarBootstrap.live(environment: bootstrapEnvironment)
+    }
+
+    private static func writePhase8WindowUIAcceptanceStandardOutput(_ data: Data) {
+        FileHandle.standardOutput.write(data)
+    }
+
+    private static func writePhase8WindowUIAcceptanceStandardError(_ data: Data) {
+        FileHandle.standardError.write(data)
+    }
+
+    private static func flushPhase8WindowUIAcceptanceIO() {
+        fflush(nil)
+    }
+
+    private static func exitPhase8WindowUIAcceptance(_ exitCode: Int32) { Darwin.exit(exitCode) }
+
+    private static func schedulePhase8WindowUIAcceptanceOperation(
+        _ operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        Task { @MainActor in
+            await operation()
+        }
+    }
+
+    private static func runPhase8WindowUIAcceptanceLoop() { RunLoop.main.run() }
+
+    private static func makePhase8WindowUIAcceptanceRunner(
+        bootstrap: MelixMenuBarBootstrap,
+        environment: [String: String]
+    ) throws -> any Phase8WindowUIAcceptanceRunning {
+        guard let cliWorkflowRunner = bootstrap.cliWorkflowRunner else {
+            throw Phase8WindowUIAcceptanceError.missingCLIWorkflowRunner
+        }
+
+        return try Phase8WindowUIAcceptanceRunner(
+            viewModel: bootstrap.viewModel,
+            cliWorkflowRunner: cliWorkflowRunner,
+            config: .init(environment: environment)
+        )
     }
 }

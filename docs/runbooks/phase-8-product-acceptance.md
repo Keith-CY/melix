@@ -88,7 +88,7 @@ Treat regressions in these flows as bugs, not as future roadmap work:
 These flows exist in code, but still need fresh real-runtime acceptance evidence before
 release sign-off:
 
-- [ ] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` through the native Window UI CLI subprocess bridge using a downloaded Hugging Face text model without fallback environment model-path injection.
+- [x] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` through the native Window UI CLI subprocess bridge using a downloaded Hugging Face text model without fallback environment model-path injection.
 
 ### Live CLI Evidence Captured
 
@@ -97,11 +97,20 @@ release sign-off:
 - [x] The live CLI bundle records the exact model ID, dataset ID, benchmark suites, evaluation suite, LoRA job ID, matrix benchmark job ID, evaluation job ID, and exported artifact paths for the real acceptance run.
 - [x] Live LoRA training, benchmark, matrix benchmark, evaluation, and export flows completed through the public `melix` CLI contract; see `progress.md` for the exact evidence path and measured timings.
 
+### Live Window UI Evidence Captured
+
+- [x] The repository-owned native Window UI acceptance bundle and screenshot were captured live on `2026-04-09T192003Z`.
+- [x] The live Window UI bundle records one base-model chat run and one derived-model chat run against the approved model `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- [x] The live Window UI evidence bundle is preserved at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/bundle.json`.
+- [x] The live Window UI screenshot is preserved at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/window-ui.png`.
+- [x] The live Window UI bundle chains back to the live CLI evidence bundle at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/cli/2026-04-09T162920Z/bundle.json`.
+- [x] The live Window UI bundle records `selected_surface=Server`, `selected_server_session_id=server-session-1`, `lora_train_job_id=model-ops-0137`, `lora_activate_job_id=model-ops-0141`, `bench_job_id=model-ops-0149`, `bench_matrix_job_id=model-ops-0154`, and `evaluation_job_id=eval-0004`; see `progress.md` for the exact measured timings.
+
 ### Bucket 3: Open Product Gaps
 
 These remain roadmap items rather than closed product behavior:
 
-- [ ] Preserve a repository-owned Window UI acceptance evidence bundle and screenshot chain from the native CLI-backed surface.
+- [x] Preserve a repository-owned Window UI acceptance evidence bundle and screenshot chain from the native CLI-backed surface.
 
 ## Final Metrics Report
 

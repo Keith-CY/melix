@@ -188,6 +188,219 @@ struct AppMainBootstrapTests {
         #expect(await client.handshakeCount == 1)
     }
 
+    @Test("main routes the phase 8 acceptance flag through the acceptance entrypoint")
+    @MainActor
+    func mainRoutesPhase8AcceptanceFlag() {
+        var launchLiveCallCount = 0
+        var capturedAcceptanceEnvironment: [String: String]?
+
+        MelixMenuBarApp.main(
+            environment: [
+                "MELIX_HOME": "/tmp/melix-home",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",
+            ],
+            launchLiveHandler: {
+                launchLiveCallCount += 1
+            },
+            phase8WindowUIAcceptanceHandler: { environment in
+                capturedAcceptanceEnvironment = environment
+            }
+        )
+
+        #expect(launchLiveCallCount == 0)
+        #expect(capturedAcceptanceEnvironment?["MELIX_HOME"] == "/tmp/melix-home")
+        #expect(capturedAcceptanceEnvironment?["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE"] == "1")
+    }
+
+    @Test("main routes non-acceptance launches through the live path")
+    @MainActor
+    func mainRoutesDefaultLaunchPath() {
+        var launchLiveCallCount = 0
+        var acceptanceCallCount = 0
+
+        MelixMenuBarApp.main(
+            environment: [
+                "MELIX_HOME": "/tmp/melix-home",
+            ],
+            launchLiveHandler: {
+                launchLiveCallCount += 1
+            },
+            phase8WindowUIAcceptanceHandler: { _ in
+                acceptanceCallCount += 1
+            }
+        )
+
+        #expect(launchLiveCallCount == 1)
+        #expect(acceptanceCallCount == 0)
+    }
+
+    @Test("phase 8 acceptance entry writes snake_case json and exits zero")
+    @MainActor
+    func phase8AcceptanceEntryWritesSnakeCaseJSONAndExitsZero() async throws {
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
+        )
+        let application = RecordingApplicationLifecycle()
+        let recorder = Phase8WindowUIAcceptanceMainRecorder()
+
+        MelixMenuBarApp.runPhase8WindowUIAcceptance(
+            environment: [
+                "MELIX_HOME": "/tmp/melix-home",
+            ],
+            application: application,
+            bootstrapFactory: { _ in bootstrap },
+            acceptanceRunnerFactory: { _, _ in
+                SucceedingPhase8WindowUIAcceptanceMainRunner(
+                    result: Phase8WindowUIAcceptanceResult(
+                        bundlePath: "/tmp/window-ui/bundle.json",
+                        screenshotPath: "/tmp/window-ui/window-ui.png",
+                        cliEvidenceBundlePath: "/tmp/cli/bundle.json",
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+                    )
+                )
+            },
+            writeStandardOutput: { data in
+                recorder.standardOutput.append(data)
+            },
+            writeStandardError: { data in
+                recorder.standardError.append(data)
+            },
+            flushHandler: {
+                recorder.flushCount += 1
+            },
+            exitHandler: { exitCode in
+                recorder.exitCodes.append(exitCode)
+            },
+            operationScheduler: { operation in
+                Task { @MainActor in
+                    await operation()
+                }
+            },
+            runLoopRunner: {
+                recorder.runLoopInvocationCount += 1
+            }
+        )
+
+        try await waitForBootstrapCondition("expected phase 8 acceptance entrypoint to exit") {
+            recorder.exitCodes.isEmpty == false
+        }
+
+        let standardOutput = String(decoding: recorder.standardOutput, as: UTF8.self)
+        let outputJSON = try #require(
+            JSONSerialization.jsonObject(with: recorder.standardOutput) as? [String: String]
+        )
+        #expect(application.recordedPolicies == [.accessory])
+        #expect(recorder.runLoopInvocationCount == 1)
+        #expect(recorder.flushCount == 1)
+        #expect(recorder.exitCodes == [0])
+        #expect(recorder.standardError.isEmpty)
+        #expect(standardOutput.hasSuffix("\n"))
+        #expect(outputJSON["bundle_path"] == "/tmp/window-ui/bundle.json")
+        #expect(outputJSON["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("phase 8 acceptance entry writes localized stderr when the cli runner is missing")
+    @MainActor
+    func phase8AcceptanceEntryWritesLocalizedStderrWhenCLIRunnerIsMissing() async {
+        let bootstrap = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
+        )
+        var standardOutput = Data()
+        var standardError = Data()
+
+        let exitCode = await MelixMenuBarApp.executePhase8WindowUIAcceptance(
+            environment: [
+                "MELIX_HOME": "/tmp/melix-home",
+            ],
+            bootstrapFactory: { _ in bootstrap },
+            writeStandardOutput: { data in
+                standardOutput.append(data)
+            },
+            writeStandardError: { data in
+                standardError.append(data)
+            }
+        )
+
+        #expect(exitCode == 1)
+        #expect(standardOutput.isEmpty)
+        #expect(
+            String(decoding: standardError, as: UTF8.self)
+                == "Phase 8 Window UI acceptance requires a CLI workflow runner.\n"
+        )
+    }
+
+    @Test("phase 8 acceptance entry supports the default bootstrap and scheduler wiring")
+    @MainActor
+    func phase8AcceptanceEntrySupportsDefaultBootstrapAndSchedulerWiring() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-main-defaults-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let application = RecordingApplicationLifecycle()
+        let recorder = Phase8WindowUIAcceptanceMainRecorder()
+
+        MelixMenuBarApp.runPhase8WindowUIAcceptance(
+            environment: [
+                "MELIX_HOME": tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_CLI": "/tmp/melix-cli",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ],
+            application: application,
+            acceptanceRunnerFactory: { _, _ in
+                SucceedingPhase8WindowUIAcceptanceMainRunner(
+                    result: Phase8WindowUIAcceptanceResult(
+                        bundlePath: "/tmp/window-ui/defaults-bundle.json",
+                        screenshotPath: "/tmp/window-ui/defaults-window-ui.png",
+                        cliEvidenceBundlePath: "/tmp/cli/defaults-bundle.json",
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+                    )
+                )
+            },
+            exitHandler: { exitCode in
+                recorder.exitCodes.append(exitCode)
+            },
+            runLoopRunner: {
+                recorder.runLoopInvocationCount += 1
+            }
+        )
+
+        try await waitForBootstrapCondition("expected default phase 8 acceptance entrypoint to exit") {
+            recorder.exitCodes.isEmpty == false
+        }
+
+        #expect(application.recordedPolicies == [.accessory])
+        #expect(recorder.runLoopInvocationCount == 1)
+        #expect(recorder.exitCodes == [0])
+    }
+
+    @Test("phase 8 acceptance execution supports the default runner factory path")
+    @MainActor
+    func phase8AcceptanceExecutionSupportsDefaultRunnerFactoryPath() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-main-runner-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let exitCode = await MelixMenuBarApp.executePhase8WindowUIAcceptance(
+            environment: [
+                "MELIX_HOME": tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_CLI": "/tmp/melix-cli",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ]
+        )
+
+        #expect(exitCode == 1)
+    }
+
     @Test("bootstrap wires the desktop foundation presenter into the status menu")
     @MainActor
     func bootstrapWiresDesktopFoundationPresenter() async throws {
@@ -320,6 +533,45 @@ struct AppMainBootstrapTests {
         #expect(environment.startupSurface == .tray)
         #expect(environment.presentationMode == .tray)
         #expect(environment.terminationMode == .terminate)
+    }
+
+    @Test("bootstrap cli environment injects a default managed model root under MelixHome")
+    @MainActor
+    func bootstrapCLIEnvironmentInjectsDefaultManagedModelRoot() {
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_HOME": "/tmp/melix-home",
+            ]
+        )
+
+        let cliEnvironment = environment.cliEnvironment(
+            base: [
+                "MELIX_HOME": "/tmp/melix-home",
+            ]
+        )
+
+        #expect(cliEnvironment["MELIX_MANAGED_MODEL_ROOT"] == "/tmp/melix-home/models/default-managed")
+    }
+
+    @Test("bootstrap cli environment preserves an explicit managed model root override")
+    @MainActor
+    func bootstrapCLIEnvironmentPreservesExplicitManagedModelRoot() {
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_HOME": "/tmp/melix-home",
+            ]
+        )
+
+        let cliEnvironment = environment.cliEnvironment(
+            base: [
+                "MELIX_HOME": "/tmp/melix-home",
+                "MELIX_MANAGED_MODEL_ROOT": "/tmp/custom-managed-root",
+            ]
+        )
+
+        #expect(cliEnvironment["MELIX_MANAGED_MODEL_ROOT"] == "/tmp/custom-managed-root")
     }
 
     @Test("termination coordinator launches dev-down and then terminates the application")
@@ -638,6 +890,24 @@ private final class RecordingNSApplication: NSApplicationControlling {
 private final class TerminationCoordinatorRecorder {
     var terminateApplicationCallCount = 0
     var devDownRequests: [(String, String?)] = []
+}
+
+@MainActor
+private final class Phase8WindowUIAcceptanceMainRecorder {
+    var standardOutput = Data()
+    var standardError = Data()
+    var flushCount = 0
+    var exitCodes: [Int32] = []
+    var runLoopInvocationCount = 0
+}
+
+@MainActor
+private struct SucceedingPhase8WindowUIAcceptanceMainRunner: Phase8WindowUIAcceptanceRunning {
+    let result: Phase8WindowUIAcceptanceResult
+
+    func run() async throws -> Phase8WindowUIAcceptanceResult {
+        result
+    }
 }
 
 @MainActor

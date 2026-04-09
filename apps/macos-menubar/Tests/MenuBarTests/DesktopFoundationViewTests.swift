@@ -3105,6 +3105,875 @@ struct DesktopFoundationViewTests {
     }
 }
 
+@Suite("Phase 8 Window UI Acceptance Runner", .serialized)
+struct Phase8WindowUIAcceptanceRunnerTests {
+    @Test("phase 8 window ui acceptance config normalizes blank environment values")
+    func phase8WindowUIAcceptanceConfigNormalizesBlankEnvironmentValues() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-window-ui-config-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let melixHome = tempRoot.appendingPathComponent("melix-home", isDirectory: true)
+        let cliBundlePath = melixHome
+            .appendingPathComponent("acceptance/phase8/cli/2026-04-09T162920Z/bundle.json")
+        try fileManager.createDirectory(
+            at: cliBundlePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"surface\":\"cli\"}\n".utf8).write(to: cliBundlePath)
+
+        let config = Phase8WindowUIAcceptanceConfig(
+            environment: [
+                "MELIX_HOME": melixHome.path,
+                "MELIX_REPO_ROOT": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_MODEL_ID": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_LOCAL_MODEL_PATH": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_TRAINING_FIXTURE": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_BENCH_SUITES": " smoke , latency ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_MATRIX_SUITES": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_EVALUATION_SUITES": " mmlu , gsm8k ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_EVALUATION_DATASET": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_SERVER_SESSION_ID": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_CLI_BUNDLE_PATH": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_TIMESTAMP": "   ",
+            ]
+        )
+
+        #expect(config.repoRoot == FileManager.default.currentDirectoryPath)
+        #expect(config.melixHome == melixHome.path)
+        #expect(config.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(config.localModelPath.isEmpty)
+        #expect(config.trainingFixture == "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1")
+        #expect(config.benchSuites == ["smoke", "latency"])
+        #expect(config.matrixSuites == ["smoke"])
+        #expect(config.evaluationSuites == ["mmlu", "gsm8k"])
+        #expect(config.evaluationDataset == "mmlu.dev.v1")
+        #expect(config.serverSessionID == "server-session-1")
+        #expect(
+            URL(fileURLWithPath: config.cliEvidenceBundlePath).resolvingSymlinksInPath().path
+                == cliBundlePath.resolvingSymlinksInPath().path
+        )
+        #expect(config.timestamp.isEmpty == false)
+    }
+
+    @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
+    @MainActor
+    func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-window-ui-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let cliBundlePath = tempRoot
+            .appendingPathComponent("melix-home", isDirectory: true)
+            .appendingPathComponent("acceptance/phase8/cli/2026-04-09T162920Z/bundle.json")
+        try fileManager.createDirectory(
+            at: cliBundlePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var baseModel = ModelCatalog.devTextModel()
+        baseModel.modelID = "melix-dev-text"
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        snapshot.models = [baseModel, derivedModel]
+        var runtimeSession = makeDesktopRuntimeSession()
+        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.lifecycleState = .ready
+        runtimeSession.powerState = .active
+        snapshot.runtimeSessions = [runtimeSession]
+        await client.configureSnapshot(snapshot)
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .modelImport(let options):
+                return .success(
+                    makeManagedModelReceiptJSON(
+                        modelID: options.modelID,
+                        managedModelPath: "/tmp/melix-managed/\(options.modelID)",
+                        sourceKind: "local_path",
+                        sourceLocator: options.path
+                    )
+                )
+            case .modelRootsRescan:
+                return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
+            case .serverSessionCreate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionUpdate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionSelect:
+                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            case .chatRun(let options):
+                let assistantText = options.modelID == "melix-dev-text-lora" ? "DERIVED_OK" : "BASE_OK"
+                return .success(
+                    """
+                    {
+                      "model_id": "\(options.modelID)",
+                      "server_session_id": "server-session-1",
+                      "assistant_text": "\(assistantText)",
+                      "finish_reason": "stop",
+                      "request_id": "chat-\(assistantText.lowercased())"
+                    }
+                    """
+                )
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-0001",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-train-lora/model-ops-0001/adapters.safetensors",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            case .loraActivate:
+                return .success(
+                    """
+                    {
+                      "operation": "activate_adapter",
+                      "job_id": "model-ops-0002",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-activate/model-ops-0002/manifest.json",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                      "derived_model_id": "melix-dev-text-lora",
+                      "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
+                    }
+                    """
+                )
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .benchMatrixRun:
+                return .success(makeCLIBenchmarkMatrixRunJSON(jobID: "matrix-newer"))
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
+            case .benchExportCSV(let options):
+                try? Data("metric,value\nbench,1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                try? Data("suite,ttft_ms\nsmoke,21.1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportRequestsCSV(let options):
+                try? Data("request,latency_ms\n0,28.7\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSummaryCSV(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesCSV(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesJSONL(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let viewModel = RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner)
+        let renderer = RecordingPhase8WindowUIRenderer()
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: viewModel,
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                modelID: "melix-dev-text",
+                localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
+                trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: cliBundlePath.path,
+                timestamp: "2026-04-09T120000Z"
+            ),
+            renderer: renderer
+        )
+
+        let result = try await runner.run()
+
+        #expect(FileManager.default.fileExists(atPath: result.bundlePath))
+        #expect(FileManager.default.fileExists(atPath: result.screenshotPath))
+        #expect((try Data(contentsOf: URL(fileURLWithPath: result.screenshotPath))).isEmpty == false)
+
+        let bundleData = try Data(contentsOf: URL(fileURLWithPath: result.bundlePath))
+        let bundleJSON = try #require(
+            JSONSerialization.jsonObject(with: bundleData) as? [String: Any]
+        )
+        #expect(bundleJSON["cli_evidence_bundle_path"] as? String == cliBundlePath.path)
+        #expect(bundleJSON["screenshot_path"] as? String == result.screenshotPath)
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        #expect(recordedCommands.contains(where: {
+            if case .modelImport = $0 { return true }
+            return false
+        }))
+        #expect(recordedCommands.contains(where: {
+            if case .serverStart = $0 { return true }
+            return false
+        }))
+        #expect(recordedCommands.contains(where: {
+            if case .loraTrain = $0 { return true }
+            return false
+        }))
+        #expect(recordedCommands.contains(where: {
+            if case .benchRun = $0 { return true }
+            return false
+        }))
+        #expect(recordedCommands.contains(where: {
+            if case .evalRun = $0 { return true }
+            return false
+        }))
+    }
+
+    @Test("phase 8 window ui acceptance runner routes lora workflows through the materialized model id")
+    @MainActor
+    func phase8WindowUIAcceptanceRunnerRoutesLoraWorkflowsThroughMaterializedModel() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-window-ui-materialized-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let cliBundlePath = tempRoot
+            .appendingPathComponent("melix-home", isDirectory: true)
+            .appendingPathComponent("acceptance/phase8/cli/2026-04-09T162920Z/bundle.json")
+        try fileManager.createDirectory(
+            at: cliBundlePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+
+        let materializedModelID = "melix-dev-qwen-local"
+        let derivedModelID = "\(materializedModelID)-lora-adapter"
+        let adapterManifestPath = "/tmp/melix-train-lora/model-ops-0001/train_lora.adapter.json"
+        let adapterWeightsPath = "/tmp/melix-train-lora/model-ops-0001/adapter/adapters.safetensors"
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var fallbackTextModel = ModelCatalog.devTextModel()
+        fallbackTextModel.modelID = "melix-dev-text"
+        var importedModel = ModelCatalog.devTextModel()
+        importedModel.modelID = materializedModelID
+        importedModel.kind = "embedding"
+        importedModel.features = ["embed"]
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = derivedModelID
+        snapshot.models = [fallbackTextModel, importedModel, derivedModel]
+        var runtimeSession = makeDesktopRuntimeSession()
+        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.lifecycleState = .ready
+        runtimeSession.powerState = .active
+        snapshot.runtimeSessions = [runtimeSession]
+        await client.configureSnapshot(snapshot)
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .modelImport(let options):
+                return .success(
+                    makeManagedModelReceiptJSON(
+                        modelID: options.modelID,
+                        managedModelPath: "/tmp/melix-managed/\(options.modelID)",
+                        sourceKind: "local_path",
+                        sourceLocator: options.path
+                    )
+                )
+            case .modelRootsRescan:
+                return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
+            case .serverSessionCreate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionUpdate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionSelect:
+                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            case .chatRun(let options):
+                let assistantText = options.modelID == derivedModelID ? "DERIVED_OK" : "BASE_OK"
+                return .success(
+                    """
+                    {
+                      "model_id": "\(options.modelID)",
+                      "server_session_id": "server-session-1",
+                      "assistant_text": "\(assistantText)",
+                      "finish_reason": "stop",
+                      "request_id": "chat-\(assistantText.lowercased())"
+                    }
+                    """
+                )
+            case .loraTrain(let options):
+                guard options.modelID == materializedModelID else {
+                    return .failure(
+                        .processFailed(
+                            commandID: command.workflowCommandID,
+                            surface: .subprocess,
+                            exitCode: 1,
+                            stderr: "expected lora train to use \(materializedModelID), got \(options.modelID)"
+                        )
+                    )
+                }
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-0001",
+                      "source_model": "\(materializedModelID)",
+                      "output_path": "\(adapterWeightsPath)",
+                      "artifact_path": "\(adapterManifestPath)",
+                      "weights_path": "\(adapterWeightsPath)",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            case .loraActivate(let options):
+                guard options.modelID == materializedModelID else {
+                    return .failure(
+                        .processFailed(
+                            commandID: command.workflowCommandID,
+                            surface: .subprocess,
+                            exitCode: 1,
+                            stderr: "expected lora activate to use \(materializedModelID), got \(options.modelID)"
+                        )
+                    )
+                }
+                guard options.adapterPath == adapterManifestPath else {
+                    return .failure(
+                        .processFailed(
+                            commandID: command.workflowCommandID,
+                            surface: .subprocess,
+                            exitCode: 1,
+                            stderr: "expected lora activate to use \(adapterManifestPath), got \(options.adapterPath)"
+                        )
+                    )
+                }
+                return .success(
+                    """
+                    {
+                      "operation": "activate_adapter",
+                      "job_id": "model-ops-0002",
+                      "source_model": "\(materializedModelID)",
+                      "output_path": "/tmp/melix-activate/model-ops-0002/manifest.json",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                      "derived_model_id": "\(derivedModelID)",
+                      "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
+                    }
+                    """
+                )
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .benchMatrixRun:
+                return .success(makeCLIBenchmarkMatrixRunJSON(jobID: "matrix-newer"))
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
+            case .benchExportCSV(let options):
+                try? Data("metric,value\nbench,1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                try? Data("suite,ttft_ms\nsmoke,21.1\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportRequestsCSV(let options):
+                try? Data("request,latency_ms\n0,28.7\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSummaryCSV(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesCSV(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesJSONL(let options):
+                try? Data("{\"ok\":true}\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner),
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                modelID: materializedModelID,
+                localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
+                trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: cliBundlePath.path,
+                timestamp: "2026-04-09T120000Z"
+            ),
+            renderer: RecordingPhase8WindowUIRenderer()
+        )
+
+        let result = try await runner.run()
+        #expect(FileManager.default.fileExists(atPath: result.bundlePath))
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        let trainCommand = try #require(recordedCommands.first(where: {
+            if case .loraTrain = $0 { return true }
+            return false
+        }))
+        if case .loraTrain(let options) = trainCommand {
+            #expect(options.modelID == materializedModelID)
+        } else {
+            Issue.record("expected a lora train command")
+        }
+
+        let activateCommand = try #require(recordedCommands.first(where: {
+            if case .loraActivate = $0 { return true }
+            return false
+        }))
+        if case .loraActivate(let options) = activateCommand {
+            #expect(options.modelID == materializedModelID)
+            #expect(options.adapterPath == adapterManifestPath)
+        } else {
+            Issue.record("expected a lora activate command")
+        }
+    }
+
+    @Test("phase 8 window ui acceptance runner rejects lora train receipts without an adapter manifest path")
+    @MainActor
+    func phase8WindowUIAcceptanceRunnerRejectsMissingAdapterManifestPath() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-window-ui-missing-adapter-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let cliBundlePath = tempRoot
+            .appendingPathComponent("melix-home", isDirectory: true)
+            .appendingPathComponent("acceptance/phase8/cli/2026-04-09T162920Z/bundle.json")
+        try fileManager.createDirectory(
+            at: cliBundlePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+
+        let materializedModelID = "melix-dev-qwen-local"
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var fallbackTextModel = ModelCatalog.devTextModel()
+        fallbackTextModel.modelID = "melix-dev-text"
+        var importedModel = ModelCatalog.devTextModel()
+        importedModel.modelID = materializedModelID
+        importedModel.kind = "embedding"
+        importedModel.features = ["embed"]
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "\(materializedModelID)-lora-adapter"
+        snapshot.models = [fallbackTextModel, importedModel, derivedModel]
+        var runtimeSession = makeDesktopRuntimeSession()
+        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.lifecycleState = .ready
+        runtimeSession.powerState = .active
+        snapshot.runtimeSessions = [runtimeSession]
+        await client.configureSnapshot(snapshot)
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .modelImport(let options):
+                return .success(
+                    makeManagedModelReceiptJSON(
+                        modelID: options.modelID,
+                        managedModelPath: "/tmp/melix-managed/\(options.modelID)",
+                        sourceKind: "local_path",
+                        sourceLocator: options.path
+                    )
+                )
+            case .modelRootsRescan:
+                return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
+            case .serverSessionCreate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionUpdate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionSelect:
+                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            case .chatRun:
+                return .success(
+                    """
+                    {
+                      "model_id": "\(materializedModelID)",
+                      "server_session_id": "server-session-1",
+                      "assistant_text": "BASE_OK",
+                      "finish_reason": "stop",
+                      "request_id": "chat-base"
+                    }
+                    """
+                )
+            case .loraTrain(let options):
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-0001",
+                      "source_model": "\(options.modelID)",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner),
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                modelID: materializedModelID,
+                localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
+                trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: cliBundlePath.path,
+                timestamp: "2026-04-09T120000Z"
+            ),
+            renderer: RecordingPhase8WindowUIRenderer()
+        )
+
+        do {
+            _ = try await runner.run()
+            Issue.record("expected the acceptance runner to reject the missing adapter manifest path")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            switch error {
+            case .missingAdapterManifestPath:
+                break
+            default:
+                Issue.record("expected missingAdapterManifestPath, got \(error)")
+            }
+        } catch {
+            Issue.record("expected Phase8WindowUIAcceptanceError, got \(error)")
+        }
+    }
+
+    @Test("phase 8 window ui acceptance runner surfaces renderer failures")
+    @MainActor
+    func phase8WindowUIAcceptanceRunnerSurfacesRendererFailures() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-window-ui-failure-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let cliBundlePath = tempRoot
+            .appendingPathComponent("melix-home", isDirectory: true)
+            .appendingPathComponent("acceptance/phase8/cli/2026-04-09T162920Z/bundle.json")
+        try fileManager.createDirectory(
+            at: cliBundlePath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"ok\":true}\n".utf8).write(to: cliBundlePath)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .modelImport(let options):
+                return .success(
+                    makeManagedModelReceiptJSON(
+                        modelID: options.modelID,
+                        managedModelPath: "/tmp/melix-managed/\(options.modelID)",
+                        sourceKind: "local_path",
+                        sourceLocator: options.path
+                    )
+                )
+            case .modelRootsRescan:
+                return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
+            case .serverSessionUpdate:
+                return .success("{\"server_session_id\":\"server-session-1\"}\n")
+            case .serverSessionSelect:
+                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            case .chatRun:
+                return .success(
+                    """
+                    {
+                      "model_id": "melix-dev-text",
+                      "server_session_id": "server-session-1",
+                      "assistant_text": "BASE_OK",
+                      "finish_reason": "stop",
+                      "request_id": "chat-base"
+                    }
+                    """
+                )
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-0001",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-train-lora/model-ops-0001/adapters.safetensors",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            case .loraActivate:
+                return .success(
+                    """
+                    {
+                      "operation": "activate_adapter",
+                      "job_id": "model-ops-0002",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-activate/model-ops-0002/manifest.json",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                      "derived_model_id": "melix-dev-text-lora",
+                      "derived_model_path": "/tmp/melix-activate/model-ops-0002/derived"
+                    }
+                    """
+                )
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .benchMatrixRun:
+                return .success(makeCLIBenchmarkMatrixRunJSON(jobID: "matrix-newer"))
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON(jobID: "eval-newer"))
+            case .benchExportCSV(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .benchMatrixExportRequestsCSV(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSummaryCSV(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesCSV(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            case .evalExportSamplesJSONL(let options):
+                try? Data("ok\n".utf8).write(to: URL(fileURLWithPath: options.outputPath))
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: options.outputPath,
+                        rowCount: 1
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner),
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.appendingPathComponent("melix-home", isDirectory: true).path,
+                modelID: "melix-dev-text",
+                localModelPath: tempRoot.appendingPathComponent("fixture-model", isDirectory: true).path,
+                trainingFixture: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: cliBundlePath.path,
+                timestamp: "2026-04-09T120000Z"
+            ),
+            renderer: FailingPhase8WindowUIRenderer()
+        )
+
+        do {
+            _ = try await runner.run()
+            Issue.record("expected the acceptance runner to surface the renderer failure")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            switch error {
+            case .screenshotRenderFailed:
+                break
+            default:
+                Issue.record("expected screenshotRenderFailed, got \(error)")
+            }
+        } catch {
+            Issue.record("expected Phase8WindowUIAcceptanceError, got \(error)")
+        }
+    }
+}
+
+@MainActor
+private final class RecordingPhase8WindowUIRenderer: Phase8WindowUIRendering {
+    func render(viewModel: RuntimeViewModel, to outputURL: URL, size: CGSize) throws {
+        _ = viewModel
+        _ = size
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("png".utf8).write(to: outputURL)
+    }
+}
+
+@MainActor
+private struct FailingPhase8WindowUIRenderer: Phase8WindowUIRendering {
+    func render(viewModel: RuntimeViewModel, to outputURL: URL, size: CGSize) throws {
+        _ = viewModel
+        _ = outputURL
+        _ = size
+        throw CocoaError(.fileWriteUnknown)
+    }
+}
+
 @MainActor
 private func hostView<Content: View>(_ rootView: Content) -> NSView {
     let controller = NSHostingController(rootView: rootView)

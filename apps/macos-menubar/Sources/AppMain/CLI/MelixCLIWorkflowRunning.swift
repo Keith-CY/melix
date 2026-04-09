@@ -171,10 +171,13 @@ public struct MelixCLIModelOperationManifestPayload: Codable, Equatable, Sendabl
     public let jobID: String?
     public let sourceModel: String?
     public let outputPath: String?
+    public let artifactPath: String?
+    public let weightsPath: String?
     public let adapterName: String?
     public let datasetURI: String?
     public let derivedModelID: String?
     public let derivedModelPath: String?
+    public let derivedModelAlias: String?
     public let activationMode: String?
 }
 
