@@ -194,7 +194,7 @@ enum MenuBarApplicationMenuBuilder {
 
 @MainActor
 public final class MelixMenuBarBootstrap {
-    private let viewModel: RuntimeViewModel
+    let viewModel: RuntimeViewModel
     private let startupSurface: MenuBarStartupSurface
     private let desktopFoundationPresenter: any DesktopFoundationPresenting
     private let commandCenterPresenter: any DesktopFoundationPresenting
@@ -206,6 +206,7 @@ public final class MelixMenuBarBootstrap {
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         melixHome: MelixHome = MelixHome(),
         operatorSessionStore: (any OperatorSessionStoring)? = nil,
+        cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
@@ -234,15 +235,20 @@ public final class MelixMenuBarBootstrap {
         }
     ) {
         let resolvedOperatorSessionStore = operatorSessionStore ?? OperatorSessionStore(melixHome: melixHome)
-        let resolvedOperatorCommandRunner = operatorCommandRunner ?? MelixCLIRunner(
-            client: client,
-            operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+        let resolvedOperatorCommandRunner = operatorCommandRunner ?? (
+            cliWorkflowRunner == nil
+                ? MelixCLIRunner(
+                    client: client,
+                    operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+                )
+                : nil
         )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
             metrics: metrics,
             operatorSessionStore: resolvedOperatorSessionStore,
+            cliWorkflowRunner: cliWorkflowRunner,
             operatorCommandRunner: resolvedOperatorCommandRunner,
             serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore
         )
@@ -277,6 +283,7 @@ public final class MelixMenuBarBootstrap {
 
     static func live(
         environment: MenuBarBootstrapEnvironment,
+        cliProcessExecutor: any MelixCLIProcessExecuting = LiveMelixCLIProcessExecutor(),
         terminationHandler: @escaping @MainActor @Sendable () -> Void = { NSApplication.shared.terminate(nil) }
     ) -> MelixMenuBarBootstrap {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
@@ -302,15 +309,17 @@ public final class MelixMenuBarBootstrap {
         )
         let localClient = LocalControlPlaneXPCClient(service: service)
         let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+        let cliWorkflowRunner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: environment.cliExecutablePath,
+            environment: environment.cliEnvironment(base: ProcessInfo.processInfo.environment),
+            processExecutor: cliProcessExecutor
+        )
         return MelixMenuBarBootstrap(
             client: localClient,
             startupSurface: environment.startupSurface,
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
-            operatorCommandRunner: MelixCLIRunner(
-                client: localClient,
-                operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
-            ),
+            cliWorkflowRunner: cliWorkflowRunner,
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )
@@ -328,6 +337,7 @@ public final class MelixMenuBarBootstrap {
 
 struct MenuBarBootstrapEnvironment {
     let repoRoot: String
+    let cliExecutablePath: String
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
     let startupSurface: MenuBarStartupSurface
@@ -341,6 +351,9 @@ struct MenuBarBootstrapEnvironment {
         } else {
             self.repoRoot = MenuBarBootstrapEnvironment.inferRepoRoot()
         }
+        self.cliExecutablePath = environment["MELIX_CLI"] ?? MenuBarBootstrapEnvironment.inferCLIExecutablePath(
+            repoRoot: self.repoRoot
+        )
         self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
@@ -367,6 +380,29 @@ struct MenuBarBootstrapEnvironment {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .path
+    }
+
+    private static func inferCLIExecutablePath(repoRoot: String) -> String {
+        let repoURL = URL(fileURLWithPath: repoRoot)
+        let candidates = [
+            repoURL.appendingPathComponent(".build/arm64-apple-macosx/debug/melix").path,
+            repoURL.appendingPathComponent(".build/arm64-apple-macosx/release/melix").path,
+            repoURL.appendingPathComponent(".build/debug/melix").path,
+            repoURL.appendingPathComponent(".build/release/melix").path,
+            "melix",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? candidates[0]
+    }
+
+    func cliEnvironment(base: [String: String]) -> [String: String] {
+        var merged = base
+        merged["MELIX_REPO_ROOT"] = repoRoot
+        merged["MELIX_WORKER_SOCKET_PATH"] = pythonWorkerSocketPath
+        merged["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = swiftTextWorkerSocketPath
+        if let runtimeDirectory, runtimeDirectory.isEmpty == false {
+            merged["MELIX_RUNTIME_DIR"] = runtimeDirectory
+        }
+        return merged
     }
 }
 

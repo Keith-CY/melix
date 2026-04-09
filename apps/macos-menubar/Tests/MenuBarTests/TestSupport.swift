@@ -1,6 +1,7 @@
 import Foundation
 
 @testable import AppMain
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -2099,4 +2100,221 @@ struct StubProductInstallStateProvider: ProductInstallStateProviding {
     func startupFailureDiagnostic(for error: any Error) -> ProductStartupFailureDiagnostic? {
         startupDiagnosticResponse
     }
+}
+
+actor RecordingCLIWorkflowRunner: MelixCLIWorkflowRunning {
+    private var outputs: [(command: MelixCLICommand, output: String)] = []
+    private var failures: [(command: MelixCLICommand, error: MelixCLIWorkflowError)] = []
+    private var commandHandler: (@Sendable (MelixCLICommand) -> Result<String, MelixCLIWorkflowError>)?
+    private(set) var recordedCommands: [MelixCLICommand] = []
+
+    let surface: MelixCLIWorkflowSurface
+
+    init(surface: MelixCLIWorkflowSurface = .subprocess) {
+        self.surface = surface
+    }
+
+    func configureOutput(_ output: String, for command: MelixCLICommand) {
+        outputs.append((command: command, output: output))
+    }
+
+    func configureFailure(_ error: MelixCLIWorkflowError, for command: MelixCLICommand) {
+        failures.append((command: command, error: error))
+    }
+
+    func configureHandler(
+        _ handler: @escaping @Sendable (MelixCLICommand) -> Result<String, MelixCLIWorkflowError>
+    ) {
+        commandHandler = handler
+    }
+
+    func run(_ command: MelixCLICommand) async throws -> String {
+        recordedCommands.append(command)
+        if let commandHandler {
+            return try commandHandler(command).get()
+        }
+        if let failure = failures.last(where: { $0.command == command }) {
+            throw failure.error
+        }
+        return outputs.last(where: { $0.command == command })?.output ?? "{}\n"
+    }
+
+    func snapshotRecordedCommands() -> [MelixCLICommand] {
+        recordedCommands
+    }
+}
+
+actor RecordingCLIProcessExecutor: MelixCLIProcessExecuting {
+    struct Invocation: Equatable, Sendable {
+        let executablePath: String
+        let arguments: [String]
+        let environment: [String: String]
+    }
+
+    private var queuedResults: [Result<String, MelixCLIProcessExecutionError>] = []
+    private(set) var recordedInvocations: [Invocation] = []
+
+    func enqueueOutput(_ output: String) {
+        queuedResults.append(.success(output))
+    }
+
+    func enqueueFailure(_ error: MelixCLIProcessExecutionError) {
+        queuedResults.append(.failure(error))
+    }
+
+    func run(executablePath: String, arguments: [String], environment: [String: String]) async throws -> String {
+        recordedInvocations.append(
+            Invocation(
+                executablePath: executablePath,
+                arguments: arguments,
+                environment: environment
+            )
+        )
+        guard queuedResults.isEmpty == false else {
+            return "{}\n"
+        }
+        let next = queuedResults.removeFirst()
+        return try next.get()
+    }
+}
+
+func makeManagedModelReceiptJSON(
+    modelID: String,
+    managedModelPath: String,
+    sourceKind: String,
+    sourceLocator: String
+) -> String {
+    """
+    {
+      "model_id": "\(modelID)",
+      "managed_model_path": "\(managedModelPath)",
+      "source_kind": "\(sourceKind)",
+      "source_locator": "\(sourceLocator)",
+      "warnings": []
+    }
+    """
+}
+
+func makeCLIServerSnapshotJSON(
+    serverSessionID: String,
+    lifecycleState: String = "ready",
+    powerState: String = "active",
+    serverState: String = "server_ready"
+) -> String {
+    """
+    {
+      "server_state": "\(serverState)",
+      "runtime_sessions": [
+        {
+          "server_session_id": "\(serverSessionID)",
+          "lifecycle_state": "\(lifecycleState)",
+          "power_state": "\(powerState)",
+          "wake_reason": "operator_resume",
+          "idle_timer_seconds": 0,
+          "auto_sleep_enabled": false,
+          "light_sleep_after_seconds": 300,
+          "deep_sleep_after_seconds": 900,
+          "updated_at_unix_ms": 1712300000000
+        }
+      ]
+    }
+    """
+}
+
+func makeCLIBenchRunJSON(
+    reportPath: String = "/tmp/melix/bench/runs/bench-newer/bench-report.md"
+) -> String {
+    """
+    {
+      "report_path": "\(reportPath)",
+      "report_markdown": "# Melix Bench\\n\\n- bench.smoke.ttft_ms: 21.10 ms\\n",
+      "metrics": {
+        "bench.smoke.tokens_per_second": 61.2,
+        "bench.smoke.ttft_ms": 21.1
+      }
+    }
+    """
+}
+
+func makeCLIBenchmarkMatrixRunJSON(
+    jobID: String = "matrix-newer",
+    outputDir: String = "/tmp/melix/bench/matrix-runs/matrix-newer"
+) -> String {
+    """
+    {
+      "job": {
+        "schema_version": "melix.benchmark_matrix_job.v1",
+        "job_id": "\(jobID)",
+        "model_id": "melix-dev-text-lora",
+        "task_kind": "text-generation",
+        "source_repo": "",
+        "suite_ids": ["smoke"],
+        "benchmark_mode": "matrix",
+        "status": "completed",
+        "output_dir": "\(outputDir)",
+        "created_at_unix_ms": 1712300000000,
+        "updated_at_unix_ms": 1712300001000
+      },
+      "summary_rows": []
+    }
+    """
+}
+
+func makeCLIEvaluationRunJSON(
+    jobID: String = "eval-newer",
+    outputDir: String = "/tmp/melix/evaluation/runs/eval-newer"
+) -> String {
+    """
+    [
+      {
+        "job": {
+          "schema_version": "melix.evaluation_job.v1",
+          "job_id": "\(jobID)",
+          "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "scoring_mode": "multiple_choice_accuracy",
+          "parameters": {},
+          "status": "completed",
+          "output_dir": "\(outputDir)",
+          "created_at_unix_ms": 1712300000000,
+          "updated_at_unix_ms": 1712300001000
+        },
+        "results": [
+          {
+            "schema_version": "melix.evaluation_result.v1",
+            "job_id": "\(jobID)",
+            "suite_id": "mmlu",
+            "dataset_id": "mmlu.dev.v1",
+            "sample_size": 8,
+            "report_path": "\(outputDir)/evaluation-report.md",
+            "metrics": [
+              {
+                "name": "mmlu.accuracy",
+                "value": 0.5,
+                "unit": ""
+              }
+            ]
+          }
+        ]
+      }
+    ]
+    """
+}
+
+func makeCLIExportResponseJSON(
+    jobID: String,
+    outputPath: String,
+    rowCount: Int
+) -> String {
+    """
+    {
+      "job_id": "\(jobID)",
+      "output_path": "\(outputPath)",
+      "row_count": \(rowCount)
+    }
+    """
 }

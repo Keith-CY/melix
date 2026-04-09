@@ -11,6 +11,32 @@
 
 ## 2026-04-09
 
+- Closed the Phase 8 Stage 4 Window UI shell slice so the macOS menubar app now routes the
+  remaining Phase 8 write-path workflows through the shipping `melix` CLI instead of keeping a
+  second in-process workflow authority:
+  - added `MelixCLIWorkflowRunning`, `MelixCLIProcessExecuting`, and
+    `MelixSubprocessCLIWorkflowRunner` so the app can shell out to the bundled `melix`
+    executable, decode typed JSON receipts, and surface stable typed subprocess failures into the
+    native UI state
+  - switched the default `AppMain` bootstrap to inject the subprocess-backed CLI workflow runner
+    in production while keeping fake and in-process runners available for tests
+  - updated `RuntimeViewModel` so managed Hub download, local import, server-session create/select
+    and start, LoRA train and activate, benchmark, matrix benchmark, evaluation, and export all
+    prefer the CLI-first workflow path when the menubar app has a CLI workflow runner
+  - kept server-session rebinding and derived-model activation aligned with the CLI contract by
+    allowing activation fallback to the latest trained adapter output path and by not immediately
+    overwriting CLI-projected lifecycle state with a stale direct refresh after `lora activate`
+  - expanded positive and negative Swift tests around subprocess decoding, process failures,
+    bootstrap wiring, server-session mutation failures, train and activate failures, and the
+    remaining CLI-backed Window UI workflow guard rails
+- Verification summary for Phase 8 Stage 4:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|AppMainBootstrapTests|MelixSubprocessCLIWorkflowRunnerTests'`: `206 tests in 3 suites passed after 1.044 seconds` after a fresh coverage-enabled rebuild
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/CLI/MelixCLIWorkflowRunning.swift apps/macos-menubar/Sources/AppMain/CLI/MelixCLIProcessExecutor.swift apps/macos-menubar/Sources/AppMain/CLI/MelixSubprocessCLIWorkflowRunner.swift apps/macos-menubar/Sources/AppMain/AppMain.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/MelixSubprocessCLIWorkflowRunnerTests.swift`: `95.93%` (`1273/1327`)
+- Metrics report for Phase 8 Stage 4:
+  - Window UI CLI-shell touched-scope changed-line coverage: `95.93%` (`1273/1327`)
+  - Stage 4 leaves real Window UI screenshot capture and acceptance-bundle emission to Stage 5;
+    no live UI evidence path is claimed in this transaction
+
 - Closed the Phase 8 Stage 3 CLI acceptance slice so the public `melix` contract now closes the
   deterministic LoRA, derived-chat, benchmark, matrix benchmark, evaluation, export, and evidence
   bundle path in one repository-owned runner:

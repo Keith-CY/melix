@@ -491,6 +491,27 @@ struct AppMainBootstrapTests {
         #expect(type(of: bootstrap) == MelixMenuBarBootstrap.self)
     }
 
+    @Test("live bootstrap injects the subprocess cli workflow runner")
+    @MainActor
+    func liveBootstrapInjectsSubprocessCLIWorkflowRunner() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_CLI": "/tmp/melix-cli",
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
+            ]
+        )
+
+        let bootstrap = MelixMenuBarBootstrap.live(
+            environment: environment,
+            cliProcessExecutor: processExecutor
+        )
+
+        #expect(bootstrap.viewModel.cliWorkflowRunnerSurface == .subprocess)
+    }
+
     @Test("launchLive can use the default live bootstrap factory")
     @MainActor
     func launchLiveCanUseDefaultBootstrapFactory() async throws {

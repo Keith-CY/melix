@@ -5011,6 +5011,512 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastEvaluationExport != nil)
     }
 
+    @Test("phase8 write workflows use cli workflow json receipts when configured")
+    @MainActor
+    func phase8WriteWorkflowsUseCLIWorkflowJSONReceiptsWhenConfigured() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-cli-workflows-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorStore = OperatorSessionStore(melixHome: melixHome)
+        let initialServerSession = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Primary Server",
+            modelID: "melix-dev-text",
+            host: "127.0.0.1",
+            port: 18_080
+        )
+        try operatorStore.save(
+            OperatorSessionState(
+                selectedSurface: .server,
+                selectedServerSessionID: initialServerSession.id,
+                serverSessions: [initialServerSession]
+            )
+        )
+
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await directClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            func sessionJSON(modelID: String) -> String {
+                """
+                {
+                  "selected_surface": "server",
+                  "selected_tool_section": "models_library",
+                  "selected_server_session_id": "server-session-1",
+                  "dismissed_banner_ids": [],
+                  "download_queue": [],
+                  "registry_roots": [],
+                  "server_sessions": [
+                    {
+                      "id": "server-session-1",
+                      "title": "Primary Server",
+                      "model_id": "\(modelID)",
+                      "host": "127.0.0.1",
+                      "port": 18080,
+                      "rate_limit_per_minute": 120,
+                      "timeout_seconds": 120,
+                      "lifecycle": "draft",
+                      "updated_at": "2026-04-09T16:30:00Z"
+                    }
+                  ]
+                }
+                """
+            }
+
+            switch command {
+            case .modelHubDownload(let options):
+                return .success(
+                    makeManagedModelReceiptJSON(
+                        modelID: options.repoID,
+                        managedModelPath: "/tmp/melix-managed/\(options.repoID)",
+                        sourceKind: "hub_repo",
+                        sourceLocator: options.repoID
+                    )
+                )
+            case .modelRootsRescan:
+                return .success("{\"operation\":\"registry_snapshot\"}\n")
+            case .serverSessionUpdate(let options):
+                return .success(sessionJSON(modelID: options.modelID.isEmpty ? "melix-dev-text" : options.modelID))
+            case .serverSessionSelect:
+                return .success(sessionJSON(modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-0001",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            case .loraActivate:
+                return .success(
+                    """
+                    {
+                      "activation_mode": "fused_derived_model",
+                      "source_model": "melix-dev-text",
+                      "adapter_name": "phase8-acceptance",
+                      "derived_model_id": "melix-dev-text-lora",
+                      "derived_model_path": "/tmp/melix-derived/model"
+                    }
+                    """
+                )
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .benchMatrixRun:
+                return .success(makeCLIBenchmarkMatrixRunJSON())
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON())
+            case .benchExportCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: options.outputPath, rowCount: 2)
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: options.outputPath, rowCount: 1)
+                )
+            case .evalExportSummaryCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: options.outputPath, rowCount: 1)
+                )
+            case .evalExportSamplesJSONL(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: options.outputPath, rowCount: 2)
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            metrics: metrics,
+            operatorSessionStore: operatorStore,
+            cliWorkflowRunner: workflowRunner
+        )
+
+        await viewModel.start()
+        viewModel.modelHubSelectedRevision = "main"
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "phase8-acceptance"
+        viewModel.loraDerivedModelAlias = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.downloadHubModel(repoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        viewModel.updateSelectedServerSessionModelID("mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        await viewModel.startSelectedServerSession()
+        await viewModel.trainPrimaryModel()
+        await viewModel.activateLatestAdapter()
+        await viewModel.runBench()
+        await viewModel.exportSelectedBenchmarkCSV()
+        await viewModel.runBenchMatrix()
+        await viewModel.exportSelectedBenchmarkMatrixSummaryCSV()
+        await viewModel.runEvaluation()
+        await viewModel.exportSelectedEvaluationSummaryCSV()
+        await viewModel.exportSelectedEvaluationSamplesJSONL()
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+
+        #expect(recordedCommands.contains {
+            if case .modelHubDownload = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .serverSessionUpdate = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .serverSessionSelect = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .serverStart = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .loraTrain = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .loraActivate = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .benchRun = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .benchMatrixRun = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .evalRun = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .benchExportCSV = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .benchMatrixExportSummaryCSV = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .evalExportSummaryCSV = $0 { return true }
+            return false
+        })
+        #expect(recordedCommands.contains {
+            if case .evalExportSamplesJSONL = $0 { return true }
+            return false
+        })
+
+        let directOperations = await directClient.recordedModelOperationRequests
+        #expect(directOperations.contains { $0.operation == "download" } == false)
+        #expect(directOperations.contains { $0.operation == "train_lora" } == false)
+        #expect(directOperations.contains { $0.operation == "activate_adapter" } == false)
+        #expect(await directClient.recordedBenchRequests.isEmpty)
+        #expect(await directClient.recordedBenchMatrixRequests.isEmpty)
+        #expect(await directClient.recordedEvaluationRequests.isEmpty)
+
+        #expect(viewModel.lastModelOperation?.modelID == "melix-dev-text")
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+        #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report") == true)
+        #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.jobID == "matrix-newer")
+        #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
+        #expect(viewModel.lastBenchmarkCSVExport != nil)
+        #expect(viewModel.lastBenchmarkMatrixExport?.formatTitle == "summary.csv")
+        #expect(viewModel.lastEvaluationExport?.formatTitle == "samples.jsonl")
+        #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.ops_bench_matrix_ms"] != nil)
+        #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
+    }
+
+    @Test("cli workflow failures surface typed failure state into the runtime view model")
+    @MainActor
+    func cliWorkflowFailuresSurfaceTypedFailureStateIntoTheRuntimeViewModel() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)]
+            )
+        )
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .benchRun:
+                return Result<String, MelixCLIWorkflowError>.failure(
+                    MelixCLIWorkflowError.invalidJSON(
+                        commandID: "bench.run",
+                        surface: MelixCLIWorkflowSurface.subprocess,
+                        output: "{"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            cliWorkflowRunner: workflowRunner
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        await viewModel.runBench()
+
+        let failure = try #require(viewModel.lastCLIWorkflowFailure)
+        #expect(failure.commandID == "bench.run")
+        #expect(failure.failureKind == .invalidJSON)
+        #expect(failure.surface == .subprocess)
+        #expect(viewModel.lastError?.contains("bench.run") == true)
+        #expect(await directClient.recordedBenchRequests.isEmpty)
+    }
+
+    @Test("recording cli workflow runner supports configured outputs and failures")
+    func recordingCLIWorkflowRunnerSupportsConfiguredOutputsAndFailures() async throws {
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let benchCommand = MelixCLICommand.benchRun(.init(modelID: "melix-dev-text", suites: ["smoke"], json: true))
+        let exportCommand = MelixCLICommand.benchExportCSV(
+            .init(jobID: "bench-newer", outputPath: "/tmp/bench-newer.csv", json: true)
+        )
+
+        await workflowRunner.configureOutput("{\"ok\":true}\n", for: benchCommand)
+        await workflowRunner.configureFailure(
+            .processFailed(
+                commandID: "bench.export_csv",
+                surface: .subprocess,
+                exitCode: 2,
+                stderr: "export failed"
+            ),
+            for: exportCommand
+        )
+
+        let output = try await workflowRunner.run(benchCommand)
+        #expect(output.contains("\"ok\":true"))
+
+        do {
+            _ = try await workflowRunner.run(exportCommand)
+            Issue.record("Expected configured CLI workflow failure.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error.failureKind == .processFailed)
+        }
+    }
+
+    @Test("cli create and select server session failures surface local error state")
+    @MainActor
+    func cliCreateAndSelectServerSessionFailuresSurfaceLocalErrorState() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .serverSessionCreate:
+                return .failure(
+                    .processFailed(
+                        commandID: "server.session.create",
+                        surface: .subprocess,
+                        exitCode: 3,
+                        stderr: "create failed"
+                    )
+                )
+            case .serverSessionSelect:
+                return .failure(
+                    .processFailed(
+                        commandID: "server.session.select",
+                        surface: .subprocess,
+                        exitCode: 4,
+                        stderr: "select failed"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        let viewModel = RuntimeViewModel(client: directClient, cliWorkflowRunner: workflowRunner)
+        await viewModel.start()
+
+        viewModel.createServerSession()
+        try await waitForRuntimeViewModelCondition("expected create session CLI failure") {
+            viewModel.lastCLIWorkflowFailure?.commandID == "server.session.create"
+        }
+        #expect(viewModel.lastError?.contains("server.session.create") == true)
+
+        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.selectServerSession(id: selectedServerSessionID)
+        try await waitForRuntimeViewModelCondition("expected select session CLI failure") {
+            viewModel.lastCLIWorkflowFailure?.commandID == "server.session.select"
+        }
+        #expect(viewModel.lastError?.contains("server.session.select") == true)
+    }
+
+    @Test("cli download and train failures surface typed local errors")
+    @MainActor
+    func cliDownloadAndTrainFailuresSurfaceTypedLocalErrors() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: directClient, cliWorkflowRunner: workflowRunner)
+        await viewModel.start()
+        viewModel.modelHubSelectedRevision = "main"
+
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .modelHubDownload:
+                return .failure(
+                    .invalidJSON(
+                        commandID: "model.hub.download",
+                        surface: .subprocess,
+                        output: "{"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        await viewModel.downloadHubModel(repoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+
+        let downloadFailure = try #require(viewModel.lastCLIWorkflowFailure)
+        #expect(downloadFailure.commandID == "model.hub.download")
+        #expect(downloadFailure.failureKind == .invalidJSON)
+        #expect(viewModel.lastError?.contains("model.hub.download") == true)
+
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "phase8-acceptance"
+
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .loraTrain:
+                return .failure(
+                    .processFailed(
+                        commandID: "lora.train",
+                        surface: .subprocess,
+                        exitCode: 5,
+                        stderr: "training failed"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        await viewModel.trainPrimaryModel()
+
+        let trainingFailure = try #require(viewModel.lastCLIWorkflowFailure)
+        #expect(trainingFailure.commandID == "lora.train")
+        #expect(trainingFailure.failureKind == .processFailed)
+        #expect(viewModel.lastError?.contains("lora.train") == true)
+    }
+
+    @Test("cli activate failure reuses the latest trained adapter path and surfaces a typed local error")
+    @MainActor
+    func cliActivateFailureReusesTheLatestTrainedAdapterPathAndSurfacesATypedLocalError() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "model-ops-activate-fallback",
+                      "source_model": "melix-dev-text",
+                      "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+                      "adapter_name": "phase8-acceptance",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            case .loraActivate:
+                return .failure(
+                    .processFailed(
+                        commandID: "lora.activate",
+                        surface: .subprocess,
+                        exitCode: 6,
+                        stderr: "activation failed"
+                    )
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+
+        let viewModel = RuntimeViewModel(client: directClient, cliWorkflowRunner: workflowRunner)
+        await viewModel.start()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "phase8-acceptance"
+        viewModel.loraDerivedModelAlias = "melix-dev-text-lora"
+
+        await viewModel.trainPrimaryModel()
+        await viewModel.activateLatestAdapter()
+
+        let failure = try #require(viewModel.lastCLIWorkflowFailure)
+        #expect(failure.commandID == "lora.activate")
+        #expect(failure.failureKind == .processFailed)
+        #expect(viewModel.lastError?.contains("lora.activate") == true)
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        #expect(recordedCommands.contains {
+            if case .loraActivate(let options) = $0 {
+                return options.adapterPath == "/tmp/melix-train-lora/train_lora.adapter.json"
+            }
+            return false
+        })
+    }
+
     @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")
     @MainActor
     func evaluationConfigurationForwardsCanonicalControls() async throws {

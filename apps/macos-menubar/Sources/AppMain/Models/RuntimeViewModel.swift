@@ -19,6 +19,25 @@ public actor MenuBarMetricsStore {
     }
 }
 
+public struct RuntimeCLIWorkflowFailureState: Equatable, Sendable {
+    public let commandID: String
+    public let surface: MelixCLIWorkflowSurface
+    public let failureKind: MelixCLIWorkflowFailureKind
+    public let detail: String
+
+    public init(
+        commandID: String,
+        surface: MelixCLIWorkflowSurface,
+        failureKind: MelixCLIWorkflowFailureKind,
+        detail: String
+    ) {
+        self.commandID = commandID
+        self.surface = surface
+        self.failureKind = failureKind
+        self.detail = detail
+    }
+}
+
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
@@ -1059,6 +1078,7 @@ public final class RuntimeViewModel {
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
+    public private(set) var lastCLIWorkflowFailure: RuntimeCLIWorkflowFailureState?
     public private(set) var productUpdateSummary: String?
     public private(set) var productUpdateDetail: String?
     public private(set) var productUpdateIsAvailable = false
@@ -1236,6 +1256,7 @@ public final class RuntimeViewModel {
     private let client: any ControlPlaneXPCClient
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
+    private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
@@ -1447,6 +1468,7 @@ public final class RuntimeViewModel {
         client: any ControlPlaneXPCClient,
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
+        cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
@@ -1454,9 +1476,18 @@ public final class RuntimeViewModel {
         self.client = client
         self.metrics = metrics
         self.operatorSessionStore = operatorSessionStore
+        self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
         self.productInstallStateProvider = productInstallStateProvider
+    }
+
+    var cliWorkflowRunnerSurface: MelixCLIWorkflowSurface? {
+        cliWorkflowRunner?.surface
+    }
+
+    private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
+        cliWorkflowRunner ?? operatorCommandRunner
     }
 
     deinit {
@@ -1590,12 +1621,12 @@ public final class RuntimeViewModel {
         let nextIndex = serverSessions.count + 1
         let title = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
         let port = 8080 + max(0, serverSessions.count)
-        if let operatorCommandRunner {
+        if let commandWorkflowRunner {
             Task {
                 do {
-                    _ = try await operatorCommandRunner.run(
+                    _ = try await commandWorkflowRunner.run(
                         .serverSessionCreate(
-                            .init(title: title, modelID: modelID, host: "127.0.0.1", port: port)
+                            .init(title: title, modelID: modelID, host: "127.0.0.1", port: port, json: true)
                         )
                     )
                     restoreOperatorSessionState()
@@ -1606,6 +1637,7 @@ public final class RuntimeViewModel {
                         createChatSession()
                     }
                 } catch {
+                    recordCLIWorkflowErrorIfNeeded(error)
                     recordLocalError(String(describing: error))
                 }
                 notifyStateChanged()
@@ -1634,14 +1666,17 @@ public final class RuntimeViewModel {
         guard serverSessions.contains(where: { $0.id == id }) else {
             return
         }
-        if let operatorCommandRunner {
+        if let commandWorkflowRunner {
             Task {
                 do {
-                    _ = try await operatorCommandRunner.run(.serverSessionSelect(.init(serverSessionID: id)))
+                    _ = try await commandWorkflowRunner.run(
+                        .serverSessionSelect(.init(serverSessionID: id, json: true))
+                    )
                     restoreOperatorSessionState()
                     syncServerSessionsWithModels()
                     refreshAgentIntegrationExports()
                 } catch {
+                    recordCLIWorkflowErrorIfNeeded(error)
                     recordLocalError(String(describing: error))
                 }
                 selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
@@ -1918,7 +1953,8 @@ public final class RuntimeViewModel {
                     serverSessionID: serverSession.id,
                     autoSleepEnabled: serverSession.autoSleepEnabled,
                     lightSleepAfterSeconds: UInt32(max(0, serverSession.lightSleepAfterSeconds)),
-                    deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds))
+                    deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds)),
+                    json: true
                 )
             ),
             metricName: "menu.server_idle_policy_ms"
@@ -1929,8 +1965,12 @@ public final class RuntimeViewModel {
     }
 
     public func startServerSession(id serverSessionID: String) async {
+        if cliWorkflowRunner != nil {
+            await startServerSessionViaCLI(serverSessionID: serverSessionID)
+            return
+        }
         if await executeServerLifecycleCommand(
-            .serverStart(.init(serverSessionID: serverSessionID)),
+            .serverStart(.init(serverSessionID: serverSessionID, json: true)),
             metricName: "menu.server_start_ms"
         ) {
             return
@@ -1951,7 +1991,7 @@ public final class RuntimeViewModel {
 
     public func pauseServerSession(id serverSessionID: String) async {
         if await executeServerLifecycleCommand(
-            .serverPause(.init(serverSessionID: serverSessionID)),
+            .serverPause(.init(serverSessionID: serverSessionID, json: true)),
             metricName: "menu.server_pause_ms"
         ) {
             return
@@ -1966,7 +2006,7 @@ public final class RuntimeViewModel {
 
     public func resumeServerSession(id serverSessionID: String) async {
         if await executeServerLifecycleCommand(
-            .serverResume(.init(serverSessionID: serverSessionID)),
+            .serverResume(.init(serverSessionID: serverSessionID, json: true)),
             metricName: "menu.server_resume_ms"
         ) {
             return
@@ -1981,7 +2021,7 @@ public final class RuntimeViewModel {
 
     public func wakeServerSession(id serverSessionID: String) async {
         if await executeServerLifecycleCommand(
-            .serverWake(.init(serverSessionID: serverSessionID)),
+            .serverWake(.init(serverSessionID: serverSessionID, json: true)),
             metricName: "menu.server_wake_ms"
         ) {
             return
@@ -1996,7 +2036,7 @@ public final class RuntimeViewModel {
 
     public func stopServerSession(id serverSessionID: String) async {
         if await executeServerLifecycleCommand(
-            .serverStop(.init(serverSessionID: serverSessionID)),
+            .serverStop(.init(serverSessionID: serverSessionID, json: true)),
             metricName: "menu.server_stop_ms"
         ) {
             return
@@ -3570,6 +3610,31 @@ public final class RuntimeViewModel {
             return
         }
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
+                let receipt = try await cliWorkflowRunner.downloadHubModel(
+                    repoID: normalizedRepoID,
+                    revision: revision
+                )
+                _ = try await cliWorkflowRunner.run(.modelRootsRescan(.init(json: true)))
+                clearCLIWorkflowFailure()
+                await applyManagedReceiptOperation(
+                    receipt,
+                    modelID: normalizedRepoID,
+                    operation: "download",
+                    startedAt: startedAt,
+                    metricName: "menu.model_hub_download_ms"
+                )
+                await refreshDownloadQueueState(notify: false, surfaceErrors: false)
+                await refreshDesktopFoundation()
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+            }
+            return
+        }
         do {
             let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
             let result: Melix_Controlplane_V1_ModelOperationResult
@@ -3715,6 +3780,87 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    private func applyManagedReceiptOperation(
+        _ receipt: ManagedModelReceipt,
+        modelID: String,
+        operation: String,
+        startedAt: Date,
+        metricName: String
+    ) async {
+        await metrics.record(
+            name: metricName,
+            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+        )
+        let manifestJSON = (try? String(
+            data: JSONEncoder().encode(receipt),
+            encoding: .utf8
+        )) ?? "{}"
+        lastModelOperation = RuntimeModelOperationState(
+            modelID: modelID,
+            operation: operation,
+            jobID: "",
+            stage: "completed",
+            pct: 1,
+            outputPath: receipt.managedModelPath,
+            manifestJson: manifestJSON,
+            quantProfileID: "",
+            artifactKind: "managed_model_receipt",
+            manifestPath: "",
+            artifactBytes: 0,
+            artifactRuntime: "",
+            servingCompatible: true,
+            smokeTestRequested: false,
+            smokeTestPassed: false,
+            calibrationSampleCount: 0,
+            targetRepo: "",
+            sourceArtifactKind: "",
+            conversionTargetFormat: "",
+            linkedQuantizationProfileID: ""
+        )
+        notifyStateChanged()
+    }
+
+    private func applyCLIModelOperationManifest(
+        _ manifest: MelixCLIModelOperationManifestPayload,
+        modelID: String,
+        operation: String,
+        rawManifestJSON: String,
+        startedAt: Date,
+        metricName: String,
+        refreshProductToolingState: Bool
+    ) async {
+        await metrics.record(
+            name: metricName,
+            valueMs: Date().timeIntervalSince(startedAt) * 1_000
+        )
+        lastModelOperation = RuntimeModelOperationState(
+            modelID: modelID,
+            operation: operation,
+            jobID: manifest.jobID ?? "",
+            stage: "completed",
+            pct: 1,
+            outputPath: manifest.outputPath ?? manifest.derivedModelPath ?? "",
+            manifestJson: rawManifestJSON,
+            quantProfileID: "",
+            artifactKind: operation == "activate_adapter" ? "derived_model_manifest" : "adapter_manifest",
+            manifestPath: "",
+            artifactBytes: 0,
+            artifactRuntime: "",
+            servingCompatible: true,
+            smokeTestRequested: false,
+            smokeTestPassed: false,
+            calibrationSampleCount: 0,
+            targetRepo: "",
+            sourceArtifactKind: "",
+            conversionTargetFormat: "",
+            linkedQuantizationProfileID: ""
+        )
+        if refreshProductToolingState {
+            await refreshModelOpsProductState(modelID: modelID, notify: false)
+        }
+        notifyStateChanged()
+    }
+
     public func refreshDownloadQueueState() async {
         await refreshDownloadQueueState(notify: true, surfaceErrors: true)
     }
@@ -3826,6 +3972,47 @@ public final class RuntimeViewModel {
         guard !modelID.isEmpty else {
             return
         }
+        if let cliWorkflowRunner {
+            let startedAt = Date()
+            do {
+                let output = try await cliWorkflowRunner.run(
+                    .loraTrain(
+                        .init(
+                            modelID: modelID,
+                            datasetSourceKind: loraTrainingExt()["dataset_source_kind"] ?? "local_package",
+                            datasetURI: loraTrainingExt()["dataset_uri"] ?? "",
+                            adapterName: loraTrainingExt()["adapter_name"] ?? "melix-dev-adapter",
+                            targetRepo: loraTrainingExt()["target_repo"] ?? "",
+                            trainingMode: loraTrainingExt()["training_mode"] ?? "",
+                            parameters: loraTrainingCLIParameters(),
+                            json: true
+                        )
+                    )
+                )
+                let manifest = try decodeMelixCLIJSON(
+                    MelixCLIModelOperationManifestPayload.self,
+                    output: output,
+                    command: .loraTrain(.init(modelID: modelID, datasetURI: "", adapterName: "", json: true)),
+                    surface: cliWorkflowRunner.surface
+                )
+                clearCLIWorkflowFailure()
+                await applyCLIModelOperationManifest(
+                    manifest,
+                    modelID: modelID,
+                    operation: "train_lora",
+                    rawManifestJSON: output,
+                    startedAt: startedAt,
+                    metricName: "menu.model_operation_ms",
+                    refreshProductToolingState: true
+                )
+                return
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
         await runModelOperation(
             modelID: modelID,
             operation: "train_lora",
@@ -3837,12 +4024,53 @@ public final class RuntimeViewModel {
 
     public func activateLatestAdapter() async {
         let modelID = resolvedLoraModelID()
-        guard !modelID.isEmpty, let adapter = selectedAdapterPackage, !adapter.outputPath.isEmpty else {
+        let adapterPath = selectedAdapterPackage?.outputPath.isEmpty == false
+            ? selectedAdapterPackage?.outputPath ?? ""
+            : latestCLITrainedAdapterPath()
+        guard !modelID.isEmpty, adapterPath.isEmpty == false else {
             return
         }
 
+        if let cliWorkflowRunner {
+            let startedAt = Date()
+            do {
+                let output = try await cliWorkflowRunner.run(
+                    .loraActivate(
+                        .init(
+                            modelID: modelID,
+                            adapterPath: adapterPath,
+                            derivedModelAlias: Self.normalizedOptionalString(loraDerivedModelAlias) ?? "",
+                            json: true
+                        )
+                    )
+                )
+                let manifest = try decodeMelixCLIJSON(
+                    MelixCLIModelOperationManifestPayload.self,
+                    output: output,
+                    command: .loraActivate(.init(modelID: modelID, adapterPath: adapterPath, json: true)),
+                    surface: cliWorkflowRunner.surface
+                )
+                clearCLIWorkflowFailure()
+                await applyCLIModelOperationManifest(
+                    manifest,
+                    modelID: modelID,
+                    operation: "activate_adapter",
+                    rawManifestJSON: output,
+                    startedAt: startedAt,
+                    metricName: "menu.model_operation_ms",
+                    refreshProductToolingState: true
+                )
+                return
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+                notifyStateChanged()
+                return
+            }
+        }
+
         var ext: [String: String] = [
-            "artifact_path": adapter.outputPath,
+            "artifact_path": adapterPath,
         ]
         if let alias = Self.normalizedOptionalString(loraDerivedModelAlias) {
             ext["derived_model_alias"] = alias
@@ -4107,6 +4335,50 @@ public final class RuntimeViewModel {
         }
         let contextLengths = normalizedBenchContextLengths()
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let payload = try await cliWorkflowRunner.decodeJSON(
+                    MelixCLIBenchRunPayload.self,
+                    command: .benchRun(
+                        .init(
+                            modelID: selectedBenchmarkTargetMode == .catalogModel ? modelID : "",
+                            hfRepoID: selectedBenchmarkTargetMode == .huggingFaceRepo ? repoID : "",
+                            suites: suites,
+                            contextLengths: contextLengths,
+                            generationLength: normalizedBenchGenerationLengths().first ?? 0,
+                            batchSizes: normalizedBenchBatchSizes(),
+                            repeats: normalizedBenchRepeats(),
+                            cacheProfile: normalizedBenchCacheProfile(),
+                            reasoningMode: normalizedBenchReasoningMode(),
+                            structuredOutputMode: normalizedBenchStructuredOutputMode(),
+                            parameters: benchmarkParameters(),
+                            json: true
+                        )
+                    )
+                )
+                clearCLIWorkflowFailure()
+                await metrics.record(
+                    name: "menu.ops_bench_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+                for (name, value) in payload.metrics {
+                    latestSnapshot.metrics.values[name] = value
+                }
+                lastBenchReport = RuntimeBenchReportState(
+                    reportPath: payload.reportPath,
+                    markdown: payload.reportMarkdown,
+                    metrics: payload.metrics.keys.sorted().map { key in
+                        RuntimeBenchMetricState(name: key, value: String(format: "%.2f", payload.metrics[key] ?? 0))
+                    }
+                )
+                await refreshBenchmarkHistory(notify: false)
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let result: ControlPlaneBenchResult
             if let operatorCommandRunner {
@@ -4167,6 +4439,31 @@ public final class RuntimeViewModel {
 
     public func exportSelectedBenchmarkCSV() async {
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let selectedJobID = selectedBenchmarkHistoryJobID.isEmpty ? (selectedBenchmarkHistoryEntry?.jobID ?? "") : selectedBenchmarkHistoryJobID
+                let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+                let outputPath = exportDirectory.appendingPathComponent(Self.benchmarkCSVFileName(jobID: selectedJobID)).path
+                let response = try await cliWorkflowRunner.decodeJSON(
+                    MelixCLIExportResponse.self,
+                    command: .benchExportCSV(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                )
+                clearCLIWorkflowFailure()
+                lastBenchmarkCSVExport = RuntimeBenchmarkCSVExportState(
+                    outputPath: response.outputPath,
+                    rowCount: response.rowCount
+                )
+                await metrics.record(
+                    name: "menu.bench_export_csv_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let exportDirectory = try Self.ensureBenchmarkExportDirectory()
             let bundle: ControlPlaneBenchmarkExportBundle
@@ -4271,6 +4568,45 @@ public final class RuntimeViewModel {
         }
 
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let payload = try await cliWorkflowRunner.decodeJSON(
+                    MelixCLIBenchmarkMatrixRunPayload.self,
+                    command: .benchMatrixRun(
+                        .init(
+                            modelID: request.modelID,
+                            hfRepoID: request.hfRepoID,
+                            taskKind: request.taskKind,
+                            suites: request.suites,
+                            contextLengths: request.contextLengths,
+                            generationLengths: request.generationLengths,
+                            batchSizes: request.batchSizes,
+                            cacheProfiles: request.cacheProfiles,
+                            reasoningModes: request.reasoningModes,
+                            structuredOutputModes: request.structuredOutputModes,
+                            concurrencyLevels: request.concurrencyLevels,
+                            repeats: request.repeats,
+                            requests: request.requests,
+                            durationSeconds: request.durationSeconds,
+                            allowLargeMatrix: request.allowLargeMatrix,
+                            json: true
+                        )
+                    )
+                )
+                selectedBenchmarkMatrixHistoryJobID = payload.job.jobID
+                clearCLIWorkflowFailure()
+                await metrics.record(
+                    name: "menu.ops_bench_matrix_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+                await refreshBenchmarkHistory(notify: false)
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let result: ControlPlaneBenchMatrixResult
             if let operatorCommandRunner {
@@ -4358,6 +4694,36 @@ public final class RuntimeViewModel {
         }
 
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let payloads = try await cliWorkflowRunner.decodeJSON(
+                    [MelixCLIEvaluationRunPayload].self,
+                    command: .evalRun(
+                        .init(
+                            modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
+                            hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
+                            suites: suites,
+                            datasetID: "",
+                            sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
+                            parameters: evaluationParameters(),
+                            json: true
+                        )
+                    )
+                )
+                selectedEvaluationHistoryJobID = payloads.first?.job.jobID ?? ""
+                clearCLIWorkflowFailure()
+                await metrics.record(
+                    name: "menu.ops_eval_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+                await refreshEvaluationHistory(notify: false)
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             if let operatorCommandRunner {
                 _ = try await operatorCommandRunner.runEvaluations(
@@ -4425,6 +4791,36 @@ public final class RuntimeViewModel {
 
     public func exportSelectedEvaluationSamplesJSONL() async {
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let selectedJobID = selectedEvaluationHistoryJobID.isEmpty
+                    ? (selectedEvaluationHistoryEntry?.jobID ?? "")
+                    : selectedEvaluationHistoryJobID
+                let exportDirectory = try Self.ensureEvaluationExportDirectory()
+                let outputPath = exportDirectory.appendingPathComponent(
+                    Self.evaluationSamplesJSONLFileName(jobID: selectedJobID)
+                ).path
+                let response = try await cliWorkflowRunner.decodeJSON(
+                    MelixCLIExportResponse.self,
+                    command: .evalExportSamplesJSONL(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                )
+                clearCLIWorkflowFailure()
+                lastEvaluationExport = RuntimeEvaluationExportState(
+                    outputPath: response.outputPath,
+                    rowCount: response.rowCount,
+                    formatTitle: "samples.jsonl"
+                )
+                await metrics.record(
+                    name: "menu.eval_export_jsonl_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
             let bundle: ControlPlaneBenchmarkExportBundle
@@ -4624,6 +5020,13 @@ public final class RuntimeViewModel {
             return modelID
         }
         return nil
+    }
+
+    private func latestCLITrainedAdapterPath() -> String {
+        guard lastModelOperation?.operation == "train_lora" else {
+            return ""
+        }
+        return Self.normalizedOptionalString(lastModelOperation?.outputPath ?? "") ?? ""
     }
 
     private func updateSelectedServerSession(
@@ -5044,24 +5447,76 @@ public final class RuntimeViewModel {
         _ command: MelixCLICommand,
         metricName: String
     ) async -> Bool {
-        guard let operatorCommandRunner else {
+        guard let commandWorkflowRunner else {
             return false
         }
 
         let startedAt = Date()
         do {
-            _ = try await operatorCommandRunner.run(command)
+            let output = try await commandWorkflowRunner.run(command)
             restoreOperatorSessionState()
-            await refreshDesktopFoundation()
+            if commandWorkflowRunner.surface == .subprocess {
+                try applyCLIServerSnapshotIfPresent(output: output, command: command, surface: commandWorkflowRunner.surface)
+            } else {
+                await refreshDesktopFoundation()
+            }
+            clearCLIWorkflowFailure()
             await metrics.record(
                 name: metricName,
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
         } catch {
+            recordCLIWorkflowErrorIfNeeded(error)
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
         return true
+    }
+
+    private func startServerSessionViaCLI(serverSessionID: String) async {
+        guard let cliWorkflowRunner, let serverSession = serverSession(id: serverSessionID) else {
+            return
+        }
+
+        let startedAt = Date()
+        do {
+            _ = try await cliWorkflowRunner.run(
+                .serverSessionUpdate(
+                    .init(
+                        serverSessionID: serverSession.id,
+                        title: serverSession.title,
+                        modelID: serverSession.modelID,
+                        host: serverSession.host,
+                        port: serverSession.port,
+                        rateLimitPerMinute: serverSession.rateLimitPerMinute,
+                        timeoutSeconds: serverSession.timeoutSeconds,
+                        json: true
+                    )
+                )
+            )
+            restoreOperatorSessionState()
+            _ = try await cliWorkflowRunner.run(
+                .serverSessionSelect(.init(serverSessionID: serverSession.id, json: true))
+            )
+            restoreOperatorSessionState()
+            let snapshotOutput = try await cliWorkflowRunner.run(
+                .serverStart(.init(serverSessionID: serverSession.id, json: true))
+            )
+            try applyCLIServerSnapshotIfPresent(
+                output: snapshotOutput,
+                command: .serverStart(.init(serverSessionID: serverSession.id, json: true)),
+                surface: cliWorkflowRunner.surface
+            )
+            clearCLIWorkflowFailure()
+            await metrics.record(
+                name: "menu.server_start_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+        } catch {
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
     }
 
     private func maybeApplyStoredGatewayAccessForSelectedRunningSession() {
@@ -5610,6 +6065,37 @@ public final class RuntimeViewModel {
         missingRowsMessage: String
     ) async {
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let selectedJobID = selectedBenchmarkMatrixHistoryJobID.isEmpty
+                    ? (selectedBenchmarkMatrixHistoryEntry?.jobID ?? "")
+                    : selectedBenchmarkMatrixHistoryJobID
+                let exportDirectory = try Self.ensureBenchmarkExportDirectory()
+                let outputPath = exportDirectory.appendingPathComponent(fileName).path
+                let command: MelixCLICommand = formatTitle == "summary.csv"
+                    ? .benchMatrixExportSummaryCSV(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                    : .benchMatrixExportRequestsCSV(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                let response = try await cliWorkflowRunner.decodeJSON(MelixCLIExportResponse.self, command: command)
+                clearCLIWorkflowFailure()
+                lastBenchmarkMatrixExport = RuntimeBenchmarkMatrixExportState(
+                    outputPath: response.outputPath,
+                    rowCount: response.rowCount,
+                    formatTitle: formatTitle
+                )
+                let metricName = formatTitle == "summary.csv"
+                    ? "menu.bench_matrix_export_summary_csv_ms"
+                    : "menu.bench_matrix_export_requests_csv_ms"
+                await metrics.record(
+                    name: metricName,
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let exportDirectory = try Self.ensureBenchmarkExportDirectory()
             let bundle: ControlPlaneBenchmarkExportBundle
@@ -5654,6 +6140,34 @@ public final class RuntimeViewModel {
         missingRowsMessage: String
     ) async {
         let startedAt = Date()
+        if let cliWorkflowRunner {
+            do {
+                let selectedJobID = selectedEvaluationHistoryJobID.isEmpty
+                    ? (selectedEvaluationHistoryEntry?.jobID ?? "")
+                    : selectedEvaluationHistoryJobID
+                let exportDirectory = try Self.ensureEvaluationExportDirectory()
+                let outputPath = exportDirectory.appendingPathComponent(fileName).path
+                let command: MelixCLICommand = formatTitle == "summary.csv"
+                    ? .evalExportSummaryCSV(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                    : .evalExportSamplesCSV(.init(jobID: selectedJobID, outputPath: outputPath, json: true))
+                let response = try await cliWorkflowRunner.decodeJSON(MelixCLIExportResponse.self, command: command)
+                clearCLIWorkflowFailure()
+                lastEvaluationExport = RuntimeEvaluationExportState(
+                    outputPath: response.outputPath,
+                    rowCount: response.rowCount,
+                    formatTitle: formatTitle
+                )
+                await metrics.record(
+                    name: "menu.eval_export_csv_ms",
+                    valueMs: Date().timeIntervalSince(startedAt) * 1_000
+                )
+            } catch {
+                recordCLIWorkflowErrorIfNeeded(error)
+                recordLocalError(String(describing: error))
+            }
+            notifyStateChanged()
+            return
+        }
         do {
             let exportDirectory = try Self.ensureEvaluationExportDirectory()
             let bundle: ControlPlaneBenchmarkExportBundle
@@ -6358,6 +6872,91 @@ public final class RuntimeViewModel {
         refreshImageState(preferredJobID: imageJob.jobID)
     }
 
+    private func clearCLIWorkflowFailure() {
+        lastCLIWorkflowFailure = nil
+    }
+
+    private func recordCLIWorkflowErrorIfNeeded(_ error: Error) {
+        guard let workflowError = error as? MelixCLIWorkflowError else {
+            return
+        }
+        lastCLIWorkflowFailure = RuntimeCLIWorkflowFailureState(
+            commandID: {
+                switch workflowError {
+                case .processFailed(let commandID, _, _, _),
+                     .invalidJSON(let commandID, _, _),
+                     .missingField(let commandID, _, _),
+                     .unsupportedCommand(let commandID, _):
+                    return commandID
+                }
+            }(),
+            surface: {
+                switch workflowError {
+                case .processFailed(_, let surface, _, _),
+                     .invalidJSON(_, let surface, _),
+                     .missingField(_, let surface, _),
+                     .unsupportedCommand(_, let surface):
+                    return surface
+                }
+            }(),
+            failureKind: workflowError.failureKind,
+            detail: workflowError.localizedDescription
+        )
+    }
+
+    private func applyCLIServerSnapshotIfPresent(
+        output: String,
+        command: MelixCLICommand,
+        surface: MelixCLIWorkflowSurface
+    ) throws {
+        switch command {
+        case .serverStart, .serverPause, .serverResume, .serverWake, .serverStop, .serverSetIdlePolicy:
+            let payload = try decodeMelixCLIJSON(
+                MelixCLIServerSnapshotPayload.self,
+                output: output,
+                command: command,
+                surface: surface
+            )
+            applyCLIServerSnapshotPayload(payload)
+        default:
+            break
+        }
+    }
+
+    private func applyCLIServerSnapshotPayload(_ payload: MelixCLIServerSnapshotPayload) {
+        serverStateText = Self.cliServerStateText(payload.serverState)
+        statusTitle = "Melix \(serverStateText)"
+
+        for runtime in payload.runtimeSessions {
+            updateServerSessionCollections(serverSessionID: runtime.serverSessionID) { session in
+                session.lifecycle = Self.cliServerSessionLifecycle(runtime.lifecycleState)
+                session.powerState = Self.cliServerSessionPowerState(runtime.powerState)
+                session.wakeReason = Self.cliServerWakeReason(runtime.wakeReason)
+                session.idleTimerSeconds = runtime.idleTimerSeconds
+                session.autoSleepEnabled = runtime.autoSleepEnabled
+                session.lightSleepAfterSeconds = runtime.lightSleepAfterSeconds
+                session.deepSleepAfterSeconds = runtime.deepSleepAfterSeconds
+                session.updatedAt = Date(timeIntervalSince1970: TimeInterval(runtime.updatedAtUnixMS) / 1_000)
+            }
+        }
+    }
+
+    private func updateServerSessionCollections(
+        serverSessionID: String,
+        update: (inout DesktopServerSessionState) -> Void
+    ) {
+        if let index = persistedServerSessions.firstIndex(where: { $0.id == serverSessionID }) {
+            var session = persistedServerSessions[index]
+            update(&session)
+            persistedServerSessions[index] = session
+        }
+        if let index = serverSessions.firstIndex(where: { $0.id == serverSessionID }) {
+            var session = serverSessions[index]
+            update(&session)
+            serverSessions[index] = session
+        }
+    }
+
     private func recordLocalError(_ message: String) {
         let sanitizedMessage = sanitizedRichText(message)
         lastError = sanitizedMessage
@@ -6381,6 +6980,74 @@ public final class RuntimeViewModel {
 
     private func setLastError(_ message: String) {
         lastError = sanitizedRichText(message)
+    }
+
+    private static func cliServerStateText(_ value: String) -> String {
+        switch value {
+        case "server_ready":
+            return "Ready"
+        case "server_booting":
+            return "Booting"
+        case "server_degraded":
+            return "Degraded"
+        case "server_draining":
+            return "Draining"
+        case "server_failed":
+            return "Failed"
+        case "server_stopped":
+            return "Stopped"
+        default:
+            return "Unknown"
+        }
+    }
+
+    private static func cliServerSessionLifecycle(_ value: String) -> DesktopServerSessionLifecycle {
+        switch value {
+        case "ready":
+            return .running
+        case "paused":
+            return .paused
+        case "sleeping":
+            return .sleeping
+        case "stopped":
+            return .stopped
+        case "error":
+            return .error
+        default:
+            return .draft
+        }
+    }
+
+    private static func cliServerSessionPowerState(_ value: String) -> DesktopServerPowerState {
+        switch value {
+        case "active":
+            return .active
+        case "light_sleep":
+            return .lightSleep
+        case "deep_sleep":
+            return .deepSleep
+        case "stopped":
+            return .stopped
+        default:
+            return .active
+        }
+    }
+
+    private static func cliServerWakeReason(_ value: String) -> DesktopServerWakeReason {
+        switch value {
+        case "initial_boot":
+            return .initialBoot
+        case "request_activity":
+            return .requestActivity
+        case "operator_resume":
+            return .operatorResume
+        case "tool_activity":
+            return .toolActivity
+        case "policy_apply":
+            return .policyApply
+        default:
+            return .operatorResume
+        }
     }
 
     private func sanitizedRichText(_ text: String) -> String {
@@ -6588,6 +7255,13 @@ public final class RuntimeViewModel {
         ext["mask_prompt"] = loraMaskPrompt ? "true" : "false"
         ext["gradient_checkpointing"] = loraGradientCheckpointing ? "true" : "false"
         return ext
+    }
+
+    private func loraTrainingCLIParameters() -> [String: String] {
+        let ext = loraTrainingExt()
+        return ext.filter { key, _ in
+            ["adapter_name", "dataset_source_kind", "dataset_uri", "target_repo", "training_mode"].contains(key) == false
+        }
     }
 
     private static func normalizedOptionalString(_ value: String) -> String? {

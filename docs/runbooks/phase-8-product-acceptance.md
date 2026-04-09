@@ -81,13 +81,14 @@ Treat regressions in these flows as bugs, not as future roadmap work:
 - [x] `Server Session` create, update, remove, select, start, pause, resume, wake, stop, and unavailable-binding preservation.
 - [x] CLI-first server-session rebinding and `chat run` execution against managed base or derived models without `MELIX_DEV_TEXT_MODEL_PATH`.
 - [x] Shared CLI-core execution for LoRA train and activate, benchmark, matrix benchmark, evaluation, export, and acceptance-bundle orchestration.
+- [x] Window UI subprocess-backed CLI shell coverage for managed Hub download, local import, server-session mutation and start, LoRA train and activate, benchmark, matrix benchmark, evaluation, and export.
 
 ### Bucket 2: Implemented But Pending Live Acceptance Revalidation
 
 These flows exist in code, but still need fresh real-runtime acceptance evidence before
 release sign-off:
 
-- [ ] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` using a downloaded Hugging Face text model without fallback environment model-path injection.
+- [ ] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` through the native Window UI CLI subprocess bridge using a downloaded Hugging Face text model without fallback environment model-path injection.
 
 ### Live CLI Evidence Captured
 
@@ -100,8 +101,7 @@ release sign-off:
 
 These remain roadmap items rather than closed product behavior:
 
-- [ ] Add a native desktop workflow that rebinds the primary text model after the operator selects and downloads a Hugging Face text model, without requiring `MELIX_DEV_TEXT_MODEL_PATH`.
-- [ ] Route the remaining Window UI Phase 8 write-path workflows through the CLI-first shell and preserve acceptance evidence from that UI surface.
+- [ ] Preserve a repository-owned Window UI acceptance evidence bundle and screenshot chain from the native CLI-backed surface.
 
 ## Final Metrics Report
 
