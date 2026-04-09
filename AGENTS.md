@@ -66,6 +66,7 @@ For local JavaScript or TypeScript package operations, prefer Bun and `bunx`.
 - Before each work transaction, read the relevant docs and standards before changing code.
 - Confirm the implementation approach in plan mode before editing code. If plan mode is unavailable, create or update an explicit written plan before broad implementation.
 - For non-trivial work, start from an explicit plan under `docs/plans/` or update the active plan before broad implementation.
+- During design, do not anchor on minimal change or implementation cost. Optimize for the best end-state architecture, best practices, and the most reasonable long-term choice for Melix.
 - During design, define the performance probes, measurement points, and success metrics for the code path being changed.
 - Prefer small, verifiable slices over broad speculative rewrites.
 - Do not claim completion without running the relevant verification commands and reporting the result.
