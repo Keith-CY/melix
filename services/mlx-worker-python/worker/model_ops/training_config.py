@@ -12,6 +12,7 @@ from worker.model_ops.errors import ModelOperationError
 @dataclass(frozen=True)
 class LoRATrainingConfig:
     training_mode: str
+    quantization_mode: str
     family_id: str
     rank: int
     alpha: float
@@ -33,6 +34,10 @@ class LoRATrainingConfig:
     steps_per_report: int
     steps_per_eval: int
     steps_per_save: int
+    validation_strategy: str
+    validation_split: str
+    validation_sample_count: int
+    desired_derived_model_alias: str
     adapter_name: str
     target_repo: str
 
@@ -90,6 +95,7 @@ def normalize_training_config(
     dataset_format: str,
     response_only_supported: bool,
     sample_count: int,
+    validation_sample_count: int = 0,
 ) -> LoRATrainingConfig:
     if source_model.model_kind != "text":
         raise ModelOperationError(
@@ -99,16 +105,17 @@ def normalize_training_config(
         )
 
     training_mode = ext.get("training_mode", "lora").strip().lower() or "lora"
-    if training_mode == "qlora":
-        raise ModelOperationError(
-            code="unsupported_training_mode",
-            message="training_mode=qlora is reserved but not implemented in v1.",
-        )
-    if training_mode != "lora":
+    if training_mode not in {"lora", "qlora"}:
         raise ModelOperationError(
             code="unsupported_training_mode",
             message=f"Unsupported training_mode: {training_mode}",
         )
+    if training_mode == "qlora" and _is_quantized_base_model(source_model) is False:
+        raise ModelOperationError(
+            code="unsupported_training_mode",
+            message="training_mode=qlora requires a quantized base model.",
+        )
+    quantization_mode = "quantized_base" if training_mode == "qlora" else "none"
 
     family_id = _resolve_family_id(source_model)
     profile = _FAMILY_PROFILES.get(family_id)
@@ -190,11 +197,14 @@ def normalize_training_config(
         field_name="max_seq_length",
     )
     steps_per_report = min(max(1, iters), 10)
-    steps_per_eval = max(iters, 1)
+    steps_per_eval = max(iters, 1) if validation_sample_count > 0 else 0
     steps_per_save = max(iters, 1)
+    validation_split = ext.get("hf_valid_split", "").strip()
+    validation_strategy = "hf_split" if validation_split and validation_sample_count > 0 else "none"
 
     return LoRATrainingConfig(
         training_mode=training_mode,
+        quantization_mode=quantization_mode,
         family_id=family_id,
         rank=_int_value(ext.get("rank", ""), default=8, minimum=1, field_name="rank"),
         alpha=_float_value(ext.get("alpha", ""), default=20.0, minimum=0.0, field_name="alpha"),
@@ -216,6 +226,10 @@ def normalize_training_config(
         steps_per_report=steps_per_report,
         steps_per_eval=steps_per_eval,
         steps_per_save=steps_per_save,
+        validation_strategy=validation_strategy,
+        validation_split=validation_split,
+        validation_sample_count=validation_sample_count,
+        desired_derived_model_alias=ext.get("derived_model_alias", "").strip(),
         adapter_name=ext.get("adapter_name", "melix-adapter").strip() or "melix-adapter",
         target_repo=ext.get("target_repo", "").strip(),
     )
@@ -253,6 +267,23 @@ def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]
             seen.add(backend_module)
             backend_modules.append(backend_module)
     return backend_modules
+
+
+def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
+    if source_model.quant_profile_id.strip():
+        return True
+
+    searchable = " ".join(
+        [
+            source_model.model_id.lower(),
+            source_model.model_path.lower(),
+            source_model.revision.lower(),
+        ]
+    )
+    return any(
+        token in searchable
+        for token in ("4bit", "8bit", "q4", "q8", "optiq")
+    )
 
 
 def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:

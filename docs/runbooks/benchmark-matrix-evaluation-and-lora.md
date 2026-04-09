@@ -62,7 +62,7 @@ Example:
 
 ```bash
 swift run melix bench run \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --suite smoke \
   --suite latency \
   --context-length 1024 \
@@ -128,7 +128,7 @@ Example:
 
 ```bash
 swift run melix bench matrix run \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --suite smoke \
   --suite latency \
   --context-length 1024 \
@@ -178,7 +178,7 @@ Example with explicit suite and controls:
 
 ```bash
 swift run melix eval run \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --suite mmlu \
   --suite gsm8k \
   --sample-size 12 \
@@ -244,7 +244,7 @@ Local dataset package example:
 
 ```bash
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter \
@@ -263,7 +263,7 @@ Hugging Face dataset example:
 
 ```bash
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path HuggingFaceH4/ultrachat_200k \
   --hf-train-split train_sft \
   --chat-feature messages \
@@ -275,9 +275,9 @@ swift run melix lora train \
 
 ```bash
 swift run melix lora activate \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
-  --alias melix-dev-text-lora
+  --alias melix-qwen35-acceptance
 ```
 
 Activation writes a derived-model manifest and registers a new text model into the local catalog.
@@ -357,7 +357,7 @@ comparison workflow is serial:
 Recommended comparison pattern:
 
 ```bash
-swift run melix bench run --model-id melix-dev-text::1 --suite smoke --sample-size 6 --batch-factor 2
+swift run melix bench run --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --sample-size 6 --batch-factor 2
 swift run melix bench run --model-id <adapter-a-derived-model-id> --suite smoke --sample-size 6 --batch-factor 2
 swift run melix bench run --model-id <adapter-b-derived-model-id> --suite smoke --sample-size 6 --batch-factor 2
 ```
@@ -394,15 +394,15 @@ make bootstrap
 make proto
 
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter
 
 swift run melix lora activate \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
-  --alias melix-dev-text-lora
+  --alias melix-qwen35-acceptance
 
 swift run melix lora list --json
 

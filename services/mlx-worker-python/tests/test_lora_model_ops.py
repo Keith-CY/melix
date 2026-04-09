@@ -67,9 +67,11 @@ class SuccessfulRunner(MLXLMRunner):
         self.subprocess_train_calls = 0
         self.native_activation_calls = 0
         self.subprocess_activation_calls = 0
+        self.last_train_request: TrainingRequest | None = None
 
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.native_train_calls += 1
+        self.last_train_request = request
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
@@ -138,10 +140,12 @@ class SuccessfulRunner(MLXLMRunner):
 class NativeUnavailableRunner(SuccessfulRunner):
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.native_train_calls += 1
+        self.last_train_request = request
         raise NativeExecutionUnavailable("mlx native path unavailable")
 
     def train_subprocess(self, request: TrainingRequest, reason: Exception) -> TrainingResult:
         self.subprocess_train_calls += 1
+        self.last_train_request = request
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
@@ -202,10 +206,21 @@ class FakeHFDatasetFetcher:
                         "dataset": "melix/demo-hf",
                         "config": "default",
                         "split": "train",
+                    },
+                    {
+                        "dataset": "melix/demo-hf",
+                        "config": "default",
+                        "split": "validation",
                     }
                 ]
             }
         if endpoint == "rows":
+            if params.get("split") == "validation":
+                return {
+                    "rows": [
+                        {"row": {"text": "validation sample"}},
+                    ]
+                }
             return {
                 "rows": [
                     {"row": {"text": "hello from hf"}},
@@ -364,12 +379,141 @@ def test_train_lora_materializes_hf_dataset_and_reuses_cached_package(tmp_path: 
     assert [endpoint for endpoint, _ in fetcher.calls] == ["splits", "rows"]
 
 
+def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alias(
+    tmp_path: Path,
+) -> None:
+    fetcher = FakeHFDatasetFetcher()
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    source_model.model_path = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    source_model.quant_profile_id = "q4"
+
+    service._core = MaintenanceCore(
+        service._core._registry,
+        jobs_root=tmp_path / "model-ops",
+        lora_training_pipeline=LoRATrainingPipeline(
+            runner=runner,
+            hf_dataset_fetcher=fetcher,
+        ),
+        adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "ignored-train-output"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "qlora",
+                    "adapter_name": "melix-qwen35-acceptance-adapter",
+                    "dataset_source_kind": "hf_dataset",
+                    "hf_dataset_path": "melix/demo-hf",
+                    "hf_train_split": "train",
+                    "hf_valid_split": "validation",
+                    "text_feature": "text",
+                    "derived_model_alias": "melix-qwen35-acceptance",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+    normalized_dataset_path = Path(payload["normalized_dataset_manifest_path"])
+    normalized_dataset_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
+
+    assert payload["training_mode"] == "qlora"
+    assert payload["quantization_mode"] == "quantized_base"
+    assert payload["hf_valid_split"] == "validation"
+    assert payload["validation_strategy"] == "hf_split"
+    assert payload["validation_sample_count"] == 1
+    assert payload["desired_derived_model_alias"] == "melix-qwen35-acceptance"
+    assert normalized_dataset_payload["validation_sample_count"] == 1
+    assert normalized_dataset_payload["validation_strategy"] == "hf_split"
+    assert normalized_dataset_payload["hf_valid_split"] == "validation"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.training_mode == "qlora"
+    assert runner.last_train_request.config.validation_strategy == "hf_split"
+    assert runner.last_train_request.config.validation_sample_count == 1
+    assert (normalized_dataset_path.parent / "valid.jsonl").is_file()
+    assert [params["split"] for endpoint, params in fetcher.calls if endpoint == "rows"] == [
+        "train",
+        "validation",
+    ]
+
+
+def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    source_model.model_path = "models/plain-llama"
+    source_model.quant_profile_id = ""
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "qlora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_training_mode"
+
+
+def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "text": "hello",
+            }
+        ],
+        format="text_completion",
+    )
+
+    with pytest.raises(Exception) as exc:
+        resolve_training_dataset_package(
+            {
+                "dataset_source_kind": "local_package",
+                "dataset_uri": str(dataset_dir),
+                "hf_valid_split": "validation",
+            },
+            jobs_root=tmp_path / "jobs",
+        )
+
+    assert exc.value.code == "invalid_dataset_source"
+
+
 def test_materialize_hf_training_dataset_rejects_empty_row_payload(tmp_path: Path) -> None:
     reference = HFDatasetReference(
         dataset_path="melix/demo-hf",
         dataset_name="default",
         dataset_revision="main",
         train_split="train",
+        valid_split="",
         chat_feature="",
         prompt_feature="",
         completion_feature="",
@@ -457,6 +601,7 @@ def test_reference_from_cached_manifest_handles_invalid_payloads(tmp_path: Path)
         dataset_name="default",
         dataset_revision="main",
         train_split="train",
+        valid_split="",
         chat_feature="",
         prompt_feature="",
         completion_feature="",
@@ -477,6 +622,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
         dataset_name="",
         dataset_revision="main",
         train_split="train",
+        valid_split="",
         chat_feature="messages",
         prompt_feature="",
         completion_feature="",
@@ -523,6 +669,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
             dataset_name="default",
             dataset_revision="main",
             train_split="train",
+            valid_split="",
             chat_feature="",
             prompt_feature="",
             completion_feature="",
@@ -540,6 +687,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
                 dataset_name="default",
                 dataset_revision="main",
                 train_split="train",
+                valid_split="",
                 chat_feature="",
                 prompt_feature="",
                 completion_feature="",
@@ -555,6 +703,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
             dataset_name="default",
             dataset_revision="main",
             train_split="train",
+            valid_split="",
             chat_feature="",
             prompt_feature="prompt",
             completion_feature="completion",
@@ -568,6 +717,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
             dataset_name="default",
             dataset_revision="main",
             train_split="train",
+            valid_split="",
             chat_feature="",
             prompt_feature="",
             completion_feature="",
@@ -583,6 +733,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
                 dataset_name="default",
                 dataset_revision="main",
                 train_split="train",
+                valid_split="",
                 chat_feature="",
                 prompt_feature="",
                 completion_feature="",
@@ -600,6 +751,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
             dataset_name="default",
             dataset_revision="main",
             train_split="train",
+            valid_split="",
             chat_feature="",
             prompt_feature="prompt",
             completion_feature="completion",
@@ -614,6 +766,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
             dataset_name="default",
             dataset_revision="main",
             train_split="train",
+            valid_split="",
             chat_feature="",
             prompt_feature="",
             completion_feature="",
@@ -638,6 +791,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
                 dataset_name="default",
                 dataset_revision="main",
                 train_split="train",
+                valid_split="",
                 chat_feature="",
                 prompt_feature="prompt",
                 completion_feature="completion",
@@ -655,6 +809,7 @@ def test_hf_dataset_helper_resolution_and_mapping_paths() -> None:
                 dataset_name="default",
                 dataset_revision="main",
                 train_split="train",
+                valid_split="",
                 chat_feature="",
                 prompt_feature="",
                 completion_feature="",

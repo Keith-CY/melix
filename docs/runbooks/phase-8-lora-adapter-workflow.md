@@ -27,13 +27,13 @@ The same workflow is available through the public `melix` CLI:
 swift run melix lora list
 
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter
 
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path HuggingFaceH4/ultrachat_200k \
   --hf-train-split train_sft \
   --chat-feature messages \
@@ -113,7 +113,7 @@ Equivalent CLI examples:
 
 ```bash
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter \
@@ -128,7 +128,7 @@ swift run melix lora train \
   --mask-prompt
 
 swift run melix lora train \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path databricks/databricks-dolly-15k \
   --hf-train-split train \
   --prompt-feature instruction \
@@ -161,9 +161,9 @@ Equivalent CLI example:
 
 ```bash
 swift run melix lora activate \
-  --model-id melix-dev-text::1 \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
-  --alias melix-dev-text-lora
+  --alias melix-qwen35-acceptance
 ```
 
 Expected activation behavior:

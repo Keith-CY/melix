@@ -460,19 +460,19 @@ struct MelixCLIRunnerTests {
         let client = StubControlPlaneXPCClient()
         await client.setServerSnapshot(makeServerSnapshot(models: [
             makeModelSummary(id: "melix-dev-image", kind: "image"),
-            makeModelSummary(id: "melix-dev-text", kind: "text"),
+            makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
         ]))
         await client.setModelOperationResult(makeModelOperationResult(
-            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"ready","source_model":"melix-dev-text"}]}"#
+            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"ready","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit"}]}"#
         ))
 
         let output = try await MelixCLIRunner(client: client).run(.loraList(.init()))
         let call = try #require(await client.lastModelOperationCall)
 
-        #expect(call.modelID == "melix-dev-text")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(call.operation == "registry_snapshot")
         #expect(output.contains("adapter\tstatus\tsource_model"))
-        #expect(output.contains("demo-adapter\tready\tmelix-dev-text"))
+        #expect(output.contains("demo-adapter\tready\tmlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
     }
 
     @Test("lora list returns json when requested and honors an explicit preferred model id")
@@ -483,11 +483,11 @@ struct MelixCLIRunnerTests {
         ))
 
         let output = try await MelixCLIRunner(client: client).run(
-            .loraList(.init(modelID: "melix-dev-text", json: true))
+            .loraList(.init(modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", json: true))
         )
         let call = try #require(await client.lastModelOperationCall)
 
-        #expect(call.modelID == "melix-dev-text")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(output == #"{"adapters":[{"adapter_name":"demo-adapter"}]}"#)
     }
 
@@ -519,7 +519,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .loraTrain(
                 .init(
-                    modelID: "melix-dev-text",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     datasetSourceKind: "local_package",
                     datasetURI: "/tmp/datasets/alpaca.jsonl",
                     adapterName: "demo-adapter",
@@ -534,7 +534,7 @@ struct MelixCLIRunnerTests {
         let call = try #require(await client.lastModelOperationCall)
 
         #expect(output == "/tmp/melix/train_lora/job-1")
-        #expect(call.modelID == "melix-dev-text")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(call.operation == "train_lora")
         #expect(call.ext["dataset_source_kind"] == "local_package")
         #expect(call.ext["dataset_uri"] == "/tmp/datasets/alpaca.jsonl")
@@ -552,7 +552,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .loraTrain(
                 .init(
-                    modelID: "melix-dev-text",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     datasetSourceKind: "hf_dataset",
                     datasetURI: "",
                     adapterName: "hf-demo-adapter",
@@ -567,7 +567,7 @@ struct MelixCLIRunnerTests {
                         "response_only": "true",
                         "mask_prompt": "true",
                         "gradient_checkpointing": "true",
-                        "derived_model_alias": "melix-dev-text-ultrachat",
+                        "derived_model_alias": "melix-qwen35-acceptance",
                     ]
                 )
             )
@@ -587,7 +587,8 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["response_only"] == "true")
         #expect(call.ext["mask_prompt"] == "true")
         #expect(call.ext["gradient_checkpointing"] == "true")
-        #expect(call.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.ext["derived_model_alias"] == "melix-qwen35-acceptance")
     }
 
     @Test("lora train returns manifest json when requested")
@@ -601,7 +602,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .loraTrain(
                 .init(
-                    modelID: "melix-dev-text",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     datasetSourceKind: "local_package",
                     datasetURI: "/tmp/datasets/alpaca.jsonl",
                     adapterName: "demo-adapter",
@@ -623,9 +624,9 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .loraActivate(
                 .init(
-                    modelID: "melix-dev-text",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     adapterPath: "/tmp/melix/adapters/demo-adapter.json",
-                    derivedModelAlias: "melix-dev-text-demo"
+                    derivedModelAlias: "melix-qwen35-acceptance"
                 )
             )
         )
@@ -633,8 +634,9 @@ struct MelixCLIRunnerTests {
 
         #expect(output == "/tmp/melix/activate_adapter/job-2")
         #expect(call.operation == "activate_adapter")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(call.ext["artifact_path"] == "/tmp/melix/adapters/demo-adapter.json")
-        #expect(call.ext["derived_model_alias"] == "melix-dev-text-demo")
+        #expect(call.ext["derived_model_alias"] == "melix-qwen35-acceptance")
     }
 
     @Test("lora activate returns manifest json when requested without an alias")
@@ -648,7 +650,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .loraActivate(
                 .init(
-                    modelID: "melix-dev-text",
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     adapterPath: "/tmp/melix/adapters/demo-adapter.json",
                     json: true
                 )

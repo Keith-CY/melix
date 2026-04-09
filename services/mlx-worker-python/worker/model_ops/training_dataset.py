@@ -31,6 +31,8 @@ class TrainingDatasetPackage:
     sample_count: int
     version: str
     normalized_samples: list[dict[str, Any]]
+    normalized_validation_samples: list[dict[str, Any]]
+    validation_sample_count: int
     response_only_supported: bool
 
 
@@ -40,7 +42,9 @@ class NormalizedDatasetSnapshot:
     manifest_path: Path
     samples_path: Path
     train_path: Path
+    valid_path: Path | None
     sample_count: int
+    validation_sample_count: int
     format: str
 
 
@@ -54,6 +58,7 @@ class HFDatasetReference:
     prompt_feature: str
     completion_feature: str
     text_feature: str
+    valid_split: str = ""
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,30 @@ def load_training_dataset_package(
             },
         )
 
+    validation_samples_path = package_path / "valid.jsonl"
+    normalized_validation_samples: list[dict[str, Any]] = []
+    if validation_samples_path.is_file():
+        with validation_samples_path.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    sample = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ModelOperationError(
+                        code="invalid_dataset_package",
+                        message="Training dataset validation sample is not valid JSON.",
+                        details={"line": str(line_number)},
+                    ) from exc
+                normalized_validation_samples.append(
+                    _normalize_sample(
+                        sample,
+                        format_name=format_name,
+                        max_characters_per_sample=max_characters_per_sample,
+                    )
+                )
+
     return TrainingDatasetPackage(
         package_path=package_path,
         manifest_path=manifest_path,
@@ -181,6 +210,8 @@ def load_training_dataset_package(
         sample_count=len(normalized_samples),
         version=str(manifest["version"]),
         normalized_samples=normalized_samples,
+        normalized_validation_samples=normalized_validation_samples,
+        validation_sample_count=len(normalized_validation_samples),
         response_only_supported=format_name in {"chat_messages", "prompt_completion"},
     )
 
@@ -197,6 +228,11 @@ def resolve_training_dataset_package(
         "hf_dataset" if request_ext.get("hf_dataset_path", "").strip() else "local_package"
     )
     if source_kind == "local_package":
+        if request_ext.get("hf_valid_split", "").strip():
+            raise ModelOperationError(
+                code="invalid_dataset_source",
+                message="hf_valid_split is only supported for hf_dataset sources.",
+            )
         dataset_uri = request_ext.get("dataset_uri", "").strip()
         package = load_training_dataset_package(
             dataset_uri,
@@ -228,6 +264,7 @@ def resolve_training_dataset_package(
         prompt_feature=request_ext.get("prompt_feature", "").strip(),
         completion_feature=request_ext.get("completion_feature", "").strip(),
         text_feature=request_ext.get("text_feature", "").strip(),
+        valid_split=request_ext.get("hf_valid_split", "").strip(),
     )
     if not reference.dataset_path:
         raise ModelOperationError(
@@ -267,12 +304,14 @@ def write_normalized_dataset_snapshot(
     manifest_path = dataset_dir / "manifest.json"
     samples_path = dataset_dir / "samples.jsonl"
     train_path = dataset_dir / "train.jsonl"
+    valid_path = dataset_dir / "valid.jsonl"
 
     manifest_payload = {
         "schema_version": "melix.training_dataset_snapshot.v1",
         "dataset_id": dataset.dataset_id,
         "format": dataset.format,
         "sample_count": dataset.sample_count,
+        "validation_sample_count": dataset.validation_sample_count,
         "version": dataset.version,
         "source_manifest_path": str(dataset.manifest_path),
         "source_samples_path": str(dataset.samples_path),
@@ -283,13 +322,26 @@ def write_normalized_dataset_snapshot(
     serialized_samples = [json.dumps(sample) for sample in dataset.normalized_samples]
     samples_path.write_text("\n".join(serialized_samples) + "\n", encoding="utf-8")
     train_path.write_text("\n".join(serialized_samples) + "\n", encoding="utf-8")
+    if dataset.normalized_validation_samples:
+        serialized_validation_samples = [
+            json.dumps(sample)
+            for sample in dataset.normalized_validation_samples
+        ]
+        valid_path.write_text(
+            "\n".join(serialized_validation_samples) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        valid_path = None
 
     return NormalizedDatasetSnapshot(
         dataset_dir=dataset_dir,
         manifest_path=manifest_path,
         samples_path=samples_path,
         train_path=train_path,
+        valid_path=valid_path,
         sample_count=dataset.sample_count,
+        validation_sample_count=dataset.validation_sample_count,
         format=dataset.format,
     )
 
@@ -333,6 +385,25 @@ def materialize_hf_training_dataset_package(
 
     format_name = _infer_hf_dataset_format(resolved_reference, rows)
     serialized_samples = [_map_hf_row_to_training_sample(row, format_name, resolved_reference) for row in rows]
+    serialized_validation_samples: list[dict[str, Any]] = []
+    if resolved_reference.valid_split:
+        validation_rows = _fetch_hf_dataset_rows(
+            replace(resolved_reference, train_split=resolved_reference.valid_split),
+            fetcher,
+        )
+        if not validation_rows:
+            raise ModelOperationError(
+                code="hf_dataset_fetch_failed",
+                message="Hugging Face validation split did not return any rows.",
+                details={
+                    "hf_dataset_path": resolved_reference.dataset_path,
+                    "hf_valid_split": resolved_reference.valid_split,
+                },
+            )
+        serialized_validation_samples = [
+            _map_hf_row_to_training_sample(row, format_name, resolved_reference)
+            for row in validation_rows
+        ]
     dataset_uri = _hf_dataset_uri(resolved_reference)
     dataset_id = (
         f"{resolved_reference.dataset_path}:{resolved_reference.dataset_name}:"
@@ -352,6 +423,8 @@ def materialize_hf_training_dataset_package(
         "hf_dataset_name": resolved_reference.dataset_name,
         "hf_dataset_revision": resolved_reference.dataset_revision,
         "hf_train_split": resolved_reference.train_split,
+        "hf_valid_split": resolved_reference.valid_split,
+        "validation_sample_count": len(serialized_validation_samples),
         "chat_feature": resolved_reference.chat_feature,
         "prompt_feature": resolved_reference.prompt_feature,
         "completion_feature": resolved_reference.completion_feature,
@@ -362,6 +435,11 @@ def materialize_hf_training_dataset_package(
         "\n".join(json.dumps(sample) for sample in serialized_samples) + "\n",
         encoding="utf-8",
     )
+    if serialized_validation_samples:
+        (package_path / "valid.jsonl").write_text(
+            "\n".join(json.dumps(sample) for sample in serialized_validation_samples) + "\n",
+            encoding="utf-8",
+        )
     return MaterializedTrainingDatasetPackage(
         package_path=package_path,
         cache_key=cache_key,
@@ -505,6 +583,7 @@ def _reference_from_cached_manifest(
         prompt_feature=str(payload.get("prompt_feature", reference.prompt_feature)),
         completion_feature=str(payload.get("completion_feature", reference.completion_feature)),
         text_feature=str(payload.get("text_feature", reference.text_feature)),
+        valid_split=str(payload.get("hf_valid_split", reference.valid_split)),
     )
 
 
@@ -655,11 +734,14 @@ def _map_hf_row_to_training_sample(
 
 
 def _hf_dataset_uri(reference: HFDatasetReference) -> str:
-    return (
+    uri = (
         f"hf://{reference.dataset_path}"
         f"?config={reference.dataset_name}&split={reference.train_split}"
-        f"&revision={reference.dataset_revision}"
     )
+    if reference.valid_split:
+        uri += f"&valid_split={reference.valid_split}"
+    uri += f"&revision={reference.dataset_revision}"
+    return uri
 
 
 def _hf_materialization_cache_key(reference: HFDatasetReference) -> str:
@@ -675,6 +757,7 @@ def _hf_materialization_cache_key(reference: HFDatasetReference) -> str:
                 "prompt_feature": reference.prompt_feature,
                 "completion_feature": reference.completion_feature,
                 "text_feature": reference.text_feature,
+                "valid_split": reference.valid_split,
             },
             sort_keys=True,
         ).encode("utf-8")

@@ -61,10 +61,22 @@ class LoRATrainingPipeline:
             dataset_format=dataset.package.format,
             response_only_supported=dataset.package.response_only_supported,
             sample_count=dataset.package.sample_count,
+            validation_sample_count=dataset.package.validation_sample_count,
         )
 
         emit("prepare_training_data", 0.5)
         normalized_snapshot = write_normalized_dataset_snapshot(dataset.package, output_dir=output_dir)
+        normalized_dataset_manifest = json.loads(
+            normalized_snapshot.manifest_path.read_text(encoding="utf-8")
+        )
+        normalized_dataset_manifest["validation_strategy"] = config.validation_strategy
+        normalized_dataset_manifest["validation_sample_count"] = config.validation_sample_count
+        if config.validation_split:
+            normalized_dataset_manifest["hf_valid_split"] = config.validation_split
+        normalized_snapshot.manifest_path.write_text(
+            json.dumps(normalized_dataset_manifest, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
         emit("apply_lora", 0.65)
         adapter_output_dir = output_dir / "adapter"
@@ -108,6 +120,7 @@ class LoRATrainingPipeline:
             "dataset_cache_key": dataset.cache_key,
             "dataset_cache_hit": dataset.cache_hit,
             "training_mode": config.training_mode,
+            "quantization_mode": config.quantization_mode,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -130,6 +143,8 @@ class LoRATrainingPipeline:
             "training.learning_rate_final": training_result.metrics.learning_rate_final,
             "training.gradient_checkpointing_enabled": config.gradient_checkpointing,
             "training.response_only_enabled": config.response_only,
+            "validation_strategy": config.validation_strategy,
+            "validation_sample_count": config.validation_sample_count,
             "tokens_seen": training_result.metrics.tokens_seen,
             "examples_seen": training_result.metrics.examples_seen,
             "loss_final": training_result.metrics.loss_final,
@@ -138,6 +153,8 @@ class LoRATrainingPipeline:
             "adapter_artifact_bytes": adapter_artifact_bytes,
             "target_repo": config.target_repo,
         }
+        if config.desired_derived_model_alias:
+            manifest["desired_derived_model_alias"] = config.desired_derived_model_alias
         if dataset.hf_reference is not None:
             manifest.update(
                 {
@@ -145,6 +162,7 @@ class LoRATrainingPipeline:
                     "hf_dataset_name": dataset.hf_reference.dataset_name,
                     "hf_dataset_revision": dataset.hf_reference.dataset_revision,
                     "hf_train_split": dataset.hf_reference.train_split,
+                    "hf_valid_split": dataset.hf_reference.valid_split,
                     "chat_feature": dataset.hf_reference.chat_feature,
                     "prompt_feature": dataset.hf_reference.prompt_feature,
                     "completion_feature": dataset.hf_reference.completion_feature,

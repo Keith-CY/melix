@@ -86,9 +86,9 @@ These flows exist in code, but still need fresh real-runtime acceptance evidence
 release sign-off:
 
 - [ ] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` using a downloaded Hugging Face text model without fallback environment model-path injection.
-- [ ] Capture one base-model chat run and one derived-model chat run against the downloaded model family.
-- [ ] Re-run live LoRA training, matrix benchmark, evaluation, and export flows and retain screenshots, job IDs, and output paths as acceptance evidence.
-- [ ] Record the exact model ID, dataset ID, benchmark suites, evaluation suite, and exported artifact paths in the acceptance evidence bundle.
+- [ ] Capture one base-model chat run and one derived-model chat run against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- [ ] Re-run live LoRA training, matrix benchmark, evaluation, and export flows against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` and retain screenshots, job IDs, and output paths as acceptance evidence.
+- [ ] Record the exact model ID `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`, dataset ID, benchmark suites, evaluation suite, and exported artifact paths in the acceptance evidence bundle.
 
 ### Bucket 3: Open Product Gaps
 
