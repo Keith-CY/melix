@@ -3061,6 +3061,62 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.outputPath == "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main")
     }
 
+    @Test("execute allows local import operations for unknown model ids")
+    func executeAllowsLocalImportOperationsForUnknownModelIDs() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-local-import-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/managed-root/local/melix-dev-qwen-local/main"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-qwen-local",
+                operation: "local_import",
+                outputDir: "",
+                ext: [
+                    "source_path": "/tmp/qwen-local-model",
+                    "melix.source_kind": "local_path",
+                    "melix.source_locator": "/tmp/qwen-local-model",
+                    "melix.model_kind": "text",
+                    "melix.revision": "main",
+                    "melix.managed_root": "/tmp/managed-root",
+                ]
+            )
+        )
+        let lastRequest = try #require(await modelOpsClient.lastConvertRequest)
+
+        #expect(response.ok)
+        #expect(lastRequest.sourceModel == "melix-dev-qwen-local")
+        #expect(lastRequest.ext["operation"] == "local_import")
+        #expect(lastRequest.ext["source_path"] == "/tmp/qwen-local-model")
+        #expect(lastRequest.ext["melix.source_kind"] == "local_path")
+        #expect(lastRequest.ext["melix.source_locator"] == "/tmp/qwen-local-model")
+        #expect(lastRequest.ext["melix.model_kind"] == "text")
+        #expect(lastRequest.ext["melix.revision"] == "main")
+        #expect(lastRequest.ext["melix.managed_root"] == "/tmp/managed-root")
+        #expect(response.model.operation.operation == "local_import")
+        #expect(response.model.operation.jobID == "job-local-import-123")
+        #expect(response.model.operation.outputPath == "/tmp/managed-root/local/melix-dev-qwen-local/main")
+    }
+
     @Test("execute prefers explicit quant profile selection for quantize operations")
     func executePrefersExplicitQuantProfileSelectionForQuantizeOperations() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()

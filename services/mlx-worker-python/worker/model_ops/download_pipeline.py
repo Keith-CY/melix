@@ -440,6 +440,7 @@ class DownloadPipeline:
             "variant_id": revision,
             "ext": {
                 "melix.source_kind": "hub_repo",
+                "melix.source_locator": repo_id,
                 "melix.hf_repo_id": repo_id,
                 "melix.hf_revision": revision,
                 "melix.managed_import": "true",
@@ -465,6 +466,8 @@ class DownloadPipeline:
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
             "operation": "download",
+            "model_id": repo_id,
+            "managed_model_path": str(output_path),
             "source_model": request.source_model,
             "output_dir": str(output_dir),
             "status": "completed",
@@ -488,6 +491,7 @@ class DownloadPipeline:
                 "melix.hf_repo_id": repo_id,
                 "melix.hf_revision": revision,
                 "melix.source_kind": "hub_repo",
+                "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
             },
             "metrics": {

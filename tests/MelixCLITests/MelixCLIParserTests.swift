@@ -105,6 +105,48 @@ struct MelixCLIParserTests {
         #expect(moveOptions.index == 1)
     }
 
+    @Test("parses model import command and rejects missing import path")
+    func parsesModelImportCommandAndRejectsMissingImportPath() throws {
+        let importCommand = try MelixCLIParser.parse([
+            "model",
+            "import",
+            "--path", "/tmp/qwen-local-model",
+            "--model-id", "melix-dev-qwen-local",
+            "--model-kind", "text",
+            "--revision", "main",
+            "--json",
+        ])
+
+        #expect(
+            importCommand ==
+                .modelImport(
+                    .init(
+                        path: "/tmp/qwen-local-model",
+                        modelID: "melix-dev-qwen-local",
+                        modelKind: "text",
+                        revision: "main",
+                        json: true
+                    )
+                )
+        )
+
+        #expect(throws: MelixCLIError.missingRequired("--path is required for melix model import.")) {
+            try MelixCLIParser.parse([
+                "model",
+                "import",
+                "--model-id", "melix-dev-qwen-local",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--model-id is required for melix model import.")) {
+            try MelixCLIParser.parse([
+                "model",
+                "import",
+                "--path", "/tmp/qwen-local-model",
+            ])
+        }
+    }
+
     @Test("parses server session create update remove and select commands")
     func parsesServerSessionCRUDCommands() throws {
         let createCommand = try MelixCLIParser.parse([

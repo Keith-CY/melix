@@ -81,6 +81,208 @@ struct MelixCLIRunnerTests {
         #expect(call.ext.isEmpty)
     }
 
+    @Test("model hub download json renders a managed model receipt")
+    func modelHubDownloadJSONRendersAManagedModelReceipt() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                manifestJSON: #"""
+                {
+                  "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                  "ext": {
+                    "melix.source_kind": "hub_repo",
+                    "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+                  }
+                }
+                """#
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelHubDownload(.init(repoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", revision: "main", json: true))
+        )
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(payload["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(
+            payload["managed_model_path"] as? String ==
+                "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+        )
+        #expect(payload["source_kind"] as? String == "hub_repo")
+        #expect(payload["source_locator"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("model import forwards a local import operation and renders a managed model receipt")
+    func modelImportForwardsALocalImportOperationAndRendersAManagedModelReceipt() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/local/melix-dev-qwen-local/main",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-qwen-local",
+                  "ext": {
+                    "melix.source_kind": "local_path",
+                    "melix.source_locator": "/tmp/qwen-local-model"
+                  }
+                }
+                """#
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelImport(
+                .init(
+                    path: "/tmp/qwen-local-model",
+                    modelID: "melix-dev-qwen-local",
+                    modelKind: "text",
+                    revision: "main",
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(call.modelID == "melix-dev-qwen-local")
+        #expect(call.operation == "local_import")
+        #expect(call.ext["source_path"] == "/tmp/qwen-local-model")
+        #expect(call.ext["melix.source_kind"] == "local_path")
+        #expect(call.ext["melix.model_kind"] == "text")
+        #expect(call.ext["melix.revision"] == "main")
+        #expect(payload["model_id"] as? String == "melix-dev-qwen-local")
+        #expect(payload["managed_model_path"] as? String == "/tmp/melix-managed/local/melix-dev-qwen-local/main")
+        #expect(payload["source_kind"] as? String == "local_path")
+        #expect(payload["source_locator"] as? String == "/tmp/qwen-local-model")
+    }
+
+    @Test("model import forwards the managed root override when configured")
+    func modelImportForwardsTheManagedRootOverrideWhenConfigured() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/local/melix-dev-qwen-local/main",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-qwen-local",
+                  "ext": {
+                    "melix.source_kind": "local_path",
+                    "melix.source_locator": "/tmp/qwen-local-model"
+                  }
+                }
+                """#
+            )
+        )
+
+        _ = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_MANAGED_MODEL_ROOT": "/tmp/melix-managed"]
+        ).run(
+            .modelImport(
+                .init(
+                    path: "/tmp/qwen-local-model",
+                    modelID: "melix-dev-qwen-local",
+                    modelKind: "text",
+                    revision: "main"
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.ext["melix.managed_root"] == "/tmp/melix-managed")
+    }
+
+    @Test("model import json rejects a malformed managed model manifest")
+    func modelImportJSONRejectsAMalformedManagedModelManifest() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/local/melix-dev-qwen-local/main",
+                manifestJSON: "not-json"
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .modelImport(
+                    .init(
+                        path: "/tmp/qwen-local-model",
+                        modelID: "melix-dev-qwen-local",
+                        modelKind: "text",
+                        revision: "main",
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected model import json to reject malformed managed model manifests.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("Managed model operations must return a JSON manifest."))
+        }
+    }
+
+    @Test("model import json falls back to source model and source path fields")
+    func modelImportJSONFallsBackToSourceModelAndSourcePathFields() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/local/melix-dev-qwen-local/main",
+                manifestJSON: #"""
+                {
+                  "source_model": "melix-dev-qwen-local",
+                  "source_path": "/tmp/qwen-local-model"
+                }
+                """#
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .modelImport(
+                .init(
+                    path: "/tmp/qwen-local-model",
+                    modelID: "melix-dev-qwen-local",
+                    modelKind: "text",
+                    revision: "main",
+                    json: true
+                )
+            )
+        )
+        let payload = try #require(parseJSONObject(output))
+
+        #expect(payload["model_id"] as? String == "melix-dev-qwen-local")
+        #expect(payload["managed_model_path"] as? String == "/tmp/melix-managed/local/melix-dev-qwen-local/main")
+        #expect(payload["source_kind"] as? String == "")
+        #expect(payload["source_locator"] as? String == "/tmp/qwen-local-model")
+    }
+
+    @Test("model import json requires a model identifier in the managed manifest")
+    func modelImportJSONRequiresAModelIdentifierInTheManagedManifest() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/local/melix-dev-qwen-local/main",
+                manifestJSON: #"{"warnings":["manifest missing model id"]}"#
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .modelImport(
+                    .init(
+                        path: "/tmp/qwen-local-model",
+                        modelID: "melix-dev-qwen-local",
+                        modelKind: "text",
+                        revision: "main",
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected model import json to require a model identifier in the managed manifest.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("Managed model manifest did not include a model identifier and output path."))
+        }
+    }
+
     @Test("model roots rescan omits an empty registry-root override")
     func modelRootsRescanOmitsEmptyRegistryRootOverride() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())

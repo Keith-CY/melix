@@ -9,6 +9,35 @@
   `swiftpm-testing-helper` sat idle at `0.0%` CPU until termination. Rerun `make swift-test`
   after the fix.
 
+## 2026-04-09
+
+- Closed the Phase 8 Stage 1 CLI materialization slice so managed hub downloads and local-path
+  imports now share one machine-readable receipt contract and a deterministic CLI acceptance path:
+  - added `melix model import` parser and runner support, including a shared managed-model receipt
+    renderer for `model hub download --json` and `model import --json`
+  - added Python worker-side `local_import` materialization, receipt metadata, and maintenance-core
+    routing for managed local imports
+  - added the training fixture `melix-dev-dataset.v1`, positive and negative Swift/Python unit
+    coverage, a control-plane regression for unknown imported model ids, and deterministic CLI E2E
+    coverage for local import plus registry visibility
+  - normalized malformed managed-manifest parsing into a stable CLI runtime error so negative CLI
+    validation does not leak raw Foundation JSON errors
+- Verification summary for Phase 8 Stage 1:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `82 tests in 2 suites passed after 0.014 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata Sources/MelixCLICore/MelixCLI.swift tests/MelixCLITests/MelixCLIParserTests.swift tests/MelixCLITests/MelixCLIRunnerTests.swift`: `98.80%` (`330/334`)
+  - `swift test --package-path services/control-plane-swift --enable-code-coverage --filter ControlPlaneServiceTests`: `179 tests in 1 suite passed after 0.105 seconds`
+  - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift`: `96.00%` (`72/75`)
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/p8_s1_py.coverage --source=services/mlx-worker-python/worker,tests/integration -m pytest services/mlx-worker-python/tests/test_maintenance_service.py tests/integration/test_phase8_cli_acceptance.py -q`: `82 passed in 117.74s (0:01:57)`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/p8_s1_py.coverage -o /tmp/p8_s1_py_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/p8_s1_py_coverage.json services/mlx-worker-python/worker/model_ops/download_pipeline.py services/mlx-worker-python/worker/model_ops/local_import_pipeline.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/tests/test_maintenance_service.py tests/integration/test_phase8_cli_acceptance.py`: `95.10%` (`136/143`)
+- Metrics report for Phase 8 Stage 1:
+  - CLI touched-scope changed-line coverage: `98.80%` (`330/334`)
+  - control-plane touched-scope changed-line coverage: `96.00%` (`72/75`)
+  - Python worker plus deterministic CLI E2E touched-scope changed-line coverage: `95.10%` (`136/143`)
+  - deterministic CLI E2E now proves the Stage 1 contract without a full control-plane stack by
+    booting only the Python model-ops worker subprocess and exercising `model import` plus
+    registry visibility through the `melix` CLI surface
+
 ## 2026-04-06
 
 - Audited milestone-bookkeeping accuracy and aligned the roadmap wording with the implemented

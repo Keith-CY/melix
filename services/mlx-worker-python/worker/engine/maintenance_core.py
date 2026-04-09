@@ -25,6 +25,7 @@ from worker.model_ops.hub_catalog import (
 )
 from worker.model_ops.job_registry import ModelOpsJobRegistry
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.model_ops.local_import_pipeline import LocalImportPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
@@ -162,6 +163,7 @@ class MaintenanceCore:
         job_registry: ModelOpsJobRegistry | None = None,
         hub_catalog: HubCatalog | None = None,
         download_pipeline: DownloadPipeline | None = None,
+        local_import_pipeline: LocalImportPipeline | None = None,
         lora_training_pipeline: LoRATrainingPipeline | None = None,
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
@@ -173,6 +175,7 @@ class MaintenanceCore:
         self._conversion_pipeline = ModelConversionPipeline(registry)
         self._quantization_pipeline = OQQuantizationPipeline(registry)
         self._download_pipeline = download_pipeline or DownloadPipeline()
+        self._local_import_pipeline = local_import_pipeline or LocalImportPipeline()
         self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
         self._upload_receipt_pipeline = UploadReceiptPipeline()
@@ -269,6 +272,7 @@ class MaintenanceCore:
             "convert",
             "quantize",
             "download",
+            "local_import",
             "upload",
             "train_lora",
             "activate_adapter",
@@ -429,13 +433,20 @@ class MaintenanceCore:
                 )
                 return
 
-            if operation == "download":
+            if operation in {"download", "local_import"}:
                 try:
-                    result = self._download_pipeline.run(
-                        request,
-                        job_id=job.job_id,
-                        output_dir=output_dir,
-                    )
+                    if operation == "download":
+                        result = self._download_pipeline.run(
+                            request,
+                            job_id=job.job_id,
+                            output_dir=output_dir,
+                        )
+                    else:
+                        result = self._local_import_pipeline.run(
+                            request,
+                            job_id=job.job_id,
+                            output_dir=output_dir,
+                        )
                 except ModelOperationError as exc:
                     state_json = exc.details.get("state_json", "")
                     if state_json:
@@ -457,7 +468,7 @@ class MaintenanceCore:
                     )
                     return
 
-                if operation == "download":
+                if operation in {"download", "local_import"}:
                     self._registry.model_catalog.registry_snapshot(rescan=True)
 
                 for snapshot in result.snapshots:

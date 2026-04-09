@@ -601,6 +601,96 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
     assert "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" in discovered_ids
 
 
+def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-models"
+    source_dir = tmp_path / "local-source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-qwen-local",
+                output_dir=str(tmp_path / "import-managed"),
+                generate_manifest=True,
+                ext={
+                    "operation": "local_import",
+                    "source_path": str(source_dir),
+                    "melix.managed_root": str(managed_root),
+                    "melix.source_kind": "local_path",
+                    "melix.model_kind": "text",
+                    "melix.revision": "main",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    materialized_dir = managed_root / "local" / "melix-dev-qwen-local" / "main"
+    manifest = json.loads((materialized_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert events[-1].completed.output_path == str(materialized_dir)
+    assert manifest["model_id"] == "melix-dev-qwen-local"
+    assert manifest["provider_id"] == "local"
+    assert manifest["ext"]["melix.source_kind"] == "local_path"
+    assert manifest["ext"]["melix.source_locator"] == str(source_dir)
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-after-import"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    discovered_ids = [model["model_id"] for model in snapshot_payload["model_registry"]["models"]]
+
+    assert "melix-dev-qwen-local" in discovered_ids
+
+
+def test_local_import_job_rejects_missing_source_directory(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-qwen-local",
+                output_dir=str(tmp_path / "import-missing"),
+                generate_manifest=True,
+                ext={
+                    "operation": "local_import",
+                    "source_path": str(tmp_path / "missing-model"),
+                    "melix.managed_root": str(tmp_path / "managed-models"),
+                    "melix.source_kind": "local_path",
+                    "melix.model_kind": "text",
+                    "melix.revision": "main",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "invalid_argument"
+    assert "existing source directory" in events[-1].failed.error.message
+
+
 def test_download_job_resumes_from_partial_state_and_records_resume_metadata(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     source_path, source_bytes = _write_download_source_file(tmp_path, size=3072)

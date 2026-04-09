@@ -432,6 +432,58 @@ public struct ModelDownloadOptions: Equatable, Sendable {
     }
 }
 
+public struct ModelImportOptions: Equatable, Sendable {
+    public let path: String
+    public let modelID: String
+    public let modelKind: String
+    public let revision: String
+    public let json: Bool
+
+    public init(
+        path: String,
+        modelID: String,
+        modelKind: String = "text",
+        revision: String = "main",
+        json: Bool = false
+    ) {
+        self.path = path
+        self.modelID = modelID
+        self.modelKind = modelKind.isEmpty ? "text" : modelKind
+        self.revision = revision.isEmpty ? "main" : revision
+        self.json = json
+    }
+}
+
+public struct ManagedModelReceipt: Codable, Equatable, Sendable {
+    public let modelID: String
+    public let managedModelPath: String
+    public let sourceKind: String
+    public let sourceLocator: String
+    public let warnings: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case modelID = "model_id"
+        case managedModelPath = "managed_model_path"
+        case sourceKind = "source_kind"
+        case sourceLocator = "source_locator"
+        case warnings
+    }
+
+    public init(
+        modelID: String,
+        managedModelPath: String,
+        sourceKind: String,
+        sourceLocator: String,
+        warnings: [String] = []
+    ) {
+        self.modelID = modelID
+        self.managedModelPath = managedModelPath
+        self.sourceKind = sourceKind
+        self.sourceLocator = sourceLocator
+        self.warnings = warnings
+    }
+}
+
 public struct ModelRootsListOptions: Equatable, Sendable {
     public let json: Bool
 
@@ -553,6 +605,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case modelLoad(ModelLoadOptions)
     case modelUnload(ModelUnloadOptions)
     case modelDownload(ModelDownloadOptions)
+    case modelImport(ModelImportOptions)
     case modelHubSearch(ModelHubSearchOptions)
     case modelHubShow(ModelHubShowOptions)
     case modelHubDownload(ModelHubDownloadOptions)
@@ -641,6 +694,7 @@ public enum MelixCLIParser {
       melix model load --model-id MODEL_ID [--memory-budget-bytes N] [--json]
       melix model unload --model-id MODEL_ID [--json]
       melix model download --model-id MODEL_ID [--output-dir PATH] [--json]
+      melix model import --path PATH --model-id MODEL_ID [--model-kind KIND] [--revision REV] [--json]
       melix model hub search --query QUERY [--page-size N] [--cursor TOKEN] [--mlx-only (true|false)] [--json]
       melix model hub show --repo-id HF_REPO [--json]
       melix model hub download --repo-id HF_REPO [--revision REV] [--json]
@@ -716,6 +770,23 @@ public enum MelixCLIParser {
                 .init(
                     modelID: modelID,
                     outputDir: values.single["--output-dir"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "import":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+            guard let path = values.single["--path"], !path.isEmpty else {
+                throw MelixCLIError.missingRequired("--path is required for melix model import.")
+            }
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix model import.")
+            }
+            return .modelImport(
+                .init(
+                    path: path,
+                    modelID: modelID,
+                    modelKind: values.single["--model-kind"] ?? "text",
+                    revision: values.single["--revision"] ?? "main",
                     json: values.flags.contains("--json")
                 )
             )
@@ -1570,6 +1641,7 @@ public actor MelixCLIRunner {
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
         var ext: [String: String] = [
             "melix.source_kind": "hub_repo",
+            "melix.source_locator": repoID,
             "melix.hf_repo_id": repoID,
             "melix.hf_revision": revision.isEmpty ? "main" : revision,
             "melix.managed_import": "true",
@@ -1593,6 +1665,31 @@ public actor MelixCLIRunner {
             modelID: modelID,
             operation: "download",
             outputDir: resolvedDownloadOutputDirectory(modelID: modelID, explicitOutputDir: outputDir)
+        )
+    }
+
+    public func importModel(
+        path: String,
+        modelID: String,
+        modelKind: String = "text",
+        revision: String = "main"
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        let canonicalPath = canonicalRootPath(path)
+        var ext: [String: String] = [
+            "source_path": canonicalPath,
+            "melix.source_kind": "local_path",
+            "melix.source_locator": canonicalPath,
+            "melix.model_kind": modelKind.isEmpty ? "text" : modelKind,
+            "melix.revision": revision.isEmpty ? "main" : revision,
+        ]
+        if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
+            ext["melix.managed_root"] = managedRoot
+        }
+        return try await performModelOperation(
+            modelID: modelID,
+            operation: "local_import",
+            outputDir: "",
+            ext: ext
         )
     }
 
@@ -1741,6 +1838,15 @@ public actor MelixCLIRunner {
         case .modelDownload(let options):
             let result = try await downloadModel(modelID: options.modelID, outputDir: options.outputDir)
             return options.json ? result.manifestJson : result.outputPath + "\n"
+        case .modelImport(let options):
+            let result = try await importModel(
+                path: options.path,
+                modelID: options.modelID,
+                modelKind: options.modelKind,
+                revision: options.revision
+            )
+            let receipt = try makeManagedModelReceipt(from: result)
+            return options.json ? try prettyJSON(receipt) : receipt.managedModelPath + "\n"
         case .modelHubSearch(let options):
             let result = try await searchHubModels(
                 query: options.query,
@@ -1760,7 +1866,8 @@ public actor MelixCLIRunner {
             return renderHubModelCard(card)
         case .modelHubDownload(let options):
             let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision)
-            return options.json ? result.manifestJson : result.outputPath + "\n"
+            let receipt = try makeManagedModelReceipt(from: result)
+            return options.json ? try prettyJSON(receipt) : receipt.managedModelPath + "\n"
         case .modelRootsList(let options):
             let state = try loadOperatorState()
             if options.json {
@@ -2560,6 +2667,51 @@ public actor MelixCLIRunner {
             return "\(name)\t\(status)\t\(sourceModel)"
         }
         return (["adapter\tstatus\tsource_model"] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func makeManagedModelReceipt(
+        from result: Melix_Controlplane_V1_ModelOperationResult
+    ) throws -> ManagedModelReceipt {
+        guard let data = result.manifestJson.data(using: .utf8) else {
+            throw MelixCLIError.runtime("Managed model operations must return a JSON manifest.")
+        }
+        let payloadObject: Any
+        do {
+            payloadObject = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.runtime("Managed model operations must return a JSON manifest.")
+        }
+        guard let payload = payloadObject as? [String: Any] else {
+            throw MelixCLIError.runtime("Managed model operations must return a JSON manifest.")
+        }
+
+        let ext = payload["ext"] as? [String: Any] ?? [:]
+        let warnings = (payload["warnings"] as? [String]) ?? []
+        let modelID = (payload["model_id"] as? String)
+            ?? (payload["source_model"] as? String)
+            ?? ""
+        let managedModelPath = (payload["managed_model_path"] as? String)
+            ?? (payload["output_path"] as? String)
+            ?? result.outputPath
+        let sourceKind = (ext["melix.source_kind"] as? String)
+            ?? (payload["source_kind"] as? String)
+            ?? ""
+        let sourceLocator = (ext["melix.source_locator"] as? String)
+            ?? (ext["melix.hf_repo_id"] as? String)
+            ?? (payload["source_path"] as? String)
+            ?? ""
+
+        guard modelID.isEmpty == false, managedModelPath.isEmpty == false else {
+            throw MelixCLIError.runtime("Managed model manifest did not include a model identifier and output path.")
+        }
+
+        return ManagedModelReceipt(
+            modelID: modelID,
+            managedModelPath: managedModelPath,
+            sourceKind: sourceKind,
+            sourceLocator: sourceLocator,
+            warnings: warnings
+        )
     }
 
     private func runEvaluationSuites(

@@ -2296,7 +2296,7 @@ public actor ControlPlaneService {
         let startedAt = Date()
         await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
         let modelExists = await modelCatalog.model(id: command.modelID) != nil
-        guard modelExists || allowsManagedHubImportDownload(for: command) else {
+        guard modelExists || allowsManagedImportOperation(for: command) else {
             return errorResponse(for: request, code: "not_found", message: "Unknown model ID.")
         }
         guard
@@ -2417,23 +2417,31 @@ public actor ControlPlaneService {
         }
     }
 
-    private func allowsManagedHubImportDownload(
+    private func allowsManagedImportOperation(
         for command: Melix_Controlplane_V1_RunModelOperation
     ) -> Bool {
-        guard command.operation == "download" else {
+        switch command.operation {
+        case "download":
+            guard command.ext["melix.source_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == "hub_repo" else {
+                return false
+            }
+            let managedImport = command.ext["melix.managed_import"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? ""
+            guard ["1", "true", "yes", "on"].contains(managedImport) else {
+                return false
+            }
+            let repoID = command.ext["melix.hf_repo_id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return repoID.isEmpty == false
+        case "local_import":
+            guard command.ext["melix.source_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == "local_path" else {
+                return false
+            }
+            let sourcePath = command.ext["source_path"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return sourcePath.isEmpty == false
+        default:
             return false
         }
-        guard command.ext["melix.source_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == "hub_repo" else {
-            return false
-        }
-        let managedImport = command.ext["melix.managed_import"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        guard ["1", "true", "yes", "on"].contains(managedImport) else {
-            return false
-        }
-        let repoID = command.ext["melix.hf_repo_id"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return repoID.isEmpty == false
     }
 
     private func syncRegistryModelsFromWorkerIfAvailable(rescan: Bool = false) async {

@@ -1,0 +1,2 @@
+{"messages":[{"role":"system","content":"You are Melix acceptance training data."},{"role":"user","content":"Reply with BASE_OK."},{"role":"assistant","content":"BASE_OK"}]}
+{"messages":[{"role":"user","content":"Reply with DERIVED_OK."},{"role":"assistant","content":"DERIVED_OK"}]}
