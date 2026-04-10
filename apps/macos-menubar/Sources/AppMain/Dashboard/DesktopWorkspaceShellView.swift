@@ -1542,6 +1542,19 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if let lastError = viewModel.lastError, lastError.isEmpty == false {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(lastError)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            }
+
             if let info = viewModel.selectedModelInfo {
                 GroupBox("Model Info") {
                     DesktopModelInfoSummaryView(info: info)

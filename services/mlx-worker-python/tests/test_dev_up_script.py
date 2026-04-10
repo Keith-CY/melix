@@ -221,6 +221,9 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     ):
         artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_text("stale", encoding="utf-8")
+    gateway_config = layout.runtime_dir / "gateway-config.json"
+    gateway_config.parent.mkdir(parents=True, exist_ok=True)
+    gateway_config.write_text("persist", encoding="utf-8")
 
     dev_up.cleanup_runtime_artifacts(layout)
     assert all(not artifact.exists() for artifact in (
@@ -230,6 +233,7 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
         layout.swift_text_worker_metrics_path,
         layout.python_worker_metrics_path,
     ))
+    assert gateway_config.read_text(encoding="utf-8") == "persist"
 
     (layout.runtime_dir / "swift-text-worker.pid").write_text("12", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Run scripts/dev_down.sh first"):
@@ -251,6 +255,49 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path) -> None
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
+
+
+def test_prepare_swift_worker_launch_cwd_symlinks_runtime_local_default_metallib(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    metallib_path = tmp_path / ".venv/lib/python3.13/site-packages/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_uses_configured_uv_cache_dir_for_metallib(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    layout = replace(make_layout(dev_up, tmp_path), uv_cache_dir=tmp_path / "custom-uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    metallib_path = layout.uv_cache_dir / "mlx/runtime/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_falls_back_to_repo_root_without_local_metallib(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
+
+    assert launch_cwd == tmp_path
+    assert not (layout.runtime_dir / "swift-text-worker-cwd" / "default.metallib").exists()
 
 
 def test_spawn_background_process_and_write_pid_file(
@@ -404,6 +451,10 @@ def test_write_runtime_environment_emits_export_file(tmp_path: Path) -> None:
     content = env_path.read_text(encoding="utf-8")
     assert 'export MELIX_RUNTIME_DIR="' in content
     assert 'export MELIX_PYTHON_WORKER_METRICS_PATH="' in content
+    assert (
+        f'export MELIX_GATEWAY_CONFIG_STORE_PATH="{layout.runtime_dir / "gateway-config.json"}"'
+        in content
+    )
 
 
 def test_start_stack_orchestrates_processes_and_emits_runtime_env(
@@ -421,6 +472,11 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         dev_up,
         "build_swift_launch_command",
         lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
+    )
+    monkeypatch.setattr(
+        dev_up,
+        "prepare_swift_worker_launch_cwd",
+        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
     )
     monkeypatch.setattr(
         dev_up,
@@ -451,6 +507,17 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert any(kind == "spawn" for kind, _ in calls)
     assert any(kind == "wait" for kind, _ in calls)
     assert ("http", "11434") in calls
+    swift_spawn = next(
+        payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-text-worker-swift"]
+    )
+    assert swift_spawn["cwd"] == layout.runtime_dir / "swift-text-worker-cwd"
+    control_plane_spawn = next(
+        payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
+    )
+    assert (
+        control_plane_spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"]
+        == f"{layout.runtime_dir / 'gateway-config.json'}"
+    )
 
 
 def test_start_stack_wraps_http_timeout_with_log_paths(
@@ -482,6 +549,44 @@ def test_start_stack_wraps_http_timeout_with_log_paths(
     assert "control-plane.log" in message
     assert "swift-text-worker.log" in message
     assert "python-worker.log" in message
+
+
+def test_start_stack_control_plane_gateway_config_store_overrides_parent_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    captured_env: dict[tuple[str, ...], dict[str, str]] = {}
+    pid_values = iter([101, 202, 303])
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command, **kwargs):
+        captured_env[tuple(command)] = kwargs["env"]
+        return FakeProcess(next(pid_values))
+
+    monkeypatch.setenv("MELIX_GATEWAY_CONFIG_STORE_PATH", "/tmp/global-gateway-config.json")
+    monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setattr(
+        dev_up,
+        "build_swift_launch_command",
+        lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
+    )
+    monkeypatch.setattr(dev_up.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(dev_up, "run_wait_for_worker_ready", lambda repo_root, **kwargs: None)
+    monkeypatch.setattr(dev_up, "wait_for_http_ready", lambda http_port, timeout_seconds=120.0: None)
+    monkeypatch.setattr(dev_up.time, "perf_counter_ns", lambda: 999)
+
+    dev_up.start_stack(dev_up.DevUpOptions(prefer_built=True))
+
+    control_plane_env = captured_env[("melix-control-plane",)]
+    assert (
+        control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"]
+        == f"{layout.runtime_dir / 'gateway-config.json'}"
+    )
 
 
 def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1224,6 +1224,52 @@ struct MelixCLIRunnerTests {
         #expect(benchOneEntry["source_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
     }
 
+    @Test("bench list maps malformed export bundle decoding errors to runtime CLI errors")
+    func benchListMapsMalformedExportBundleErrors() async throws {
+        let client = StubControlPlaneXPCClient()
+        let malformedBundleJSON = #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":"oops"}"#
+        await client.setExportResult(.init(exportBundleJSON: malformedBundleJSON))
+        let expectedDecodeMessage: String
+        do {
+            _ = try ControlPlaneBenchmarkExportBundle.decode(json: malformedBundleJSON)
+            Issue.record("Expected malformed benchmark export bundle fixture to fail decoding.")
+            expectedDecodeMessage = "unknown decode error"
+        } catch let error as ControlPlaneBenchmarkExportError {
+            expectedDecodeMessage = error.errorDescription ?? error.localizedDescription
+        } catch {
+            expectedDecodeMessage = String(describing: error)
+        }
+
+        await #expect(
+            throws: MelixCLIError.runtime("Malformed benchmark export bundle: \(expectedDecodeMessage)")
+        ) {
+            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
+        }
+    }
+
+    @Test("bench list preserves exportResults transport/runtime failures without remapping")
+    func benchListPreservesExportResultsFailuresWithoutRemapping() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResultError(MelixCLIError.runtime("Control-plane exportResults RPC is unavailable."))
+
+        await #expect(throws: MelixCLIError.runtime("Control-plane exportResults RPC is unavailable.")) {
+            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
+        }
+    }
+
+    @Test("bench list does not remap exportResults errors that occur before decode")
+    func benchListDoesNotRemapPreDecodeExportResultsErrors() async throws {
+        let client = StubControlPlaneXPCClient()
+        let upstreamError = ControlPlaneBenchmarkExportError.invalidJSON(
+            "exportResults failed before CLI decode handling."
+        )
+        await client.setExportResultError(upstreamError)
+
+        await #expect(throws: upstreamError) {
+            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
+        }
+    }
+
     @Test("bench export-csv writes filtered benchmark metric rows and returns JSON metadata")
     func benchExportCSVWritesFilteredRows() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1820,6 +1866,21 @@ struct MelixCLIRunnerTests {
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
     }
 
+    @Test("eval export-samples-jsonl returns the written output path in plain text")
+    func evalExportSamplesJSONLReturnsWrittenPathInPlainText() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("eval-1-samples.jsonl")
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: outputURL.path))
+        )
+
+        #expect(output == outputURL.path + "\n")
+    }
+
     @Test("eval export commands fail when the requested job has no rows")
     func evalExportCommandsFailForMissingJob() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1832,6 +1893,18 @@ struct MelixCLIRunnerTests {
             Issue.record("Expected eval export-summary-csv to fail when the job is missing.")
         } catch let error as MelixCLIError {
             #expect(error == .runtime("No evaluation rows were found for job eval-missing."))
+        }
+    }
+
+    @Test("eval export-samples-jsonl fails when the requested job has no rows")
+    func evalExportSamplesJSONLFailsForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        await #expect(throws: MelixCLIError.runtime("No evaluation rows were found for job eval-missing.")) {
+            _ = try await MelixCLIRunner(client: client).run(
+                .evalExportSamplesJSONL(.init(jobID: "eval-missing", outputPath: "/tmp/eval-missing.jsonl"))
+            )
         }
     }
 
@@ -2091,6 +2164,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
+    private var exportResultError: (any Error & Sendable)?
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
     private var chatRequestID = "stub-chat"
     private var chatModelID = "melix-dev-text"
@@ -2126,6 +2200,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setExportResult(_ result: ControlPlaneExportResult) {
         self.exportResult = result
+        self.exportResultError = nil
+    }
+
+    func setExportResultError(_ error: (any Error & Sendable)?) {
+        self.exportResultError = error
     }
 
     func setModelInfo(modelID: String, info: Melix_Controlplane_V1_ModelInfo) {
@@ -2339,6 +2418,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
         _ = outputDir
+        if let exportResultError {
+            throw exportResultError
+        }
         return exportResult
     }
 

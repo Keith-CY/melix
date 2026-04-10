@@ -5,6 +5,220 @@ import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+struct TestMelixCLIProcessCall: Equatable, Sendable {
+    let executable: String
+    let arguments: [String]
+    let environment: [String: String]
+}
+
+actor TestScriptedMelixCLIProcessLauncher: MelixCLIProcessLaunching {
+    private let responder: @Sendable ([String], [String: String]) throws -> MelixCLIProcessResult
+    private(set) var calls: [TestMelixCLIProcessCall] = []
+
+    init(
+        responder: @escaping @Sendable ([String], [String: String]) throws -> MelixCLIProcessResult
+    ) {
+        self.responder = responder
+    }
+
+    func run(
+        executable: String,
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> MelixCLIProcessResult {
+        calls.append(
+            TestMelixCLIProcessCall(
+                executable: executable,
+                arguments: arguments,
+                environment: environment
+            )
+        )
+        return try responder(arguments, environment)
+    }
+
+    func snapshot() -> [TestMelixCLIProcessCall] {
+        calls
+    }
+}
+
+func makePhase1SubprocessSuccessResponse(
+    arguments: [String],
+    outputDirectory: URL,
+    fixtureBundle: ControlPlaneBenchmarkExportBundle
+) throws -> MelixCLIProcessResult {
+    switch Array(arguments.prefix(3)) {
+    case ["bench", "run", "--model-id"], ["bench", "run", "--repo-id"]:
+        return try makeJSONProcessResult([
+            "report_path": "/tmp/melix/bench/runs/bench-newer/bench-report.md",
+            "report_markdown": "# Bench Newer\n",
+            "metrics": [
+                "bench.smoke.ttft_ms": 21.10,
+                "bench.smoke.tokens_per_second": 61.20,
+            ],
+        ])
+    case ["bench", "matrix", "run"]:
+        return try makeJSONProcessResult([
+            "job": [
+                "schema_version": "melix.benchmark_matrix_job.v1",
+                "job_id": "matrix-newer",
+                "model_id": "melix-dev-text-lora",
+                "task_kind": "text-generation",
+                "source_repo": "databricks/databricks-dolly-15k",
+                "suite_ids": ["smoke", "latency"],
+                "benchmark_mode": "matrix",
+                "status": "completed",
+                "output_dir": "/tmp/melix/bench/matrix-runs/matrix-newer",
+                "created_at_unix_ms": 1_712_250_000_000,
+                "updated_at_unix_ms": 1_712_250_000_500,
+            ],
+            "summary_rows": [
+                [
+                    "job_id": "matrix-newer",
+                    "task_kind": "text-generation",
+                    "source_repo": "databricks/databricks-dolly-15k",
+                    "model_id": "melix-dev-text-lora",
+                    "suite_id": "smoke",
+                    "context_length": 1024,
+                    "generation_length": 128,
+                    "batch_size": 2,
+                    "cache_profile": "warm",
+                    "reasoning_mode": "enabled",
+                    "structured_output_mode": "json_schema",
+                    "concurrency_level": 1,
+                    "repeats": 4,
+                    "requests": 12,
+                    "duration_seconds": 0,
+                    "ttft_mean_ms": 21.4,
+                    "ttft_std_ms": 0.9,
+                    "request_latency_mean_ms": 29.1,
+                    "request_latency_std_ms": 0.8,
+                    "prefill_tokens_per_second_mean": 340.0,
+                    "decode_tokens_per_second_mean": 66.0,
+                    "throughput_requests_per_second": 5.4,
+                    "throughput_tokens_per_second": 284.0,
+                    "success_rate": 1.0,
+                    "peak_memory_bytes_max": 1_984_000_000,
+                    "queue_wait_mean_ms": 1.8,
+                    "queue_wait_p95_ms": 2.4,
+                    "created_at_unix_ms": 1_712_250_000_000,
+                ],
+            ],
+        ])
+    case ["eval", "run", "--model-id"], ["eval", "run", "--repo-id"]:
+        return try makeJSONProcessResult([[
+            "job": [
+                "schema_version": "melix.evaluation_job.v1",
+                "job_id": "eval-newer",
+                "model_id": "melix-dev-text-lora",
+                "task_kind": "text-generation",
+                "source_repo": "cais/mmlu",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "sample_size": 8,
+                "scoring_mode": "multiple_choice_accuracy",
+                "parameters": [
+                    "batch_factor": "2",
+                    "few_shot": "3",
+                ],
+                "status": "completed",
+                "output_dir": "/tmp/melix/evaluation/runs/eval-newer",
+                "created_at_unix_ms": 1_712_300_000_000,
+                "updated_at_unix_ms": 1_712_300_000_500,
+            ],
+            "results": [[
+                "schema_version": "melix.evaluation_result.v1",
+                "job_id": "eval-newer",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "sample_size": 8,
+                "report_path": "/tmp/melix/evaluation/runs/eval-newer/evaluation-report.md",
+                "metrics": [[
+                    "name": "eval.mmlu.multiple_choice_accuracy",
+                    "value": 0.75,
+                    "unit": "ratio",
+                ]],
+            ]],
+        ]])
+    default:
+        return try makeSyntheticBenchmarkBundleResponse(
+            arguments: arguments,
+            outputDirectory: outputDirectory,
+            fixtureBundle: fixtureBundle
+        )
+    }
+}
+
+func makeSyntheticBenchmarkBundleResponse(
+    arguments: [String],
+    outputDirectory: URL,
+    fixtureBundle: ControlPlaneBenchmarkExportBundle
+) throws -> MelixCLIProcessResult {
+    switch arguments {
+    case ["bench", "list", "--json"]:
+        return try makeEncodableProcessResult(fixtureBundle.benchmarkHistoryEntries())
+    case ["bench", "matrix", "list", "--json"]:
+        return try makeEncodableProcessResult(fixtureBundle.benchmarkMatrixHistoryEntries())
+    case ["eval", "list", "--json"]:
+        return try makeEncodableProcessResult(fixtureBundle.evaluationHistoryEntries())
+    default:
+        break
+    }
+
+    guard let outputIndex = arguments.firstIndex(of: "--output"),
+          arguments.indices.contains(outputIndex + 1),
+          let jobIndex = arguments.firstIndex(of: "--job-id"),
+          arguments.indices.contains(jobIndex + 1) else {
+        throw MenuBarTestError(description: "Invalid melix subprocess arguments: \(arguments.joined(separator: " "))")
+    }
+
+    let jobID = arguments[jobIndex + 1]
+    let outputURL = URL(fileURLWithPath: arguments[outputIndex + 1])
+    try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    let contents: String
+    switch Array(arguments.prefix(3)) {
+    case ["bench", "export-csv", "--job-id"]:
+        contents = fixtureBundle.benchmarkCSV(jobID: jobID)
+    case ["bench", "matrix", "export-summary-csv"]:
+        contents = fixtureBundle.benchmarkMatrixSummaryCSV(jobID: jobID)
+    case ["bench", "matrix", "export-requests-csv"]:
+        contents = fixtureBundle.benchmarkMatrixRequestsCSV(jobID: jobID)
+    case ["eval", "export-summary-csv", "--job-id"]:
+        contents = fixtureBundle.evaluationSummaryCSV(jobID: jobID)
+    case ["eval", "export-samples-jsonl", "--job-id"]:
+        contents = try fixtureBundle.evaluationSamplesJSONL(jobID: jobID)
+    default:
+        throw MenuBarTestError(description: "Unsupported melix subprocess command: \(arguments.joined(separator: " "))")
+    }
+
+    try contents.write(to: outputURL, atomically: true, encoding: .utf8)
+    return try makeJSONProcessResult([
+        "job_id": jobID,
+        "output_path": outputURL.path,
+        "row_count": 1,
+    ])
+}
+
+func makeJSONProcessResult(_ payload: Any) throws -> MelixCLIProcessResult {
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    return MelixCLIProcessResult(
+        stdout: String(decoding: data, as: UTF8.self),
+        stderr: "",
+        exitStatus: 0
+    )
+}
+
+func makeEncodableProcessResult<Value: Encodable>(_ payload: Value) throws -> MelixCLIProcessResult {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(payload)
+    return MelixCLIProcessResult(
+        stdout: String(decoding: data, as: UTF8.self),
+        stderr: "",
+        exitStatus: 0
+    )
+}
+
 enum MenuBarTestEnvironment {
     static var isHeadlessCI: Bool {
         let environment = ProcessInfo.processInfo.environment

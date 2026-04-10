@@ -5257,6 +5257,73 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
+    @Test("benchmark evaluation diagnostics rebuild state from subprocess-backed cli output")
+    @MainActor
+    func diagnosticsRebuildStateFromSubprocessBackedCLIOutput() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        let fixtureBundle = try ControlPlaneBenchmarkExportBundle.decode(json: makeBenchmarkExportBundleJSON())
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-subprocess-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let launcher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
+            try makePhase1SubprocessSuccessResponse(
+                arguments: arguments,
+                outputDirectory: temporaryRoot,
+                fixtureBundle: fixtureBundle
+            )
+        }
+        let runner = MelixCLISubprocessRunner(
+            environment: [
+                "MELIX_CLI_EXECUTABLE": "/tmp/melix-stub",
+                "MELIX_HOME": temporaryRoot.path,
+            ],
+            launcher: launcher
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
+        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.runBench()
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        await viewModel.runBenchMatrix()
+        await viewModel.runEvaluation()
+
+        #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report.md") == true)
+        #expect(viewModel.benchmarkHistory.isEmpty == false)
+        #expect(viewModel.benchmarkMatrixHistory.isEmpty == false)
+        #expect(viewModel.evaluationHistory.isEmpty == false)
+        #expect(viewModel.evaluationSamplePreview.isEmpty == false)
+        #expect(await directClient.recordedBenchRequests.isEmpty)
+        #expect(await directClient.recordedBenchMatrixRequests.isEmpty)
+        #expect(await directClient.recordedEvaluationRequests.isEmpty)
+
+        let recordedCommands = await launcher.snapshot().map { $0.arguments.joined(separator: " ") }
+        #expect(recordedCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora") }))
+        #expect(recordedCommands.contains(where: { $0.hasPrefix("bench matrix run --model-id melix-dev-text-lora") }))
+        #expect(recordedCommands.contains(where: { $0.hasPrefix("eval run --model-id melix-dev-text-lora") }))
+        #expect(recordedCommands.contains("bench list --json"))
+        #expect(recordedCommands.contains("bench matrix list --json"))
+        #expect(recordedCommands.contains("eval list --json"))
+    }
+
     @Test("cli workflow failures surface typed failure state into the runtime view model")
     @MainActor
     func cliWorkflowFailuresSurfaceTypedFailureStateIntoTheRuntimeViewModel() async throws {
@@ -5515,6 +5582,132 @@ struct RuntimeViewModelTests {
             }
             return false
         })
+    }
+
+    @Test("subprocess-backed diagnostics surface cli failure and malformed decode output")
+    @MainActor
+    func diagnosticsSurfaceSubprocessFailureAndMalformedDecodeOutput() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)]
+            )
+        )
+
+        let failureLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
+            if Array(arguments.prefix(2)) == ["bench", "run"] {
+                return MelixCLIProcessResult(stdout: "", stderr: "benchmark exploded", exitStatus: 17)
+            }
+            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
+        }
+        let failureRunner = MelixCLISubprocessRunner(
+            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
+            launcher: failureLauncher
+        )
+        let failureViewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: failureRunner
+        )
+
+        await failureViewModel.start()
+        failureViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        failureViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await failureViewModel.runBench()
+
+        #expect(failureViewModel.lastError == "melix subprocess failed: benchmark exploded")
+
+        let malformedLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
+            if Array(arguments.prefix(2)) == ["bench", "run"] {
+                return MelixCLIProcessResult(stdout: "{not-json", stderr: "", exitStatus: 0)
+            }
+            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
+        }
+        let malformedRunner = MelixCLISubprocessRunner(
+            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
+            launcher: malformedLauncher
+        )
+        let malformedViewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: malformedRunner
+        )
+
+        await malformedViewModel.start()
+        malformedViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        malformedViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await malformedViewModel.runBench()
+
+        let malformedError = malformedViewModel.lastError ?? ""
+        let malformedCommands = await malformedLauncher.snapshot().map { $0.arguments.joined(separator: " ") }
+        #expect(malformedError.isEmpty == false)
+        #expect(malformedCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora --suite smoke") }))
+    }
+
+    @Test("production subprocess proof covers successful invocation mapping and surfaced failures")
+    @MainActor
+    func productionSubprocessProofCoversSuccessfulInvocationAndSurfacedFailures() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)]
+            )
+        )
+        let fixtureBundle = try ControlPlaneBenchmarkExportBundle.decode(json: makeBenchmarkExportBundleJSON())
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-subprocess-proof-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let successLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
+            try makePhase1SubprocessSuccessResponse(
+                arguments: arguments,
+                outputDirectory: temporaryRoot,
+                fixtureBundle: fixtureBundle
+            )
+        }
+        let successRunner = MelixCLISubprocessRunner(
+            environment: [
+                "MELIX_CLI_EXECUTABLE": "/tmp/melix-stub",
+                "MELIX_HOME": temporaryRoot.path,
+            ],
+            launcher: successLauncher
+        )
+        let successViewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: successRunner
+        )
+
+        await successViewModel.start()
+        successViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        successViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await successViewModel.runBench()
+
+        let successCommands = await successLauncher.snapshot().map { $0.arguments.joined(separator: " ") }
+        #expect(successCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora --suite smoke") }))
+        #expect(successViewModel.lastError == nil)
+
+        let failureLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
+            if Array(arguments.prefix(2)) == ["bench", "run"] {
+                return MelixCLIProcessResult(stdout: "", stderr: "benchmark exploded", exitStatus: 1)
+            }
+            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
+        }
+        let failureRunner = MelixCLISubprocessRunner(
+            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
+            launcher: failureLauncher
+        )
+        let failureViewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: failureRunner
+        )
+
+        await failureViewModel.start()
+        failureViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
+        failureViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        await failureViewModel.runBench()
+
+        #expect(failureViewModel.lastError == "melix subprocess failed: benchmark exploded")
     }
 
     @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")

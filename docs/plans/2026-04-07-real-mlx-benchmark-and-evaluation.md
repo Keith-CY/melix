@@ -52,6 +52,13 @@ Replace the current deterministic-only benchmark and evaluation execution path w
 - the runner executes one model at a time and unloads or tears down runtime state before starting the next model
 - a fresh temporary report root contains CSV and Markdown summaries together with per-model benchmark, matrix, and evaluation artifacts
 
+## Phase 1 Acceptance Boundary
+
+- Phase 1 baseline target: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- The Phase 1 Window UI surface is limited to `Tools -> Diagnostics -> Benchmark`, `Tools -> Diagnostics -> Benchmark Matrix`, and `Tools -> Diagnostics -> Evaluation`. Independent comparison and release-gate windows are outside the phase boundary.
+- The canonical Phase 1 CLI acceptance command suite (positive and negative, release-build form) is defined in `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under `Phase 1 Canonical CLI Acceptance Suite`.
+- Negative acceptance coverage is defined as two CLI failure-path categories: invalid CLI configurations within the included Phase 1 command surface, and unsupported or out-of-scope targets. It is not CLI validation of Window UI routing.
+
 ## Execution Plan
 
 ### 1. Real Benchmark Backend Recovery

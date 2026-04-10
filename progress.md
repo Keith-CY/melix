@@ -9,6 +9,105 @@
   `swiftpm-testing-helper` sat idle at `0.0%` CPU until termination. Rerun `make swift-test`
   after the fix.
 
+## 2026-04-10
+
+- Closed the Phase 1 benchmark, benchmark-matrix, and evaluation CLI/UI acceptance slice for the
+  designated text baseline by finishing the CLI-owned Window UI seam, restoring Swift worker direct
+  support for `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`, and making the live Phase 1 metrics workflow
+  reproducible in an isolated runtime:
+  - kept the Phase 1 product contract CLI-first and mixed-mode, with production Window UI
+    benchmark and evaluation actions invoking the public `melix` CLI as a subprocess while tests
+    continue to use the same CLI contract through the shared runner seam
+  - added Diagnostics-surface failure rendering plus focused Window UI smoke coverage for
+    benchmark, benchmark-matrix, and evaluation workflows and subprocess failure paths
+  - upgraded the Swift worker MLX dependency stack to versions that register `qwen3_5`, linked
+    `MLXLLM` into the worker runtime, and added both linkage tests and direct positive/negative
+    `AutoSwiftMLXBackend.loadModel(spec:)` regression coverage
+  - updated `scripts/dev_up.py` so the Swift worker starts from a runtime-local metallib launch
+    directory, honors `UV_CACHE_DIR` during metallib discovery, and keeps runtime-scoped gateway
+    configuration persisted across restarts instead of deleting it
+  - refreshed the runbook, spec, master plan, and task bookkeeping so the accepted baseline and the
+    existing Window UI diagnostics boundary remain explicit repository truth
+- Verification summary for the Phase 1 closure slice:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'AppMainBootstrapTests|RuntimeViewModelTests|DesktopFoundationViewTests|BenchmarkEvaluationWorkflowSmokeTests|MelixCLISubprocessRunnerTests'`: `294 tests in 5 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'AppMainBootstrapTests|RuntimeViewModelTests|DesktopFoundationViewTests|BenchmarkEvaluationWorkflowSmokeTests|MelixCLISubprocessRunnerTests'`: `294 tests in 5 suites passed`
+  - `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/AppMain.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Tests/MenuBarTests/AppMainBootstrapTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift apps/macos-menubar/Tests/MenuBarTests/BenchmarkEvaluationWorkflowSmokeTests.swift apps/macos-menubar/Tests/MenuBarTests/MelixCLISubprocessRunnerTests.swift`: `98.56%` (`480/487`)
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testAutoSwiftMLXBackendLiveLoadModelAcceptsQwen35FixturesBeforeWeightLoading|WorkerScaffoldTests/testAutoSwiftMLXBackendLiveLoadModelRejectsUnknownModelTypeFixtures|RuntimeLinkageTests'`: pass
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --filter 'RuntimeLinkageTests'`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_dev_up_script.py -q`: `25 passed in 0.15s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file=/tmp/phase1_dev_up.coverage -m pytest services/mlx-worker-python/tests/test_dev_up_script.py -q && PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file=/tmp/phase1_dev_up.coverage -o /tmp/phase1_dev_up_coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/phase1_dev_up_coverage.json scripts/dev_up.py`: `25 passed` and changed-line coverage `100.00%` (`37/37`)
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-b" MELIX_HTTP_PORT=12473 MELIX_DEV_TEXT_MODEL_PATH="$HOME/Library/Application Support/Melix/models/default-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main" bash scripts/dev_up.sh --prefer-built`: pass
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-b" MELIX_DEV_TEXT_MODEL_PATH="$HOME/Library/Application Support/Melix/models/default-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main" make phase1-metrics PHASE1_METRICS_ARGS='--json'`: pass with successful `swift_worker_direct`, `python_worker_direct`, and `control_plane_http` entries
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-b" bash scripts/dev_down.sh`: pass
+  - `git diff --check`: pass
+- Metrics report for the Phase 1 closure slice:
+  - designated text acceptance baseline: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`
+  - Window UI changed-line coverage: `98.56%` (`480/487`)
+  - Python executable changed-line coverage for `scripts/dev_up.py`: `100.00%` (`37/37`)
+  - Swift worker executable changed lines in `SwiftMLXBackend.swift` are `0/0` because the touched
+    production delta is linkage-only import wiring; the measurable regression protection is carried
+    by the new focused Swift tests
+  - Swift worker focused changed-line coverage across the new regression-test files is `93.02%`
+    (`80/86`)
+  - aggregate measurable changed-line coverage across the touched Phase 1 slice is `97.87%`
+    (`597/610`)
+  - `Package.swift`, `Package.resolved`, generated artifacts, and planning/runbook documents are
+    excluded from executable changed-line coverage because they are manifests, lockfiles, or
+    repository documentation
+- Closed the final Phase 1 review-follow-up delta so the benchmark and evaluation Window UI shell
+  no longer risks drifting from the resolved CLI path, and the canonical CLI E2E now proves the
+  live worker failure path explicitly:
+  - propagated the bootstrap-resolved CLI executable path into the production operator subprocess
+    environment and taught the subprocess runner to honor `MELIX_CLI` when
+    `MELIX_CLI_EXECUTABLE` is absent
+  - added focused bootstrap and subprocess-runner regressions so both the explicit executable-path
+    handoff and the legacy environment fallback stay covered
+  - added a negative Phase 1 CLI E2E that starts the live stack, stops the live workers, reruns
+    the canonical `bench run` acceptance vector, and asserts that the surfaced failure is
+    operator-visible instead of silently succeeding
+  - updated the Phase 1 runbook and bookkeeping so CLI acceptance, Window UI acceptance, and the
+    positive/negative UT and E2E results are explicitly recorded
+- Acceptance ledger for the final Phase 1 closure:
+  - CLI positive UT: passed
+  - CLI negative UT: passed
+  - CLI positive E2E: passed
+  - CLI negative E2E: passed, including live worker failure surfacing after the workers stop
+  - Window UI positive UT: passed
+  - Window UI negative UT: passed
+  - Window UI positive E2E: passed
+  - Window UI negative E2E: passed
+  - CLI acceptance: passed against `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`
+  - Window UI acceptance: passed through the existing `Tools -> Diagnostics -> Benchmark`,
+    `Benchmark Matrix`, and `Evaluation` workflows, with visible failure-state coverage and a
+    production subprocess proof
+- Verification summary for the final Phase 1 closure delta:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `102 tests in 2 suites passed`
+  - `swift package --package-path services/control-plane-swift clean`: pass; required because a
+    stale Swift 6.3 artifact inside `services/control-plane-swift/.build` blocked the first
+    control-plane rerun under Swift 6.2.3
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'PythonBridgeWorkerClientTests|BenchmarkExportBundleTests|ControlPlaneServiceTests'`: `250 tests in 3 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/mlx-text-worker-swift/.build/ModuleCache.noindex" swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter 'WorkerScaffoldTests|RuntimeLinkageTests'`: `136 XCTest + 2 Swift Testing passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_benchmark_export.py -q`: `132 passed in 1.47s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'AppMainBootstrapTests|RuntimeViewModelTests|DesktopFoundationViewTests|ControlPlaneXPCClientTests|BenchmarkEvaluationWorkflowSmokeTests|MelixCLISubprocessRunnerTests'`: `354 tests in 7 suites passed`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/apps/macos-menubar/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'AppMainBootstrapTests|MelixCLISubprocessRunnerTests'`: `49 tests in 2 suites passed`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" MELIX_DEV_TEXT_MODEL_PATH="$HOME/Library/Application Support/Melix/models/default-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file=/tmp/phase1_cli.coverage --source=tests/integration -m pytest tests/integration/test_phase1_benchmark_eval_cli.py -q`: `5 passed in 73.78s (0:01:13)`
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-d" MELIX_HTTP_PORT=12475 MELIX_DEV_TEXT_MODEL_PATH="$HOME/Library/Application Support/Melix/models/default-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main" bash scripts/dev_up.sh --prefer-built`: pass
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-d" MELIX_DEV_TEXT_MODEL_PATH="$HOME/Library/Application Support/Melix/models/default-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main" make phase1-metrics PHASE1_METRICS_ARGS='--json'`: pass with successful `swift_worker_direct`, `python_worker_direct`, and `control_plane_http` entries
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-d" bash scripts/dev_down.sh`: pass
+  - `MELIX_RUNTIME_DIR="$(pwd)/.runtime/phase1-metrics-isolated-c" bash scripts/dev_down.sh`: pass
+- Metrics report for the final Phase 1 closure delta:
+  - Window UI follow-up changed-line coverage for
+    `AppMain.swift`, `MelixCLISubprocessRunner.swift`, `AppMainBootstrapTests.swift`, and
+    `MelixCLISubprocessRunnerTests.swift`: `100.00%` (`181/181`)
+  - Phase 1 CLI E2E changed-line coverage for
+    `tests/integration/test_phase1_benchmark_eval_cli.py`: `100.00%` (`13/13`)
+  - aggregate measurable changed-line coverage across the final review-follow-up delta:
+    `100.00%` (`194/194`)
+  - latest live Phase 1 metrics bundle at
+    `/Users/ChenYu/.codex/worktrees/8265/melix/.runtime/phase1-metrics-isolated-d` reports
+    successful `swift_worker_direct`, `python_worker_direct`, and `control_plane_http` paths for
+    the designated baseline
+
 ## 2026-04-09
 
 - Closed the Phase 8 Stage 5 Window UI evidence slice so the native macOS menubar app now
@@ -210,7 +309,6 @@
     `MELIX_DEV_TEXT_MODEL_PATH` by exercising `model import -> model roots rescan -> server session
     update -> server session select -> server start -> chat run` through the shipping `melix`
     executable
-
 ## 2026-04-06
 
 - Audited milestone-bookkeeping accuracy and aligned the roadmap wording with the implemented

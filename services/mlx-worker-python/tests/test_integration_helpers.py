@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -257,3 +258,456 @@ def test_read_metrics_export_parses_json_payload(tmp_path: Path) -> None:
     metrics_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert helpers.read_metrics_export(metrics_path) == payload
+
+
+def test_live_melix_stack_cli_environment_includes_runtime_socket_and_store_paths(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    stack = helpers.LiveMelixStack(
+        repo_root,
+        environment_overrides={
+            "MELIX_HOME": "/custom/home",
+            "MELIX_GATEWAY_CONFIG_STORE_PATH": "/custom/config.json",
+            "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": "/custom/defaults.json",
+        },
+    )
+
+    environment = stack.cli_environment(repo_root)
+
+    assert environment["MELIX_HOME"] == "/custom/home"
+    assert environment["MELIX_GATEWAY_CONFIG_STORE_PATH"] == "/custom/config.json"
+    assert environment["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] == "/custom/defaults.json"
+    assert environment["MELIX_REPO_ROOT"] == str(repo_root)
+    assert environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == str(stack.swift_socket_path)
+    assert environment["MELIX_WORKER_SOCKET_PATH"] == str(stack.python_socket_path)
+    assert environment["MELIX_CONTROL_PLANE_METRICS_PATH"] == str(stack.control_plane_metrics_path)
+    assert environment["MELIX_MODEL_OPS_JOBS_ROOT"] == str(stack.model_ops_jobs_root)
+    assert environment["MELIX_EVALUATION_JOBS_ROOT"] == str(stack.evaluation_jobs_root)
+
+
+def test_live_melix_stack_start_uses_ensured_swift_binaries_and_runtime_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    stack = helpers.LiveMelixStack(repo_root, start_python_worker=False)
+    recorded_binary_requests: list[tuple[Path, str]] = []
+    recorded_processes: list[tuple[list[str], dict[str, str]]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def poll(self) -> None:
+            return None
+
+    def fake_ensure_swift_product_binary(repo_root_arg: Path, *, package_path: Path, product_name: str, timeout_seconds: float = 600.0) -> Path:
+        recorded_binary_requests.append((package_path, product_name))
+        return repo_root_arg / package_path / ".build" / "arm64-apple-macosx" / "debug" / product_name
+
+    def fake_popen(command, **kwargs):
+        recorded_processes.append((command, kwargs["env"]))
+        return FakeProcess(pid=100 + len(recorded_processes))
+
+    monkeypatch.setattr(helpers, "ensure_swift_product_binary", fake_ensure_swift_product_binary)
+    monkeypatch.setattr(helpers.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(helpers, "wait_for_worker_handshake", lambda *args, **kwargs: None)
+    monkeypatch.setattr(helpers, "wait_for_http_ready", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stack, "_stop_process", lambda name, process: None)
+
+    try:
+        stack.start()
+    finally:
+        stack.stop()
+
+    assert recorded_binary_requests == [
+        (Path("services/mlx-text-worker-swift"), "melix-text-worker-swift"),
+        (Path("services/control-plane-swift"), "melix-control-plane"),
+    ]
+    assert recorded_processes[0][0] == [
+        str(repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/melix-text-worker-swift")
+    ]
+    assert recorded_processes[1][0] == [
+        str(repo_root / "services/control-plane-swift/.build/arm64-apple-macosx/debug/melix-control-plane")
+    ]
+    assert recorded_processes[0][1]["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == str(stack.swift_socket_path)
+    assert recorded_processes[1][1]["MELIX_HOME"] == str(stack.runtime_state_root)
+
+
+def test_phase1_canonical_cli_cases_parses_positive_and_negative_commands(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    runbook_path = repo_root / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
+    runbook_path.parent.mkdir(parents=True, exist_ok=True)
+    runbook_path.write_text(
+        """
+## Phase 1 Canonical CLI Acceptance Suite
+
+Prerequisite: ensure the release CLI binary exists before running this suite.
+
+```bash
+swift build -c release --product melix
+```
+
+Use the release build to run the positive acceptance suite against
+`mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+
+```bash
+# comment line
+./.build/release/melix bench run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --sample-size 2 --batch-factor 1 --json
+echo helper note
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --json
+./.build/release/melix eval run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite mmlu --json
+```
+
+Use these negative acceptance commands for two CLI failure-path categories.
+
+```bash
+# comment line
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --duration-seconds 30
+echo helper note
+./.build/release/melix eval run --repo-id mlx-community/Qwen-Image-2512-4bit --suite mmlu --json
+```
+
+## Next Section
+""".strip(),
+        encoding="utf-8",
+    )
+
+    commands = helpers._phase1_canonical_cli_cases(repo_root)
+
+    assert commands["bench_run_positive"] == [
+        "bench",
+        "run",
+        "--repo-id",
+        "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "--suite",
+        "smoke",
+        "--context-length",
+        "1024",
+        "--generation-length",
+        "128",
+        "--batch-size",
+        "1",
+        "--sample-size",
+        "2",
+        "--batch-factor",
+        "1",
+        "--json",
+    ]
+    assert commands["bench_matrix_conflicting_load_budget_negative"][-2:] == [
+        "--duration-seconds",
+        "30",
+    ]
+    assert commands["eval_run_unsupported_repo_negative"][3] == "mlx-community/Qwen-Image-2512-4bit"
+
+
+def test_phase1_canonical_cli_cases_rejects_missing_required_commands(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    runbook_path = repo_root / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
+    runbook_path.parent.mkdir(parents=True, exist_ok=True)
+    runbook_path.write_text(
+        """
+## Phase 1 Canonical CLI Acceptance Suite
+
+Prerequisite: ensure the release CLI binary exists before running this suite.
+
+```bash
+swift build -c release --product melix
+```
+
+Use the release build to run the positive acceptance suite against
+`mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+
+```bash
+./.build/release/melix bench run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --sample-size 2 --batch-factor 1 --json
+```
+
+Use these negative acceptance commands for two CLI failure-path categories.
+
+```bash
+./.build/release/melix eval run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite mmlu --json
+```
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match="Phase 1 canonical CLI cases are missing"):
+        helpers._phase1_canonical_cli_cases(repo_root)
+
+
+def test_phase1_canonical_cli_cases_rejects_missing_section_marker(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    runbook_path = repo_root / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
+    runbook_path.parent.mkdir(parents=True, exist_ok=True)
+    runbook_path.write_text("# Different Section\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="Unable to locate '## Phase 1 Canonical CLI Acceptance Suite'"):
+        helpers._phase1_canonical_cli_cases(repo_root)
+
+
+def test_phase1_canonical_cli_cases_ignores_noncanonical_bash_blocks(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    runbook_path = repo_root / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
+    runbook_path.parent.mkdir(parents=True, exist_ok=True)
+    runbook_path.write_text(
+        """
+## Phase 1 Canonical CLI Acceptance Suite
+
+Prerequisite: ensure the release CLI binary exists before running this suite.
+
+```bash
+swift build -c release --product melix
+```
+
+This auxiliary snippet should not be treated as part of the canonical suite.
+
+```bash
+echo helper note
+```
+
+Use the release build to run the positive acceptance suite against
+`mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+
+```bash
+./.build/release/melix bench run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --sample-size 2 --batch-factor 1 --json
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --json
+./.build/release/melix eval run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite mmlu --json
+```
+
+Use these negative acceptance commands for two CLI failure-path categories.
+
+```bash
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --duration-seconds 30
+./.build/release/melix eval run --repo-id mlx-community/Qwen-Image-2512-4bit --suite mmlu --json
+```
+""".strip(),
+        encoding="utf-8",
+    )
+
+    commands = helpers._phase1_canonical_cli_cases(repo_root)
+
+    assert commands["bench_run_positive"][0:2] == ["bench", "run"]
+    assert commands["eval_run_unsupported_repo_negative"][3] == "mlx-community/Qwen-Image-2512-4bit"
+
+
+def test_resolve_cli_binary_uses_root_package_build_output(tmp_path: Path) -> None:
+    binary_path = tmp_path / ".build/arm64-apple-macosx/debug/melix"
+    binary_path.parent.mkdir(parents=True, exist_ok=True)
+    binary_path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    binary_path.chmod(binary_path.stat().st_mode | stat.S_IXUSR)
+
+    assert helpers.resolve_cli_binary(tmp_path) == binary_path
+
+
+def test_ensure_cli_binary_delegates_to_swift_product_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_ensure_swift_product_binary(
+        repo_root: Path,
+        *,
+        package_path: Path,
+        product_name: str,
+        timeout_seconds: float = 600.0,
+        configuration: str = "debug",
+    ) -> Path:
+        recorded["repo_root"] = repo_root
+        recorded["package_path"] = package_path
+        recorded["product_name"] = product_name
+        recorded["timeout_seconds"] = timeout_seconds
+        recorded["configuration"] = configuration
+        return repo_root / ".build/arm64-apple-macosx/debug/melix"
+
+    monkeypatch.setattr(helpers, "ensure_swift_product_binary", fake_ensure_swift_product_binary)
+
+    resolved = helpers.ensure_cli_binary(tmp_path, timeout_seconds=11.0, configuration="release")
+
+    assert resolved == tmp_path / ".build/arm64-apple-macosx/debug/melix"
+    assert recorded == {
+        "repo_root": tmp_path,
+        "package_path": Path("."),
+        "product_name": "melix",
+        "timeout_seconds": 11.0,
+        "configuration": "release",
+    }
+
+
+def test_run_melix_cli_executes_binary_with_merged_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        recorded["command"] = command
+        recorded["cwd"] = kwargs["cwd"]
+        recorded["env"] = kwargs["env"]
+        recorded["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(command, 0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr(
+        helpers,
+        "ensure_cli_binary",
+        lambda repo_root, timeout_seconds=600.0, configuration="debug": recorded.update({"configuration": configuration})
+        or repo_root / ".build/debug/melix",
+    )
+    monkeypatch.setattr(helpers.subprocess, "run", fake_run)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    result = helpers.run_melix_cli(
+        tmp_path,
+        ["bench", "list", "--json"],
+        {"MELIX_HOME": "/tmp/melix-home"},
+        configuration="release",
+        timeout_seconds=12.5,
+    )
+
+    assert result.returncode == 0
+    assert recorded["command"] == [str(tmp_path / ".build/debug/melix"), "bench", "list", "--json"]
+    assert recorded["cwd"] == tmp_path
+    assert recorded["env"]["PATH"] == "/usr/bin"
+    assert recorded["env"]["MELIX_HOME"] == "/tmp/melix-home"
+    assert recorded["configuration"] == "release"
+    assert recorded["timeout"] == 12.5
+
+
+def test_run_phase1_canonical_cli_uses_resolved_command_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    recorded: dict[str, object] = {}
+    completed = subprocess.CompletedProcess(["melix", "bench", "run"], 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(helpers, "_phase1_canonical_cli_cases", lambda repo_root: {"bench_run_positive": ["bench", "run", "--json"]})
+    monkeypatch.setattr(
+        helpers,
+        "run_melix_cli",
+        lambda repo_root, args, environment, timeout_seconds=600.0, configuration="debug": recorded.update(
+            {
+                "repo_root": repo_root,
+                "args": args,
+                "environment": environment,
+                "timeout_seconds": timeout_seconds,
+                "configuration": configuration,
+            }
+        )
+        or completed,
+    )
+
+    result = helpers.run_phase1_canonical_cli(
+        tmp_path,
+        {"MELIX_HOME": "/tmp/melix-home"},
+        case_id="bench_run_positive",
+        timeout_seconds=33.0,
+    )
+
+    assert result == completed
+    assert recorded == {
+        "repo_root": tmp_path,
+        "args": ["bench", "run", "--json"],
+        "environment": {"MELIX_HOME": "/tmp/melix-home"},
+        "timeout_seconds": 33.0,
+        "configuration": "release",
+    }
+
+
+def test_ensure_swift_product_binary_builds_missing_product(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    binary_path = repo_root / "services/control-plane-swift/.build/arm64-apple-macosx/debug/melix-control-plane"
+    recorded: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        recorded["command"] = command
+        recorded["cwd"] = kwargs["cwd"]
+        recorded["env"] = kwargs["env"]
+        binary_path.parent.mkdir(parents=True, exist_ok=True)
+        binary_path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        binary_path.chmod(binary_path.stat().st_mode | stat.S_IXUSR)
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(helpers.subprocess, "run", fake_run)
+
+    resolved = helpers.ensure_swift_product_binary(
+        repo_root,
+        package_path=Path("services/control-plane-swift"),
+        product_name="melix-control-plane",
+        timeout_seconds=42.0,
+    )
+
+    assert resolved == binary_path
+    assert recorded["command"] == [
+        "swift",
+        "build",
+        "--package-path",
+        str(repo_root / "services/control-plane-swift"),
+        "--product",
+        "melix-control-plane",
+    ]
+    assert recorded["cwd"] == repo_root
+    assert recorded["env"]["HOME"] == str(repo_root / ".swift-home")
+    assert recorded["env"]["CLANG_MODULE_CACHE_PATH"] == str(repo_root / ".build" / "ModuleCache.noindex")
+
+
+def test_ensure_swift_product_binary_raises_when_build_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+
+    monkeypatch.setattr(
+        helpers.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="swift build stdout",
+            stderr="swift build stderr",
+        ),
+    )
+
+    with pytest.raises(AssertionError, match="Unable to build required Swift product"):
+        helpers.ensure_swift_product_binary(
+            repo_root,
+            package_path=Path("services/mlx-text-worker-swift"),
+            product_name="melix-text-worker-swift",
+        )
+
+
+def test_run_phase1_canonical_cli_rejects_unknown_case(tmp_path: Path) -> None:
+    runbook_path = tmp_path / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
+    runbook_path.parent.mkdir(parents=True, exist_ok=True)
+    runbook_path.write_text(
+        """
+## Phase 1 Canonical CLI Acceptance Suite
+
+Prerequisite: ensure the release CLI binary exists before running this suite.
+
+```bash
+swift build -c release --product melix
+```
+
+Use the release build to run the positive acceptance suite against
+`mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+
+```bash
+./.build/release/melix bench run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --sample-size 2 --batch-factor 1 --json
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --json
+./.build/release/melix eval run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite mmlu --json
+```
+
+Use these negative acceptance commands for two CLI failure-path categories.
+
+```bash
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --requests 4 --duration-seconds 30
+./.build/release/melix eval run --repo-id mlx-community/Qwen-Image-2512-4bit --suite mmlu --json
+```
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError, match="Unknown Phase 1 canonical CLI case"):
+        helpers.run_phase1_canonical_cli(tmp_path, {}, case_id="not-a-real-case")

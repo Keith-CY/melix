@@ -7,6 +7,9 @@ import MelixWorkerProtocol
 #if canImport(MLXLMCommon)
 @preconcurrency import MLXLMCommon
 #endif
+#if canImport(MLXLLM)
+@preconcurrency import MLXLLM
+#endif
 
 struct RuntimeUnavailableError: LocalizedError {
     let message: String

@@ -138,6 +138,9 @@ class EvaluationCore:
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
         loaded_model = self._loaded_model_for_execution(model_handle)
+        if model_handle and loaded_model is None:
+            resolved_target_id = model_id or model_handle.split("::", 1)[0]
+            raise RuntimeError(f"No loaded evaluation target is available for {resolved_target_id}")
         self._validate_task_kind_against_dataset(
             dataset_id=str(manifest["dataset_id"]),
             samples=selected,

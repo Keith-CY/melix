@@ -372,6 +372,11 @@ Current behavior limits:
 
 Use the native operator window when you prefer interactive controls over CLI flags.
 
+In Phase 1, the production operator window executes benchmark, matrix benchmark, and evaluation
+actions by invoking the public `melix` CLI as a subprocess. Test environments use the same CLI
+contract through the shared runner seam, so Window UI verification and CLI verification exercise the
+same product behavior.
+
 The current product surface exposes:
 
 - a standard benchmark flow with suite and parameter controls
@@ -384,6 +389,76 @@ The same target model rule still applies in the operator window:
 
 - benchmark, matrix, and evaluation select a model or direct repo target
 - LoRA must be activated first so the derived model appears as a selectable target
+
+## Window UI Diagnostics Workflow
+
+Use `Tools -> Diagnostics` for the Phase 1 operator acceptance path.
+
+### Run A Standard Benchmark From The Window UI
+
+1. Open the Window UI and select `Tools -> Diagnostics`.
+2. Keep `Benchmark Mode` on `Standard`.
+3. Select either:
+   - `Catalog Model` and choose a local or derived model ID
+   - `Hugging Face Repo` and enter a direct repo target
+4. Select one or more benchmark suites.
+5. Configure context lengths, batch sizes, repeats, cache profile, reasoning mode, structured
+   output mode, sample size, and batch factor as needed.
+6. Select `Run Benchmark`.
+7. Verify the Window UI updates:
+   - `Benchmark Results` shows metric cards and chart data
+   - `Benchmark History` contains the new job
+   - `Export Bench CSV` writes a CSV artifact for the selected or newest benchmark job
+
+### Run A Matrix Benchmark From The Window UI
+
+1. Open `Tools -> Diagnostics`.
+2. Switch `Benchmark Mode` to `Matrix`.
+3. Select a benchmark-capable catalog model or direct repo target.
+4. Select one or more suites plus the desired matrix sweep dimensions.
+5. Choose exactly one load-budget mode:
+   - `Requests`
+   - `Duration`
+6. Enter a positive value for the selected load budget.
+7. Select `Run Matrix`.
+8. Verify the Window UI updates:
+   - `Benchmark Results` shows matrix summary rows and chart points
+   - `Benchmark History` shows the new matrix job
+   - `Export Matrix Summary` writes the summary CSV artifact
+   - `Export Matrix Requests` writes the request-level CSV artifact
+
+### Run An Evaluation From The Window UI
+
+1. Open `Tools -> Diagnostics`.
+2. Select a catalog model or direct repo target for evaluation.
+3. Select one or more evaluation suites.
+4. Configure sample size, batch factor, few-shot, seed, scoring mode, and code execution policy.
+5. Select `Run Evaluation`.
+6. Verify the Window UI updates:
+   - evaluation metric cards are populated
+   - evaluation sample preview rows appear
+   - evaluation history contains the new job
+   - `Export Eval Summary`, `Export Eval Samples`, and `Export Eval JSONL` write artifacts for the selected or newest evaluation job
+
+## Window UI Failure Acceptance
+
+The Phase 1 Diagnostics surface must surface CLI-backed failures in the Window UI rather than hiding
+them behind silent state resets.
+
+Accept the Window UI failure path only when the following behaviors hold:
+
+- an invalid matrix load-budget configuration blocks `Run Matrix` and renders the validation error
+  inside `Tools -> Diagnostics`
+- a benchmark subprocess failure renders the surfaced CLI error text inside `Tools -> Diagnostics`
+- an evaluation subprocess failure renders the surfaced CLI error text inside `Tools -> Diagnostics`
+- malformed export or decode output keeps the operation in a failed state and renders the surfaced
+  error text inside `Tools -> Diagnostics`
+- positive runs followed by a failed run keep prior persisted history available unless the new CLI
+  response successfully refreshes the shared export bundle
+
+For CLI-side negative acceptance commands, continue to use
+`docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under
+`Phase 1 Canonical CLI Acceptance Suite`.
 
 ## Recommended Verification Sequence
 
@@ -432,6 +507,14 @@ swift run melix eval run \
   --few-shot 4 \
   --seed 9
 ```
+
+## Phase 1 Acceptance Reference
+
+- Phase 1 acceptance baseline model: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- Phase 1 Window UI scope: `Tools -> Diagnostics -> Benchmark`, `Tools -> Diagnostics -> Benchmark Matrix`, and `Tools -> Diagnostics -> Evaluation`.
+- Phase 1 excludes independent comparison and release-gate windows.
+- For the exact canonical CLI acceptance command suite (positive and negative), use `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under `Phase 1 Canonical CLI Acceptance Suite`.
+- In this workflow runbook, negative acceptance coverage includes two CLI failure-path categories: invalid CLI configurations inside the included Phase 1 command surface and unsupported or out-of-scope targets. This document does not duplicate the canonical command block.
 
 ## Related Runbooks
 

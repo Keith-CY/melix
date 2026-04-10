@@ -1249,6 +1249,20 @@ public final class RuntimeViewModel {
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
+    var operatorCommandRunnerTypeNameForTesting: String {
+        guard let operatorCommandRunner else {
+            return ""
+        }
+        return String(describing: type(of: operatorCommandRunner))
+    }
+
+    var operatorCommandRunnerExecutablePathForTesting: String {
+        guard let runner = operatorCommandRunner as? MelixCLISubprocessRunner else {
+            return ""
+        }
+        return runner.resolvedExecutablePathForTesting
+    }
+
     public var serveableModels: [RuntimeModelRow] {
         models.filter(\.isServeableServerModel)
     }
@@ -1257,7 +1271,7 @@ public final class RuntimeViewModel {
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
-    private let operatorCommandRunner: MelixCLIRunner?
+    private let operatorCommandRunner: (any MelixOperatorCommandRunning)?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -1469,7 +1483,7 @@ public final class RuntimeViewModel {
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
-        operatorCommandRunner: MelixCLIRunner? = nil,
+        operatorCommandRunner: (any MelixOperatorCommandRunning)? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
@@ -1487,7 +1501,7 @@ public final class RuntimeViewModel {
     }
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
-        cliWorkflowRunner ?? operatorCommandRunner
+        cliWorkflowRunner ?? (operatorCommandRunner as? any MelixCLIWorkflowRunning)
     }
 
     deinit {

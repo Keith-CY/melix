@@ -189,13 +189,29 @@ def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
     return _rows_to_csv(rows, _canonical_benchmark_row_columns())
 
 
-def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
+def build_benchmark_matrix_summary_csv(
+    bundle: dict[str, object],
+    *,
+    job_id: str | None = None,
+) -> str:
     rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
+    if job_id is not None:
+        rows = [row for row in rows if str(row.get("job_id", "")) == job_id]
+        if not rows:
+            raise ValueError(f"No benchmark matrix summary rows were found for job {job_id}.")
     return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
 
 
-def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
+def build_benchmark_matrix_requests_csv(
+    bundle: dict[str, object],
+    *,
+    job_id: str | None = None,
+) -> str:
     rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
+    if job_id is not None:
+        rows = [row for row in rows if str(row.get("job_id", "")) == job_id]
+        if not rows:
+            raise ValueError(f"No benchmark matrix request rows were found for job {job_id}.")
     return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
 
 

@@ -171,14 +171,57 @@ def ensure_runtime_is_stopped(layout: RuntimeLayout) -> None:
 
 
 def cleanup_runtime_artifacts(layout: RuntimeLayout) -> None:
+    swift_worker_launch_dir = layout.runtime_dir / "swift-text-worker-cwd"
     for artifact in (
         layout.python_socket_path,
         layout.swift_text_worker_socket_path,
         layout.control_plane_metrics_path,
         layout.swift_text_worker_metrics_path,
         layout.python_worker_metrics_path,
+        swift_worker_launch_dir / "default.metallib",
     ):
         artifact.unlink(missing_ok=True)
+    try:
+        swift_worker_launch_dir.rmdir()
+    except OSError:
+        pass
+
+
+def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
+    candidate_search_roots: list[Path] = []
+    if uv_cache_dir is not None:
+        candidate_search_roots.append(uv_cache_dir)
+
+    candidate_roots = [repo_root, repo_root.parent, repo_root.parent.parent]
+    candidate_prefixes = [".venv", ".uv-cache"]
+    for root in candidate_roots:
+        for prefix in candidate_prefixes:
+            candidate_search_roots.append(root / prefix)
+
+    seen: set[Path] = set()
+    for search_root in candidate_search_roots:
+        resolved_root = search_root.expanduser().resolve()
+        if resolved_root in seen or not resolved_root.exists():
+            continue
+        seen.add(resolved_root)
+        for candidate in resolved_root.rglob("mlx.metallib"):
+            if candidate.is_file():
+                return candidate.resolve()
+
+    return None
+
+
+def prepare_swift_worker_launch_cwd(layout: RuntimeLayout, repo_root: Path) -> Path:
+    metallib_path = resolve_local_mlx_metallib(repo_root, uv_cache_dir=layout.uv_cache_dir)
+    if metallib_path is None:
+        return repo_root
+
+    launch_dir = layout.runtime_dir / "swift-text-worker-cwd"
+    launch_dir.mkdir(parents=True, exist_ok=True)
+    default_metallib_path = launch_dir / "default.metallib"
+    default_metallib_path.unlink(missing_ok=True)
+    default_metallib_path.symlink_to(metallib_path)
+    return launch_dir
 
 
 def spawn_background_process(
@@ -263,6 +306,7 @@ def wait_for_http_ready(http_port: str, *, timeout_seconds: float = 120.0) -> No
 def write_runtime_environment(layout: RuntimeLayout) -> Path:
     env_path = layout.runtime_dir / "env.sh"
     env_path.parent.mkdir(parents=True, exist_ok=True)
+    gateway_config_store_path = layout.runtime_dir / "gateway-config.json"
     exports = {
         "MELIX_RUNTIME_DIR": os.fspath(layout.runtime_dir),
         "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
@@ -277,6 +321,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": os.fspath(layout.swift_text_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
+        "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(gateway_config_store_path),
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
@@ -290,6 +335,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
 def start_stack(options: DevUpOptions) -> None:
     repo_root = ROOT
     layout = compute_runtime_layout(repo_root)
+    gateway_config_store_path = layout.runtime_dir / "gateway-config.json"
     ensure_runtime_directories(layout)
     ensure_runtime_is_stopped(layout)
     cleanup_runtime_artifacts(layout)
@@ -300,8 +346,9 @@ def start_stack(options: DevUpOptions) -> None:
         product_name="melix-text-worker-swift",
         prefer_built=options.prefer_built,
     )
+    swift_text_cwd = prepare_swift_worker_launch_cwd(layout, repo_root)
     swift_text_pid = spawn_background_process(
-        cwd=repo_root,
+        cwd=swift_text_cwd,
         log_path=layout.runtime_dir / "swift-text-worker.log",
         env_overrides={
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
@@ -376,6 +423,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
+            "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(gateway_config_store_path),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
         },

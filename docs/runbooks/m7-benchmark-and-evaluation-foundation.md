@@ -286,3 +286,38 @@ Expected outcome:
 - Window UI exposes the canonical benchmark, matrix benchmark, and evaluation operator controls
 - CLI exposes canonical benchmark, matrix benchmark, and evaluation run plus export commands
 - verification commands are repository-owned and reproducible
+
+## Phase 1 Canonical CLI Acceptance Suite
+
+This section is the single source of truth for the exact Phase 1 CLI acceptance command suite.
+Other docs must reference this section instead of duplicating command blocks.
+
+Prerequisite: ensure the release CLI binary exists before running this suite.
+
+```bash
+HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift build -c release --product melix
+```
+
+Use the release build to run the positive acceptance suite against
+`mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+
+```bash
+./.build/release/melix bench run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --sample-size 2 --batch-factor 1 --json
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --cache-profile cold --reasoning-mode disabled --structured-output-mode plain_text --concurrency 1 --requests 4 --json
+./.build/release/melix eval run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite mmlu --sample-size 4 --few-shot 0 --seed 7 --json
+```
+
+Use these negative acceptance commands for two CLI failure-path categories:
+invalid CLI configurations within the included Phase 1 command surface
+(for example, conflicting `bench matrix run` load-budget flags) and unsupported or out-of-scope
+targets (for example, a text-to-image repo such as `mlx-community/Qwen-Image-2512-4bit`).
+
+```bash
+./.build/release/melix bench matrix run --repo-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --context-length 1024 --generation-length 128 --batch-size 1 --cache-profile cold --reasoning-mode disabled --structured-output-mode plain_text --concurrency 1 --requests 4 --duration-seconds 30
+./.build/release/melix eval run --repo-id mlx-community/Qwen-Image-2512-4bit --suite mmlu --sample-size 4 --json
+```
+
+The automated Phase 1 CLI E2E suite also validates live worker failure surfacing by starting the
+local stack, stopping the live workers, and re-running the canonical `bench run` acceptance vector
+from this section to confirm the CLI returns a surfaced worker-availability failure instead of
+silently succeeding.

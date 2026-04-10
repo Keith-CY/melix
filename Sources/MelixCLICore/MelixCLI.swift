@@ -776,8 +776,8 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy MODE] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy POLICY] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy POLICY] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -1852,7 +1852,12 @@ public actor MelixCLIRunner {
 
     public func fetchBenchmarkExportBundle(outputDir: String = "") async throws -> ControlPlaneBenchmarkExportBundle {
         let export = try await client.exportResults(outputDir: outputDir)
-        return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+        do {
+            return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
+        } catch let error as ControlPlaneBenchmarkExportError {
+            let decodeMessage = error.errorDescription ?? error.localizedDescription
+            throw MelixCLIError.runtime("Malformed benchmark export bundle: \(decodeMessage)")
+        }
     }
 
     public func runEvaluations(_ options: EvalRunOptions) async throws -> [ControlPlaneEvaluationResult] {

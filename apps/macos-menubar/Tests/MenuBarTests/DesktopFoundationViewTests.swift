@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -1921,6 +1922,56 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
 
+    }
+
+    @Test("workspace diagnostics renders phase1 benchmark and evaluation failure banners")
+    @MainActor
+    func workspaceDiagnosticsRendersPhase1BenchmarkAndEvaluationFailureBanners() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        await directClient.configureSnapshot(
+            makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel()])
+        )
+        let runnerClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-diagnostics-failure-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: MelixOperatorSessionStore(
+                melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+            )
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkModelID = "melix-dev-text"
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await runnerClient.configureErrors(bench: MenuBarTestError(description: "benchmark exploded"))
+        await viewModel.runBench()
+
+        let benchmarkView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let benchmarkTexts = renderedTextValues(in: benchmarkView)
+        #expect(benchmarkView.subviews.isEmpty == false)
+        #expect(benchmarkTexts.contains("benchmark exploded"))
+
+        await runnerClient.configureErrors(bench: nil, evaluation: MenuBarTestError(description: "evaluation exploded"))
+        await viewModel.runEvaluation()
+
+        let evaluationView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let evaluationTexts = renderedTextValues(in: evaluationView)
+        #expect(evaluationView.subviews.isEmpty == false)
+        #expect(evaluationTexts.contains("evaluation exploded"))
     }
 
     @Test("workspace diagnostics renders evaluation configuration history and sample previews")
