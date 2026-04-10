@@ -10,15 +10,6 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
     }
 
-    @Test("documents canonical eval run scoring and code execution options in usage text")
-    func documentsCanonicalEvalRunScoringAndCodeExecutionOptionsInUsageText() {
-        #expect(
-            MelixCLIParser.usageText.contains(
-                "melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy POLICY] [--json]"
-            )
-        )
-    }
-
     @Test("parses server snapshot and pause commands")
     func parsesServerSnapshotAndPauseCommands() throws {
         let snapshotCommand = try MelixCLIParser.parse([

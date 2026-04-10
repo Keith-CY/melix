@@ -37,7 +37,13 @@ struct StatusMenuTests {
     func installRendersErrorState() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureErrors(handshake: MenuBarTestError(description: "menu handshake failed"))
-        let viewModel = RuntimeViewModel(client: client)
+        let viewModel = RuntimeViewModel(
+            client: client,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: nil,
+                startupDiagnosticResponse: nil
+            )
+        )
         let renderer = RecordingStatusMenuRenderer()
         let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
 

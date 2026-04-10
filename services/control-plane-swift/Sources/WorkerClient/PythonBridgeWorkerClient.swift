@@ -1281,15 +1281,24 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
         process.standardError = stderr
 
         try process.run()
-        async let stdoutData = collectPipeData(from: stdout.fileHandleForReading)
-        async let stderrData = collectPipeData(from: stderr.fileHandleForReading)
+        let stdoutTask = Task {
+            try String(decoding: stdout.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        }
+        let stderrTask = Task {
+            try String(decoding: stderr.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        }
+        defer {
+            stdoutTask.cancel()
+            stderrTask.cancel()
+        }
+
         _ = await waitForTermination(
             of: process,
             state: terminationState
         )
 
-        let output = String(decoding: await stdoutData, as: UTF8.self)
-        _ = String(decoding: await stderrData, as: UTF8.self)
+        let output = try await stdoutTask.value
+        _ = try await stderrTask.value
 
         guard let line = output.split(separator: "\n").last.map(String.init),
               !line.isEmpty
@@ -1405,21 +1414,5 @@ public struct ProcessWorkerBridgeRunner: WorkerBridgeRunning, Sendable {
             return process.terminationStatus
         }
         return await state.waitForExit()
-    }
-
-    private func collectPipeData(from handle: FileHandle) async -> Data {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var data = Data()
-                while true {
-                    let chunk = handle.availableData
-                    if chunk.isEmpty {
-                        continuation.resume(returning: data)
-                        return
-                    }
-                    data.append(chunk)
-                }
-            }
-        }
     }
 }

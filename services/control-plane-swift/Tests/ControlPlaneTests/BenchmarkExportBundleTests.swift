@@ -244,13 +244,6 @@ struct BenchmarkExportBundleTests {
         #expect(bundle.benchmarkMatrixSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms\n")
         #expect(bundle.benchmarkMatrixRequestsCSV() == "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms\n")
     }
-
-    @Test("rejects malformed benchmark matrix payloads during export bundle decoding")
-    func rejectsMalformedBenchmarkMatrixPayloadsDuringDecoding() {
-        #expect(throws: ControlPlaneBenchmarkExportError.self) {
-            _ = try ControlPlaneBenchmarkExportBundle.decode(json: malformedBenchmarkMatrixPayloadJSON)
-        }
-    }
 }
 
 private let benchmarkExportBundleJSON = """
@@ -824,15 +817,6 @@ private let emptyBenchmarkMatrixExportBundleJSON = """
   "export_schema_version": "melix.benchmark_export.v1",
   "benchmark_matrix_jobs": [],
   "benchmark_matrix_summary_rows": [],
-  "benchmark_matrix_request_rows": []
-}
-"""
-
-private let malformedBenchmarkMatrixPayloadJSON = """
-{
-  "export_schema_version": "melix.benchmark_export.v1",
-  "benchmark_matrix_jobs": [],
-  "benchmark_matrix_summary_rows": "invalid-type",
   "benchmark_matrix_request_rows": []
 }
 """

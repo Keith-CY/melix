@@ -18,8 +18,10 @@ surfaces:
 
 - choose a base text model
 - choose a local dataset package or a Hugging Face dataset source
-- set LoRA hyperparameters, adapter name, target repo, and optional derived-model alias
-- start training, inspect persisted adapter history, and activate an adapter into a derived model
+- choose `LoRA` or `QLoRA` training mode
+- set LoRA hyperparameters, adapter name, target repo, optional validation split, and optional derived-model alias
+- choose `fused_derived_model` or `adapter_backed_runtime` activation mode
+- start training, inspect persisted adapter history, activate an adapter into a derived model, publish the adapter package, and remove an activated derived model
 
 The same workflow is available through the public `melix` CLI:
 
@@ -30,15 +32,28 @@ swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
-  --target-repo melix/adapters/melix-dev-adapter
+  --target-repo melix/adapters/melix-dev-adapter \
+  --training-mode qlora
 
 swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path HuggingFaceH4/ultrachat_200k \
   --hf-train-split train_sft \
+  --hf-valid-split test_sft \
   --chat-feature messages \
   --adapter-name melix-ultrachat \
-  --target-repo melix/adapters/melix-ultrachat
+  --target-repo melix/adapters/melix-ultrachat \
+  --training-mode qlora
+
+swift run melix lora activate \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --activation-mode adapter_backed_runtime \
+  --alias melix-qwen35-acceptance
+
+swift run melix lora remove-derived \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --derived-model-id melix-qwen35-acceptance
 ```
 
 ## Dataset Package Layout
@@ -93,6 +108,7 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "operation": "train_lora",
   "adapter_name": "melix-dev-adapter",
   "dataset_uri": "/absolute/path/to/dataset",
+  "training_mode": "qlora",
   "target_repo": "melix/adapters/melix-dev-adapter",
   "target_modules": "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
   "num_layers": "8",
@@ -102,6 +118,8 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "learning_rate": "1e-5",
   "batch_size": "4",
   "epochs": "1",
+  "hf_valid_split": "test_sft",
+  "derived_model_alias": "melix-qwen35-acceptance",
   "response_only": "true",
   "gradient_checkpointing": "false",
   "mask_prompt": "true",
@@ -117,6 +135,7 @@ swift run melix lora train \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter \
+  --training-mode qlora \
   --rank 16 \
   --alpha 32 \
   --dropout 0.1 \
@@ -131,16 +150,20 @@ swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path databricks/databricks-dolly-15k \
   --hf-train-split train \
+  --hf-valid-split validation \
   --prompt-feature instruction \
   --completion-feature response \
   --adapter-name melix-dolly \
-  --target-repo melix/adapters/melix-dolly
+  --target-repo melix/adapters/melix-dolly \
+  --training-mode lora
 ```
 
 Expected training behavior:
 
 - dataset validation runs before backend execution
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
+- Melix supports both `lora` and `qlora` through the same `train_lora` surface
+- if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
 - Melix expands compact target modules into family-specific module paths
 - Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
@@ -153,7 +176,9 @@ Trigger `RunModelOperation(activate_adapter)` with the adapter manifest path ret
 ```json
 {
   "operation": "activate_adapter",
-  "artifact_path": "/absolute/path/to/train_lora.adapter.json"
+  "artifact_path": "/absolute/path/to/train_lora.adapter.json",
+  "activation_mode": "adapter_backed_runtime",
+  "derived_model_alias": "melix-qwen35-acceptance"
 }
 ```
 
@@ -163,13 +188,15 @@ Equivalent CLI example:
 swift run melix lora activate \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --activation-mode adapter_backed_runtime \
   --alias melix-qwen35-acceptance
 ```
 
 Expected activation behavior:
 
 - Melix validates adapter compatibility against the base model
-- v1 activation defaults to `fused_derived_model`
+- `fused_derived_model` remains the default when `--activation-mode` is omitted
+- `adapter_backed_runtime` is a supported first-class activation mode for keeping adapter artifacts attached to the runtime instead of materializing a fused local model
 - the completed artifact is `activate_adapter.derived_model.json` with schema `melix.derived_text_model.v1` under `<jobs_root>/activate_adapter/<job_id>/`
 - the result includes `derived_model_id`, `derived_model_path`, `activation_duration_ms`, and `adapter_set_hash`
 - the activated model is registered into the control-plane catalog as a text model
@@ -179,7 +206,7 @@ Expected activation behavior:
 Confirm the activation result before using the model for traffic:
 
 1. inspect the activation manifest and confirm `schema_version == "melix.derived_text_model.v1"`
-2. confirm `activation_mode == "fused_derived_model"`
+2. confirm `activation_mode` matches the requested mode, either `fused_derived_model` or `adapter_backed_runtime`
 3. confirm `melix.adapter_set_hash` is present and differs from incompatible adapters
 4. load the derived model through the existing text runtime path
 5. compare one controlled prompt against the base model and verify the derived model behavior changes in the expected direction
@@ -240,13 +267,26 @@ Inspect:
 
 Remove:
 
-1. unload the derived model if it is currently resident
-2. remove the local `derived_model_path` directory
-3. refresh the control-plane model catalog or restart the local stack so the removed derived model is no longer discoverable
+```bash
+swift run melix lora remove-derived \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --derived-model-id melix-qwen35-acceptance
+```
 
-v1 note:
+Equivalent manifest-targeted removal:
 
-- Melix does not yet expose a dedicated `remove_derived_model` operation, so derived-model removal is local filesystem cleanup plus catalog refresh or restart
+```bash
+swift run melix lora remove-derived \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --manifest-path /absolute/path/to/activate_adapter.derived_model.json
+```
+
+Expected removal behavior:
+
+- Melix unloads the derived model if it is still resident
+- Melix removes product-owned derived-model artifacts
+- Melix refreshes registry state and prunes the removed derived model from the local catalog
+- invalid remove requests fail with typed guard rails instead of falling back to manual filesystem cleanup
 
 ## Verification
 
@@ -256,4 +296,8 @@ swift test --enable-code-coverage --filter MelixCLITests
 swift test --package-path services/control-plane-swift --filter executeRegistersActivatedDerivedModelsIntoTheCatalog
 swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests
 swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_cli_smoke.py --json
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_window_smoke.py --json
 ```

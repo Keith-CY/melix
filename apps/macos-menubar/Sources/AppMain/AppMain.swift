@@ -216,8 +216,7 @@ public final class MelixMenuBarBootstrap {
         melixHome: MelixHome = MelixHome(),
         operatorSessionStore: (any OperatorSessionStoring)? = nil,
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
-        operatorCommandEnvironment: [String: String]? = nil,
-        operatorCommandRunner: (any MelixOperatorCommandRunning)? = nil,
+        operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
@@ -245,14 +244,13 @@ public final class MelixMenuBarBootstrap {
         }
     ) {
         let resolvedOperatorSessionStore = operatorSessionStore ?? OperatorSessionStore(melixHome: melixHome)
-        let seamRunner = MelixCLIRunner(
-            client: client,
-            operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
-        )
-        let resolvedOperatorCommandEnvironment = operatorCommandEnvironment ?? ProcessInfo.processInfo.environment
-        let resolvedOperatorCommandRunner = operatorCommandRunner ?? MelixCLISubprocessRunner(
-            environment: resolvedOperatorCommandEnvironment,
-            fallbackRunner: seamRunner
+        let resolvedOperatorCommandRunner = operatorCommandRunner ?? (
+            cliWorkflowRunner == nil
+                ? MelixCLIRunner(
+                    client: client,
+                    operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+                )
+                : nil
         )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
@@ -327,19 +325,12 @@ public final class MelixMenuBarBootstrap {
             environment: processEnvironment,
             processExecutor: cliProcessExecutor
         )
-        var operatorCommandEnvironment = processEnvironment
-        if operatorCommandEnvironment["MELIX_REPO_ROOT"]?.isEmpty != false {
-            operatorCommandEnvironment["MELIX_REPO_ROOT"] = environment.repoRoot
-        }
-        operatorCommandEnvironment["MELIX_CLI"] = environment.cliExecutablePath
-        operatorCommandEnvironment["MELIX_CLI_EXECUTABLE"] = environment.cliExecutablePath
         return MelixMenuBarBootstrap(
             client: localClient,
             startupSurface: environment.startupSurface,
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
             cliWorkflowRunner: cliWorkflowRunner,
-            operatorCommandEnvironment: operatorCommandEnvironment,
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )
@@ -351,6 +342,44 @@ public final class MelixMenuBarBootstrap {
         live(
             environment: MenuBarBootstrapEnvironment(environment: ProcessInfo.processInfo.environment),
             terminationHandler: terminationHandler
+        )
+    }
+
+    static func liveCLIRunnerBaseCommand(
+        environment: [String: String],
+        repoRoot: String
+    ) -> [String] {
+        if let publicCLIPath = environment["MELIX_PUBLIC_CLI_PATH"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           publicCLIPath.isEmpty == false {
+            return [publicCLIPath]
+        }
+        return [
+            "/usr/bin/env",
+            "swift",
+            "run",
+            "--package-path",
+            repoRoot,
+            "melix",
+        ]
+    }
+
+    private static func liveCLIRunner(
+        client: any ControlPlaneXPCClient,
+        melixHome: MelixHome,
+        repoRoot: String,
+        environment: [String: String]
+    ) -> MelixCLIRunner {
+        let executor = MelixCLIProcessExecutor(
+            baseCommand: liveCLIRunnerBaseCommand(environment: environment, repoRoot: repoRoot),
+            environment: environment,
+            workingDirectory: repoRoot
+        )
+        return MelixCLIRunner(
+            client: client,
+            environment: environment,
+            operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome),
+            commandExecutor: executor.run
         )
     }
 }
@@ -366,23 +395,14 @@ struct MenuBarBootstrapEnvironment {
     let runtimeDirectory: String?
 
     init(environment: [String: String]) {
-        let explicitCLI = environment["MELIX_CLI"].flatMap { value in
-            value.isEmpty ? nil : value
-        }
-        let explicitCLIExecutable = environment["MELIX_CLI_EXECUTABLE"].flatMap { value in
-            value.isEmpty ? nil : value
-        }
         if let repoRoot = environment["MELIX_REPO_ROOT"], !repoRoot.isEmpty {
             self.repoRoot = repoRoot
         } else {
             self.repoRoot = MenuBarBootstrapEnvironment.inferRepoRoot()
         }
-        self.cliExecutablePath =
-            explicitCLI
-            ?? explicitCLIExecutable
-            ?? MenuBarBootstrapEnvironment.inferCLIExecutablePath(
-                repoRoot: self.repoRoot
-            )
+        self.cliExecutablePath = environment["MELIX_CLI"] ?? MenuBarBootstrapEnvironment.inferCLIExecutablePath(
+            repoRoot: self.repoRoot
+        )
         self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
@@ -411,7 +431,7 @@ struct MenuBarBootstrapEnvironment {
             .path
     }
 
-    static func inferCLIExecutablePath(repoRoot: String) -> String {
+    private static func inferCLIExecutablePath(repoRoot: String) -> String {
         let repoURL = URL(fileURLWithPath: repoRoot)
         let candidates = [
             repoURL.appendingPathComponent(".build/arm64-apple-macosx/debug/melix").path,

@@ -15,9 +15,9 @@ let package = Package(
         .package(path: "../../packages/protocol/swift"),
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.0.0"),
         .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.6.1"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm/", .upToNextMinor(from: "2.31.3")),
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
-        .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.2.0")),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm/", .upToNextMinor(from: "2.29.1")),
+        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.29.1")),
+        .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.1.6")),
     ],
     targets: [
         .target(
@@ -27,7 +27,6 @@ let package = Package(
                 .product(name: "GRPCCore", package: "grpc-swift-2"),
                 .product(name: "GRPCNIOTransportHTTP2Posix", package: "grpc-swift-nio-transport"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
             ],
             path: "Sources/Core"
         ),
@@ -46,15 +45,6 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
             path: "Tests/CoreTests"
-        ),
-        .testTarget(
-            name: "MelixTextWorkerRuntimeLinkageTests",
-            dependencies: [
-                "Bootstrap",
-                "MelixTextWorkerCore",
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-            ],
-            path: "Tests/RuntimeLinkageTests"
         ),
     ]
 )

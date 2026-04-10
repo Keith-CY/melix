@@ -24,13 +24,6 @@ This contract does not define:
 - one-command combined benchmark plus evaluation runs
 - leaderboard or community-submission APIs
 
-## Phase 1 Acceptance Boundary
-
-- Phase 1 acceptance model: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` serves as the canonical baseline for all validation in this phase.
-- The Phase 1 Window UI surface is limited to `Tools -> Diagnostics -> Benchmark`, `Tools -> Diagnostics -> Benchmark Matrix`, and `Tools -> Diagnostics -> Evaluation`.
-- Phase 1 explicitly excludes the independent comparison window and the release-gate window from this acceptance boundary.
-- The canonical Phase 1 CLI acceptance command suite (positive and negative) is defined in `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under `Phase 1 Canonical CLI Acceptance Suite`.
-
 ## Product Split
 
 ### Performance Benchmarking

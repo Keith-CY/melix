@@ -12,6 +12,7 @@ struct DesktopPolishSmokeTests {
     @Test("desktop polish smoke emits canonical metrics")
     @MainActor
     func desktopPolishSmokeEmitsCanonicalMetrics() async throws {
+        let smoothedAssistantText = "Assistant response with enough characters to require multiple presentation flushes before completion."
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-desktop-polish-smoke-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -59,10 +60,10 @@ struct DesktopPolishSmokeTests {
         await client.configureScheduledChatEvents([
             .init(delay: .zero, event: .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0)),
             .init(delay: .zero, event: .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5)),
-            .init(delay: .zero, event: .tokenDelta("Assistant response")),
+            .init(delay: .zero, event: .tokenDelta(smoothedAssistantText)),
             .init(delay: .milliseconds(200), event: .completed(
                 finishReason: "stop",
-                assistantText: "Assistant response",
+                assistantText: smoothedAssistantText,
                 reasoningText: ""
             )),
         ])
@@ -98,7 +99,7 @@ struct DesktopPolishSmokeTests {
 
         try await waitForDesktopPolishCondition("chat smoothing should present a partial assistant row") {
             viewModel.chatTranscript.contains { entry in
-                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != "Assistant response"
+                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != smoothedAssistantText
             }
         }
         await submitTask.value
@@ -190,33 +191,9 @@ struct DesktopPolishSmokeTests {
 
 @MainActor
 private func groundedSurfaceCount(for viewModel: RuntimeViewModel) -> Int {
-    let foundation = viewModel.desktopFoundationState
-    let surfaceChecks: [(DesktopSurface, Bool)] = [
-        (.chat, hostedDesktopPolishViewHasSubviews(DesktopChatTabView(viewModel: viewModel))),
-        (.image, hostedDesktopPolishViewHasSubviews(DesktopImageTabView(viewModel: viewModel))),
-        (
-            .server,
-            hostedDesktopPolishViewHasSubviews(
-                DesktopServerGatewayAccessSummaryView(session: makeDesktopPolishServerSession())
-            )
-        ),
-        (.tools, hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel))),
-        (
-            .api,
-            hostedDesktopPolishViewHasSubviews(
-                DesktopAPIWorkspaceView(
-                    viewModel: viewModel,
-                    foundation: foundation,
-                    initialSection: .quickStarts
-                )
-            )
-        ),
-    ]
-
-    return surfaceChecks.reduce(into: 0) { count, candidate in
-        let (surface, isGrounded) = candidate
+    DesktopSurface.allCases.reduce(into: 0) { count, surface in
         viewModel.selectSurface(surface)
-        if isGrounded {
+        if hostedDesktopPolishViewHasSubviews(DesktopWorkspaceShellView(viewModel: viewModel)) {
             count += 1
         }
     }

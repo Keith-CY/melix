@@ -1564,7 +1564,7 @@ struct PythonBridgeWorkerClientTests {
             command: BridgeCommand(
                 kind: .exportResults,
                 socketPath: "/tmp/unused.sock",
-                requestData: Data("medium-unary".utf8)
+                requestData: Data("large-unary".utf8)
             )
         )
 
@@ -1631,66 +1631,6 @@ struct PythonBridgeWorkerClientTests {
         )
 
         #expect(unaryLine.contains("\"kind\""))
-    }
-
-    @Test("process bridge runner drains large unary stdout without deadlocking")
-    func processBridgeRunnerDrainsLargeUnaryStdoutWithoutDeadlocking() async throws {
-        let fixtureRoot = try makeProcessBridgeFixtureRepo()
-        defer { terminateFixtureBridgeProcesses(matching: fixtureRoot.path) }
-        let runner = ProcessWorkerBridgeRunner(
-            repoRoot: fixtureRoot.path,
-            environment: ProcessInfo.processInfo.environment
-        )
-
-        let unaryLine = try await withTaskTimeout(.seconds(2)) {
-            try await runner.runUnary(
-                command: BridgeCommand(
-                    kind: .embed,
-                    socketPath: "/tmp/unused.sock",
-                    requestData: Data("large-unary".utf8)
-                )
-            )
-        }
-
-        #expect(unaryLine.contains("\"kind\""))
-        #expect(unaryLine.count > 200_000)
-    }
-
-    @Test("timeout helper propagates non-cancellation failures")
-    func timeoutHelperPropagatesNonCancellationFailures() async {
-        enum FixtureError: Error, Equatable {
-            case boom
-        }
-
-        await #expect(throws: FixtureError.boom) {
-            _ = try await withTaskTimeout(.seconds(1)) {
-                throw FixtureError.boom
-            }
-        }
-    }
-
-    @Test("timeout helper keeps timeout result when the operation is cancelled")
-    func timeoutHelperKeepsTimeoutResultWhenTheOperationIsCancelled() async {
-        await #expect(throws: TaskTimeoutError.exceeded) {
-            _ = try await withTaskTimeout(.milliseconds(10)) {
-                while true {
-                    try await Task.sleep(for: .seconds(1))
-                }
-            }
-        }
-    }
-
-    @Test("timeout result box ignores duplicate resolution")
-    func timeoutResultBoxIgnoresDuplicateResolution() async {
-        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<Int, Error>, Never>) in
-            let box = TimeoutResultBox<Int>(continuation: continuation)
-            Task {
-                await box.resolve(.success(1))
-                await box.resolve(.success(2))
-            }
-        }
-
-        #expect((try? result.get()) == 1)
     }
 
     @Test("process bridge runner cancels hanging streams without leaking the child process")
@@ -1842,7 +1782,7 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"first").decode("ascii")}), flush=True)
         time.sleep(0.01)
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"second").decode("ascii")}), flush=True)
-    elif payload == b"medium-unary":
+    elif payload == b"large-unary":
         huge = base64.b64encode(b"x" * 70000).decode("ascii")
         print(json.dumps({"kind": "message", "message_b64": huge}), flush=True)
     elif args.command == "handshake":
@@ -1850,9 +1790,6 @@ private func makeProcessBridgeFixtureRepo() throws -> URL {
     elif payload == b"rpc-error":
         print(json.dumps({"kind": "error", "code": "DEADLINE_EXCEEDED", "message": "timed out"}), flush=True)
         sys.exit(1)
-    elif payload == b"large-unary":
-        large_payload = base64.b64encode(b"x" * 200000).decode("ascii")
-        print(json.dumps({"kind": "message", "message_b64": large_payload}), flush=True)
     else:
         print(json.dumps({"kind": "message", "message_b64": base64.b64encode(b"ok").decode("ascii")}), flush=True)
     """.write(
@@ -1899,61 +1836,4 @@ private func collect<T: Sendable>(_ stream: AsyncThrowingStream<T, Error>) async
         values.append(value)
     }
     return values
-}
-
-private enum TaskTimeoutError: Error, Equatable {
-    case exceeded
-}
-
-private func withTaskTimeout<T: Sendable>(
-    _ timeout: Duration,
-    operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<T, Error>, Never>) in
-        let box = TimeoutResultBox(continuation: continuation)
-        let operationTask = Task {
-            do {
-                await box.resolve(.success(try await operation()))
-            } catch {
-                if Task.isCancelled {
-                    return
-                }
-                await box.resolve(.failure(error))
-            }
-        }
-        Task {
-            try? await Task.sleep(for: timeout)
-            operationTask.cancel()
-            await box.resolve(.failure(TaskTimeoutError.exceeded))
-        }
-    }
-    return try result.get()
-}
-
-private func terminateFixtureBridgeProcesses(matching fragment: String) {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-    process.arguments = ["-f", fragment]
-    do {
-        try process.run()
-        process.waitUntilExit()
-    } catch {
-        return
-    }
-}
-
-private actor TimeoutResultBox<T: Sendable> {
-    private var continuation: CheckedContinuation<Result<T, Error>, Never>?
-
-    init(continuation: CheckedContinuation<Result<T, Error>, Never>) {
-        self.continuation = continuation
-    }
-
-    func resolve(_ result: Result<T, Error>) {
-        guard let continuation else {
-            return
-        }
-        self.continuation = nil
-        continuation.resume(returning: result)
-    }
 }

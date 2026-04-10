@@ -1,6 +1,8 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2Posix
+import NIOCore
+import NIOPosix
 
 import MelixWorkerProtocol
 
@@ -137,7 +139,20 @@ public struct SwiftTextWorkerClient:
 }
 
 public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
-    public init() {}
+    private let makeEventLoopGroup: @Sendable () -> MultiThreadedEventLoopGroup
+    private let shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
+
+    public init(
+        makeEventLoopGroup: @escaping @Sendable () -> MultiThreadedEventLoopGroup = {
+            MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        },
+        shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void = { group in
+            try await group.shutdownGracefully()
+        }
+    ) {
+        self.makeEventLoopGroup = makeEventLoopGroup
+        self.shutdownEventLoopGroup = shutdownEventLoopGroup
+    }
 
     public func handshake(
         socketPath: String,
@@ -268,11 +283,13 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
             Melix_Worker_V1_CacheService.Client<HTTP2ClientTransport.Posix>
         ) async throws -> Result
     ) async throws -> Result {
+        let eventLoopGroup = makeEventLoopGroup()
         do {
-            return try await withGRPCClient(
+            let result = try await withGRPCClient(
                 transport: .http2NIOPosix(
                     target: .unixDomainSocket(path: socketPath),
-                    transportSecurity: .plaintext
+                    transportSecurity: .plaintext,
+                    eventLoopGroup: eventLoopGroup
                 )
             ) { client in
                 let runtimeClient = Melix_Worker_V1_RuntimeService.Client(wrapping: client)
@@ -280,7 +297,10 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
                 let cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
                 return try await operation(runtimeClient, inferenceClient, cacheClient)
             }
+            try await shutdownEventLoopGroup(eventLoopGroup)
+            return result
         } catch {
+            try? await shutdownEventLoopGroup(eventLoopGroup)
             throw WorkerClientError.unavailable
         }
     }

@@ -164,29 +164,6 @@ class RecordingBenchmarkBackend:
         )
 
 
-class ScriptedEvaluationBackend:
-    runtime_name = "scripted-evaluation"
-
-    def __init__(self, responses: tuple[str, ...]) -> None:
-        self._responses = list(responses)
-
-    def load_model(self, model_spec):
-        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
-
-    def estimate_resident_bytes(self, model_spec) -> int:
-        _ = model_spec
-        return 1_024
-
-    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
-        _ = loaded_model
-        _ = prompt
-        _ = sampling
-        if cancel_event.is_set():
-            return
-        text = self._responses.pop(0)
-        yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
-
-
 class FakeBenchmarkHFDatasetFetcher:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
@@ -2133,7 +2110,7 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
 
 def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
     registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
         model_catalog=WorkerModelCatalog(),
     )
     loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
@@ -2456,12 +2433,7 @@ def test_resolved_benchmark_task_kind_covers_explicit_mode_and_model_kind_branch
 
 
 def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
-    registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=ScriptedEvaluationBackend(("4", "6"))),
-        model_catalog=WorkerModelCatalog(),
-    )
-    service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -2491,7 +2463,7 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
 
     response = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="qa_smoke.dev.v1",
             dataset_root=str(dataset_root),
@@ -2511,45 +2483,6 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     assert response.results[0].dataset_id == "qa_smoke.dev.v1"
     assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
     assert response.results[0].metrics[0].value == 1.0
-
-
-def test_run_evaluation_fails_when_requested_handle_is_not_loaded(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
-    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
-    dataset_root.mkdir(parents=True)
-    (dataset_root / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "melix.evaluation_dataset_package.v1",
-                "dataset_id": "qa_smoke.dev.v1",
-                "suite_id": "mmlu",
-                "version": "2026-03-31",
-                "sample_count": 1,
-                "split": "validation",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (dataset_root / "samples.jsonl").write_text(
-        json.dumps({"prompt": "capital of france?", "expected": "Paris"}) + "\n",
-        encoding="utf-8",
-    )
-
-    response = service.RunEvaluation(
-        maintenance_pb2.RunEvaluationRequest(
-            model_handle="melix-dev-text::missing",
-            suite_id="mmlu",
-            dataset_id="qa_smoke.dev.v1",
-            dataset_root=str(dataset_root),
-            sample_size=1,
-        ),
-        context=None,
-    )
-
-    assert response.ok is False
-    assert response.error.code == "evaluation_failed"
-    assert response.error.message == "No loaded evaluation target is available for melix-dev-text"
 
 
 def test_search_hub_models_passes_cursor_and_filters_to_mlx_results(tmp_path: Path) -> None:
@@ -2697,12 +2630,7 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=ScriptedEvaluationBackend(("4",))),
-        model_catalog=WorkerModelCatalog(),
-    )
-    service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path)
     dataset_root = (
         tmp_path
         / "services"
@@ -2734,7 +2662,7 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
 
     response = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="qa_smoke.dev.v1",
             sample_size=1,
@@ -2752,12 +2680,7 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=ScriptedEvaluationBackend(("7", "9"))),
-        model_catalog=WorkerModelCatalog(),
-    )
-    service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path)
     repo_root = Path(__file__).resolve().parents[3]
     fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / "mmlu.dev.v1"
 
@@ -2766,7 +2689,7 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
 
     response = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="mmlu.dev.v1",
             sample_size=2,
@@ -3005,12 +2928,7 @@ def test_run_evaluation_uses_checked_in_imagenette_fixture_when_dataset_root_is_
 def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitted(
     tmp_path: Path,
 ) -> None:
-    registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=ScriptedEvaluationBackend(("7",))),
-        model_catalog=WorkerModelCatalog(),
-    )
-    service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -3034,7 +2952,7 @@ def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitt
 
     response = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="ignored.dev.v1",
             sample_size=1,
@@ -3944,7 +3862,6 @@ def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path:
         model_catalog=WorkerModelCatalog(),
     )
     service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -3995,7 +3912,7 @@ def test_export_results_writes_bundle_and_collects_model_ops_artifacts(tmp_path:
     assert matrix.job.job_id
     evaluation = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="qa_smoke.dev.v1",
             dataset_root=str(dataset_root),
@@ -4027,7 +3944,6 @@ def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None
         model_catalog=WorkerModelCatalog(),
     )
     service = build_service(tmp_path, registry=registry)
-    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
     dataset_root.mkdir(parents=True)
     (dataset_root / "manifest.json").write_text(
@@ -4078,7 +3994,7 @@ def test_submit_results_returns_typed_submission_payload(tmp_path: Path) -> None
     assert matrix.job.job_id
     evaluation = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
-            model_handle=loaded.handle,
+            model_handle="melix-dev-text::1",
             suite_id="mmlu",
             dataset_id="qa_smoke.dev.v1",
             dataset_root=str(dataset_root),

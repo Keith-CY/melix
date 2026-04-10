@@ -345,7 +345,9 @@ struct CoreUtilityTests {
         }
         await Task.yield()
 
-        let queuedSnapshot = await gate.snapshot()
+        let queuedSnapshot = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs.count == 2
+        }
         #expect(queuedSnapshot.queuedRequestIDs == ["req-cold-queued", "req-hot-queued"])
 
         await gate.release(requestID: "req-batch-1")
@@ -413,6 +415,33 @@ struct CoreUtilityTests {
             "background-image-edit",
         ])
     }
+}
+
+private func waitForAdmissionGateSnapshot(
+    _ gate: AdmissionGate,
+    attempts: Int = 50,
+    predicate: @escaping @Sendable (
+        (
+            activeRequestID: String?,
+            activeRequestIDs: [String],
+            activeCohortID: String?,
+            queuedRequestIDs: [String]
+        )
+    ) -> Bool
+) async -> (
+    activeRequestID: String?,
+    activeRequestIDs: [String],
+    activeCohortID: String?,
+    queuedRequestIDs: [String]
+) {
+    for _ in 0..<attempts {
+        let snapshot = await gate.snapshot()
+        if predicate(snapshot) {
+            return snapshot
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await gate.snapshot()
 }
 
 private struct StubWorkerClient: WorkerClient {

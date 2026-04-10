@@ -2742,7 +2742,13 @@ struct RuntimeViewModelTests {
     func startRecordsHandshakeFailure() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureErrors(handshake: MenuBarTestError(description: "handshake failed"))
-        let viewModel = RuntimeViewModel(client: client)
+        let viewModel = RuntimeViewModel(
+            client: client,
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: nil,
+                startupDiagnosticResponse: nil
+            )
+        )
 
         await viewModel.start()
 
@@ -5257,73 +5263,6 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
-    @Test("benchmark evaluation diagnostics rebuild state from subprocess-backed cli output")
-    @MainActor
-    func diagnosticsRebuildStateFromSubprocessBackedCLIOutput() async throws {
-        let directClient = FakeControlPlaneXPCClient()
-        await directClient.configureSnapshot(
-            makeSnapshot(
-                serverState: .serverReady,
-                models: [
-                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
-                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
-                ]
-            )
-        )
-        let fixtureBundle = try ControlPlaneBenchmarkExportBundle.decode(json: makeBenchmarkExportBundleJSON())
-        let temporaryRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-menubar-subprocess-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
-
-        let launcher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
-            try makePhase1SubprocessSuccessResponse(
-                arguments: arguments,
-                outputDirectory: temporaryRoot,
-                fixtureBundle: fixtureBundle
-            )
-        }
-        let runner = MelixCLISubprocessRunner(
-            environment: [
-                "MELIX_CLI_EXECUTABLE": "/tmp/melix-stub",
-                "MELIX_HOME": temporaryRoot.path,
-            ],
-            launcher: launcher
-        )
-        let viewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: runner
-        )
-
-        await viewModel.start()
-        viewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
-        viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
-        viewModel.selectedEvaluationModelID = "melix-dev-text-lora"
-        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-
-        await viewModel.runBench()
-        viewModel.selectedBenchmarkPresentationMode = .matrix
-        await viewModel.runBenchMatrix()
-        await viewModel.runEvaluation()
-
-        #expect(viewModel.lastBenchReport?.reportPath.contains("bench-report.md") == true)
-        #expect(viewModel.benchmarkHistory.isEmpty == false)
-        #expect(viewModel.benchmarkMatrixHistory.isEmpty == false)
-        #expect(viewModel.evaluationHistory.isEmpty == false)
-        #expect(viewModel.evaluationSamplePreview.isEmpty == false)
-        #expect(await directClient.recordedBenchRequests.isEmpty)
-        #expect(await directClient.recordedBenchMatrixRequests.isEmpty)
-        #expect(await directClient.recordedEvaluationRequests.isEmpty)
-
-        let recordedCommands = await launcher.snapshot().map { $0.arguments.joined(separator: " ") }
-        #expect(recordedCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora") }))
-        #expect(recordedCommands.contains(where: { $0.hasPrefix("bench matrix run --model-id melix-dev-text-lora") }))
-        #expect(recordedCommands.contains(where: { $0.hasPrefix("eval run --model-id melix-dev-text-lora") }))
-        #expect(recordedCommands.contains("bench list --json"))
-        #expect(recordedCommands.contains("bench matrix list --json"))
-        #expect(recordedCommands.contains("eval list --json"))
-    }
-
     @Test("cli workflow failures surface typed failure state into the runtime view model")
     @MainActor
     func cliWorkflowFailuresSurfaceTypedFailureStateIntoTheRuntimeViewModel() async throws {
@@ -5584,132 +5523,6 @@ struct RuntimeViewModelTests {
         })
     }
 
-    @Test("subprocess-backed diagnostics surface cli failure and malformed decode output")
-    @MainActor
-    func diagnosticsSurfaceSubprocessFailureAndMalformedDecodeOutput() async throws {
-        let directClient = FakeControlPlaneXPCClient()
-        await directClient.configureSnapshot(
-            makeSnapshot(
-                serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)]
-            )
-        )
-
-        let failureLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
-            if Array(arguments.prefix(2)) == ["bench", "run"] {
-                return MelixCLIProcessResult(stdout: "", stderr: "benchmark exploded", exitStatus: 17)
-            }
-            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
-        }
-        let failureRunner = MelixCLISubprocessRunner(
-            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
-            launcher: failureLauncher
-        )
-        let failureViewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: failureRunner
-        )
-
-        await failureViewModel.start()
-        failureViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
-        failureViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        await failureViewModel.runBench()
-
-        #expect(failureViewModel.lastError == "melix subprocess failed: benchmark exploded")
-
-        let malformedLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
-            if Array(arguments.prefix(2)) == ["bench", "run"] {
-                return MelixCLIProcessResult(stdout: "{not-json", stderr: "", exitStatus: 0)
-            }
-            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
-        }
-        let malformedRunner = MelixCLISubprocessRunner(
-            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
-            launcher: malformedLauncher
-        )
-        let malformedViewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: malformedRunner
-        )
-
-        await malformedViewModel.start()
-        malformedViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
-        malformedViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        await malformedViewModel.runBench()
-
-        let malformedError = malformedViewModel.lastError ?? ""
-        let malformedCommands = await malformedLauncher.snapshot().map { $0.arguments.joined(separator: " ") }
-        #expect(malformedError.isEmpty == false)
-        #expect(malformedCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora --suite smoke") }))
-    }
-
-    @Test("production subprocess proof covers successful invocation mapping and surfaced failures")
-    @MainActor
-    func productionSubprocessProofCoversSuccessfulInvocationAndSurfacedFailures() async throws {
-        let directClient = FakeControlPlaneXPCClient()
-        await directClient.configureSnapshot(
-            makeSnapshot(
-                serverState: .serverReady,
-                models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)]
-            )
-        )
-        let fixtureBundle = try ControlPlaneBenchmarkExportBundle.decode(json: makeBenchmarkExportBundleJSON())
-        let temporaryRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-menubar-subprocess-proof-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
-
-        let successLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
-            try makePhase1SubprocessSuccessResponse(
-                arguments: arguments,
-                outputDirectory: temporaryRoot,
-                fixtureBundle: fixtureBundle
-            )
-        }
-        let successRunner = MelixCLISubprocessRunner(
-            environment: [
-                "MELIX_CLI_EXECUTABLE": "/tmp/melix-stub",
-                "MELIX_HOME": temporaryRoot.path,
-            ],
-            launcher: successLauncher
-        )
-        let successViewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: successRunner
-        )
-
-        await successViewModel.start()
-        successViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
-        successViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        await successViewModel.runBench()
-
-        let successCommands = await successLauncher.snapshot().map { $0.arguments.joined(separator: " ") }
-        #expect(successCommands.contains(where: { $0.hasPrefix("bench run --model-id melix-dev-text-lora --suite smoke") }))
-        #expect(successViewModel.lastError == nil)
-
-        let failureLauncher = TestScriptedMelixCLIProcessLauncher { arguments, _ in
-            if Array(arguments.prefix(2)) == ["bench", "run"] {
-                return MelixCLIProcessResult(stdout: "", stderr: "benchmark exploded", exitStatus: 1)
-            }
-            return MelixCLIProcessResult(stdout: "[]", stderr: "", exitStatus: 0)
-        }
-        let failureRunner = MelixCLISubprocessRunner(
-            environment: ["MELIX_CLI_EXECUTABLE": "/tmp/melix-stub"],
-            launcher: failureLauncher
-        )
-        let failureViewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: failureRunner
-        )
-
-        await failureViewModel.start()
-        failureViewModel.selectedBenchmarkModelID = "melix-dev-text-lora"
-        failureViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        await failureViewModel.runBench()
-
-        #expect(failureViewModel.lastError == "melix subprocess failed: benchmark exploded")
-    }
-
     @Test("evaluation configuration forwards few shot seed scoring mode and code execution policy controls")
     @MainActor
     func evaluationConfigurationForwardsCanonicalControls() async throws {
@@ -5855,6 +5668,8 @@ struct RuntimeViewModelTests {
         viewModel.loraMaskPrompt = true
         viewModel.loraGradientCheckpointing = true
         viewModel.loraDerivedModelAlias = "melix-dev-text-ultrachat"
+        viewModel.loraTrainingMode = .qlora
+        viewModel.loraActivationMode = .adapterBackedRuntime
 
         await viewModel.trainPrimaryModel()
         let trainRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "train_lora" }))
@@ -5884,12 +5699,162 @@ struct RuntimeViewModelTests {
         #expect(trainRequest.ext["mask_prompt"] == "true")
         #expect(trainRequest.ext["gradient_checkpointing"] == "true")
         #expect(trainRequest.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
+        #expect(trainRequest.ext["training_mode"] == "qlora")
 
         await viewModel.activateLatestAdapter()
         let activateRequest = try #require(await client.recordedModelOperationRequests.first(where: { $0.operation == "activate_adapter" }))
         #expect(activateRequest.modelID == "melix-dev-text")
         #expect(activateRequest.ext["artifact_path"] == "/tmp/melix-train-lora/train_lora.adapter.json")
         #expect(activateRequest.ext["derived_model_alias"] == "melix-dev-text-ultrachat")
+        #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
+    }
+
+    @Test("lora removal and compare workflows dispatch configured modes through the shared runner seam")
+    @MainActor
+    func loraRemovalAndCompareDispatchConfiguredModesThroughSharedRunnerSeam() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-runner-phase4-lora-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await runnerClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "remove_derived_model",
+                outputPath: "/tmp/melix-remove/remove_derived_model.json",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "remove_derived_model"
+        )
+        await runnerClient.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/hf-demo-adapter",
+                    activationStatus: "activated",
+                    derivedModelID: "melix-dev-text-lora",
+                    derivedModelPath: "/tmp/melix-derived/model"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await runnerClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        let operatorStore = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: operatorStore
+        )
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorCommandRunner: runner
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.selectedLoraModelID = "melix-dev-text"
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraHFDatasetPath = "HuggingFaceH4/ultrachat_200k"
+        viewModel.loraHFTrainSplit = "train_sft"
+        viewModel.loraChatFeature = "messages"
+        viewModel.loraAdapterName = "hf-demo-adapter"
+        viewModel.loraDerivedModelAlias = "melix-dev-text-ultrachat"
+        viewModel.loraTrainingMode = .qlora
+        viewModel.loraActivationMode = .adapterBackedRuntime
+        await viewModel.trainPrimaryModel()
+        await viewModel.activateLatestAdapter()
+        viewModel.selectedEvaluationTargetMode = .catalogModel
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationSampleSize = "6"
+        viewModel.evaluationBatchFactor = "2"
+        viewModel.evaluationFewShot = "1"
+        viewModel.evaluationSeed = "9"
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.evaluationCodeExecPolicy = "sandboxed"
+        await viewModel.runEvaluation()
+        await viewModel.removeSelectedDerivedModel()
+
+        let runnerModelOps = await runnerClient.recordedModelOperationRequests
+        let trainRequest = try #require(runnerModelOps.first(where: { $0.operation == "train_lora" }))
+        let activateRequest = try #require(runnerModelOps.first(where: { $0.operation == "activate_adapter" }))
+        let removeRequest = try #require(runnerModelOps.first(where: { $0.operation == "remove_derived_model" }))
+        let evaluationRequest = try #require(await runnerClient.recordedEvaluationRequests.last)
+
+        #expect(await directClient.recordedModelOperationRequests.isEmpty)
+        #expect(await directClient.recordedEvaluationRequests.isEmpty)
+        #expect(trainRequest.ext["training_mode"] == "qlora")
+        #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
+        #expect(removeRequest.ext["derived_model_id"] == "melix-dev-text-lora")
+        #expect(removeRequest.ext["manifest_path"] == nil)
+        #expect(evaluationRequest.parameters["compare_mode"] == "base_vs_targets")
+        #expect(evaluationRequest.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+        #expect(evaluationRequest.parameters["batch_factor"] == "2")
+        #expect(evaluationRequest.parameters["few_shot"] == "1")
+        #expect(evaluationRequest.parameters["seed"] == "9")
+        #expect(evaluationRequest.parameters["scoring_mode"] == "multiple_choice_accuracy")
+        #expect(evaluationRequest.parameters["code_exec_policy"] == "sandboxed")
+    }
+
+    @Test("lora remove and compare guard rails require concrete targets")
+    @MainActor
+    func loraRemoveAndCompareGuardRailsRequireConcreteTargets() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Select at least one compare target model before running Evaluation Compare.")
+
+        await viewModel.removeSelectedDerivedModel()
+        #expect(viewModel.lastError == "Select an activated adapter before removing its derived model.")
     }
 
     @Test("fetch model info surfaces OCR profile defaults from the active snapshot")

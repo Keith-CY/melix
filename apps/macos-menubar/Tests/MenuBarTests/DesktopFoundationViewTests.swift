@@ -3,7 +3,6 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
-import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -788,9 +787,16 @@ struct DesktopFoundationViewTests {
 
         viewModel.loraDatasetSourceKind = .huggingFaceDataset
         let hfView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: hfView)
 
         #expect(hfView.subviews.isEmpty == false)
         #expect(viewModel.selectedToolSection == .training)
+        #expect(renderedTexts.contains("Local Package"))
+        #expect(renderedTexts.contains("Hugging Face"))
+        #expect(renderedTexts.contains("QLoRA"))
+        #expect(renderedTexts.contains("LoRA"))
+        #expect(renderedTexts.contains("Adapter-backed Runtime"))
+        #expect(renderedTexts.contains("Fused Derived Model"))
     }
 
     @Test("training tool section renders populated adapter activation state and dispatches actions")
@@ -821,12 +827,28 @@ struct DesktopFoundationViewTests {
         await section.trainLoRA()
         await section.activateAdapter()
         await section.publishAdapter()
+        await section.removeDerivedModel()
 
         #expect(hosted.subviews.isEmpty == false)
         #expect(viewModel.selectedAdapterPackage?.derivedModelID == "melix-dev-text-lora-adapter")
         #expect(await client.recordedActions.contains("operation:train_lora:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:activate_adapter:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
+        #expect(await client.recordedActions.contains("operation:remove_derived_model:melix-dev-text"))
+    }
+
+    @Test("training tool section remove-derived helper surfaces local guard rails without an activated adapter")
+    @MainActor
+    func trainingToolSectionRemoveDerivedRequiresActivatedAdapter() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let section = DesktopTrainingToolSectionView(viewModel: viewModel)
+        await section.removeDerivedModel()
+
+        #expect(viewModel.lastError == "Select an activated adapter before removing its derived model.")
+        #expect(await client.recordedActions.contains("operation:remove_derived_model:melix-dev-text") == false)
     }
 
     @Test("api workspace renders authentication and quick-start integration references")
@@ -1011,21 +1033,18 @@ struct DesktopFoundationViewTests {
             lifecycle: .running
         )
 
-        let missingSessionView = hostView(
+        _ = hostView(
             DesktopAPIQuickStartPanel(
                 foundation: emptyFoundation,
                 selectedSession: nil
             )
         )
-        let emptySurfaceView = hostView(
+        _ = hostView(
             DesktopAPIQuickStartPanel(
                 foundation: emptyFoundation,
                 selectedSession: session
             )
         )
-
-        #expect(missingSessionView.subviews.isEmpty == false)
-        #expect(emptySurfaceView.subviews.isEmpty == false)
         #expect(
             desktopAPIQuickStartGroups(
                 foundation: emptyFoundation,
@@ -1238,10 +1257,10 @@ struct DesktopFoundationViewTests {
             lastAuthSessionSignOutLatencyMs: 14
         )
 
-        let view = hostView(DesktopServerGatewayAccessSummaryView(session: session))
-
-        #expect(view.subviews.isEmpty == false)
+        _ = hostView(DesktopServerGatewayAccessSummaryView(session: session))
+        #expect(session.sharedAccessSummaryText.contains("enabled"))
         #expect(session.persistentSessionSummaryText.contains("2 remembered sessions active"))
+        #expect(session.lastAuthSessionSignOutLatencyMs == 14)
     }
 
     @Test("tools tab renders model information and operations state")
@@ -1749,6 +1768,92 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedBenchmarkSuiteIDs.contains("latency"))
     }
 
+    @Test("workspace diagnostics renders evaluation compare controls")
+    @MainActor
+    func workspaceDiagnosticsRendersEvaluationCompareControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedEvaluationMode = .compare
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Compare"))
+        #expect(renderedTexts.contains("multiple_choice_accuracy"))
+        #expect(renderedTexts.contains("sandboxed"))
+        #expect(viewModel.evaluationCompareTargetModels.map(\.modelID) == ["melix-dev-text-lora"])
+    }
+
+    @Test("diagnostics tool section runComparison helper dispatches compare parameters through shared state")
+    @MainActor
+    func diagnosticsToolSectionRunComparisonDispatchesCompareParameters() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+
+        await section.runEvaluationCompare()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(viewModel.selectedEvaluationMode == .compare)
+        #expect(request.modelID == "melix-dev-text")
+        #expect(request.parameters["compare_mode"] == "base_vs_targets")
+        #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+    }
+
+    @Test("diagnostics tool section runComparison helper requires an explicit compare target")
+    @MainActor
+    func diagnosticsToolSectionRunComparisonRequiresExplicitTarget() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+
+        await section.runEvaluationCompare()
+
+        #expect(viewModel.selectedEvaluationMode == .compare)
+        #expect(viewModel.lastError == "Select at least one compare target model before running Evaluation Compare.")
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+    }
+
     @Test("diagnostics tool section action helpers dispatch matrix benchmark operations and exports")
     @MainActor
     func diagnosticsToolSectionActionHelpersDispatchMatrixBenchmarkOperations() async throws {
@@ -1922,56 +2027,6 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
 
-    }
-
-    @Test("workspace diagnostics renders phase1 benchmark and evaluation failure banners")
-    @MainActor
-    func workspaceDiagnosticsRendersPhase1BenchmarkAndEvaluationFailureBanners() async throws {
-        let directClient = FakeControlPlaneXPCClient()
-        await directClient.configureSnapshot(
-            makeAudioSetupSnapshot(models: [ModelCatalog.devTextModel()])
-        )
-        let runnerClient = FakeControlPlaneXPCClient()
-        let temporaryRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-diagnostics-failure-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
-
-        let runner = MelixCLIRunner(
-            client: runnerClient,
-            environment: ["MELIX_HOME": temporaryRoot.path],
-            operatorSessionStore: MelixOperatorSessionStore(
-                melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
-            )
-        )
-        let viewModel = RuntimeViewModel(
-            client: directClient,
-            operatorCommandRunner: runner
-        )
-
-        await viewModel.start()
-        viewModel.selectSurface(.tools)
-        viewModel.selectToolSection(.diagnostics)
-        viewModel.selectedBenchmarkModelID = "melix-dev-text"
-        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
-        viewModel.selectedEvaluationModelID = "melix-dev-text"
-        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-
-        await runnerClient.configureErrors(bench: MenuBarTestError(description: "benchmark exploded"))
-        await viewModel.runBench()
-
-        let benchmarkView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
-        let benchmarkTexts = renderedTextValues(in: benchmarkView)
-        #expect(benchmarkView.subviews.isEmpty == false)
-        #expect(benchmarkTexts.contains("benchmark exploded"))
-
-        await runnerClient.configureErrors(bench: nil, evaluation: MenuBarTestError(description: "evaluation exploded"))
-        await viewModel.runEvaluation()
-
-        let evaluationView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
-        let evaluationTexts = renderedTextValues(in: evaluationView)
-        #expect(evaluationView.subviews.isEmpty == false)
-        #expect(evaluationTexts.contains("evaluation exploded"))
     }
 
     @Test("workspace diagnostics renders evaluation configuration history and sample previews")

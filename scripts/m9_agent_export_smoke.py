@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 def run_swift_smoke(repo_root: Path) -> dict[str, float]:
+    env = os.environ.copy()
+    env["HOME"] = str(repo_root / ".swift-home" / "macos-menubar")
+    env["CLANG_MODULE_CACHE_PATH"] = str(
+        repo_root / ".build" / "ModuleCache.noindex" / "macos-menubar"
+    )
     command = [
+        "xcrun",
         "swift",
         "test",
         "--package-path",
@@ -24,6 +31,7 @@ def run_swift_smoke(repo_root: Path) -> dict[str, float]:
         check=True,
         capture_output=True,
         text=True,
+        env=env,
     )
 
     for stream in (completed.stdout, completed.stderr):

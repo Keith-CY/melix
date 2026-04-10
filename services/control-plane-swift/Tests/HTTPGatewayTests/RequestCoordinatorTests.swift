@@ -1524,10 +1524,23 @@ struct RequestCoordinatorTests {
 
         let snapshot = await schedulerReadModel.snapshot()
         let metrics = await metricsStore.snapshot()
+        let decodeRequestIDs = await waitForDecodeRequests(
+            workerClient: workerClient,
+            requestIDs: [
+                "req-batch-override-1",
+                "req-batch-override-2",
+                "req-batch-override-3",
+            ]
+        )
 
         #expect(snapshot.activeRequests == 3)
         #expect(metrics.values["scheduler.continuous_batch_size"] == 3)
         #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(Set(decodeRequestIDs) == Set([
+            "req-batch-override-1",
+            "req-batch-override-2",
+            "req-batch-override-3",
+        ]))
 
         for requestID in ["req-batch-override-1", "req-batch-override-2", "req-batch-override-3"] {
             await workerClient.emitDecodeStarted(requestID: requestID, decodeHandle: "decode-\(requestID)")
@@ -1598,6 +1611,14 @@ struct RequestCoordinatorTests {
         #expect(queuedProgress?.phase == .requestQueued)
         #expect(snapshotBeforeRelease.activeRequests == 1)
         #expect(metricsBeforeRelease.values["scheduler.continuous_batch_eligible_rate"] == 0)
+        #expect(
+            Set(
+                await waitForDecodeRequests(
+                    workerClient: workerClient,
+                    requestIDs: ["req-batch-disabled-1"]
+                )
+            ).isSuperset(of: ["req-batch-disabled-1"])
+        )
 
         await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-1", decodeHandle: "decode-req-batch-disabled-1")
         await workerClient.emitToken(requestID: "req-batch-disabled-1", text: "one")
@@ -1612,6 +1633,14 @@ struct RequestCoordinatorTests {
             }
         }
         defer { consumer2.cancel() }
+        #expect(
+            Set(
+                await waitForDecodeRequests(
+                    workerClient: workerClient,
+                    requestIDs: ["req-batch-disabled-1", "req-batch-disabled-2"]
+                )
+            ).isSuperset(of: ["req-batch-disabled-1", "req-batch-disabled-2"])
+        )
 
         await workerClient.emitDecodeStarted(requestID: "req-batch-disabled-2", decodeHandle: "decode-req-batch-disabled-2")
         await workerClient.emitToken(requestID: "req-batch-disabled-2", text: "two")
@@ -2846,6 +2875,10 @@ private actor PhaseAwareWorkerClient:
         decodeRequests.last
     }
 
+    func decodeRequestIDs() -> [String] {
+        decodeRequests.map { $0.execution.id.requestID }
+    }
+
     func finishAborted(requestID: String) {
         guard let continuation = continuations.removeValue(forKey: requestID) else {
             return
@@ -3102,4 +3135,20 @@ private func waitForDecodeRequest(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return await workerClient.lastDecodeRequest()
+}
+
+private func waitForDecodeRequests(
+    workerClient: PhaseAwareWorkerClient,
+    requestIDs: [String],
+    attempts: Int = 100
+) async -> [String] {
+    let expected = Set(requestIDs)
+    for _ in 0..<attempts {
+        let observed = await workerClient.decodeRequestIDs()
+        if Set(observed).isSuperset(of: expected) {
+            return observed
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await workerClient.decodeRequestIDs()
 }

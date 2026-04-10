@@ -658,6 +658,60 @@ public enum RuntimeLoraDatasetSourceKind: String, CaseIterable, Identifiable, Se
     }
 }
 
+public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendable {
+    case lora = "lora"
+    case qlora = "qlora"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .lora:
+            return "LoRA"
+        case .qlora:
+            return "QLoRA"
+        }
+    }
+}
+
+public enum RuntimeLoraActivationMode: String, CaseIterable, Identifiable, Sendable {
+    case fusedDerivedModel = "fused_derived_model"
+    case adapterBackedRuntime = "adapter_backed_runtime"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .fusedDerivedModel:
+            return "Fused Derived Model"
+        case .adapterBackedRuntime:
+            return "Adapter-backed Runtime"
+        }
+    }
+}
+
+public enum RuntimeEvaluationMode: String, CaseIterable, Identifiable, Sendable {
+    case standard = "standard"
+    case compare = "compare"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .standard:
+            return "Standard"
+        case .compare:
+            return "Compare"
+        }
+    }
+}
+
 public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
     public let id: String
     public let adapterName: String
@@ -1192,8 +1246,12 @@ public final class RuntimeViewModel {
     public var evaluationScoringMode = "multiple_choice_accuracy"
     public var evaluationCodeExecPolicy = "sandboxed"
     public var evaluationHFRepoID = ""
+    public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
+    public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
+    public var loraTrainingMode: RuntimeLoraTrainingMode = .lora
+    public var loraActivationMode: RuntimeLoraActivationMode = .fusedDerivedModel
     public var loraDatasetURI = "datasets/melix-dev"
     public var loraHFDatasetPath = ""
     public var loraHFDatasetName = ""
@@ -1249,20 +1307,6 @@ public final class RuntimeViewModel {
 
     public var onStateChanged: (@MainActor @Sendable () -> Void)?
 
-    var operatorCommandRunnerTypeNameForTesting: String {
-        guard let operatorCommandRunner else {
-            return ""
-        }
-        return String(describing: type(of: operatorCommandRunner))
-    }
-
-    var operatorCommandRunnerExecutablePathForTesting: String {
-        guard let runner = operatorCommandRunner as? MelixCLISubprocessRunner else {
-            return ""
-        }
-        return runner.resolvedExecutablePathForTesting
-    }
-
     public var serveableModels: [RuntimeModelRow] {
         models.filter(\.isServeableServerModel)
     }
@@ -1271,7 +1315,7 @@ public final class RuntimeViewModel {
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
-    private let operatorCommandRunner: (any MelixOperatorCommandRunning)?
+    private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -1483,7 +1527,7 @@ public final class RuntimeViewModel {
         metrics: MenuBarMetricsStore = MenuBarMetricsStore(),
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
-        operatorCommandRunner: (any MelixOperatorCommandRunning)? = nil,
+        operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
@@ -1501,7 +1545,7 @@ public final class RuntimeViewModel {
     }
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
-        cliWorkflowRunner ?? (operatorCommandRunner as? any MelixCLIWorkflowRunning)
+        cliWorkflowRunner ?? operatorCommandRunner
     }
 
     deinit {
@@ -2501,6 +2545,13 @@ public final class RuntimeViewModel {
 
     public var evaluationModels: [RuntimeModelRow] {
         models.filter { $0.kind == "text" }
+    }
+
+    public var evaluationCompareTargetModels: [RuntimeModelRow] {
+        let baseModelID = selectedEvaluationTargetMode == .catalogModel ? resolvedEvaluationModelID() : ""
+        return evaluationModels.filter { model in
+            baseModelID.isEmpty || model.modelID != baseModelID
+        }
     }
 
     public var evaluationSuites: [RuntimeEvaluationSuiteOptionState] {
@@ -4089,9 +4140,39 @@ public final class RuntimeViewModel {
         if let alias = Self.normalizedOptionalString(loraDerivedModelAlias) {
             ext["derived_model_alias"] = alias
         }
+        ext["activation_mode"] = loraActivationMode.rawValue
         await runModelOperation(
             modelID: modelID,
             operation: "activate_adapter",
+            outputDir: "",
+            ext: ext,
+            refreshProductToolingState: true
+        )
+        await refreshDesktopFoundation()
+    }
+
+    public func removeSelectedDerivedModel() async {
+        let modelID = resolvedLoraModelID()
+        guard !modelID.isEmpty, let adapter = selectedAdapterPackage else {
+            recordLocalError("Select an activated adapter before removing its derived model.")
+            notifyStateChanged()
+            return
+        }
+
+        var ext: [String: String] = [:]
+        if let derivedModelID = Self.normalizedOptionalString(adapter.derivedModelID) {
+            ext["derived_model_id"] = derivedModelID
+        } else if let manifestPath = Self.normalizedOptionalString(adapter.outputPath) {
+            ext["manifest_path"] = manifestPath
+        } else {
+            recordLocalError("Select an activated adapter before removing its derived model.")
+            notifyStateChanged()
+            return
+        }
+
+        await runModelOperation(
+            modelID: modelID,
+            operation: "remove_derived_model",
             outputDir: "",
             ext: ext,
             refreshProductToolingState: true
@@ -4707,6 +4788,13 @@ public final class RuntimeViewModel {
             return
         }
 
+        let compareTargetModelIDs = selectedEvaluationCompareTargetModelIDs.sorted()
+        if selectedEvaluationMode == .compare, compareTargetModelIDs.isEmpty {
+            recordLocalError("Select at least one compare target model before running Evaluation Compare.")
+            notifyStateChanged()
+            return
+        }
+
         let startedAt = Date()
         if let cliWorkflowRunner {
             do {
@@ -4719,7 +4807,9 @@ public final class RuntimeViewModel {
                             suites: suites,
                             datasetID: "",
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                            parameters: evaluationParameters(),
+                            parameters: evaluationParameters(
+                                compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil
+                            ),
                             json: true
                         )
                     )
@@ -4740,15 +4830,28 @@ public final class RuntimeViewModel {
         }
         do {
             if let operatorCommandRunner {
-                _ = try await operatorCommandRunner.runEvaluations(
-                    .init(
-                        modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
-                        hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
-                        suites: suites,
-                        sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                        parameters: evaluationParameters()
+                if selectedEvaluationMode == .compare {
+                    _ = try await operatorCommandRunner.runEvaluationCompare(
+                        EvalCompareOptions(
+                            modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
+                            hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
+                            targetModelIDs: compareTargetModelIDs,
+                            suites: suites,
+                            sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
+                            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs)
+                        )
                     )
-                )
+                } else {
+                    _ = try await operatorCommandRunner.runEvaluations(
+                        .init(
+                            modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
+                            hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
+                            suites: suites,
+                            sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
+                            parameters: evaluationParameters(compareTargetModelIDs: nil)
+                        )
+                    )
+                }
             } else {
                 for suiteID in suites {
                     let datasetID = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
@@ -4759,7 +4862,7 @@ public final class RuntimeViewModel {
                             suiteID: suiteID,
                             datasetID: datasetID,
                             sampleSize: evaluationSampleSize(for: suiteID),
-                            parameters: evaluationParameters()
+                            parameters: evaluationParameters(compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil)
                         )
                     )
                 }
@@ -5765,6 +5868,9 @@ public final class RuntimeViewModel {
         if selectedEvaluationSuiteIDs.isEmpty {
             selectedEvaluationSuiteIDs = ["mmlu"]
         }
+        let availableCompareTargetModelIDs = Set(evaluationCompareTargetModels.map(\.modelID))
+        selectedEvaluationCompareTargetModelIDs = selectedEvaluationCompareTargetModelIDs
+            .intersection(availableCompareTargetModelIDs)
         evaluationScoringMode = normalizedEvaluationScoringMode()
         evaluationCodeExecPolicy = normalizedEvaluationCodeExecPolicy()
         rebuildEvaluationDerivedState()
@@ -5979,7 +6085,7 @@ public final class RuntimeViewModel {
         return parameters
     }
 
-    private func evaluationParameters() -> [String: String] {
+    private func evaluationParameters(compareTargetModelIDs: [String]?) -> [String: String] {
         var parameters: [String: String] = [:]
         let batchFactor = evaluationBatchFactor.trimmingCharacters(in: .whitespacesAndNewlines)
         if batchFactor.isEmpty == false {
@@ -6000,6 +6106,10 @@ public final class RuntimeViewModel {
         let codeExecPolicy = normalizedEvaluationCodeExecPolicy()
         if codeExecPolicy.isEmpty == false {
             parameters["code_exec_policy"] = codeExecPolicy
+        }
+        if let compareTargetModelIDs, compareTargetModelIDs.isEmpty == false {
+            parameters["compare_mode"] = "base_vs_targets"
+            parameters["compare_target_model_ids"] = compareTargetModelIDs.joined(separator: ",")
         }
         return parameters
     }
@@ -7238,6 +7348,7 @@ public final class RuntimeViewModel {
         var ext: [String: String] = [
             "adapter_name": Self.normalizedOptionalString(loraAdapterName) ?? "melix-dev-adapter",
             "dataset_source_kind": loraDatasetSourceKind.rawValue,
+            "training_mode": loraTrainingMode.rawValue,
         ]
 
         if loraDatasetSourceKind == .localPackage {

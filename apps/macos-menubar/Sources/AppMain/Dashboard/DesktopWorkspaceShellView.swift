@@ -1119,6 +1119,18 @@ struct DesktopTrainingToolSectionView: View {
                     }
                     .pickerStyle(.segmented)
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Training Mode")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Training Mode", selection: trainingModeBinding()) {
+                            ForEach(RuntimeLoraTrainingMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
                     if viewModel.loraDatasetSourceKind == .localPackage {
                         TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
                             .textFieldStyle(.roundedBorder)
@@ -1194,6 +1206,18 @@ struct DesktopTrainingToolSectionView: View {
                     TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
                         .textFieldStyle(.roundedBorder)
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Activation Mode")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Activation Mode", selection: activationModeBinding()) {
+                            ForEach(RuntimeLoraActivationMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
                     HStack {
                         Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
                         Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
@@ -1207,6 +1231,12 @@ struct DesktopTrainingToolSectionView: View {
                         Button("Activate Adapter", action: startActivateAdapterTask)
                         .buttonStyle(.bordered)
                         .disabled(viewModel.selectedAdapterPackage == nil)
+
+                        Button("Remove Derived Model", action: startRemoveDerivedModelTask)
+                            .buttonStyle(.bordered)
+                            .disabled(
+                                viewModel.selectedAdapterPackage?.derivedModelID.isEmpty ?? true
+                            )
 
                         Button("Publish Adapter", action: startPublishAdapterTask)
                         .buttonStyle(.bordered)
@@ -1313,6 +1343,20 @@ struct DesktopTrainingToolSectionView: View {
         )
     }
 
+    private func trainingModeBinding() -> Binding<RuntimeLoraTrainingMode> {
+        Binding(
+            get: { viewModel.loraTrainingMode },
+            set: { viewModel.loraTrainingMode = $0 }
+        )
+    }
+
+    private func activationModeBinding() -> Binding<RuntimeLoraActivationMode> {
+        Binding(
+            get: { viewModel.loraActivationMode },
+            set: { viewModel.loraActivationMode = $0 }
+        )
+    }
+
     func trainLoRA() async {
         await viewModel.trainPrimaryModel()
     }
@@ -1325,6 +1369,10 @@ struct DesktopTrainingToolSectionView: View {
         await viewModel.publishLatestAdapter()
     }
 
+    func removeDerivedModel() async {
+        await viewModel.removeSelectedDerivedModel()
+    }
+
     private func startTrainLoRATask() {
         Task { await trainLoRA() }
     }
@@ -1335,6 +1383,10 @@ struct DesktopTrainingToolSectionView: View {
 
     private func startPublishAdapterTask() {
         Task { await publishAdapter() }
+    }
+
+    private func startRemoveDerivedModelTask() {
+        Task { await removeDerivedModel() }
     }
 }
 
@@ -1379,6 +1431,11 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func runEvaluation() async {
+        await viewModel.runEvaluation()
+    }
+
+    func runEvaluationCompare() async {
+        viewModel.selectedEvaluationMode = .compare
         await viewModel.runEvaluation()
     }
 
@@ -1468,6 +1525,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         Task { await runEvaluation() }
     }
 
+    private func startEvaluationCompareTask() {
+        Task { await runEvaluationCompare() }
+    }
+
     private func startRefreshEvaluationResultsTask() {
         Task { await refreshEvaluationResults() }
     }
@@ -1529,6 +1590,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     && viewModel.evaluationModels.isEmpty
                                 ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
                             )
+                        Button("Run Comparison", action: startEvaluationCompareTask)
+                            .disabled(
+                                (
+                                    viewModel.selectedEvaluationTargetMode == .catalogModel
+                                    && viewModel.evaluationModels.isEmpty
+                                ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
+                            )
                         Button("Refresh Eval", action: startRefreshEvaluationResultsTask)
                         Button("Export Eval Summary", action: startExportEvaluationSummaryCSVTask)
                             .disabled(viewModel.evaluationHistory.isEmpty)
@@ -1540,19 +1608,6 @@ struct DesktopDiagnosticsToolSectionView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if let lastError = viewModel.lastError, lastError.isEmpty == false {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                    Text(lastError)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
 
             if let info = viewModel.selectedModelInfo {
@@ -2398,6 +2453,64 @@ struct DesktopDiagnosticsToolSectionView: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 10) {
+                        Text("Evaluation Mode")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Evaluation Mode",
+                            selection: Binding(
+                                get: { viewModel.selectedEvaluationMode },
+                                set: { viewModel.selectedEvaluationMode = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeEvaluationMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text("Compare Targets")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        if viewModel.evaluationCompareTargetModels.isEmpty {
+                            Text("No alternate catalog models are available for comparison.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                                ForEach(viewModel.evaluationCompareTargetModels, id: \.modelID) { model in
+                                    let isSelected = viewModel.selectedEvaluationCompareTargetModelIDs.contains(model.modelID)
+                                    Button {
+                                        if isSelected {
+                                            viewModel.selectedEvaluationCompareTargetModelIDs.remove(model.modelID)
+                                        } else {
+                                            viewModel.selectedEvaluationCompareTargetModelIDs.insert(model.modelID)
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                                            Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                                .font(.caption)
+                                                .foregroundStyle(.primary)
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 10)
+                                        .background(
+                                            isSelected
+                                            ? Color.accentColor.opacity(0.12)
+                                            : Color.secondary.opacity(0.06),
+                                            in: RoundedRectangle(cornerRadius: 10)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
                         Text("Evaluation Controls")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)

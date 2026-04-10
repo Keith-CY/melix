@@ -13,10 +13,20 @@ make proto
 make py-test
 make swift-test
 make integration-test
+make coverage
 ```
 
 Use these as the final repository verification gate for LoRA, benchmark, and CLI productization
 in addition to the release-gate and metrics commands below.
+
+Run the repository-owned deterministic acceptance smokes as part of the same gate:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_cli_smoke.py --json
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_window_smoke.py --json
+```
 
 ## Install Or Upgrade
 
@@ -63,6 +73,35 @@ This verifies:
 
 For the manual LoRA operator workflow, use `docs/runbooks/phase-8-lora-adapter-workflow.md`.
 
+## Latest Deterministic Acceptance Evidence
+
+Recorded on 2026-04-09. This evidence closes the repository-owned deterministic acceptance gate.
+Bucket 2 below still tracks the remaining live-runtime revalidation work.
+
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/phase4-python.coverage --source=scripts,tests/integration,services/mlx-worker-python/tests -m pytest services/mlx-worker-python/tests/test_phase8_lora_smoke_scripts.py services/mlx-worker-python/tests/test_m15_desktop_polish_smoke_script.py services/mlx-worker-python/tests/test_m9_agent_export_smoke.py tests/integration/test_phase8_lora_cli_smoke.py tests/integration/test_phase8_lora_window_smoke.py tests/integration/test_desktop_polish_smoke.py tests/integration/test_disk_streaming_smoke.py tests/integration/test_queue_pressure.py tests/integration/test_session_lifecycle_integration.py -q`
+  -> `18 passed in 207.07s`
+- `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/phase4-python-coverage.json scripts/m15_desktop_polish_smoke.py scripts/m9_agent_export_smoke.py scripts/phase8_lora_cli_smoke.py scripts/phase8_lora_window_smoke.py services/mlx-worker-python/tests/test_m15_desktop_polish_smoke_script.py services/mlx-worker-python/tests/test_m9_agent_export_smoke.py services/mlx-worker-python/tests/test_phase8_lora_smoke_scripts.py tests/integration/helpers.py tests/integration/test_disk_streaming_smoke.py tests/integration/test_phase8_lora_cli_smoke.py tests/integration/test_phase8_lora_window_smoke.py tests/integration/test_queue_pressure.py tests/integration/test_session_lifecycle_integration.py`
+  -> `97.13% (305/314)` changed-line coverage across the touched Python scope
+- `python3 scripts/swift_changed_line_coverage.py ...`
+  -> changed-line Swift coverage across the touched executable scope:
+  root CLI `98.12% (835/851)`,
+  Window UI `98.22% (883/899)`,
+  control plane `96.25% (231/240)`,
+  aggregate `97.94% (1949/1990)`
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_cli_smoke.py --json`
+  -> passed with fixed `model_id == mlx-community/Qwen3.5-0.8B-OptiQ-4bit` and positive
+  `train`, `activate`, `compare`, `export`, and `remove_derived` acceptance coverage plus
+  negative missing-argument checks
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_window_smoke.py --json`
+  -> passed with the same fixed model ID, positive and negative Window acceptance coverage, and
+  rendered controls `QLoRA`, `Adapter-backed Runtime`, `Run Comparison`, and
+  `Remove Derived Model`
+- `make phase8-metrics PHASE8_METRICS_ARGS="--json"`
+  -> completed with `release_gate.passed == true`,
+  `release_gate.m9_missing_probe_count == 0`,
+  `release_gate.m9_failed_threshold_count == 0`, and
+  `runtime.multi_model_ready_count == 3`
+
 ## Model Management Status Buckets
 
 As of 2026-04-09, track model-management acceptance in three buckets so release decisions
@@ -80,8 +119,12 @@ Treat regressions in these flows as bugs, not as future roadmap work:
 - [x] Serveable-model filtering for `Server Session` binding and start-time validation.
 - [x] `Server Session` create, update, remove, select, start, pause, resume, wake, stop, and unavailable-binding preservation.
 - [x] CLI-first server-session rebinding and `chat run` execution against managed base or derived models without `MELIX_DEV_TEXT_MODEL_PATH`.
-- [x] Shared CLI-core execution for LoRA train and activate, benchmark, matrix benchmark, evaluation, export, and acceptance-bundle orchestration.
-- [x] Window UI subprocess-backed CLI shell coverage for managed Hub download, local import, server-session mutation and start, LoRA train and activate, benchmark, matrix benchmark, evaluation, and export.
+- [x] Shared CLI-core execution for LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, and export actions.
+- [x] Shared CLI-core execution for LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, export, and acceptance-bundle orchestration.
+- [x] Window UI subprocess-backed CLI shell coverage for managed Hub download, local import, server-session mutation and start, LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, and export.
+- [x] Production Window UI uses the public `melix` subprocess path while test-only Window acceptance uses the shared CLI runner seam directly.
+- [x] Repository-owned deterministic LoRA CLI acceptance smoke exists at `scripts/phase8_lora_cli_smoke.py`.
+- [x] Repository-owned deterministic LoRA Window acceptance smoke exists at `scripts/phase8_lora_window_smoke.py`.
 
 ### Bucket 2: Implemented But Pending Live Acceptance Revalidation
 

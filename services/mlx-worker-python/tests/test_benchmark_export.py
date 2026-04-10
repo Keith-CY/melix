@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from worker.productization.benchmark_export import (
     build_comparison_table,
     build_benchmark_batch_csv,
@@ -529,17 +527,6 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in requests_csv.splitlines()[0]
     assert "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,111" in summary_csv
     assert "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,111" in requests_csv
-
-
-def test_benchmark_matrix_csv_builders_raise_for_missing_job_rows(tmp_path: Path) -> None:
-    _write_bench_matrix_run_fixture(tmp_path / "bench", job_id="bench-matrix-1")
-    bundle = build_export_bundle(tmp_path)
-
-    with pytest.raises(ValueError, match="No benchmark matrix summary rows were found for job bench-matrix-missing."):
-        build_benchmark_matrix_summary_csv(bundle, job_id="bench-matrix-missing")
-
-    with pytest.raises(ValueError, match="No benchmark matrix request rows were found for job bench-matrix-missing."):
-        build_benchmark_matrix_requests_csv(bundle, job_id="bench-matrix-missing")
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:

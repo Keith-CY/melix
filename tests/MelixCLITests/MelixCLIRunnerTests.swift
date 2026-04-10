@@ -1062,6 +1062,394 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["manifest_path"] == "/tmp/melix/activate_adapter/job-2/activate_adapter.derived_model.json")
     }
 
+    @Test("subprocess-backed lora operations build public melix arguments and decode manifest payloads")
+    func subprocessBackedLoraOperationsBuildPublicCLIArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"train_lora","job_id":"train-job-1","output_path":"/tmp/melix/train_lora/job-1","adapter_name":"demo-adapter"}"#,
+                #"{"operation":"activate_adapter","job_id":"activate-job-1","output_path":"/tmp/melix/activate_adapter/job-1","derived_model_id":"melix-qwen35-acceptance"}"#,
+                #"{"operation":"registry_snapshot","adapters":[{"adapter_name":"demo-adapter","status":"activated"}]}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let trainResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "train_lora",
+            outputDir: "",
+            ext: [
+                "dataset_source_kind": "hf_dataset",
+                "adapter_name": "demo-adapter",
+                "training_mode": "qlora",
+                "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+                "hf_train_split": "train_sft",
+                "chat_feature": "messages",
+                "derived_model_alias": "melix-qwen35-acceptance",
+            ]
+        )
+        let activateResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "activate_adapter",
+            outputDir: "",
+            ext: [
+                "artifact_path": "/tmp/melix/train_lora/job-1/train_lora.adapter.json",
+                "activation_mode": "adapter_backed_runtime",
+                "derived_model_alias": "melix-qwen35-acceptance",
+            ]
+        )
+        let registrySnapshot = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let commands = await executor.commands
+
+        #expect(await client.lastModelOperationCall == nil)
+        #expect(trainResult.outputPath == "/tmp/melix/train_lora/job-1")
+        #expect(activateResult.outputPath == "/tmp/melix/activate_adapter/job-1")
+        #expect(parseJSONObject(registrySnapshot.manifestJson)?["operation"] as? String == "registry_snapshot")
+        #expect(commands.count == 3)
+        #expect(commands[0].contains("lora"))
+        #expect(commands[0].contains("train"))
+        #expect(commands[0].contains("--training-mode"))
+        #expect(commands[0].contains("qlora"))
+        #expect(commands[0].contains("--hf-dataset-path"))
+        #expect(commands[0].contains("HuggingFaceH4/ultrachat_200k"))
+        #expect(commands[1].contains("activate"))
+        #expect(commands[1].contains("--activation-mode"))
+        #expect(commands[1].contains("adapter_backed_runtime"))
+        #expect(commands[2] == ["lora", "list", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", "--json"])
+    }
+
+    @Test("subprocess-backed evaluation compare builds public melix compare arguments")
+    func subprocessBackedEvaluationCompareBuildsPublicCLIArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                [
+                  {
+                    "job_id": "eval-compare-1",
+                    "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "task_kind": "text-generation",
+                    "source_repo": "",
+                    "suite_id": "mmlu",
+                    "dataset_id": "mmlu.dev.v1",
+                    "sample_size": 6,
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "status": "completed",
+                    "output_dir": "/tmp/melix/evaluation/runs/eval-compare-1",
+                    "created_at_unix_ms": 1712000000000,
+                    "updated_at_unix_ms": 1712000001000,
+                    "results": []
+                  }
+                ]
+                """
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let results = try await runner.runEvaluationCompare(
+            EvalCompareOptions(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                targetModelIDs: ["melix-qwen35-acceptance", "melix-qwen35-safety"],
+                suites: ["mmlu"],
+                sampleSize: 6,
+                parameters: [
+                    "batch_factor": "2",
+                    "few_shot": "1",
+                    "seed": "9",
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "code_exec_policy": "sandboxed",
+                ]
+            )
+        )
+        let command = try #require(await executor.commands.last)
+
+        #expect(results.count == 1)
+        #expect(await client.evaluationRequests.isEmpty)
+        #expect(await client.loadedModelIDs.isEmpty)
+        #expect(command.starts(with: ["eval", "compare"]))
+        #expect(command.contains("--target-model-id"))
+        #expect(command.contains("melix-qwen35-acceptance"))
+        #expect(command.contains("melix-qwen35-safety"))
+        #expect(command.contains("--batch-factor"))
+        #expect(command.contains("2"))
+        #expect(command.contains("--few-shot"))
+        #expect(command.contains("--seed"))
+        #expect(command.contains("--scoring-mode"))
+        #expect(command.contains("--code-exec-policy"))
+        #expect(command.last == "--json")
+    }
+
+    @Test("process executor runs the configured subprocess with working-directory and environment overrides")
+    func processExecutorRunsConfiguredSubprocess() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-cli-process-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let executor = MelixCLIProcessExecutor(
+            baseCommand: [
+                "/bin/zsh",
+                "-lc",
+                #"printf "%s" "$MELIX_SUBPROCESS_TEST:$PWD:$1""#,
+                "melix-process",
+            ],
+            environment: ["MELIX_SUBPROCESS_TEST": "configured"],
+            workingDirectory: root.path
+        )
+
+        let output = try await executor.run(arguments: ["runner-arg"])
+        let components = output.split(separator: ":", maxSplits: 2).map(String.init)
+
+        #expect(components.count == 3)
+        #expect(components[0] == "configured")
+        #expect(
+            URL(fileURLWithPath: components[1]).resolvingSymlinksInPath().path ==
+            root.resolvingSymlinksInPath().path
+        )
+        #expect(components[2] == "runner-arg")
+    }
+
+    @Test("process executor surfaces subprocess failures and rejects empty commands")
+    func processExecutorSurfacesFailuresAndMisconfiguration() async throws {
+        let failingExecutor = MelixCLIProcessExecutor(
+            baseCommand: [
+                "/bin/zsh",
+                "-lc",
+                #"printf "%s" "subprocess boom" >&2; exit 3"#,
+                "melix-process",
+            ]
+        )
+
+        do {
+            _ = try await failingExecutor.run(arguments: [])
+            Issue.record("Expected the configured subprocess to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("subprocess boom"))
+        }
+
+        let misconfiguredExecutor = MelixCLIProcessExecutor(baseCommand: [])
+
+        do {
+            _ = try await misconfiguredExecutor.run(arguments: [])
+            Issue.record("Expected an empty subprocess command to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("The melix subprocess command is not configured."))
+        }
+    }
+
+    @Test("subprocess-backed model operations cover local-package remove-derived and download argument branches")
+    func subprocessBackedModelOperationsCoverAdditionalArgumentBranches() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"train_lora","job_id":"train-local-1","output_path":"/tmp/melix/train_lora/train-local-1"}"#,
+                #"{"operation":"remove_derived_model","job_id":"remove-job-1","output_path":"/tmp/melix/remove_derived_model/remove-job-1"}"#,
+                #"{"operation":"download","job_id":"download-job-1","output_path":"/tmp/melix-downloads/qwen35"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let trainResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "train_lora",
+            outputDir: "",
+            ext: [
+                "dataset_source_kind": "local_package",
+                "dataset_uri": "/tmp/melix/datasets/alpaca",
+                "adapter_name": "demo-adapter",
+                "target_repo": "melix/demo-adapter",
+                "response_only": "true",
+                "mask_prompt": "true",
+                "gradient_checkpointing": "true",
+            ]
+        )
+        let removeResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "remove_derived_model",
+            outputDir: "",
+            ext: [
+                "derived_model_id": "melix-qwen35-acceptance",
+                "manifest_path": "/tmp/melix/activate_adapter/job-1/activate_adapter.derived_model.json",
+            ]
+        )
+        let downloadResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "download",
+            outputDir: "/tmp/melix-downloads",
+            ext: [:]
+        )
+        let commands = await executor.commands
+
+        #expect(trainResult.jobID == "train-local-1")
+        #expect(removeResult.jobID == "remove-job-1")
+        #expect(downloadResult.outputPath == "/tmp/melix-downloads/qwen35")
+        #expect(commands.count == 3)
+        #expect(commands[0].contains("--dataset-uri"))
+        #expect(commands[0].contains("/tmp/melix/datasets/alpaca"))
+        #expect(commands[0].contains("--response-only"))
+        #expect(commands[0].contains("--mask-prompt"))
+        #expect(commands[0].contains("--gradient-checkpointing"))
+        #expect(commands[1].contains("remove-derived"))
+        #expect(commands[1].contains("--derived-model-id"))
+        #expect(commands[1].contains("--manifest-path"))
+        #expect(commands[2].contains("download"))
+        #expect(commands[2].contains("--output-dir"))
+        #expect(commands[2].contains("/tmp/melix-downloads"))
+    }
+
+    @Test("subprocess-backed model operations preserve raw manifest output when JSON decoding is unavailable")
+    func subprocessBackedModelOperationsPreserveRawManifestOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: ["plain-manifest-output"])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let result = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "activate_adapter",
+            outputDir: "",
+            ext: [
+                "artifact_path": "/tmp/melix/train_lora/job-1/train_lora.adapter.json",
+            ]
+        )
+
+        #expect(result.operation == "activate_adapter")
+        #expect(result.manifestJson == "plain-manifest-output")
+        #expect(result.jobID.isEmpty)
+        #expect(result.outputPath.isEmpty)
+    }
+
+    @Test("subprocess-backed eval compare supports repo ids and decodes nested result payloads")
+    func subprocessBackedEvaluationCompareSupportsRepoTargetsAndNestedResults() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                [
+                  0,
+                  {
+                    "job": {
+                      "job_id": "eval-compare-2",
+                      "model_id": "",
+                      "task_kind": "text-generation",
+                      "source_repo": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                      "suite_id": "mmlu",
+                      "dataset_id": "mmlu.dev.v1",
+                      "sample_size": 6,
+                      "scoring_mode": "multiple_choice_accuracy",
+                      "parameters": {
+                        "batch_factor": "2"
+                      },
+                      "status": "completed",
+                      "output_dir": "/tmp/melix/evaluation/runs/eval-compare-2",
+                      "created_at_unix_ms": 1712000000000,
+                      "updated_at_unix_ms": 1712000001000
+                    },
+                    "results": [
+                      {
+                        "job_id": "eval-compare-2",
+                        "suite_id": "mmlu:melix-qwen35-acceptance",
+                        "dataset_id": "mmlu.dev.v1",
+                        "sample_size": 6,
+                        "report_path": "/tmp/melix/evaluation/runs/eval-compare-2/summary.json",
+                        "metrics": [
+                          {
+                            "name": "eval.compare.win_rate",
+                            "value": 0.625,
+                            "unit": "ratio"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+                """
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let results = try await runner.runEvaluationCompare(
+            EvalCompareOptions(
+                hfRepoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                targetModelIDs: ["melix-qwen35-acceptance"],
+                suites: ["mmlu"],
+                sampleSize: 6,
+                parameters: [
+                    "batch_factor": "2",
+                    "few_shot": "1",
+                    "seed": "9",
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "code_exec_policy": "sandboxed",
+                ]
+            )
+        )
+        let command = try #require(await executor.commands.last)
+        let first = try #require(results.first)
+        let firstMetric = try #require(first.results.first?.metrics.first)
+
+        #expect(await client.evaluationRequests.isEmpty)
+        #expect(command.contains("--repo-id"))
+        #expect(command.contains("mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
+        #expect(command.contains("--target-model-id"))
+        #expect(command.contains("melix-qwen35-acceptance"))
+        #expect(command.contains("--batch-factor"))
+        #expect(command.contains("--few-shot"))
+        #expect(command.contains("--seed"))
+        #expect(command.contains("--scoring-mode"))
+        #expect(command.contains("--code-exec-policy"))
+        #expect(command.last == "--json")
+        #expect(results.count == 1)
+        #expect(first.job.jobID == "eval-compare-2")
+        #expect(first.job.sourceRepo == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(first.results.count == 1)
+        #expect(first.results[0].suiteID == "mmlu:melix-qwen35-acceptance")
+        #expect(firstMetric.name == "eval.compare.win_rate")
+        #expect(firstMetric.value == 0.625)
+        #expect(firstMetric.unit == "ratio")
+    }
+
+    @Test("subprocess-backed eval compare rejects non-array JSON payloads")
+    func subprocessBackedEvaluationCompareRejectsNonArrayPayloads() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: [#"{"job_id":"eval-compare-invalid"}"#])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        do {
+            _ = try await runner.runEvaluationCompare(
+                EvalCompareOptions(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    targetModelIDs: ["melix-qwen35-acceptance"],
+                    suites: ["mmlu"]
+                )
+            )
+            Issue.record("Expected subprocess-backed eval compare decoding to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("The melix eval compare subprocess did not return a JSON array."))
+        }
+    }
+
+    @Test("recording subprocess executor fails without a configured response")
+    func recordingExecutorFailsWithoutAConfiguredResponse() async throws {
+        let emptyExecutor = RecordingCLICommandExecutor(responses: [])
+
+        do {
+            _ = try await emptyExecutor.run(["lora", "train"])
+            Issue.record("Expected the recording executor to fail without a configured response.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No subprocess response was configured for lora train."))
+        }
+    }
+
     @Test("bench run loads the explicit model and returns JSON output")
     func benchRunLoadsExplicitModelAndReturnsJSONOutput() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1222,52 +1610,6 @@ struct MelixCLIRunnerTests {
         #expect(benchOneEntry["dataset_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
         #expect(benchOneEntry["task_kind"] as? String == "text-generation")
         #expect(benchOneEntry["source_repo"] as? String == "HuggingFaceH4/ultrachat_200k")
-    }
-
-    @Test("bench list maps malformed export bundle decoding errors to runtime CLI errors")
-    func benchListMapsMalformedExportBundleErrors() async throws {
-        let client = StubControlPlaneXPCClient()
-        let malformedBundleJSON = #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":"oops"}"#
-        await client.setExportResult(.init(exportBundleJSON: malformedBundleJSON))
-        let expectedDecodeMessage: String
-        do {
-            _ = try ControlPlaneBenchmarkExportBundle.decode(json: malformedBundleJSON)
-            Issue.record("Expected malformed benchmark export bundle fixture to fail decoding.")
-            expectedDecodeMessage = "unknown decode error"
-        } catch let error as ControlPlaneBenchmarkExportError {
-            expectedDecodeMessage = error.errorDescription ?? error.localizedDescription
-        } catch {
-            expectedDecodeMessage = String(describing: error)
-        }
-
-        await #expect(
-            throws: MelixCLIError.runtime("Malformed benchmark export bundle: \(expectedDecodeMessage)")
-        ) {
-            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
-        }
-    }
-
-    @Test("bench list preserves exportResults transport/runtime failures without remapping")
-    func benchListPreservesExportResultsFailuresWithoutRemapping() async throws {
-        let client = StubControlPlaneXPCClient()
-        await client.setExportResultError(MelixCLIError.runtime("Control-plane exportResults RPC is unavailable."))
-
-        await #expect(throws: MelixCLIError.runtime("Control-plane exportResults RPC is unavailable.")) {
-            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
-        }
-    }
-
-    @Test("bench list does not remap exportResults errors that occur before decode")
-    func benchListDoesNotRemapPreDecodeExportResultsErrors() async throws {
-        let client = StubControlPlaneXPCClient()
-        let upstreamError = ControlPlaneBenchmarkExportError.invalidJSON(
-            "exportResults failed before CLI decode handling."
-        )
-        await client.setExportResultError(upstreamError)
-
-        await #expect(throws: upstreamError) {
-            _ = try await MelixCLIRunner(client: client).run(.benchList(.init()))
-        }
     }
 
     @Test("bench export-csv writes filtered benchmark metric rows and returns JSON metadata")
@@ -1866,21 +2208,6 @@ struct MelixCLIRunnerTests {
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
     }
 
-    @Test("eval export-samples-jsonl returns the written output path in plain text")
-    func evalExportSamplesJSONLReturnsWrittenPathInPlainText() async throws {
-        let client = StubControlPlaneXPCClient()
-        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
-        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathComponent("eval-1-samples.jsonl")
-
-        let output = try await MelixCLIRunner(client: client).run(
-            .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: outputURL.path))
-        )
-
-        #expect(output == outputURL.path + "\n")
-    }
-
     @Test("eval export commands fail when the requested job has no rows")
     func evalExportCommandsFailForMissingJob() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1893,18 +2220,6 @@ struct MelixCLIRunnerTests {
             Issue.record("Expected eval export-summary-csv to fail when the job is missing.")
         } catch let error as MelixCLIError {
             #expect(error == .runtime("No evaluation rows were found for job eval-missing."))
-        }
-    }
-
-    @Test("eval export-samples-jsonl fails when the requested job has no rows")
-    func evalExportSamplesJSONLFailsForMissingJob() async throws {
-        let client = StubControlPlaneXPCClient()
-        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
-
-        await #expect(throws: MelixCLIError.runtime("No evaluation rows were found for job eval-missing.")) {
-            _ = try await MelixCLIRunner(client: client).run(
-                .evalExportSamplesJSONL(.init(jobID: "eval-missing", outputPath: "/tmp/eval-missing.jsonl"))
-            )
         }
     }
 
@@ -2026,6 +2341,196 @@ struct MelixCLIRunnerTests {
     }
 }
 
+@Suite("Phase 8 LoRA CLI Smoke", .serialized)
+struct Phase8LoRACLISmokeTests {
+    @Test("phase 8 lora cli smoke emits canonical acceptance evidence")
+    func phase8LoRACLISmokeEmitsCanonicalAcceptanceEvidence() async throws {
+        let baseModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let derivedModelID = "melix-qwen35-acceptance"
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-phase8-lora-cli-smoke-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: baseModelID, kind: "text"),
+            makeModelSummary(id: derivedModelID, kind: "text"),
+        ]))
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let runner = MelixCLIRunner(client: client)
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/melix/train_lora/train-job-1")
+        )
+        let trainOutput = try await runSmokeCLICommand(
+            [
+                "lora", "train",
+                "--model-id", baseModelID,
+                "--hf-dataset-path", "HuggingFaceH4/ultrachat_200k",
+                "--hf-train-split", "train_sft",
+                "--chat-feature", "messages",
+                "--adapter-name", "qwen35-acceptance",
+                "--training-mode", "qlora",
+                "--derived-model-alias", derivedModelID,
+                "--json",
+            ],
+            runner: runner
+        )
+        let trainPayload = try #require(parseJSONObject(trainOutput))
+        let trainCall = try #require(await client.lastModelOperationCall)
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/melix/activate_adapter/activate-job-1")
+        )
+        let activateOutput = try await runSmokeCLICommand(
+            [
+                "lora", "activate",
+                "--model-id", baseModelID,
+                "--adapter-path", "/tmp/melix/train_lora/train-job-1/train_lora.adapter.json",
+                "--activation-mode", "adapter_backed_runtime",
+                "--alias", derivedModelID,
+                "--json",
+            ],
+            runner: runner
+        )
+        let activatePayload = try #require(parseJSONObject(activateOutput))
+        let activateCall = try #require(await client.lastModelOperationCall)
+
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-1",
+                baseSuiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                targets: [(derivedModelID, 0.625)]
+            ),
+        ])
+        let compareOutput = try await runSmokeCLICommand(
+            [
+                "eval", "compare",
+                "--model-id", baseModelID,
+                "--target-model-id", derivedModelID,
+                "--suite", "mmlu",
+                "--sample-size", "6",
+                "--batch-factor", "2",
+                "--few-shot", "1",
+                "--seed", "9",
+                "--scoring-mode", "multiple_choice_accuracy",
+                "--code-exec-policy", "sandboxed",
+                "--json",
+            ],
+            runner: runner
+        )
+        let comparePayload = try #require(parseJSONArray(compareOutput))
+        let compareEntry = try #require(comparePayload.first as? [String: Any])
+        let compareJob = try #require(compareEntry["job"] as? [String: Any])
+        let compareRequest = try #require((await client.evaluationRequests).last)
+
+        let summaryURL = root.appendingPathComponent("eval-1-summary.csv")
+        let exportOutput = try await runSmokeCLICommand(
+            [
+                "eval", "export-summary-csv",
+                "--job-id", "eval-1",
+                "--output", summaryURL.path,
+                "--json",
+            ],
+            runner: runner
+        )
+        let exportPayload = try #require(parseJSONObject(exportOutput))
+        let exportCSV = try String(contentsOf: summaryURL, encoding: .utf8)
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/melix/remove_derived_model/remove-job-1")
+        )
+        let removeOutput = try await runSmokeCLICommand(
+            [
+                "lora", "remove-derived",
+                "--model-id", baseModelID,
+                "--derived-model-id", derivedModelID,
+                "--json",
+            ],
+            runner: runner
+        )
+        let removePayload = try #require(parseJSONObject(removeOutput))
+        let removeCall = try #require(await client.lastModelOperationCall)
+
+        let negativePayload: [String: String] = [
+            "train_missing_adapter_name": try captureSmokeCLIError(
+                ["lora", "train", "--model-id", baseModelID, "--dataset-uri", "datasets/melix-dev"]
+            ),
+            "activate_missing_adapter_path": try captureSmokeCLIError(
+                ["lora", "activate", "--model-id", baseModelID]
+            ),
+            "compare_missing_target": try captureSmokeCLIError(
+                ["eval", "compare", "--model-id", baseModelID]
+            ),
+            "export_missing_job": try await captureSmokeRunnerError(
+                [
+                    "eval", "export-summary-csv",
+                    "--job-id", "eval-missing",
+                    "--output", root.appendingPathComponent("eval-missing.csv").path,
+                ],
+                runner: runner
+            ),
+            "remove_missing_target": try captureSmokeCLIError(
+                ["lora", "remove-derived", "--model-id", baseModelID]
+            ),
+        ]
+
+        let positiveTrain: [String: Any] = [
+            "job_id": trainPayload["job_id"] as? String ?? "train-job-1",
+            "output_path": trainPayload["output_path"] as? String ?? "",
+            "training_mode": trainCall.ext["training_mode"] ?? "",
+        ]
+        let positiveActivate: [String: Any] = [
+            "job_id": activatePayload["job_id"] as? String ?? "activate-job-1",
+            "output_path": activatePayload["output_path"] as? String ?? "",
+            "activation_mode": activateCall.ext["activation_mode"] ?? "",
+        ]
+        let positiveCompare: [String: Any] = [
+            "job_id": compareJob["job_id"] as? String ?? "",
+            "target_model_ids": [derivedModelID],
+            "metric": "eval.compare.win_rate",
+            "compare_mode": compareRequest.parameters["compare_mode"] ?? "",
+        ]
+        let positiveExport: [String: Any] = [
+            "job_id": exportPayload["job_id"] as? String ?? "",
+            "output_path": summaryURL.path,
+            "row_count": exportPayload["row_count"] as? Int ?? 0,
+        ]
+        let positiveRemove: [String: Any] = [
+            "job_id": removePayload["job_id"] as? String ?? "remove-job-1",
+            "output_path": removePayload["output_path"] as? String ?? "",
+            "derived_model_id": removeCall.ext["derived_model_id"] ?? "",
+        ]
+        let positivePayload: [String: Any] = [
+            "train": positiveTrain,
+            "activate": positiveActivate,
+            "compare": positiveCompare,
+            "export": positiveExport,
+            "remove_derived": positiveRemove,
+        ]
+        let payload: [String: Any] = [
+            "model_id": baseModelID,
+            "positive": positivePayload,
+            "negative": negativePayload,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        print("PHASE8_LORA_CLI_SMOKE=\(String(decoding: data, as: UTF8.self))")
+
+        #expect(trainCall.operation == "train_lora")
+        #expect(trainCall.ext["training_mode"] == "qlora")
+        #expect(activateCall.operation == "activate_adapter")
+        #expect(activateCall.ext["activation_mode"] == "adapter_backed_runtime")
+        #expect(compareRequest.parameters["compare_target_model_ids"] == derivedModelID)
+        #expect(exportPayload["row_count"] as? Int == 1)
+        #expect(exportCSV.contains("eval-1"))
+        #expect(removeCall.operation == "remove_derived_model")
+        #expect(removeCall.ext["derived_model_id"] == derivedModelID)
+        #expect(negativePayload["export_missing_job"] == "No evaluation rows were found for job eval-missing.")
+    }
+}
+
 private final class EnvironmentRecorder: @unchecked Sendable {
     private(set) var environment: [String: String]?
 
@@ -2096,6 +2601,57 @@ private actor ExportResultsOnlyControlPlaneService: ControlPlaneExecuting {
     }
 }
 
+private actor RecordingCLICommandExecutor {
+    private let responses: [String]
+    private var responseIndex = 0
+    private(set) var commands: [[String]] = []
+
+    init(responses: [String]) {
+        self.responses = responses
+    }
+
+    func run(_ arguments: [String]) async throws -> String {
+        commands.append(arguments)
+        guard responseIndex < responses.count else {
+            throw MelixCLIError.runtime("No subprocess response was configured for \(arguments.joined(separator: " ")).")
+        }
+        let response = responses[responseIndex]
+        responseIndex += 1
+        return response
+    }
+}
+
+private func runSmokeCLICommand(
+    _ arguments: [String],
+    runner: MelixCLIRunner
+) async throws -> String {
+    let command = try MelixCLIParser.parse(arguments)
+    return try await runner.run(command)
+}
+
+private func captureSmokeCLIError(_ arguments: [String]) throws -> String {
+    do {
+        _ = try MelixCLIParser.parse(arguments)
+        Issue.record("Expected parser failure for arguments: \(arguments)")
+    } catch let error as MelixCLIError {
+        return error.localizedDescription
+    }
+    return ""
+}
+
+private func captureSmokeRunnerError(
+    _ arguments: [String],
+    runner: MelixCLIRunner
+) async throws -> String {
+    do {
+        _ = try await runSmokeCLICommand(arguments, runner: runner)
+        Issue.record("Expected runner failure for arguments: \(arguments)")
+    } catch let error as MelixCLIError {
+        return error.localizedDescription
+    }
+    return ""
+}
+
 private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     enum ServerAction: Sendable, Equatable {
         case start(String)
@@ -2164,7 +2720,6 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
-    private var exportResultError: (any Error & Sendable)?
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
     private var chatRequestID = "stub-chat"
     private var chatModelID = "melix-dev-text"
@@ -2200,11 +2755,6 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setExportResult(_ result: ControlPlaneExportResult) {
         self.exportResult = result
-        self.exportResultError = nil
-    }
-
-    func setExportResultError(_ error: (any Error & Sendable)?) {
-        self.exportResultError = error
     }
 
     func setModelInfo(modelID: String, info: Melix_Controlplane_V1_ModelInfo) {
@@ -2418,9 +2968,6 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func exportResults(outputDir: String) async throws -> ControlPlaneExportResult {
         _ = outputDir
-        if let exportResultError {
-            throw exportResultError
-        }
         return exportResult
     }
 

@@ -1,12 +1,13 @@
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2Posix
+import NIOPosix
 import Testing
 
 @testable import MelixControlPlaneCore
 import MelixWorkerProtocol
 
-@Suite("Swift Text Worker Client")
+@Suite("Swift Text Worker Client", .serialized)
 struct SwiftTextWorkerClientTests {
     @Test("handshake responses drive dispatch availability")
     func handshakeResponsesDriveDispatchAvailability() async throws {
@@ -240,45 +241,130 @@ struct SwiftTextWorkerClientTests {
             ],
             abortFound: true
         )
-        defer { Task { await fixture.stop() } }
+        do {
+            let client = SwiftTextWorkerClient(socketPath: fixture.socketPath)
 
-        let client = SwiftTextWorkerClient(socketPath: fixture.socketPath)
+            #expect(await client.canDispatchRequests())
 
-        #expect(await client.canDispatchRequests())
+            let loadResponse = try await client.loadModel(request: makeLoadModelRequest())
+            #expect(loadResponse.modelHandle == "melix-dev-text::swift-live")
 
-        let loadResponse = try await client.loadModel(request: makeLoadModelRequest())
-        #expect(loadResponse.modelHandle == "melix-dev-text::swift-live")
+            var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+            unloadRequest.modelHandle = "melix-dev-text::swift-live"
+            let unloadResponse = try await client.unloadModel(request: unloadRequest)
+            #expect(unloadResponse.ok)
 
-        var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
-        unloadRequest.modelHandle = "melix-dev-text::swift-live"
-        let unloadResponse = try await client.unloadModel(request: unloadRequest)
-        #expect(unloadResponse.ok)
+            let runtimeStats = try await client.runtimeStats()
+            #expect(runtimeStats.stats.residentBytes == 8_192)
 
-        let runtimeStats = try await client.runtimeStats()
-        #expect(runtimeStats.stats.residentBytes == 8_192)
+            let cacheStats = try await client.cacheStats()
+            #expect(cacheStats.stats.l1Bytes == 2_048)
+            #expect(cacheStats.stats.l2Bytes == 4_096)
 
-        let cacheStats = try await client.cacheStats()
-        #expect(cacheStats.stats.l1Bytes == 2_048)
-        #expect(cacheStats.stats.l2Bytes == 4_096)
+            let stream = try await client.generate(request: makeGenerateRequest(requestID: "req-live"))
+            let events = try await collect(stream)
+            #expect(events.count == 2)
+            #expect(events[0].tokenDelta.text == "Hel")
+            #expect(events[1].completed.assistantText == "Hel")
 
-        let stream = try await client.generate(request: makeGenerateRequest(requestID: "req-live"))
-        let events = try await collect(stream)
-        #expect(events.count == 2)
-        #expect(events[0].tokenDelta.text == "Hel")
-        #expect(events[1].completed.assistantText == "Hel")
+            let prefill = try await client.prefill(request: makePrefillRequest(requestID: "req-live-prefill"))
+            #expect(prefill.ok)
+            #expect(prefill.decodeHandle == "melix-dev-text::decode::live")
 
-        let prefill = try await client.prefill(request: makePrefillRequest(requestID: "req-live-prefill"))
-        #expect(prefill.ok)
-        #expect(prefill.decodeHandle == "melix-dev-text::decode::live")
+            let decode = try await client.decode(request: makeDecodeRequest(requestID: "req-live-decode"))
+            let decodeEvents = try await collect(decode)
+            #expect(decodeEvents.count == 2)
+            #expect(decodeEvents[0].tokenDelta.text == "Dec")
+            #expect(decodeEvents[1].completed.assistantText == "Decode")
 
-        let decode = try await client.decode(request: makeDecodeRequest(requestID: "req-live-decode"))
-        let decodeEvents = try await collect(decode)
-        #expect(decodeEvents.count == 2)
-        #expect(decodeEvents[0].tokenDelta.text == "Dec")
-        #expect(decodeEvents[1].completed.assistantText == "Decode")
+            let aborted = try await client.abort(requestID: "req-live")
+            #expect(aborted)
+        } catch {
+            await fixture.stop()
+            throw error
+        }
 
-        let aborted = try await client.abort(requestID: "req-live")
-        #expect(aborted)
+        await fixture.stop()
+    }
+
+    @Test("grpc runner shuts down dedicated event loop groups after unary RPCs")
+    func grpcRunnerShutsDownDedicatedEventLoopGroupsAfterUnaryRPCs() async throws {
+        let fixture = try await LiveSwiftWorkerFixture.start(
+            handshakeResponse: makeHandshakeResponse(),
+            loadModelResponse: {
+                var response = Melix_Worker_V1_LoadModelResponse()
+                response.ok = true
+                response.modelHandle = "melix-dev-text::swift-live"
+                return response
+            }(),
+            prefillResponse: {
+                var response = Melix_Worker_V1_PrefillResponse()
+                response.ok = true
+                response.decodeHandle = "melix-dev-text::decode::live"
+                response.appliedAcceleration.mode = .baseline
+                return response
+            }(),
+            runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse(),
+            cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse(),
+            generateEvents: [],
+            decodeEvents: [],
+            abortFound: true
+        )
+        let tracker = EventLoopGroupShutdownTracker()
+        let runner = GRPCSwiftTextWorkerRunner(
+            makeEventLoopGroup: { MultiThreadedEventLoopGroup(numberOfThreads: 1) },
+            shutdownEventLoopGroup: { group in
+                await tracker.recordShutdown()
+                try await group.shutdownGracefully()
+            }
+        )
+
+        do {
+            let client = SwiftTextWorkerClient(socketPath: fixture.socketPath, runner: runner)
+            let loadResponse = try await client.loadModel(request: makeLoadModelRequest())
+            #expect(loadResponse.modelHandle == "melix-dev-text::swift-live")
+            #expect(await tracker.shutdownCount == 1)
+        } catch {
+            await fixture.stop()
+            throw error
+        }
+
+        await fixture.stop()
+    }
+
+    @Test("live worker fixture releases gRPC runtime before shutting down its event loop group")
+    func liveWorkerFixtureReleasesGRPCRuntimeBeforeShuttingDownItsEventLoopGroup() async throws {
+        let releaseTracker = FixtureRuntimeReleaseTracker()
+        let fixture = try await LiveSwiftWorkerFixture.start(
+            handshakeResponse: makeHandshakeResponse(),
+            loadModelResponse: {
+                var response = Melix_Worker_V1_LoadModelResponse()
+                response.ok = true
+                response.modelHandle = "melix-dev-text::swift-live"
+                return response
+            }(),
+            prefillResponse: {
+                var response = Melix_Worker_V1_PrefillResponse()
+                response.ok = true
+                response.decodeHandle = "melix-dev-text::decode::live"
+                response.appliedAcceleration.mode = .baseline
+                return response
+            }(),
+            runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse(),
+            cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse(),
+            generateEvents: [],
+            decodeEvents: [],
+            abortFound: true,
+            onRuntimeDeinit: {
+                releaseTracker.markReleased()
+            },
+            shutdownEventLoopGroup: { group in
+                #expect(releaseTracker.isReleased)
+                try await group.shutdownGracefully()
+            }
+        )
+
+        await fixture.stop()
     }
 }
 
@@ -436,19 +522,43 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
     }
 }
 
+private final class LiveSwiftWorkerRuntime: @unchecked Sendable {
+    let server: GRPCServer<HTTP2ServerTransport.Posix>
+    let serveTask: Task<Void, Error>
+
+    private let onDeinit: @Sendable () -> Void
+
+    init(
+        server: GRPCServer<HTTP2ServerTransport.Posix>,
+        serveTask: Task<Void, Error>,
+        onDeinit: @escaping @Sendable () -> Void = {}
+    ) {
+        self.server = server
+        self.serveTask = serveTask
+        self.onDeinit = onDeinit
+    }
+
+    deinit {
+        onDeinit()
+    }
+}
+
 private actor LiveSwiftWorkerFixture {
     let socketPath: String
-    private let server: GRPCServer<HTTP2ServerTransport.Posix>
-    private let serveTask: Task<Void, Error>
+    private let eventLoopGroup: MultiThreadedEventLoopGroup
+    private var runtime: LiveSwiftWorkerRuntime?
+    private let shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
 
     private init(
         socketPath: String,
-        server: GRPCServer<HTTP2ServerTransport.Posix>,
-        serveTask: Task<Void, Error>
+        eventLoopGroup: MultiThreadedEventLoopGroup,
+        runtime: LiveSwiftWorkerRuntime,
+        shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
     ) {
         self.socketPath = socketPath
-        self.server = server
-        self.serveTask = serveTask
+        self.eventLoopGroup = eventLoopGroup
+        self.runtime = runtime
+        self.shutdownEventLoopGroup = shutdownEventLoopGroup
     }
 
     static func start(
@@ -459,12 +569,16 @@ private actor LiveSwiftWorkerFixture {
         cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse,
         generateEvents: [Melix_Worker_V1_ExecuteEvent],
         decodeEvents: [Melix_Worker_V1_ExecuteEvent],
-        abortFound: Bool
+        abortFound: Bool,
+        onRuntimeDeinit: @escaping @Sendable () -> Void = {},
+        shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void = { group in
+            try await group.shutdownGracefully()
+        }
     ) async throws -> LiveSwiftWorkerFixture {
         let socketPath = "/tmp/melix-swift-\(UUID().uuidString.prefix(8)).sock"
         try? FileManager.default.removeItem(atPath: socketPath)
 
-        let runtime = TestRuntimeService(
+        let runtimeService = TestRuntimeService(
             handshakeResponse: handshakeResponse,
             loadModelResponse: loadModelResponse,
             unloadModelResponse: {
@@ -481,30 +595,67 @@ private actor LiveSwiftWorkerFixture {
             abortFound: abortFound
         )
         let cache = TestCacheService(cacheStatsResponse: cacheStatsResponse)
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
         let server = GRPCServer(
             transport: .http2NIOPosix(
                 address: .unixDomainSocket(path: socketPath),
-                transportSecurity: .plaintext
+                transportSecurity: .plaintext,
+                eventLoopGroup: eventLoopGroup
             ),
-            services: [runtime, inference, cache]
+            services: [runtimeService, inference, cache]
         )
         let serveTask = Task {
             try await server.serve()
         }
         _ = try await server.listeningAddress
+        let runtime = LiveSwiftWorkerRuntime(
+            server: server,
+            serveTask: serveTask,
+            onDeinit: onRuntimeDeinit
+        )
 
         return LiveSwiftWorkerFixture(
             socketPath: socketPath,
-            server: server,
-            serveTask: serveTask
+            eventLoopGroup: eventLoopGroup,
+            runtime: runtime,
+            shutdownEventLoopGroup: shutdownEventLoopGroup
         )
     }
 
     func stop() async {
-        server.beginGracefulShutdown()
-        _ = try? await serveTask.value
+        if let runtime {
+            self.runtime = nil
+            runtime.server.beginGracefulShutdown()
+            _ = try? await runtime.serveTask.value
+        }
+        try? await shutdownEventLoopGroup(eventLoopGroup)
         try? FileManager.default.removeItem(atPath: socketPath)
+    }
+}
+
+private actor EventLoopGroupShutdownTracker {
+    private(set) var shutdownCount = 0
+
+    func recordShutdown() {
+        shutdownCount += 1
+    }
+}
+
+private final class FixtureRuntimeReleaseTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var released = false
+
+    var isReleased: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return released
+    }
+
+    func markReleased() {
+        lock.lock()
+        released = true
+        lock.unlock()
     }
 }
 

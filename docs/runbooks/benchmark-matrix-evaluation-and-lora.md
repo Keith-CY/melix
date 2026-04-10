@@ -13,7 +13,7 @@ This runbook is intentionally execution-focused. It explains:
 - how to run `bench matrix` sweeps
 - how to run `eval` jobs
 - how to use LoRA adapters with those workflows
-- how to compare multiple activated adapters serially
+- how to run first-class `eval compare` jobs against activated derived models
 
 ## Preconditions
 
@@ -51,6 +51,7 @@ Important target-selection rules:
 - `melix bench run` requires exactly one of `--model-id` or `--repo-id`
 - `melix bench matrix run` requires exactly one of `--model-id` or `--repo-id`
 - `melix eval run` requires exactly one of `--model-id` or `--repo-id`
+- `melix eval compare` requires exactly one base target (`--model-id` or `--repo-id`) plus at least one `--target-model-id`
 - benchmark, matrix, and evaluation do not accept an adapter path or adapter ID directly
 
 ## Run A Standard Benchmark
@@ -227,9 +228,11 @@ Notes:
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 
-## Use LoRA With Benchmark, Matrix, And Evaluation
+## Use LoRA With Benchmark, Matrix, Evaluation, And Compare
 
-LoRA adapters are not direct benchmark or evaluation targets.
+LoRA adapters are not direct benchmark or evaluation targets. Melix benchmark and evaluation
+commands operate on catalog model IDs or direct Hugging Face repos, so LoRA workflows must first
+materialize or register a derived model ID.
 
 The required workflow is:
 
@@ -248,6 +251,7 @@ swift run melix lora train \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
   --target-repo melix/adapters/melix-dev-adapter \
+  --training-mode qlora \
   --rank 16 \
   --alpha 32 \
   --dropout 0.1 \
@@ -266,9 +270,11 @@ swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --hf-dataset-path HuggingFaceH4/ultrachat_200k \
   --hf-train-split train_sft \
+  --hf-valid-split test_sft \
   --chat-feature messages \
   --adapter-name melix-ultrachat \
-  --target-repo melix/adapters/melix-ultrachat
+  --target-repo melix/adapters/melix-ultrachat \
+  --training-mode qlora
 ```
 
 ### Activate The Adapter
@@ -277,10 +283,13 @@ swift run melix lora train \
 swift run melix lora activate \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --activation-mode adapter_backed_runtime \
   --alias melix-qwen35-acceptance
 ```
 
 Activation writes a derived-model manifest and registers a new text model into the local catalog.
+`fused_derived_model` remains the default; `adapter_backed_runtime` is also supported when you
+want runtime-bound activation without a fused local serving tree.
 
 ### Find The Derived Model ID
 
@@ -342,123 +351,79 @@ swift run melix eval run \
   --seed 9
 ```
 
-## Compare Multiple Activated Adapters Serially
-
-Melix can keep multiple activated adapters as separate derived models in the catalog. The
-comparison workflow is serial:
-
-1. Run the base model with a fixed command set.
-2. Activate adapter A and record its derived `model_id`.
-3. Run the same benchmark, matrix, or evaluation command against adapter A.
-4. Activate adapter B and record its derived `model_id`.
-5. Run the same command against adapter B.
-6. Compare list output, summary CSV, request CSV, or sample exports across job IDs.
-
-Recommended comparison pattern:
+### Remove A Derived Model When The Comparison Is Done
 
 ```bash
-swift run melix bench run --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit --suite smoke --sample-size 6 --batch-factor 2
-swift run melix bench run --model-id <adapter-a-derived-model-id> --suite smoke --sample-size 6 --batch-factor 2
-swift run melix bench run --model-id <adapter-b-derived-model-id> --suite smoke --sample-size 6 --batch-factor 2
+swift run melix lora remove-derived \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --derived-model-id <derived-model-id>
 ```
 
-Current behavior limits:
+Melix removes the product-owned derived model artifacts and prunes the removed model from the
+catalog snapshot. If you keep multiple adapters active in the catalog, remove each derived model
+explicitly when the session is complete.
 
-- one benchmark, matrix, or evaluation run targets one model at a time
-- there is no direct `--adapter-id` or `--adapter-path` on benchmark or evaluation commands
-- the serial comparison workflow is the supported way to compare multiple adapters today
+## Run Evaluation Compare Against Activated Derived Models
+
+Use `eval compare` when you want one base target and one or more activated derived models in the
+same evaluation job.
+
+Example:
+
+```bash
+swift run melix eval compare \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-model-id <adapter-a-derived-model-id> \
+  --target-model-id <adapter-b-derived-model-id> \
+  --suite mmlu \
+  --sample-size 12 \
+  --batch-factor 2 \
+  --few-shot 4 \
+  --seed 9 \
+  --scoring-mode multiple_choice_accuracy \
+  --code-exec-policy sandboxed
+```
+
+Important compare rules:
+
+- `eval compare` still uses model IDs, not adapter paths
+- every `--target-model-id` must already exist in the local catalog
+- compare results persist through the same evaluation history and export bundle as `eval run`
+
+Export the resulting comparison evidence with the normal evaluation export commands:
+
+```bash
+swift run melix eval list --json
+
+swift run melix eval export-summary-csv \
+  --job-id <compare-job-id> \
+  --output /tmp/melix-evaluation-compare-summary.csv
+
+swift run melix eval export-samples-jsonl \
+  --job-id <compare-job-id> \
+  --output /tmp/melix-evaluation-compare-samples.jsonl
+```
+
+Benchmark and matrix workflows remain one target per run, so benchmark-to-benchmark comparison is
+still a serial job review workflow using `bench list`, `bench matrix list`, and CSV exports across
+job IDs.
 
 ## Native Operator Window Equivalents
 
 Use the native operator window when you prefer interactive controls over CLI flags.
 
-In Phase 1, the production operator window executes benchmark, matrix benchmark, and evaluation
-actions by invoking the public `melix` CLI as a subprocess. Test environments use the same CLI
-contract through the shared runner seam, so Window UI verification and CLI verification exercise the
-same product behavior.
-
 The current product surface exposes:
 
 - a standard benchmark flow with suite and parameter controls
 - a matrix benchmark flow with load-budget and sweep controls
-- an evaluation flow with sample-size, few-shot, seed, scoring, and code-exec controls
-- LoRA training and activation tooling
+- an evaluation flow with `Standard` and `Compare` modes, compare-target selection, sample-size, few-shot, seed, scoring, and code-exec controls
+- LoRA training, activation, publish, and remove-derived tooling
 - persisted history review and CSV export
 
 The same target model rule still applies in the operator window:
 
 - benchmark, matrix, and evaluation select a model or direct repo target
 - LoRA must be activated first so the derived model appears as a selectable target
-
-## Window UI Diagnostics Workflow
-
-Use `Tools -> Diagnostics` for the Phase 1 operator acceptance path.
-
-### Run A Standard Benchmark From The Window UI
-
-1. Open the Window UI and select `Tools -> Diagnostics`.
-2. Keep `Benchmark Mode` on `Standard`.
-3. Select either:
-   - `Catalog Model` and choose a local or derived model ID
-   - `Hugging Face Repo` and enter a direct repo target
-4. Select one or more benchmark suites.
-5. Configure context lengths, batch sizes, repeats, cache profile, reasoning mode, structured
-   output mode, sample size, and batch factor as needed.
-6. Select `Run Benchmark`.
-7. Verify the Window UI updates:
-   - `Benchmark Results` shows metric cards and chart data
-   - `Benchmark History` contains the new job
-   - `Export Bench CSV` writes a CSV artifact for the selected or newest benchmark job
-
-### Run A Matrix Benchmark From The Window UI
-
-1. Open `Tools -> Diagnostics`.
-2. Switch `Benchmark Mode` to `Matrix`.
-3. Select a benchmark-capable catalog model or direct repo target.
-4. Select one or more suites plus the desired matrix sweep dimensions.
-5. Choose exactly one load-budget mode:
-   - `Requests`
-   - `Duration`
-6. Enter a positive value for the selected load budget.
-7. Select `Run Matrix`.
-8. Verify the Window UI updates:
-   - `Benchmark Results` shows matrix summary rows and chart points
-   - `Benchmark History` shows the new matrix job
-   - `Export Matrix Summary` writes the summary CSV artifact
-   - `Export Matrix Requests` writes the request-level CSV artifact
-
-### Run An Evaluation From The Window UI
-
-1. Open `Tools -> Diagnostics`.
-2. Select a catalog model or direct repo target for evaluation.
-3. Select one or more evaluation suites.
-4. Configure sample size, batch factor, few-shot, seed, scoring mode, and code execution policy.
-5. Select `Run Evaluation`.
-6. Verify the Window UI updates:
-   - evaluation metric cards are populated
-   - evaluation sample preview rows appear
-   - evaluation history contains the new job
-   - `Export Eval Summary`, `Export Eval Samples`, and `Export Eval JSONL` write artifacts for the selected or newest evaluation job
-
-## Window UI Failure Acceptance
-
-The Phase 1 Diagnostics surface must surface CLI-backed failures in the Window UI rather than hiding
-them behind silent state resets.
-
-Accept the Window UI failure path only when the following behaviors hold:
-
-- an invalid matrix load-budget configuration blocks `Run Matrix` and renders the validation error
-  inside `Tools -> Diagnostics`
-- a benchmark subprocess failure renders the surfaced CLI error text inside `Tools -> Diagnostics`
-- an evaluation subprocess failure renders the surfaced CLI error text inside `Tools -> Diagnostics`
-- malformed export or decode output keeps the operation in a failed state and renders the surfaced
-  error text inside `Tools -> Diagnostics`
-- positive runs followed by a failed run keep prior persisted history available unless the new CLI
-  response successfully refreshes the shared export bundle
-
-For CLI-side negative acceptance commands, continue to use
-`docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under
-`Phase 1 Canonical CLI Acceptance Suite`.
 
 ## Recommended Verification Sequence
 
@@ -472,11 +437,13 @@ swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
   --adapter-name melix-dev-adapter \
-  --target-repo melix/adapters/melix-dev-adapter
+  --target-repo melix/adapters/melix-dev-adapter \
+  --training-mode qlora
 
 swift run melix lora activate \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
+  --activation-mode adapter_backed_runtime \
   --alias melix-qwen35-acceptance
 
 swift run melix lora list --json
@@ -506,15 +473,16 @@ swift run melix eval run \
   --batch-factor 2 \
   --few-shot 4 \
   --seed 9
+
+swift run melix eval compare \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-model-id <derived-model-id> \
+  --suite mmlu \
+  --sample-size 12 \
+  --batch-factor 2 \
+  --few-shot 4 \
+  --seed 9
 ```
-
-## Phase 1 Acceptance Reference
-
-- Phase 1 acceptance baseline model: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
-- Phase 1 Window UI scope: `Tools -> Diagnostics -> Benchmark`, `Tools -> Diagnostics -> Benchmark Matrix`, and `Tools -> Diagnostics -> Evaluation`.
-- Phase 1 excludes independent comparison and release-gate windows.
-- For the exact canonical CLI acceptance command suite (positive and negative), use `docs/runbooks/m7-benchmark-and-evaluation-foundation.md` under `Phase 1 Canonical CLI Acceptance Suite`.
-- In this workflow runbook, negative acceptance coverage includes two CLI failure-path categories: invalid CLI configurations inside the included Phase 1 command surface and unsupported or out-of-scope targets. This document does not duplicate the canonical command block.
 
 ## Related Runbooks
 

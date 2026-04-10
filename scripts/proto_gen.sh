@@ -34,12 +34,12 @@ if ! command -v protoc-gen-swift >/dev/null 2>&1; then
   exit 1
 fi
 
-HOME="$SWIFT_HOME" CLANG_MODULE_CACHE_PATH="$CLANG_MODULE_CACHE_PATH" swift build \
+HOME="$SWIFT_HOME" CLANG_MODULE_CACHE_PATH="$CLANG_MODULE_CACHE_PATH" xcrun swift build \
   --package-path "$SWIFT_OUT" \
   --product protoc-gen-grpc-swift-2 >/dev/null
 
 GRPC_SWIFT_PLUGIN_BIN="$(
-  HOME="$SWIFT_HOME" CLANG_MODULE_CACHE_PATH="$CLANG_MODULE_CACHE_PATH" swift build \
+  HOME="$SWIFT_HOME" CLANG_MODULE_CACHE_PATH="$CLANG_MODULE_CACHE_PATH" xcrun swift build \
     --package-path "$SWIFT_OUT" \
     --show-bin-path
 )/protoc-gen-grpc-swift-2"

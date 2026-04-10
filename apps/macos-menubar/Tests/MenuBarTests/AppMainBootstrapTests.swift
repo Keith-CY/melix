@@ -764,114 +764,6 @@ struct AppMainBootstrapTests {
         #expect(bootstrap.viewModel.cliWorkflowRunnerSurface == .subprocess)
     }
 
-    @Test("live bootstrap defaults benchmark and evaluation operations to the melix subprocess runner")
-    @MainActor
-    func liveBootstrapDefaultsToMelixSubprocessRunner() {
-        let environment = MenuBarBootstrapEnvironment(
-            environment: [
-                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
-                "MELIX_CLI": "/tmp/melix-cli",
-                "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
-                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
-            ]
-        )
-        let bootstrap = MelixMenuBarBootstrap.live(environment: environment)
-        let viewModel = mirrorChild(named: "viewModel", in: bootstrap) as? RuntimeViewModel
-        #expect(viewModel?.operatorCommandRunnerTypeNameForTesting.contains("MelixCLISubprocessRunner") == true)
-        #expect(viewModel?.operatorCommandRunnerExecutablePathForTesting == "/tmp/melix-cli")
-    }
-
-    @Test("live bootstrap overwrites conflicting MELIX_CLI_EXECUTABLE values with the resolved cli path")
-    @MainActor
-    func liveBootstrapOverwritesConflictingCLIExecutableEnvironment() async {
-        await withEnvironmentValue("MELIX_CLI_EXECUTABLE", "/tmp/stale-cli") {
-            let environment = MenuBarBootstrapEnvironment(
-                environment: [
-                    "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
-                    "MELIX_CLI": "/tmp/melix-cli",
-                    "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
-                    "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
-                ]
-            )
-            let bootstrap = MelixMenuBarBootstrap.live(environment: environment)
-            let viewModel = mirrorChild(named: "viewModel", in: bootstrap) as? RuntimeViewModel
-
-            #expect(viewModel?.operatorCommandRunnerTypeNameForTesting.contains("MelixCLISubprocessRunner") == true)
-            #expect(viewModel?.operatorCommandRunnerExecutablePathForTesting == "/tmp/melix-cli")
-        }
-    }
-
-    @Test("live bootstrap overwrites conflicting MELIX_CLI values with the resolved cli path")
-    @MainActor
-    func liveBootstrapOverwritesConflictingCLIEnvironment() async {
-        await withEnvironmentValue("MELIX_CLI", "/tmp/stale-cli") {
-            let environment = MenuBarBootstrapEnvironment(
-                environment: [
-                    "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
-                    "MELIX_CLI_EXECUTABLE": "/tmp/melix-cli-bootstrap",
-                    "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
-                    "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
-                ]
-            )
-            let bootstrap = MelixMenuBarBootstrap.live(environment: environment)
-            let viewModel = mirrorChild(named: "viewModel", in: bootstrap) as? RuntimeViewModel
-
-            #expect(viewModel?.operatorCommandRunnerTypeNameForTesting.contains("MelixCLISubprocessRunner") == true)
-            #expect(viewModel?.operatorCommandRunnerExecutablePathForTesting == "/tmp/melix-cli-bootstrap")
-        }
-    }
-
-    @Test("bootstrap environment uses MELIX_CLI_EXECUTABLE when MELIX_CLI is absent")
-    @MainActor
-    func bootstrapEnvironmentUsesCLIExecutableFallback() {
-        let environment = MenuBarBootstrapEnvironment(
-            environment: [
-                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
-                "MELIX_CLI_EXECUTABLE": "/tmp/melix-cli-explicit",
-            ]
-        )
-
-        #expect(environment.cliExecutablePath == "/tmp/melix-cli-explicit")
-    }
-
-    @Test("bootstrap environment ignores an empty MELIX_CLI_EXECUTABLE fallback")
-    @MainActor
-    func bootstrapEnvironmentIgnoresEmptyCLIExecutableFallback() {
-        let repoRoot = FileManager.default.currentDirectoryPath
-        let environment = MenuBarBootstrapEnvironment(
-            environment: [
-                "MELIX_REPO_ROOT": repoRoot,
-                "MELIX_CLI_EXECUTABLE": "",
-            ]
-        )
-
-        #expect(
-            environment.cliExecutablePath
-            == MenuBarBootstrapEnvironment.inferCLIExecutablePath(repoRoot: repoRoot)
-        )
-    }
-
-    @Test("live bootstrap propagates the inferred repo root into the melix subprocess runner")
-    @MainActor
-    func liveBootstrapPropagatesInferredRepoRootIntoSubprocessRunner() async {
-        await withEnvironmentValue("MELIX_REPO_ROOT", nil) {
-            let environment = MenuBarBootstrapEnvironment(
-                environment: [
-                    "MELIX_WORKER_SOCKET_PATH": "/tmp/melix-worker.sock",
-                    "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/melix-swift.sock",
-                ]
-            )
-            let bootstrap = MelixMenuBarBootstrap.live(environment: environment)
-            let viewModel = mirrorChild(named: "viewModel", in: bootstrap) as? RuntimeViewModel
-
-            #expect(viewModel?.operatorCommandRunnerTypeNameForTesting.contains("MelixCLISubprocessRunner") == true)
-            #expect(
-                viewModel?.operatorCommandRunnerExecutablePathForTesting
-                == environment.cliExecutablePath
-            )
-        }
-    }
-
     @Test("launchLive can use the default live bootstrap factory")
     @MainActor
     func launchLiveCanUseDefaultBootstrapFactory() async throws {
@@ -1043,10 +935,6 @@ private func withEnvironmentValue(
 private func posixPermissions(at url: URL) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
-}
-
-private func mirrorChild(named name: String, in value: Any) -> Any? {
-    Mirror(reflecting: value).children.first(where: { $0.label == name })?.value
 }
 
 @MainActor

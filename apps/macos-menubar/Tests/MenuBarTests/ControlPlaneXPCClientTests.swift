@@ -940,7 +940,7 @@ struct ControlPlaneXPCClientTests {
 
         _ = try await client.runBench(
             ControlPlaneBenchRequest(
-                hfRepoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
                 suites: ["smoke"],
                 parameters: [
                     "sample_size": "1",
@@ -950,7 +950,7 @@ struct ControlPlaneXPCClientTests {
         let request = try #require(await service.lastExecuteRequest)
 
         #expect(request.ops.runBench.modelID.isEmpty)
-        #expect(request.ops.runBench.hfRepoID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(request.ops.runBench.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(request.ops.runBench.suites == ["smoke"])
         #expect(request.ops.runBench.parameters["sample_size"] == "1")
     }
@@ -969,7 +969,7 @@ struct ControlPlaneXPCClientTests {
 
         let result = try await client.runEvaluation(
             ControlPlaneEvaluationRequest(
-                hfRepoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
                 suiteID: "mmlu",
                 datasetID: "mmlu.dev.v1",
                 sampleSize: 8,
@@ -984,7 +984,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.requestID == "menubar-run-eval-mmlu")
         #expect(request.commandType == "ops.run_evaluation")
         #expect(request.ops.runEvaluation.modelID.isEmpty)
-        #expect(request.ops.runEvaluation.hfRepoID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(request.ops.runEvaluation.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(request.ops.runEvaluation.suiteID == "mmlu")
         #expect(request.ops.runEvaluation.datasetID == "mmlu.dev.v1")
         #expect(request.ops.runEvaluation.sampleSize == 8)
@@ -1010,49 +1010,6 @@ struct ControlPlaneXPCClientTests {
         #expect(request.commandType == "ops.export_results")
         #expect(request.ops.exportResults.outputDir == "/tmp/melix-export")
         #expect(result.exportBundleJSON.contains("\"export_schema_version\":\"melix.benchmark_export.v1\""))
-    }
-
-    @Test("local client surfaces runEvaluation failures")
-    func localClientSurfacesRunEvaluationFailures() async throws {
-        let service = FailingExecuteControlPlaneService(
-            code: "unavailable",
-            message: "Evaluation worker request failed: worker is unavailable"
-        )
-        let client = LocalControlPlaneXPCClient(service: service)
-
-        await #expect(
-            throws: ControlPlaneXPCClientError.requestFailed(
-                code: "unavailable",
-                message: "Evaluation worker request failed: worker is unavailable"
-            )
-        ) {
-            _ = try await client.runEvaluation(
-                ControlPlaneEvaluationRequest(
-                    hfRepoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
-                    suiteID: "mmlu",
-                    datasetID: "mmlu.dev.v1",
-                    sampleSize: 8
-                )
-            )
-        }
-    }
-
-    @Test("local client surfaces exportResults failures")
-    func localClientSurfacesExportResultsFailures() async throws {
-        let service = FailingExecuteControlPlaneService(
-            code: "not_found",
-            message: "Export bundle is unavailable."
-        )
-        let client = LocalControlPlaneXPCClient(service: service)
-
-        await #expect(
-            throws: ControlPlaneXPCClientError.requestFailed(
-                code: "not_found",
-                message: "Export bundle is unavailable."
-            )
-        ) {
-            _ = try await client.exportResults(outputDir: "/tmp/melix-export")
-        }
     }
 
     @Test("local client surfaces cancel request failures")

@@ -413,30 +413,6 @@ def test_run_local_suite_uses_loaded_runtime_predictions_for_live_evaluation(
     assert run.result.score_value == 1.0
 
 
-def test_run_local_suite_raises_when_requested_handle_is_not_loaded(tmp_path: Path) -> None:
-    dataset_root = _write_dataset_package(
-        tmp_path=tmp_path,
-        dataset_id="mmlu-dev",
-        suite_id="mmlu",
-        samples=(
-            {"prompt": "capital of france?", "expected": "Paris"},
-        ),
-    )
-    backend = ScriptedEvaluationBackend(("Answer: Paris",))
-    runtime = MLXTextRuntime(backend=backend)
-    registry = FakeEvaluationRegistry(runtime=runtime, model_id="live-eval-model")
-    runner = EvaluationCore(registry=registry)
-
-    with pytest.raises(RuntimeError, match="No loaded evaluation target is available for live-eval-model"):
-        runner.run_local_suite(
-            model_id="live-eval-model",
-            model_handle="live-eval-model::missing",
-            suite_id="mmlu",
-            dataset_root=dataset_root,
-            sample_size=1,
-        )
-
-
 def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,

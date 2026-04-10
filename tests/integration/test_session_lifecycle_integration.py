@@ -21,8 +21,10 @@ def test_session_lifecycle_smoke_records_live_pause_sleep_wake_and_restart_metri
         metrics_path.unlink(missing_ok=True)
 
         environment = os.environ.copy()
-        environment["HOME"] = str(repo_root / ".swift-home")
-        environment["CLANG_MODULE_CACHE_PATH"] = str(repo_root / ".build" / "ModuleCache.noindex")
+        environment["HOME"] = str(repo_root / ".swift-home" / "root-package")
+        environment["CLANG_MODULE_CACHE_PATH"] = str(
+            repo_root / ".build" / "ModuleCache.noindex" / "root-package"
+        )
         environment["MELIX_REPO_ROOT"] = str(repo_root)
         environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = str(stack.swift_socket_path)
         environment["MELIX_WORKER_SOCKET_PATH"] = str(stack.python_socket_path)
@@ -30,6 +32,7 @@ def test_session_lifecycle_smoke_records_live_pause_sleep_wake_and_restart_metri
 
         result = subprocess.run(
             [
+                "xcrun",
                 "swift",
                 "run",
                 "--package-path",

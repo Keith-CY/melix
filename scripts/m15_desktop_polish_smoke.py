@@ -12,15 +12,16 @@ from pathlib import Path
 
 def run_swift_smoke(repo_root: Path) -> dict[str, object]:
     env = os.environ.copy()
-    env["HOME"] = str(repo_root / ".swift-home")
+    env["HOME"] = str(repo_root / ".swift-home" / "macos-menubar")
     env["CLANG_MODULE_CACHE_PATH"] = str(
-        repo_root / ".build" / "ModuleCache.noindex"
+        repo_root / ".build" / "ModuleCache.noindex" / "macos-menubar"
     )
     env.setdefault(
         "MELIX_HOME",
         str(repo_root / ".runtime" / "phase1" / "smoke-home"),
     )
     command = [
+        "xcrun",
         "swift",
         "test",
         "--disable-sandbox",

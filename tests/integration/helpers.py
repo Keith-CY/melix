@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shlex
 import signal
 import socket
 import subprocess
@@ -49,8 +47,6 @@ class LiveMelixStack:
         self.gateway_serving_defaults_store_path = (
             self.runtime_state_root / "state" / "gateway-serving-defaults.json"
         )
-        self.model_ops_jobs_root = self.runtime_state_root / "jobs" / "model-ops"
-        self.evaluation_jobs_root = self.model_ops_jobs_root / "evaluation"
         self.http_port = reserve_port()
         self.swift_text_worker_stdout_path = Path("/tmp") / f"melix-swift-worker-{token}.stdout.log"
         self.swift_text_worker_stderr_path = Path("/tmp") / f"melix-swift-worker-{token}.stderr.log"
@@ -89,7 +85,7 @@ class LiveMelixStack:
         }
         if self.should_start_swift_text_worker:
             swift_started_at = time.perf_counter()
-            swift_text_worker_binary = ensure_swift_product_binary(
+            swift_text_worker_binary = resolve_swift_product_binary(
                 self.repo_root,
                 package_path=Path("services/mlx-text-worker-swift"),
                 product_name="melix-text-worker-swift",
@@ -176,55 +172,61 @@ class LiveMelixStack:
             ) * 1_000.0
 
         control_plane_started_at = time.perf_counter()
-        control_plane_binary = ensure_swift_product_binary(
+        control_plane_binary = resolve_swift_product_binary(
             self.repo_root,
             package_path=Path("services/control-plane-swift"),
             product_name="melix-control-plane",
         )
-        control_plane_env = os.environ.copy()
-        control_plane_env.update(self.environment_overrides)
-        if "MELIX_HOME" not in control_plane_env:
-            control_plane_env["MELIX_HOME"] = os.fspath(self.runtime_state_root)
-        if "MELIX_GATEWAY_CONFIG_STORE_PATH" not in control_plane_env:
-            control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] = os.fspath(self.gateway_config_store_path)
-        if "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH" not in control_plane_env:
-            control_plane_env["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] = os.fspath(
-                self.gateway_serving_defaults_store_path
+        for attempt in range(5):
+            control_plane_env = os.environ.copy()
+            control_plane_env.update(self.environment_overrides)
+            if "MELIX_HOME" not in control_plane_env:
+                control_plane_env["MELIX_HOME"] = os.fspath(self.runtime_state_root)
+            if "MELIX_GATEWAY_CONFIG_STORE_PATH" not in control_plane_env:
+                control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] = os.fspath(self.gateway_config_store_path)
+            if "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH" not in control_plane_env:
+                control_plane_env["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"] = os.fspath(
+                    self.gateway_serving_defaults_store_path
+                )
+            control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
+            control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
+            control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
+            control_plane_env["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
+            control_plane_env["MELIX_REPO_ROOT"] = os.fspath(self.repo_root)
+            self.control_plane_stdout = self.control_plane_stdout_path.open("w", encoding="utf-8")
+            self.control_plane_stderr = self.control_plane_stderr_path.open("w", encoding="utf-8")
+
+            self.control_plane = subprocess.Popen(
+                [os.fspath(control_plane_binary)],
+                cwd=self.repo_root,
+                stdout=self.control_plane_stdout,
+                stderr=self.control_plane_stderr,
+                text=True,
+                env=control_plane_env,
+                start_new_session=True,
             )
-        control_plane_env.setdefault("MELIX_MODEL_OPS_JOBS_ROOT", os.fspath(self.model_ops_jobs_root))
-        control_plane_env.setdefault("MELIX_EVALUATION_JOBS_ROOT", os.fspath(self.evaluation_jobs_root))
-        control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
-        control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
-        control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
-        control_plane_env["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
-        control_plane_env["MELIX_REPO_ROOT"] = os.fspath(self.repo_root)
-        self.control_plane_stdout = self.control_plane_stdout_path.open("w", encoding="utf-8")
-        self.control_plane_stderr = self.control_plane_stderr_path.open("w", encoding="utf-8")
 
-        self.control_plane = subprocess.Popen(
-            [os.fspath(control_plane_binary)],
-            cwd=self.repo_root,
-            stdout=self.control_plane_stdout,
-            stderr=self.control_plane_stderr,
-            text=True,
-            env=control_plane_env,
-            start_new_session=True,
-        )
-
-        wait_for_http_ready(
-            self.http_port,
-            request_headers=self._gateway_request_headers(),
-            swift_text_worker=self.swift_text_worker,
-            swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
-            swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
-            python_worker=self.python_worker,
-            python_worker_stdout_path=self.python_worker_stdout_path,
-            python_worker_stderr_path=self.python_worker_stderr_path,
-            control_plane=self.control_plane,
-            control_plane_stdout_path=self.control_plane_stdout_path,
-            control_plane_stderr_path=self.control_plane_stderr_path,
-            timeout_seconds=120,
-        )
+            try:
+                wait_for_http_ready(
+                    self.http_port,
+                    request_headers=self._gateway_request_headers(),
+                    swift_text_worker=self.swift_text_worker,
+                    swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
+                    swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
+                    python_worker=self.python_worker,
+                    python_worker_stdout_path=self.python_worker_stdout_path,
+                    python_worker_stderr_path=self.python_worker_stderr_path,
+                    control_plane=self.control_plane,
+                    control_plane_stdout_path=self.control_plane_stdout_path,
+                    control_plane_stderr_path=self.control_plane_stderr_path,
+                    timeout_seconds=120,
+                )
+                break
+            except AssertionError:
+                if attempt == 4 or not self._control_plane_hit_port_conflict():
+                    raise
+                self.stop_control_plane()
+                self.http_port = reserve_port()
         self.startup_timings["control_plane_spawn_to_ready_ms"] = (
             time.perf_counter() - control_plane_started_at
         ) * 1_000.0
@@ -278,22 +280,6 @@ class LiveMelixStack:
 
     def image_edits_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/images/edits"
-
-    def cli_environment(self, repo_root: Path) -> dict[str, str]:
-        environment = dict(self.environment_overrides)
-        environment.setdefault("MELIX_HOME", os.fspath(self.runtime_state_root))
-        environment.setdefault("MELIX_GATEWAY_CONFIG_STORE_PATH", os.fspath(self.gateway_config_store_path))
-        environment.setdefault(
-            "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH",
-            os.fspath(self.gateway_serving_defaults_store_path),
-        )
-        environment["MELIX_REPO_ROOT"] = os.fspath(repo_root)
-        environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
-        environment["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
-        environment["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
-        environment.setdefault("MELIX_MODEL_OPS_JOBS_ROOT", os.fspath(self.model_ops_jobs_root))
-        environment.setdefault("MELIX_EVALUATION_JOBS_ROOT", os.fspath(self.evaluation_jobs_root))
-        return environment
 
     def wait_for_models(self, model_ids: list[str], *, timeout_seconds: float = 120) -> None:
         wait_for_http_model_states(
@@ -371,6 +357,14 @@ class LiveMelixStack:
                 child.rmdir()
         root.rmdir()
 
+    def _control_plane_hit_port_conflict(self) -> bool:
+        stderr = (
+            self.control_plane_stderr_path.read_text(encoding="utf-8")
+            if self.control_plane_stderr_path.exists()
+            else ""
+        )
+        return "Address already in use" in stderr or "POSIXErrorCode(rawValue: 48)" in stderr
+
 
 def reserve_port() -> int:
     with socket.socket() as sock:
@@ -378,16 +372,10 @@ def reserve_port() -> int:
         return sock.getsockname()[1]
 
 
-def resolve_swift_product_binary(
-    repo_root: Path,
-    *,
-    package_path: Path,
-    product_name: str,
-    configuration: str = "debug",
-) -> Path:
+def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:
     build_root = repo_root / package_path / ".build"
-    candidates = [build_root / configuration / product_name]
-    candidates.extend(sorted(build_root.glob(f"*/{configuration}/{product_name}")))
+    candidates = [build_root / "debug" / product_name]
+    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
 
     executable_candidates = [
         candidate
@@ -405,214 +393,6 @@ def resolve_swift_product_binary(
         f"Expected a built executable for {product_name!r} under {build_root}. "
         "Run `make swift-test` or `swift build --package-path <package>` before integration tests."
     )
-
-
-def ensure_swift_product_binary(
-    repo_root: Path,
-    *,
-    package_path: Path,
-    product_name: str,
-    timeout_seconds: float = 600.0,
-    configuration: str = "debug",
-) -> Path:
-    try:
-        return resolve_swift_product_binary(
-            repo_root,
-            package_path=package_path,
-            product_name=product_name,
-            configuration=configuration,
-        )
-    except AssertionError as error:
-        swift_home = repo_root / ".swift-home"
-        clang_module_cache_path = repo_root / ".build" / "ModuleCache.noindex"
-        swift_home.mkdir(parents=True, exist_ok=True)
-        clang_module_cache_path.mkdir(parents=True, exist_ok=True)
-
-        build_environment = os.environ.copy()
-        build_environment["HOME"] = os.fspath(swift_home)
-        build_environment["CLANG_MODULE_CACHE_PATH"] = os.fspath(clang_module_cache_path)
-        build_command = [
-            "swift",
-            "build",
-        ]
-        if configuration == "release":
-            build_command.extend(["-c", "release"])
-        build_command.extend(
-            [
-                "--package-path",
-                os.fspath(repo_root / package_path),
-                "--product",
-                product_name,
-            ]
-        )
-        result = subprocess.run(
-            build_command,
-            cwd=repo_root,
-            env=build_environment,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-        if result.returncode != 0:
-            raise AssertionError(
-                "Unable to build required Swift product "
-                f"{product_name!r} under {repo_root / package_path}. "
-                f"stdout={result.stdout!r} stderr={result.stderr!r}"
-            ) from error
-        return resolve_swift_product_binary(
-            repo_root,
-            package_path=package_path,
-            product_name=product_name,
-            configuration=configuration,
-        )
-
-
-def resolve_cli_binary(repo_root: Path, *, configuration: str = "debug") -> Path:
-    return resolve_swift_product_binary(
-        repo_root,
-        package_path=Path("."),
-        product_name="melix",
-        configuration=configuration,
-    )
-
-
-def ensure_cli_binary(
-    repo_root: Path,
-    *,
-    timeout_seconds: float = 600.0,
-    configuration: str = "debug",
-) -> Path:
-    return ensure_swift_product_binary(
-        repo_root,
-        package_path=Path("."),
-        product_name="melix",
-        timeout_seconds=timeout_seconds,
-        configuration=configuration,
-    )
-
-
-def run_melix_cli(
-    repo_root: Path,
-    args: list[str],
-    environment: dict[str, str],
-    *,
-    configuration: str = "debug",
-    timeout_seconds: float = 600.0,
-) -> subprocess.CompletedProcess[str]:
-    cli_binary = ensure_cli_binary(
-        repo_root,
-        timeout_seconds=timeout_seconds,
-        configuration=configuration,
-    )
-    merged_environment = os.environ.copy()
-    merged_environment.update(environment)
-    return subprocess.run(
-        [os.fspath(cli_binary), *args],
-        cwd=repo_root,
-        env=merged_environment,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=timeout_seconds,
-    )
-
-
-def run_phase1_canonical_cli(
-    repo_root: Path,
-    environment: dict[str, str],
-    *,
-    case_id: str,
-    configuration: str = "release",
-    timeout_seconds: float = 600.0,
-) -> subprocess.CompletedProcess[str]:
-    cases = _phase1_canonical_cli_cases(repo_root)
-    try:
-        args = cases[case_id]
-    except KeyError as error:
-        raise AssertionError(f"Unknown Phase 1 canonical CLI case: {case_id}") from error
-    return run_melix_cli(
-        repo_root,
-        args,
-        environment,
-        configuration=configuration,
-        timeout_seconds=timeout_seconds,
-    )
-
-
-def _phase1_canonical_cli_cases(repo_root: Path) -> dict[str, list[str]]:
-    runbook_path = repo_root / "docs" / "runbooks" / "m7-benchmark-and-evaluation-foundation.md"
-    runbook_text = runbook_path.read_text(encoding="utf-8")
-    section_marker = "## Phase 1 Canonical CLI Acceptance Suite"
-    if section_marker not in runbook_text:
-        raise AssertionError(f"Unable to locate {section_marker!r} in {runbook_path}.")
-    section = runbook_text.split(section_marker, 1)[1]
-    next_heading = re.search(r"^##\s+", section, flags=re.MULTILINE)
-    if next_heading:
-        section = section[: next_heading.start()]
-
-    prerequisite_match = re.search(r"Prerequisite:.*?```bash\n(.*?)```", section, flags=re.DOTALL)
-    positive_match = re.search(
-        r"Use the release build to run the positive acceptance suite.*?```bash\n(.*?)```",
-        section,
-        flags=re.DOTALL,
-    )
-    negative_match = re.search(
-        r"Use these negative acceptance commands.*?```bash\n(.*?)```",
-        section,
-        flags=re.DOTALL,
-    )
-    if prerequisite_match is None or positive_match is None or negative_match is None:
-        raise AssertionError(
-            "Expected Phase 1 canonical CLI section to contain prerequisite, positive, and negative bash blocks."
-        )
-
-    commands: dict[str, list[str]] = {}
-    positive_block = positive_match.group(1)
-    negative_block = negative_match.group(1)
-
-    for raw_line in positive_block.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        tokens = shlex.split(line)
-        if not tokens or not tokens[0].endswith("melix"):
-            continue
-        args = tokens[1:]
-        if args[:2] == ["bench", "run"]:
-            commands["bench_run_positive"] = args
-        elif args[:3] == ["bench", "matrix", "run"]:
-            commands["bench_matrix_run_positive"] = args
-        elif args[:2] == ["eval", "run"]:
-            commands["eval_run_positive"] = args
-
-    for raw_line in negative_block.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        tokens = shlex.split(line)
-        if not tokens or not tokens[0].endswith("melix"):
-            continue
-        args = tokens[1:]
-        if args[:3] == ["bench", "matrix", "run"] and "--duration-seconds" in args:
-            commands["bench_matrix_conflicting_load_budget_negative"] = args
-        elif args[:2] == ["eval", "run"]:
-            commands["eval_run_unsupported_repo_negative"] = args
-
-    required_cases = {
-        "bench_run_positive",
-        "bench_matrix_run_positive",
-        "eval_run_positive",
-        "bench_matrix_conflicting_load_budget_negative",
-        "eval_run_unsupported_repo_negative",
-    }
-    missing_cases = sorted(required_cases.difference(commands))
-    if missing_cases:
-        raise AssertionError(
-            "Phase 1 canonical CLI cases are missing from the runbook: "
-            + ", ".join(missing_cases)
-        )
-    return commands
 
 
 def wait_for_worker_handshake(

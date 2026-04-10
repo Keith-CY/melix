@@ -17,14 +17,17 @@ def test_disk_streaming_smoke_records_ram_baseline_and_typed_unsupported_evidenc
         stack.stop_control_plane()
 
         environment = os.environ.copy()
-        environment["HOME"] = str(repo_root / ".swift-home")
-        environment["CLANG_MODULE_CACHE_PATH"] = str(repo_root / ".build" / "ModuleCache.noindex")
+        environment["HOME"] = str(repo_root / ".swift-home" / "root-package")
+        environment["CLANG_MODULE_CACHE_PATH"] = str(
+            repo_root / ".build" / "ModuleCache.noindex" / "root-package"
+        )
         environment["MELIX_REPO_ROOT"] = str(repo_root)
         environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = str(stack.swift_socket_path)
         environment["MELIX_WORKER_SOCKET_PATH"] = str(stack.python_socket_path)
 
         result = subprocess.run(
             [
+                "xcrun",
                 "swift",
                 "run",
                 "--package-path",

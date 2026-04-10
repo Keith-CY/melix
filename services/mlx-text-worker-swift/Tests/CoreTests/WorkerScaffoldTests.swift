@@ -623,50 +623,6 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual((loaded.storage as? [String: String])?["revision"], "dev-branch")
     }
 
-    #if canImport(MLX) && canImport(MLXLMCommon) && canImport(MLXLLM) && canImport(Tokenizers)
-    func testAutoSwiftMLXBackendLiveLoadModelAcceptsQwen35FixturesBeforeWeightLoading() async throws {
-        let backend = AutoSwiftMLXBackend()
-
-        let error = try await withTemporaryModelFixtureDirectory(
-            config: qwen35RuntimeFixtureConfiguration()
-        ) { modelDirectory -> Error? in
-            var spec = Melix_Worker_V1_ModelSpec()
-            spec.modelID = "melix-dev-text"
-            spec.modelPath = modelDirectory.path
-
-            return await captureAsyncThrownError {
-                try await withTemporaryDefaultMetallib {
-                    try await backend.loadModel(spec: spec)
-                }
-            }
-        }
-
-        let errorDescription = describe(error: try XCTUnwrap(error))
-        XCTAssertFalse(errorDescription.contains("Unsupported model type: qwen3_5"))
-    }
-
-    func testAutoSwiftMLXBackendLiveLoadModelRejectsUnknownModelTypeFixtures() async throws {
-        let backend = AutoSwiftMLXBackend()
-
-        let error = try await withTemporaryModelFixtureDirectory(
-            config: ["model_type": "melix_unknown_test"]
-        ) { modelDirectory -> Error? in
-            var spec = Melix_Worker_V1_ModelSpec()
-            spec.modelID = "melix-dev-text"
-            spec.modelPath = modelDirectory.path
-
-            return await captureAsyncThrownError {
-                try await withTemporaryDefaultMetallib {
-                    try await backend.loadModel(spec: spec)
-                }
-            }
-        }
-
-        let errorDescription = describe(error: try XCTUnwrap(error))
-        XCTAssertTrue(errorDescription.contains("Unsupported model type: melix_unknown_test"))
-    }
-    #endif
-
     func testAutoSwiftMLXBackendGenerateEventsUsesPreparedGenerationFactory() async throws {
         let backend = AutoSwiftMLXBackend(
             preparedGenerationFactory: { _, _, _ in
@@ -6782,67 +6738,6 @@ private func withTemporaryCacheRoot<T>(
     try fileManager.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
     defer { try? fileManager.removeItem(at: cacheRoot) }
     return try await operation(cacheRoot)
-}
-
-@available(macOS 15.0, *)
-private func withTemporaryModelFixtureDirectory<T>(
-    config: [String: Any],
-    _ operation: (URL) async throws -> T
-) async throws -> T {
-    let fileManager = FileManager.default
-    let modelDirectory = fileManager.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try fileManager.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
-    defer { try? fileManager.removeItem(at: modelDirectory) }
-
-    let configData = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
-    try configData.write(to: modelDirectory.appendingPathComponent("config.json"))
-
-    return try await operation(modelDirectory)
-}
-
-@available(macOS 15.0, *)
-private func qwen35RuntimeFixtureConfiguration() -> [String: Any] {
-    [
-        "attention_bias": false,
-        "hidden_size": 64,
-        "intermediate_size": 128,
-        "linear_conv_kernel_dim": 4,
-        "linear_key_head_dim": 8,
-        "linear_num_key_heads": 4,
-        "linear_num_value_heads": 4,
-        "linear_value_head_dim": 8,
-        "max_position_embeddings": 128,
-        "model_type": "qwen3_5",
-        "num_attention_heads": 8,
-        "num_hidden_layers": 1,
-        "num_key_value_heads": 4,
-        "partial_rotary_factor": 0.25,
-        "rms_norm_eps": 0.00001,
-        "rope_theta": 10000,
-        "tie_word_embeddings": false,
-        "vocab_size": 128,
-    ]
-}
-
-@available(macOS 15.0, *)
-private func describe(error: Error) -> String {
-    error.localizedDescription
-}
-
-@available(macOS 15.0, *)
-private func captureAsyncThrownError<T>(
-    file: StaticString = #filePath,
-    line: UInt = #line,
-    _ operation: () async throws -> T
-) async -> Error? {
-    do {
-        _ = try await operation()
-        XCTFail("Expected async expression to throw an error.", file: file, line: line)
-        return nil
-    } catch {
-        return error
-    }
 }
 
 @available(macOS 15.0, *)

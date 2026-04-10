@@ -776,8 +776,8 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy POLICY] [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy POLICY] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy MODE] [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -1636,18 +1636,80 @@ private struct ArgumentCursor {
     }
 }
 
+public typealias MelixCLICommandExecutor = @Sendable ([String]) async throws -> String
+
+public struct MelixCLIProcessExecutor: Sendable {
+    public let baseCommand: [String]
+    public let environment: [String: String]
+    public let workingDirectory: String
+
+    public init(
+        baseCommand: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        workingDirectory: String = FileManager.default.currentDirectoryPath
+    ) {
+        self.baseCommand = baseCommand
+        self.environment = environment
+        self.workingDirectory = workingDirectory
+    }
+
+    public func run(arguments: [String]) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(returning: try runSync(arguments: arguments))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func runSync(arguments: [String]) throws -> String {
+        guard let executable = baseCommand.first else {
+            throw MelixCLIError.runtime("The melix subprocess command is not configured.")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(baseCommand.dropFirst()) + arguments
+        process.environment = environment
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            let message = stderrText.isEmpty ? stdoutText : stderrText
+            throw MelixCLIError.runtime(message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 public actor MelixCLIRunner {
     private let client: any ControlPlaneXPCClient
     private let operatorSessionStore: any MelixOperatorSessionStoring
     private let environment: [String: String]
+    private let commandExecutor: MelixCLICommandExecutor?
 
     public init(
         client: (any ControlPlaneXPCClient)? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         operatorSessionStore: (any MelixOperatorSessionStoring)? = nil,
+        commandExecutor: MelixCLICommandExecutor? = nil,
         serviceBuilder: (@Sendable ([String: String]) -> any ControlPlaneExecuting)? = nil
     ) {
         self.environment = environment
+        self.commandExecutor = commandExecutor
         self.operatorSessionStore = operatorSessionStore ?? MelixOperatorSessionStore(
             melixHome: MelixHome(environment: environment)
         )
@@ -1668,7 +1730,19 @@ public actor MelixCLIRunner {
         kvQuant: String = "",
         ext: [String: String] = [:]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
-        try await client.runModelOperation(
+        if let commandExecutor, let arguments = Self.modelOperationArguments(
+            modelID: modelID,
+            operation: operation,
+            outputDir: outputDir,
+            ext: ext
+        ) {
+            let output = try await commandExecutor(arguments)
+            return try Self.decodeSubprocessModelOperationResult(
+                operation: operation,
+                output: output
+            )
+        }
+        return try await client.runModelOperation(
             modelID: modelID,
             operation: operation,
             outputDir: outputDir,
@@ -1852,12 +1926,7 @@ public actor MelixCLIRunner {
 
     public func fetchBenchmarkExportBundle(outputDir: String = "") async throws -> ControlPlaneBenchmarkExportBundle {
         let export = try await client.exportResults(outputDir: outputDir)
-        do {
-            return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
-        } catch let error as ControlPlaneBenchmarkExportError {
-            let decodeMessage = error.errorDescription ?? error.localizedDescription
-            throw MelixCLIError.runtime("Malformed benchmark export bundle: \(decodeMessage)")
-        }
+        return try ControlPlaneBenchmarkExportBundle.decode(json: export.exportBundleJSON)
     }
 
     public func runEvaluations(_ options: EvalRunOptions) async throws -> [ControlPlaneEvaluationResult] {
@@ -1868,6 +1937,10 @@ public actor MelixCLIRunner {
     public func runEvaluationCompare(_ options: EvalCompareOptions) async throws -> [ControlPlaneEvaluationResult] {
         guard options.targetModelIDs.isEmpty == false else {
             throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+        }
+        if let commandExecutor {
+            let output = try await commandExecutor(Self.evalCompareArguments(options))
+            return try Self.decodeSubprocessEvaluationResults(output)
         }
         for targetModelID in options.targetModelIDs {
             _ = try await client.loadModel(modelID: targetModelID)
@@ -2392,6 +2465,235 @@ public actor MelixCLIRunner {
             return model.modelID
         }
         throw MelixCLIError.missingRequired("No model is available in the current server snapshot.")
+    }
+
+    private static func modelOperationArguments(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        ext: [String: String]
+    ) -> [String]? {
+        switch operation {
+        case "train_lora":
+            var arguments = ["lora", "train", "--model-id", modelID]
+            let datasetSourceKind = ext["dataset_source_kind"] ?? "local_package"
+            if datasetSourceKind == "hf_dataset" {
+                appendOption("--hf-dataset-path", value: ext["hf_dataset_path"], into: &arguments)
+            } else {
+                appendOption("--dataset-uri", value: ext["dataset_uri"], into: &arguments)
+            }
+            appendOption("--adapter-name", value: ext["adapter_name"], into: &arguments)
+            appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
+            appendOption("--training-mode", value: ext["training_mode"], into: &arguments)
+            appendOption("--hf-dataset-name", value: ext["hf_dataset_name"], into: &arguments)
+            appendOption("--hf-dataset-revision", value: ext["hf_dataset_revision"], into: &arguments)
+            appendOption("--hf-train-split", value: ext["hf_train_split"], into: &arguments)
+            appendOption("--hf-valid-split", value: ext["hf_valid_split"], into: &arguments)
+            appendOption("--text-feature", value: ext["text_feature"], into: &arguments)
+            appendOption("--prompt-feature", value: ext["prompt_feature"], into: &arguments)
+            appendOption("--completion-feature", value: ext["completion_feature"], into: &arguments)
+            appendOption("--chat-feature", value: ext["chat_feature"], into: &arguments)
+            appendOption("--rank", value: ext["rank"], into: &arguments)
+            appendOption("--alpha", value: ext["alpha"], into: &arguments)
+            appendOption("--dropout", value: ext["dropout"], into: &arguments)
+            appendOption("--target-modules", value: ext["target_modules"], into: &arguments)
+            appendOption("--num-layers", value: ext["num_layers"], into: &arguments)
+            appendOption("--batch-size", value: ext["batch_size"], into: &arguments)
+            appendOption("--epochs", value: ext["epochs"], into: &arguments)
+            appendOption("--learning-rate", value: ext["learning_rate"], into: &arguments)
+            appendOption("--max-seq-length", value: ext["max_seq_length"], into: &arguments)
+            appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
+            appendOption("--derived-model-alias", value: ext["derived_model_alias"], into: &arguments)
+            appendBooleanFlag("--response-only", value: ext["response_only"], into: &arguments)
+            appendBooleanFlag("--mask-prompt", value: ext["mask_prompt"], into: &arguments)
+            appendBooleanFlag("--gradient-checkpointing", value: ext["gradient_checkpointing"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "activate_adapter":
+            var arguments = ["lora", "activate", "--model-id", modelID]
+            appendOption("--adapter-path", value: ext["artifact_path"], into: &arguments)
+            appendOption("--activation-mode", value: ext["activation_mode"], into: &arguments)
+            appendOption("--alias", value: ext["derived_model_alias"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "remove_derived_model":
+            var arguments = ["lora", "remove-derived", "--model-id", modelID]
+            appendOption("--derived-model-id", value: ext["derived_model_id"], into: &arguments)
+            appendOption("--manifest-path", value: ext["manifest_path"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "registry_snapshot":
+            return ["lora", "list", "--model-id", modelID, "--json"]
+        case "download":
+            var arguments = ["model", "download", "--model-id", modelID]
+            if outputDir.isEmpty == false {
+                arguments.append(contentsOf: ["--output-dir", outputDir])
+            }
+            arguments.append("--json")
+            return arguments
+        default:
+            return nil
+        }
+    }
+
+    private static func evalCompareArguments(_ options: EvalCompareOptions) -> [String] {
+        var arguments = ["eval", "compare"]
+        if options.modelID.isEmpty == false {
+            arguments.append(contentsOf: ["--model-id", options.modelID])
+        } else if options.hfRepoID.isEmpty == false {
+            arguments.append(contentsOf: ["--repo-id", options.hfRepoID])
+        }
+        for targetModelID in options.targetModelIDs {
+            arguments.append(contentsOf: ["--target-model-id", targetModelID])
+        }
+        for suite in options.suites {
+            arguments.append(contentsOf: ["--suite", suite])
+        }
+        appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+        if options.sampleSize > 0 {
+            arguments.append(contentsOf: ["--sample-size", String(options.sampleSize)])
+        }
+        appendOption("--batch-factor", value: options.parameters["batch_factor"], into: &arguments)
+        appendOption("--seed", value: options.parameters["seed"], into: &arguments)
+        appendOption("--few-shot", value: options.parameters["few_shot"], into: &arguments)
+        appendOption("--scoring-mode", value: options.parameters["scoring_mode"], into: &arguments)
+        appendOption("--code-exec-policy", value: options.parameters["code_exec_policy"], into: &arguments)
+        arguments.append("--json")
+        return arguments
+    }
+
+    private static func appendOption(
+        _ option: String,
+        value: String?,
+        into arguments: inout [String]
+    ) {
+        guard let value, value.isEmpty == false else {
+            return
+        }
+        arguments.append(contentsOf: [option, value])
+    }
+
+    private static func appendBooleanFlag(
+        _ option: String,
+        value: String?,
+        into arguments: inout [String]
+    ) {
+        guard value == "true" else {
+            return
+        }
+        arguments.append(option)
+    }
+
+    private static func decodeSubprocessModelOperationResult(
+        operation: String,
+        output: String
+    ) throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var result = Melix_Controlplane_V1_ModelOperationResult()
+        result.operation = operation
+        result.manifestJson = output
+        guard let payload = jsonObject(from: output) else {
+            return result
+        }
+        let payloadOperation = stringValue("operation", from: payload)
+        result.operation = payloadOperation.isEmpty ? operation : payloadOperation
+        result.jobID = stringValue("job_id", from: payload)
+        result.stage = stringValue("stage", from: payload)
+        result.pct = Float(doubleValue("pct", from: payload))
+        result.outputPath = stringValue("output_path", from: payload)
+        return result
+    }
+
+    private static func decodeSubprocessEvaluationResults(
+        _ output: String
+    ) throws -> [ControlPlaneEvaluationResult] {
+        guard let items = jsonArray(from: output) else {
+            throw MelixCLIError.runtime("The melix eval compare subprocess did not return a JSON array.")
+        }
+        return items.compactMap { item in
+            guard let payload = item as? [String: Any] else {
+                return nil
+            }
+            let nestedJobPayload = dictionaryValue("job", from: payload)
+            let jobPayload = nestedJobPayload.isEmpty ? payload : nestedJobPayload
+            var job = Melix_Controlplane_V1_EvaluationJobSummary()
+            job.jobID = stringValue("job_id", from: jobPayload)
+            job.modelID = stringValue("model_id", from: jobPayload)
+            job.taskKind = stringValue("task_kind", from: jobPayload)
+            job.sourceRepo = stringValue("source_repo", from: jobPayload)
+            job.suiteID = stringValue("suite_id", from: jobPayload)
+            job.datasetID = stringValue("dataset_id", from: jobPayload)
+            job.sampleSize = UInt32(intValue("sample_size", from: jobPayload))
+            job.scoringMode = stringValue("scoring_mode", from: jobPayload)
+            job.parameters = stringDictionaryValue("parameters", from: jobPayload)
+            job.status = stringValue("status", from: jobPayload)
+            job.outputDir = stringValue("output_dir", from: jobPayload)
+            job.createdAtUnixMs = Int64(intValue("created_at_unix_ms", from: jobPayload))
+            job.updatedAtUnixMs = Int64(intValue("updated_at_unix_ms", from: jobPayload))
+
+            let results = (payload["results"] as? [[String: Any]] ?? []).map { row in
+                var summary = Melix_Controlplane_V1_EvaluationResultSummary()
+                summary.jobID = stringValue("job_id", from: row)
+                summary.suiteID = stringValue("suite_id", from: row)
+                summary.datasetID = stringValue("dataset_id", from: row)
+                summary.sampleSize = UInt32(intValue("sample_size", from: row))
+                summary.reportPath = stringValue("report_path", from: row)
+                summary.metrics = (row["metrics"] as? [[String: Any]] ?? []).map { metricPayload in
+                    var metric = Melix_Controlplane_V1_BenchmarkMetricValue()
+                    metric.name = stringValue("name", from: metricPayload)
+                    metric.value = doubleValue("value", from: metricPayload)
+                    metric.unit = stringValue("unit", from: metricPayload)
+                    return metric
+                }
+                return summary
+            }
+            return ControlPlaneEvaluationResult(job: job, results: results)
+        }
+    }
+
+    private static func jsonObject(from text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else {
+            return nil
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    private static func jsonArray(from text: String) -> [Any]? {
+        guard let data = text.data(using: .utf8) else {
+            return nil
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [Any]
+    }
+
+    private static func dictionaryValue(_ key: String, from payload: [String: Any]) -> [String: Any] {
+        payload[key] as? [String: Any] ?? [:]
+    }
+
+    private static func stringDictionaryValue(_ key: String, from payload: [String: Any]) -> [String: String] {
+        payload[key] as? [String: String] ?? [:]
+    }
+
+    private static func stringValue(_ key: String, from payload: [String: Any]) -> String {
+        payload[key] as? String ?? ""
+    }
+
+    private static func doubleValue(_ key: String, from payload: [String: Any]) -> Double {
+        if let value = payload[key] as? Double {
+            return value
+        }
+        if let value = payload[key] as? NSNumber {
+            return value.doubleValue
+        }
+        return 0
+    }
+
+    private static func intValue(_ key: String, from payload: [String: Any]) -> Int {
+        if let value = payload[key] as? Int {
+            return value
+        }
+        if let value = payload[key] as? NSNumber {
+            return value.intValue
+        }
+        return 0
     }
 
     private func loadOperatorState() throws -> MelixOperatorSessionState {

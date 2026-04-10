@@ -111,6 +111,53 @@ Metrics report:
   completion, compare orchestration, compare exports, and deterministic reporting. The
   repository-owned LoRA product metrics command remains scheduled in Task 8.
 
+## Phase 4 Status
+
+Status on 2026-04-09: completed and ready for phase-exit squash merge into local `main`.
+
+Verification evidence:
+
+- Full Window UI package verification:
+  `xcrun swift test --package-path apps/macos-menubar`
+  -> passed
+- Deterministic LoRA CLI and Window acceptance slice:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_phase8_lora_smoke_scripts.py tests/integration/test_phase8_lora_cli_smoke.py tests/integration/test_phase8_lora_window_smoke.py -q`
+  -> `8 passed in 134.71s`
+- Deterministic Phase 4 harness coverage:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/phase4-python.coverage --source=scripts,tests/integration,services/mlx-worker-python/tests -m pytest services/mlx-worker-python/tests/test_phase8_lora_smoke_scripts.py services/mlx-worker-python/tests/test_m15_desktop_polish_smoke_script.py services/mlx-worker-python/tests/test_m9_agent_export_smoke.py tests/integration/test_phase8_lora_cli_smoke.py tests/integration/test_phase8_lora_window_smoke.py tests/integration/test_desktop_polish_smoke.py tests/integration/test_disk_streaming_smoke.py tests/integration/test_queue_pressure.py tests/integration/test_session_lifecycle_integration.py -q`
+  -> `18 passed in 207.07s`
+- Changed-line Python coverage for the touched Phase 4 scope:
+  `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/phase4-python-coverage.json scripts/m15_desktop_polish_smoke.py scripts/m9_agent_export_smoke.py scripts/phase8_lora_cli_smoke.py scripts/phase8_lora_window_smoke.py services/mlx-worker-python/tests/test_m15_desktop_polish_smoke_script.py services/mlx-worker-python/tests/test_m9_agent_export_smoke.py services/mlx-worker-python/tests/test_phase8_lora_smoke_scripts.py tests/integration/helpers.py tests/integration/test_disk_streaming_smoke.py tests/integration/test_phase8_lora_cli_smoke.py tests/integration/test_phase8_lora_window_smoke.py tests/integration/test_queue_pressure.py tests/integration/test_session_lifecycle_integration.py`
+  -> `97.13% (305/314)`
+- Changed-line Swift coverage for the touched executable scope:
+  root CLI `98.12% (835/851)`,
+  Window UI `98.22% (883/899)`,
+  control plane `96.25% (231/240)`,
+  aggregate `97.94% (1949/1990)`
+- Repository verification gate:
+  `make proto`, `make py-test`, `make swift-test`, `make integration-test`, `make coverage`, and
+  `make phase8-metrics PHASE8_METRICS_ARGS="--json"`
+  -> passed
+- Fresh deterministic smoke scripts:
+  `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_cli_smoke.py --json`
+  -> passed with fixed `model_id == mlx-community/Qwen3.5-0.8B-OptiQ-4bit` plus positive
+  `train`, `activate`, `compare`, `export`, and `remove_derived` coverage with negative
+  missing-argument checks
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_lora_window_smoke.py --json`
+  -> passed with fixed `model_id == mlx-community/Qwen3.5-0.8B-OptiQ-4bit`, positive and
+  negative Window acceptance coverage, and rendered controls `QLoRA`,
+  `Adapter-backed Runtime`, `Run Comparison`, and `Remove Derived Model`
+
+Metrics report:
+
+- `make phase8-metrics PHASE8_METRICS_ARGS="--json"` completed with
+  `release_gate.passed == true`,
+  `release_gate.m9_missing_probe_count == 0`,
+  `release_gate.m9_failed_threshold_count == 0`,
+  `runtime.multi_model_ready_count == 3`,
+  `training.job_duration_ms == 1420.0`, and
+  `training.adapter_publish_ms == 118.0`.
+
 ## File Map
 
 ### Worker and productization
@@ -306,10 +353,10 @@ Verification commands:
 - Modify: `apps/macos-menubar/Tests/MenuBarTests/DesktopPolishSmokeTests.swift`
 - Modify: `apps/macos-menubar/Tests/MenuBarTests/OperatorSessionPersistenceSmokeTests.swift`
 
-- [ ] Write failing Window UI tests for QLoRA controls, validation split wiring, activation mode selection, remove-derived actions, and compare-job initiation.
-- [ ] Run the targeted MenuBar test suites and verify the failures are caused by missing bindings and view state.
-- [ ] Implement the Window UI state, action routing, and visible status rendering for the new LoRA lifecycle and comparison flows.
-- [ ] Re-run the targeted MenuBar tests and keep the existing desktop product patterns intact.
+- [x] Write failing Window UI tests for QLoRA controls, validation split wiring, activation mode selection, remove-derived actions, and compare-job initiation.
+- [x] Run the targeted MenuBar test suites and verify the failures are caused by missing bindings and view state.
+- [x] Implement the Window UI state, action routing, and visible status rendering for the new LoRA lifecycle and comparison flows.
+- [x] Re-run the targeted MenuBar tests and keep the existing desktop product patterns intact.
 
 Verification commands:
 
@@ -326,10 +373,10 @@ Verification commands:
 - Modify: `docs/runbooks/phase-8-product-acceptance.md`
 - Modify any repository-owned smoke scripts required by the new CLI and Window UI coverage
 
-- [ ] Add or update repository-owned E2E or smoke flows that exercise train, activate, compare, export, and remove-derived using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
-- [ ] Run the targeted smoke coverage first, then the full repository gates.
-- [ ] Capture the changed-scope coverage report and confirm the touched scope stays at or above 95 percent or document the measurable gap and add the missing coverage command.
-- [ ] Produce the changed-scope metrics report and refresh acceptance evidence references in the English runbooks.
+- [x] Add or update repository-owned E2E or smoke flows that exercise train, activate, compare, export, and remove-derived using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`.
+- [x] Run the targeted smoke coverage first, then the full repository gates.
+- [x] Capture the changed-scope coverage report and confirm the touched scope stays at or above 95 percent or document the measurable gap and add the missing coverage command.
+- [x] Produce the changed-scope metrics report and refresh acceptance evidence references in the English runbooks.
 
 Verification commands:
 
@@ -343,7 +390,7 @@ Verification commands:
 
 ## Self-Review Checklist
 
-- [ ] Every design requirement from `docs/plans/2026-04-09-lora-productization-closure-design.md` maps to at least one task above.
-- [ ] No task relies on `TODO`, `TBD`, or implied test coverage.
-- [ ] Every new LoRA capability has both positive and negative test coverage plus an end-to-end acceptance path.
-- [ ] The fixed acceptance model remains `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` in code, smoke fixtures, and runbooks.
+- [x] Every design requirement from `docs/plans/2026-04-09-lora-productization-closure-design.md` maps to at least one task above.
+- [x] No task relies on `TODO`, `TBD`, or implied test coverage.
+- [x] Every new LoRA capability has both positive and negative test coverage plus an end-to-end acceptance path.
+- [x] The fixed acceptance model remains `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` in code, smoke fixtures, and runbooks.
