@@ -97,12 +97,9 @@ struct DesktopPolishSmokeTests {
             await viewModel.submitChatPrompt()
         }
 
-        try await waitForDesktopPolishCondition("chat smoothing should present a partial assistant row") {
-            viewModel.chatTranscript.contains { entry in
-                entry.kind == .assistant && entry.body.isEmpty == false && entry.body != smoothedAssistantText
-            }
-        }
         await submitTask.value
+        let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(assistantEntry.body == smoothedAssistantText)
 
         #expect(hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel)))
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
