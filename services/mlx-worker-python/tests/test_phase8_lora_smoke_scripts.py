@@ -145,6 +145,8 @@ def test_run_swift_smoke_requires_marker(
     tmp_path: Path,
 ) -> None:
     module = _load_script(module_name)
+    if hasattr(module, "swift_root_package"):
+        monkeypatch.setattr(module.swift_root_package, "current_swift_toolchain_slug", lambda: "swift-6-3")
 
     class _Completed:
         stdout = "ok"
@@ -154,3 +156,93 @@ def test_run_swift_smoke_requires_marker(
 
     with pytest.raises(RuntimeError, match=marker):
         module.run_swift_smoke(tmp_path)
+
+
+def test_phase8_lora_cli_run_swift_smoke_uses_root_package_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_script("phase8_lora_cli_smoke")
+    monkeypatch.setattr(module.swift_root_package, "current_swift_toolchain_slug", lambda: "swift-6-3")
+    captured: dict[str, object] = {}
+
+    class _Completed:
+        stdout = 'PHASE8_LORA_CLI_SMOKE={"model_id":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit","positive":{},"negative":{}}\n'
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        captured["env"] = kwargs["env"]
+        return _Completed()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    payload = module.run_swift_smoke(tmp_path)
+
+    assert payload["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert captured["command"] == [
+        "xcrun",
+        "swift",
+        "test",
+        "--package-path",
+        str(tmp_path),
+        "--scratch-path",
+        str(tmp_path / ".build" / "root-package" / "swift-6-3"),
+        "--disable-sandbox",
+        "--filter",
+        "Phase8LoRACLISmokeTests",
+    ]
+    assert captured["cwd"] == tmp_path
+    env = captured["env"]
+    assert env["HOME"] == str(tmp_path / ".swift-home" / "root-package" / "swift-6-3")
+    assert env["CLANG_MODULE_CACHE_PATH"] == str(
+        tmp_path / ".build" / "ModuleCache.noindex" / "root-package" / "swift-6-3"
+    )
+
+
+def test_phase8_lora_window_run_swift_smoke_uses_menubar_package_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_script("phase8_lora_window_smoke")
+    monkeypatch.setattr(module.swift_root_package, "current_swift_toolchain_slug", lambda: "swift-6-3")
+    captured: dict[str, object] = {}
+
+    class _Completed:
+        stdout = (
+            'PHASE8_LORA_WINDOW_SMOKE={"model_id":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit",'
+            '"positive":{},"negative":{},"rendered_controls":[]}\n'
+        )
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        captured["env"] = kwargs["env"]
+        return _Completed()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    payload = module.run_swift_smoke(tmp_path)
+
+    assert payload["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert captured["command"] == [
+        "xcrun",
+        "swift",
+        "test",
+        "--package-path",
+        str(tmp_path / "apps" / "macos-menubar"),
+        "--scratch-path",
+        str(tmp_path / ".build" / "macos-menubar" / "swift-6-3"),
+        "--disable-sandbox",
+        "--filter",
+        "Phase8LoRAWindowSmokeTests",
+    ]
+    assert captured["cwd"] == tmp_path
+    env = captured["env"]
+    assert env["HOME"] == str(tmp_path / ".swift-home" / "macos-menubar" / "swift-6-3")
+    assert env["CLANG_MODULE_CACHE_PATH"] == str(
+        tmp_path / ".build" / "ModuleCache.noindex" / "macos-menubar" / "swift-6-3"
+    )
+    assert env["MELIX_HOME"] == str(tmp_path / ".runtime" / "phase8" / "smoke-home")

@@ -24,6 +24,7 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
+    monkeypatch.setattr(module.swift_root_package, "current_swift_toolchain_slug", lambda: "swift-6-3")
     captured: dict[str, object] = {}
 
     class _Completed:
@@ -53,17 +54,19 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
         "xcrun",
         "swift",
         "test",
-        "--disable-sandbox",
         "--package-path",
         str(tmp_path / "apps" / "macos-menubar"),
+        "--scratch-path",
+        str(tmp_path / ".build" / "macos-menubar" / "swift-6-3"),
+        "--disable-sandbox",
         "--filter",
         "DesktopPolishSmokeTests",
     ]
     assert captured["cwd"] == tmp_path
     env = captured["env"]
-    assert env["HOME"] == str(tmp_path / ".swift-home" / "macos-menubar")
+    assert env["HOME"] == str(tmp_path / ".swift-home" / "macos-menubar" / "swift-6-3")
     assert env["CLANG_MODULE_CACHE_PATH"] == str(
-        tmp_path / ".build" / "ModuleCache.noindex" / "macos-menubar"
+        tmp_path / ".build" / "ModuleCache.noindex" / "macos-menubar" / "swift-6-3"
     )
     assert env["MELIX_HOME"] == str(tmp_path / ".runtime" / "phase1" / "smoke-home")
 

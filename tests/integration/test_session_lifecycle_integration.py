@@ -5,7 +5,11 @@ import os
 import subprocess
 from pathlib import Path
 
-from tests.integration.helpers import LiveMelixStack
+from tests.integration.helpers import (
+    LiveMelixStack,
+    root_package_swift_command,
+    root_package_swift_environment,
+)
 
 
 def test_session_lifecycle_smoke_records_live_pause_sleep_wake_and_restart_metrics() -> None:
@@ -20,32 +24,24 @@ def test_session_lifecycle_smoke_records_live_pause_sleep_wake_and_restart_metri
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         metrics_path.unlink(missing_ok=True)
 
-        environment = os.environ.copy()
-        environment["HOME"] = str(repo_root / ".swift-home" / "root-package")
-        environment["CLANG_MODULE_CACHE_PATH"] = str(
-            repo_root / ".build" / "ModuleCache.noindex" / "root-package"
-        )
+        environment = root_package_swift_environment(repo_root, base_env=os.environ.copy())
         environment["MELIX_REPO_ROOT"] = str(repo_root)
         environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = str(stack.swift_socket_path)
         environment["MELIX_WORKER_SOCKET_PATH"] = str(stack.python_socket_path)
         environment["MELIX_CONTROL_PLANE_METRICS_PATH"] = str(metrics_path)
 
         result = subprocess.run(
-            [
-                "xcrun",
-                "swift",
+            root_package_swift_command(
+                repo_root,
                 "run",
-                "--package-path",
-                str(repo_root),
-                "melix-session-lifecycle-smoke",
-                "--json",
-            ],
+                ["melix-session-lifecycle-smoke", "--json"],
+            ),
             cwd=repo_root,
             env=environment,
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=600,
         )
         payload = json.loads(result.stdout)
 

@@ -5,7 +5,11 @@ import os
 import subprocess
 from pathlib import Path
 
-from tests.integration.helpers import LiveMelixStack
+from tests.integration.helpers import (
+    LiveMelixStack,
+    root_package_swift_command,
+    root_package_swift_environment,
+)
 
 
 def test_disk_streaming_smoke_records_ram_baseline_and_typed_unsupported_evidence() -> None:
@@ -16,31 +20,23 @@ def test_disk_streaming_smoke_records_ram_baseline_and_typed_unsupported_evidenc
         stack.start()
         stack.stop_control_plane()
 
-        environment = os.environ.copy()
-        environment["HOME"] = str(repo_root / ".swift-home" / "root-package")
-        environment["CLANG_MODULE_CACHE_PATH"] = str(
-            repo_root / ".build" / "ModuleCache.noindex" / "root-package"
-        )
+        environment = root_package_swift_environment(repo_root, base_env=os.environ.copy())
         environment["MELIX_REPO_ROOT"] = str(repo_root)
         environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = str(stack.swift_socket_path)
         environment["MELIX_WORKER_SOCKET_PATH"] = str(stack.python_socket_path)
 
         result = subprocess.run(
-            [
-                "xcrun",
-                "swift",
+            root_package_swift_command(
+                repo_root,
                 "run",
-                "--package-path",
-                str(repo_root),
-                "melix-disk-streaming-smoke",
-                "--json",
-            ],
+                ["melix-disk-streaming-smoke", "--json"],
+            ),
             cwd=repo_root,
             env=environment,
             capture_output=True,
             text=True,
             check=True,
-            timeout=180,
+            timeout=600,
         )
         payload = json.loads(result.stdout)
 

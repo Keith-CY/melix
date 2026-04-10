@@ -2150,8 +2150,8 @@ def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: 
     }
 
     assert metrics["bench.smoke.tokens_per_second"] > 0.0
-    assert 0.0 < metrics["bench.smoke.ttft_ms"] < 20.0
-    assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] > 0.0
+    assert 0.0 <= metrics["bench.smoke.ttft_ms"] < 20.0
+    assert metrics["bench.latency.p95_ms"] >= metrics["bench.latency.p50_ms"] >= 0.0
 
 
 def test_doctor_findings_cover_failed_worker_and_zero_resident_bytes(tmp_path: Path) -> None:

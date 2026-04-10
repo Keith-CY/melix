@@ -9,19 +9,24 @@ import subprocess
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import swift_root_package
+
 
 def run_swift_smoke(repo_root: Path) -> dict[str, object]:
-    env = os.environ.copy()
-    env["HOME"] = str(repo_root / ".swift-home")
-    env["CLANG_MODULE_CACHE_PATH"] = str(repo_root / ".build" / "ModuleCache.noindex")
-    command = [
-        "xcrun",
-        "swift",
+    env = swift_root_package.root_package_swift_environment(repo_root, base_env=os.environ.copy())
+    command = swift_root_package.root_package_swift_command(
+        repo_root,
         "test",
-        "--disable-sandbox",
-        "--filter",
-        "Phase8LoRACLISmokeTests",
-    ]
+        [
+            "--disable-sandbox",
+            "--filter",
+            "Phase8LoRACLISmokeTests",
+        ],
+    )
     completed = subprocess.run(
         command,
         cwd=repo_root,

@@ -5,6 +5,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 import uuid
 import urllib.error
@@ -21,6 +22,12 @@ from packages.protocol.python.worker.v1 import (
     runtime_pb2,
     runtime_pb2_grpc,
 )
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import swift_root_package
 
 
 class LiveMelixStack:
@@ -370,6 +377,22 @@ def reserve_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def root_package_swift_environment(
+    repo_root: Path,
+    *,
+    base_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    return swift_root_package.root_package_swift_environment(repo_root, base_env=base_env)
+
+
+def root_package_swift_command(
+    repo_root: Path,
+    subcommand: str,
+    arguments: list[str],
+) -> list[str]:
+    return swift_root_package.root_package_swift_command(repo_root, subcommand, arguments)
 
 
 def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:
