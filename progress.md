@@ -9,6 +9,24 @@
   `swiftpm-testing-helper` sat idle at `0.0%` CPU until termination. Rerun `make swift-test`
   after the fix.
 
+## 2026-04-12
+
+- Realigned the public documentation entrypoints so the repository now presents Melix as a
+  project first and an engineering archive second:
+  - rewrote `README.md` around product narrative, target users, LoRA and benchmark motivation,
+    quick start, and contribution entrypoints
+  - replaced the old plan-heavy `docs/README.md` with a grouped navigation page that separates
+    product status, onboarding, runbooks, canonical specs, decisions, and historical plans
+  - added `docs/getting-started.md`, `docs/contributing.md`, and `docs/current-status.md` so the
+    current shipped scope is easier to understand without reading runbooks or archived plans first
+  - rewrote `docs/phase-roadmap.md` as a truthful closure summary of the original Phase `0-8`
+    model and pointed readers to the milestone execution index for detailed historical coverage
+- Verification summary for the documentation realignment:
+  - `git diff --check`: pass
+- Metrics report for the documentation realignment:
+  - `N/A` because this transaction is documentation-only; verification is markdown hygiene plus
+    alignment against existing repository sources, progress logs, runbooks, and roadmap records
+
 ## 2026-04-09
 
 - Closed the Phase 8 Stage 5 Window UI evidence slice so the native macOS menubar app now
