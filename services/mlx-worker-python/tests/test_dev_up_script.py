@@ -340,6 +340,39 @@ def test_spawn_background_process_and_write_pid_file(
     assert pid_path.read_text(encoding="utf-8") == "321"
 
 
+def test_spawn_background_process_recreates_stale_unwritable_log_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    log_path = tmp_path / "process.log"
+    log_path.write_text("stale\n", encoding="utf-8")
+    log_path.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    seen: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 8765
+
+    def fake_popen(command, **kwargs):
+        seen["command"] = command
+        kwargs["stdout"].write(b"recreated\n")
+        kwargs["stdout"].flush()
+        return FakeProcess()
+
+    monkeypatch.setattr(dev_up.subprocess, "Popen", fake_popen)
+
+    pid = dev_up.spawn_background_process(
+        cwd=tmp_path,
+        log_path=log_path,
+        env_overrides={"MELIX_TEST_VALUE": "1"},
+        command=["python3", "-c", "print('hello')"],
+    )
+
+    assert pid == 8765
+    assert seen["command"] == ["python3", "-c", "print('hello')"]
+    assert log_path.read_text(encoding="utf-8").strip() == "recreated"
+
+
 def test_run_wait_for_worker_ready_builds_expected_uv_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -449,6 +482,7 @@ def test_write_runtime_environment_emits_export_file(tmp_path: Path) -> None:
     env_path = dev_up.write_runtime_environment(layout)
 
     content = env_path.read_text(encoding="utf-8")
+    assert f'export MELIX_REPO_ROOT="{REPO_ROOT}"' in content
     assert 'export MELIX_RUNTIME_DIR="' in content
     assert 'export MELIX_PYTHON_WORKER_METRICS_PATH="' in content
     assert (

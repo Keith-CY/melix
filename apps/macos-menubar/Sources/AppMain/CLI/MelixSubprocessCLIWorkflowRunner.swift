@@ -50,6 +50,32 @@ public actor MelixSubprocessCLIWorkflowRunner: MelixCLIWorkflowRunning {
 
     private func arguments(for command: MelixCLICommand) throws -> [String] {
         switch command {
+        case .doctor(let options):
+            var arguments = ["doctor"]
+            appendJSONFlag(options.json, to: &arguments)
+            return arguments
+        case .convert(let options):
+            var arguments = ["convert", "--model-id", options.modelID]
+            appendOptionalValue(options.outputDir, option: "--output-dir", to: &arguments)
+            appendOptionalValue(options.targetFormat, option: "--target-format", to: &arguments)
+            appendJSONFlag(options.json, to: &arguments)
+            return arguments
+        case .quantize(let options):
+            var arguments = ["quantize", "--model-id", options.modelID]
+            appendOptionalValue(options.outputDir, option: "--output-dir", to: &arguments)
+            appendOptionalValue(options.quantProfileID, option: "--quant-profile-id", to: &arguments)
+            appendOptionalValue(options.weightQuant, option: "--weight-quant", to: &arguments)
+            appendOptionalValue(options.kvQuant, option: "--kv-quant", to: &arguments)
+            appendJSONFlag(options.json, to: &arguments)
+            return arguments
+        case .upload(let options):
+            var arguments = ["upload", "--model-id", options.modelID, "--target-repo", options.targetRepo]
+            appendOptionalValue(options.outputDir, option: "--output-dir", to: &arguments)
+            appendOptionalValue(options.artifactPath, option: "--artifact-path", to: &arguments)
+            appendOptionalValue(options.artifactKind, option: "--artifact-kind", to: &arguments)
+            appendOptionalValue(options.artifactManifestPath, option: "--artifact-manifest-path", to: &arguments)
+            appendJSONFlag(options.json, to: &arguments)
+            return arguments
         case .modelHubDownload(let options):
             var arguments = ["model", "hub", "download", "--repo-id", options.repoID, "--revision", options.revision]
             appendJSONFlag(options.json, to: &arguments)

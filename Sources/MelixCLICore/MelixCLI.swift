@@ -454,6 +454,86 @@ public struct ModelImportOptions: Equatable, Sendable {
     }
 }
 
+public struct DoctorOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct ConvertOptions: Equatable, Sendable {
+    public let modelID: String
+    public let outputDir: String
+    public let targetFormat: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        outputDir: String = "",
+        targetFormat: String = "melix_model_bundle",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.outputDir = outputDir
+        self.targetFormat = targetFormat.isEmpty ? "melix_model_bundle" : targetFormat
+        self.json = json
+    }
+}
+
+public struct QuantizeOptions: Equatable, Sendable {
+    public let modelID: String
+    public let outputDir: String
+    public let quantProfileID: String
+    public let weightQuant: String
+    public let kvQuant: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        outputDir: String = "",
+        quantProfileID: String = "",
+        weightQuant: String = "",
+        kvQuant: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.outputDir = outputDir
+        self.quantProfileID = quantProfileID
+        self.weightQuant = weightQuant
+        self.kvQuant = kvQuant
+        self.json = json
+    }
+}
+
+public struct UploadOptions: Equatable, Sendable {
+    public let modelID: String
+    public let outputDir: String
+    public let targetRepo: String
+    public let artifactPath: String
+    public let artifactKind: String
+    public let artifactManifestPath: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        outputDir: String = "",
+        targetRepo: String,
+        artifactPath: String = "",
+        artifactKind: String = "",
+        artifactManifestPath: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.outputDir = outputDir
+        self.targetRepo = targetRepo
+        self.artifactPath = artifactPath
+        self.artifactKind = artifactKind
+        self.artifactManifestPath = artifactManifestPath
+        self.json = json
+    }
+}
+
 public struct ManagedModelReceipt: Codable, Equatable, Sendable {
     public let modelID: String
     public let managedModelPath: String
@@ -646,6 +726,10 @@ public struct ServerSessionIDOptions: Equatable, Sendable {
 }
 
 public enum MelixCLICommand: Equatable, Sendable {
+    case doctor(DoctorOptions)
+    case convert(ConvertOptions)
+    case quantize(QuantizeOptions)
+    case upload(UploadOptions)
     case modelList(ModelListOptions)
     case modelInspect(ModelInspectOptions)
     case modelLoad(ModelLoadOptions)
@@ -719,6 +803,14 @@ public enum MelixCLIParser {
         }
         let tail = Array(arguments.dropFirst())
         switch group {
+        case "doctor":
+            return try parseDoctor(tail)
+        case "convert":
+            return try parseConvert(tail)
+        case "quantize":
+            return try parseQuantize(tail)
+        case "upload":
+            return try parseUpload(tail)
         case "model":
             return try parseModel(tail)
         case "server":
@@ -738,6 +830,10 @@ public enum MelixCLIParser {
 
     public static let usageText = """
     Usage:
+      melix doctor [--json]
+      melix convert --model-id MODEL_ID [--output-dir PATH] [--target-format FORMAT] [--json]
+      melix quantize --model-id MODEL_ID [--output-dir PATH] [--quant-profile-id ID] [--weight-quant MODE] [--kv-quant MODE] [--json]
+      melix upload --model-id MODEL_ID --target-repo REPO [--output-dir PATH] [--artifact-path PATH] [--artifact-kind KIND] [--artifact-manifest-path PATH] [--json]
       melix model list [--json]
       melix model inspect --model-id MODEL_ID [--json]
       melix model load --model-id MODEL_ID [--memory-budget-bytes N] [--json]
@@ -783,6 +879,64 @@ public enum MelixCLIParser {
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
     """
+
+    private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        return .doctor(.init(json: values.flags.contains("--json")))
+    }
+
+    private static func parseConvert(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model-id is required for melix convert.")
+        }
+        return .convert(
+            .init(
+                modelID: modelID,
+                outputDir: values.single["--output-dir"] ?? "",
+                targetFormat: values.single["--target-format"] ?? "melix_model_bundle",
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseQuantize(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model-id is required for melix quantize.")
+        }
+        return .quantize(
+            .init(
+                modelID: modelID,
+                outputDir: values.single["--output-dir"] ?? "",
+                quantProfileID: values.single["--quant-profile-id"] ?? "",
+                weightQuant: values.single["--weight-quant"] ?? "",
+                kvQuant: values.single["--kv-quant"] ?? "",
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseUpload(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model-id is required for melix upload.")
+        }
+        guard let targetRepo = values.single["--target-repo"], !targetRepo.isEmpty else {
+            throw MelixCLIError.missingRequired("--target-repo is required for melix upload.")
+        }
+        return .upload(
+            .init(
+                modelID: modelID,
+                outputDir: values.single["--output-dir"] ?? "",
+                targetRepo: targetRepo,
+                artifactPath: values.single["--artifact-path"] ?? "",
+                artifactKind: values.single["--artifact-kind"] ?? "",
+                artifactManifestPath: values.single["--artifact-manifest-path"] ?? "",
+                json: values.flags.contains("--json")
+            )
+        )
+    }
 
     private static func parseModel(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
@@ -1734,6 +1888,9 @@ public actor MelixCLIRunner {
             modelID: modelID,
             operation: operation,
             outputDir: outputDir,
+            quantProfileID: quantProfileID,
+            weightQuant: weightQuant,
+            kvQuant: kvQuant,
             ext: ext
         ) {
             let output = try await commandExecutor(arguments)
@@ -1942,6 +2099,10 @@ public actor MelixCLIRunner {
             let output = try await commandExecutor(Self.evalCompareArguments(options))
             return try Self.decodeSubprocessEvaluationResults(output)
         }
+        let baseModelID = options.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if baseModelID.isEmpty == false {
+            _ = try await client.loadModel(modelID: baseModelID)
+        }
         for targetModelID in options.targetModelIDs {
             _ = try await client.loadModel(modelID: targetModelID)
         }
@@ -1966,6 +2127,48 @@ public actor MelixCLIRunner {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
+        case .doctor(let options):
+            let report = try await client.runDoctor()
+            if options.json {
+                return try prettyJSON(makeDoctorPayload(report))
+            }
+            return report.markdown.isEmpty ? "# Melix Doctor\n" : report.markdown
+        case .convert(let options):
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "convert",
+                outputDir: options.outputDir,
+                ext: ["target_format": options.targetFormat]
+            )
+            return options.json ? result.manifestJson : result.outputPath + "\n"
+        case .quantize(let options):
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "quantize",
+                outputDir: options.outputDir,
+                quantProfileID: options.quantProfileID,
+                weightQuant: options.weightQuant,
+                kvQuant: options.kvQuant
+            )
+            return options.json ? result.manifestJson : result.outputPath + "\n"
+        case .upload(let options):
+            var ext = ["target_repo": options.targetRepo]
+            if !options.artifactPath.isEmpty {
+                ext["artifact_path"] = options.artifactPath
+            }
+            if !options.artifactKind.isEmpty {
+                ext["artifact_kind"] = options.artifactKind
+            }
+            if !options.artifactManifestPath.isEmpty {
+                ext["artifact_manifest_path"] = options.artifactManifestPath
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "upload",
+                outputDir: options.outputDir,
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath + "\n"
         case .modelList(let options):
             let snapshot = try await client.serverSnapshot()
             if options.json {
@@ -2471,6 +2674,9 @@ public actor MelixCLIRunner {
         modelID: String,
         operation: String,
         outputDir: String,
+        quantProfileID: String,
+        weightQuant: String,
+        kvQuant: String,
         ext: [String: String]
     ) -> [String]? {
         switch operation {
@@ -2529,6 +2735,35 @@ public actor MelixCLIRunner {
             if outputDir.isEmpty == false {
                 arguments.append(contentsOf: ["--output-dir", outputDir])
             }
+            arguments.append("--json")
+            return arguments
+        case "convert":
+            var arguments = ["convert", "--model-id", modelID]
+            if outputDir.isEmpty == false {
+                arguments.append(contentsOf: ["--output-dir", outputDir])
+            }
+            appendOption("--target-format", value: ext["target_format"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "quantize":
+            var arguments = ["quantize", "--model-id", modelID]
+            if outputDir.isEmpty == false {
+                arguments.append(contentsOf: ["--output-dir", outputDir])
+            }
+            appendOption("--quant-profile-id", value: quantProfileID, into: &arguments)
+            appendOption("--weight-quant", value: weightQuant, into: &arguments)
+            appendOption("--kv-quant", value: kvQuant, into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "upload":
+            var arguments = ["upload", "--model-id", modelID]
+            if outputDir.isEmpty == false {
+                arguments.append(contentsOf: ["--output-dir", outputDir])
+            }
+            appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
+            appendOption("--artifact-path", value: ext["artifact_path"], into: &arguments)
+            appendOption("--artifact-kind", value: ext["artifact_kind"], into: &arguments)
+            appendOption("--artifact-manifest-path", value: ext["artifact_manifest_path"], into: &arguments)
             arguments.append("--json")
             return arguments
         default:
@@ -2702,7 +2937,10 @@ public actor MelixCLIRunner {
 
     private func commandRequiresConfiguredRegistryRootPriming(_ command: MelixCLICommand) -> Bool {
         switch command {
-        case .modelList,
+        case .convert,
+             .quantize,
+             .upload,
+             .modelList,
              .modelInspect,
              .modelLoad,
              .modelUnload,
@@ -3069,6 +3307,21 @@ public actor MelixCLIRunner {
         ]
     }
 
+    private func makeDoctorPayload(_ report: Melix_Controlplane_V1_DoctorReport) -> [String: Any] {
+        [
+            "markdown": report.markdown,
+            "health_status": doctorHealthStatusLabel(report.healthStatus),
+            "findings": report.findings.map { finding in
+                [
+                    "code": finding.code,
+                    "severity": doctorHealthStatusLabel(finding.severity),
+                    "summary": finding.summary,
+                    "detail": finding.detail,
+                ]
+            },
+        ]
+    }
+
     private func modelStateLabel(_ value: Melix_Controlplane_V1_ModelState) -> String {
         switch value {
         case .modelDiscovered:
@@ -3084,6 +3337,21 @@ public actor MelixCLIRunner {
         case .modelUnloaded:
             return "unloaded"
         case .modelFailed:
+            return "failed"
+        default:
+            return "unspecified"
+        }
+    }
+
+    private func doctorHealthStatusLabel(_ value: Melix_Controlplane_V1_DoctorHealthStatus) -> String {
+        switch value {
+        case .healthy:
+            return "healthy"
+        case .warning:
+            return "warning"
+        case .degraded:
+            return "degraded"
+        case .failed:
             return "failed"
         default:
             return "unspecified"

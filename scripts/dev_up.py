@@ -235,7 +235,14 @@ def spawn_background_process(
     environment.update(env_overrides)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with log_path.open("ab") as handle:
+    try:
+        handle = log_path.open("ab")
+    except PermissionError:
+        # Recover from stale logs created by a prior privileged run.
+        log_path.unlink()
+        handle = log_path.open("ab")
+
+    with handle:
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -308,6 +315,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
     env_path.parent.mkdir(parents=True, exist_ok=True)
     gateway_config_store_path = layout.runtime_dir / "gateway-config.json"
     exports = {
+        "MELIX_REPO_ROOT": os.fspath(ROOT),
         "MELIX_RUNTIME_DIR": os.fspath(layout.runtime_dir),
         "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
         "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),

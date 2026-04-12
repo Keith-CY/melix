@@ -316,6 +316,96 @@ def _write_eval_fixtures(root: Path) -> None:
     )
 
 
+def _write_eval_compare_fixtures(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "evaluation-compare-job.json").write_text(
+        json.dumps({
+            "schema_version": "melix.evaluation_compare_job.v1",
+            "job_id": "eval-compare-1",
+            "base_model_id": "melix-dev-text",
+            "target_model_ids": ["melix-dev-text-lora-a"],
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite_id": "mmlu",
+            "dataset_id": "mmlu.dev.v1",
+            "sample_size": 8,
+            "scoring_mode": "multiple_choice_accuracy",
+            "parameters": {
+                "compare_mode": "base_vs_targets",
+                "compare_target_model_ids": "melix-dev-text-lora-a",
+            },
+            "status": "completed",
+            "output_dir": str(root),
+            "created_at_unix_ms": 303,
+            "updated_at_unix_ms": 404,
+        }) + "\n"
+    )
+    (root / "evaluation-compare-summary.json").write_text(
+        json.dumps({
+            "schema_version": "melix.evaluation_compare_summary_bundle.v1",
+            "job_id": "eval-compare-1",
+            "base_model_id": "melix-dev-text",
+            "suite_id": "mmlu",
+            "dataset_id": "mmlu.dev.v1",
+            "sample_size": 8,
+            "created_at_unix_ms": 303,
+            "target_summaries": [
+                {
+                    "schema_version": "melix.evaluation_compare_summary.v1",
+                    "job_id": "eval-compare-1",
+                    "base_model_id": "melix-dev-text",
+                    "target_model_id": "melix-dev-text-lora-a",
+                    "suite_id": "mmlu",
+                    "dataset_id": "mmlu.dev.v1",
+                    "sample_size": 8,
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "win_count": 5,
+                    "loss_count": 1,
+                    "tie_count": 2,
+                    "regression_count": 1,
+                    "base_accuracy": 0.5,
+                    "target_accuracy": 1.0,
+                    "delta_accuracy": 0.5,
+                    "duration_seconds": 3.25,
+                    "metrics": [
+                        {"name": "eval.compare.base_accuracy", "value": 0.5, "unit": "ratio"},
+                        {"name": "eval.compare.delta_accuracy", "value": 0.5, "unit": "ratio"},
+                        {"name": "eval.compare.target_accuracy", "value": 1.0, "unit": "ratio"},
+                        {"name": "eval.compare.win_count", "value": 5.0, "unit": "count"},
+                    ],
+                    "report_path": str(root / "evaluation-compare-report.md"),
+                },
+            ],
+        }) + "\n"
+    )
+    (root / "evaluation-compare-samples.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "schema_version": "melix.evaluation_compare_sample.v1",
+                "job_id": "eval-compare-1",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "sample_id": "sample-1",
+                "target_model_id": "melix-dev-text-lora-a",
+                "question": "2+2?",
+                "expected": "4",
+                "base_predicted": "3",
+                "target_predicted": "4",
+                "base_raw_response": "3",
+                "target_raw_response": "4",
+                "base_correct": False,
+                "target_correct": True,
+                "outcome": "win",
+                "regression": False,
+                "base_time_s": 0.03,
+                "target_time_s": 0.02,
+                "base_parse_status": "parsed",
+                "target_parse_status": "parsed",
+            }),
+        ]) + "\n"
+    )
+
+
 def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
 
@@ -405,6 +495,27 @@ def test_collect_evaluation_artifacts_reads_per_run_history_from_runs_directory(
     assert [job["job_id"] for job in result["evaluation_jobs"]] == ["eval-1", "eval-1"]
     assert [row["job_id"] for row in result["evaluation_results"]] == ["eval-1", "eval-1"]
     assert [sample["job_id"] for sample in result["evaluation_samples"]] == ["eval-1", "eval-1"]
+
+
+def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_exports(
+    tmp_path: Path,
+) -> None:
+    evaluation_root = tmp_path / "evaluation"
+    _write_eval_compare_fixtures(evaluation_root / "runs" / "eval-compare-1")
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert [job["job_id"] for job in result["evaluation_jobs"]] == ["eval-compare-1"]
+    assert result["evaluation_jobs"][0]["model_id"] == "melix-dev-text"
+    assert result["evaluation_jobs"][0]["parameters"]["compare_target_model_ids"] == "melix-dev-text-lora-a"
+    assert [row["job_id"] for row in result["evaluation_results"]] == ["eval-compare-1"]
+    assert result["evaluation_results"][0]["report_path"].endswith("evaluation-compare-report.md")
+    assert result["evaluation_summary_rows"][0]["model_id"] == "melix-dev-text-lora-a"
+    assert result["evaluation_summary_rows"][0]["score_name"] == "eval.compare.delta_accuracy"
+    assert result["evaluation_summary_rows"][0]["score_value"] == 0.5
+    assert result["evaluation_samples"][0]["job_id"] == "eval-compare-1"
+    assert result["evaluation_samples"][0]["sample_id"] == "melix-dev-text-lora-a:sample-1"
+    assert result["evaluation_samples"][0]["predicted"] == "4"
 
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:

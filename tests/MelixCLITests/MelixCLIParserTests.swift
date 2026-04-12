@@ -10,6 +10,81 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
     }
 
+    @Test("documents and parses public model ops commands")
+    func documentsAndParsesPublicModelOpsCommands() throws {
+        #expect(MelixCLIParser.usageText.contains("melix doctor [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix convert --model-id MODEL_ID"))
+        #expect(MelixCLIParser.usageText.contains("melix quantize --model-id MODEL_ID"))
+        #expect(MelixCLIParser.usageText.contains("melix upload --model-id MODEL_ID"))
+
+        let doctorCommand = try MelixCLIParser.parse([
+            "doctor",
+            "--json",
+        ])
+        let convertCommand = try MelixCLIParser.parse([
+            "convert",
+            "--model-id", "melix-dev-text",
+            "--output-dir", "/tmp/melix-convert",
+            "--target-format", "melix_model_bundle",
+            "--json",
+        ])
+        let quantizeCommand = try MelixCLIParser.parse([
+            "quantize",
+            "--model-id", "melix-dev-text",
+            "--output-dir", "/tmp/melix-quantize",
+            "--quant-profile-id", "q4",
+            "--weight-quant", "q4",
+            "--kv-quant", "q8",
+            "--json",
+        ])
+        let uploadCommand = try MelixCLIParser.parse([
+            "upload",
+            "--model-id", "melix-dev-text",
+            "--output-dir", "/tmp/melix-upload",
+            "--target-repo", "melix/models/demo",
+            "--artifact-path", "/tmp/melix-convert/convert.artifact",
+            "--artifact-kind", "converted_model_bundle",
+            "--artifact-manifest-path", "/tmp/melix-convert/convert.artifact/manifest.json",
+            "--json",
+        ])
+
+        guard case .doctor(let doctorOptions) = doctorCommand else {
+            Issue.record("Expected doctor command")
+            return
+        }
+        guard case .convert(let convertOptions) = convertCommand else {
+            Issue.record("Expected convert command")
+            return
+        }
+        guard case .quantize(let quantizeOptions) = quantizeCommand else {
+            Issue.record("Expected quantize command")
+            return
+        }
+        guard case .upload(let uploadOptions) = uploadCommand else {
+            Issue.record("Expected upload command")
+            return
+        }
+
+        #expect(doctorOptions.json)
+        #expect(convertOptions.modelID == "melix-dev-text")
+        #expect(convertOptions.outputDir == "/tmp/melix-convert")
+        #expect(convertOptions.targetFormat == "melix_model_bundle")
+        #expect(convertOptions.json)
+        #expect(quantizeOptions.modelID == "melix-dev-text")
+        #expect(quantizeOptions.outputDir == "/tmp/melix-quantize")
+        #expect(quantizeOptions.quantProfileID == "q4")
+        #expect(quantizeOptions.weightQuant == "q4")
+        #expect(quantizeOptions.kvQuant == "q8")
+        #expect(quantizeOptions.json)
+        #expect(uploadOptions.modelID == "melix-dev-text")
+        #expect(uploadOptions.outputDir == "/tmp/melix-upload")
+        #expect(uploadOptions.targetRepo == "melix/models/demo")
+        #expect(uploadOptions.artifactPath == "/tmp/melix-convert/convert.artifact")
+        #expect(uploadOptions.artifactKind == "converted_model_bundle")
+        #expect(uploadOptions.artifactManifestPath == "/tmp/melix-convert/convert.artifact/manifest.json")
+        #expect(uploadOptions.json)
+    }
+
     @Test("parses server snapshot and pause commands")
     func parsesServerSnapshotAndPauseCommands() throws {
         let snapshotCommand = try MelixCLIParser.parse([
@@ -1063,6 +1138,19 @@ struct MelixCLIParserTests {
     func surfacesUsageAndMissingRequiredErrors() throws {
         try assertError(for: [], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["unknown"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(for: ["doctor", "oops"], equals: .usage(MelixCLIParser.usageText))
+        try assertError(
+            for: ["convert"],
+            equals: .missingRequired("--model-id is required for melix convert.")
+        )
+        try assertError(
+            for: ["quantize"],
+            equals: .missingRequired("--model-id is required for melix quantize.")
+        )
+        try assertError(
+            for: ["upload", "--model-id", "melix-dev-text"],
+            equals: .missingRequired("--target-repo is required for melix upload.")
+        )
         try assertError(for: ["lora"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["lora", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(

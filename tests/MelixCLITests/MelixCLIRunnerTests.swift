@@ -81,6 +81,118 @@ struct MelixCLIRunnerTests {
         #expect(call.ext.isEmpty)
     }
 
+    @Test("doctor command renders markdown and structured json payloads")
+    func doctorCommandRendersMarkdownAndStructuredJSONPayloads() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setDoctorReport(
+            makeDoctorReport(
+                markdown: "# Melix Doctor\n\n- worker_state: idle\n",
+                healthStatus: .healthy,
+                findings: [
+                    ("cache_warning", .warning, "Cache pressure", "Cache usage crossed the warning threshold."),
+                ]
+            )
+        )
+
+        let textOutput = try await MelixCLIRunner(client: client).run(.doctor(.init()))
+        let jsonOutput = try await MelixCLIRunner(client: client).run(.doctor(.init(json: true)))
+        let payload = try #require(parseJSONObject(jsonOutput))
+        let findings = try #require(payload["findings"] as? [[String: Any]])
+
+        #expect(textOutput.contains("# Melix Doctor"))
+        #expect(payload["markdown"] as? String == "# Melix Doctor\n\n- worker_state: idle\n")
+        #expect(payload["health_status"] as? String == "healthy")
+        #expect(findings.count == 1)
+        #expect(findings[0]["code"] as? String == "cache_warning")
+        #expect(findings[0]["severity"] as? String == "warning")
+    }
+
+    @Test("public model ops commands forward convert quantize and upload payloads")
+    func publicModelOpsCommandsForwardConvertQuantizeAndUploadPayloads() async throws {
+        let client = StubControlPlaneXPCClient()
+        let runner = MelixCLIRunner(client: client)
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-convert/convert.artifact",
+                manifestJSON: #"{"job_id":"convert-job-1","operation":"convert","target_format":"melix_model_bundle"}"#
+            )
+        )
+        let convertOutput = try await runner.run(
+            .convert(
+                .init(
+                    modelID: "melix-dev-text",
+                    outputDir: "/tmp/melix-convert",
+                    targetFormat: "melix_model_bundle",
+                    json: true
+                )
+            )
+        )
+        let convertCall = try #require(await client.lastModelOperationCall)
+        let convertPayload = try #require(parseJSONObject(convertOutput))
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-quantize/quantize.artifact",
+                manifestJSON: #"{"job_id":"quantize-job-1","operation":"quantize","quant_profile_id":"q4"}"#
+            )
+        )
+        let quantizeOutput = try await runner.run(
+            .quantize(
+                .init(
+                    modelID: "melix-dev-text",
+                    outputDir: "/tmp/melix-quantize",
+                    quantProfileID: "q4",
+                    weightQuant: "q4",
+                    kvQuant: "q8",
+                    json: true
+                )
+            )
+        )
+        let quantizeCall = try #require(await client.lastModelOperationCall)
+        let quantizePayload = try #require(parseJSONObject(quantizeOutput))
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-upload/upload.receipt.json",
+                manifestJSON: #"{"job_id":"upload-job-1","operation":"upload","target_repo":"melix/models/demo"}"#
+            )
+        )
+        let uploadOutput = try await runner.run(
+            .upload(
+                .init(
+                    modelID: "melix-dev-text",
+                    outputDir: "/tmp/melix-upload",
+                    targetRepo: "melix/models/demo",
+                    artifactPath: "/tmp/melix-convert/convert.artifact",
+                    artifactKind: "converted_model_bundle",
+                    artifactManifestPath: "/tmp/melix-convert/convert.artifact/manifest.json",
+                    json: true
+                )
+            )
+        )
+        let uploadCall = try #require(await client.lastModelOperationCall)
+        let uploadPayload = try #require(parseJSONObject(uploadOutput))
+
+        #expect(convertPayload["job_id"] as? String == "convert-job-1")
+        #expect(convertCall.operation == "convert")
+        #expect(convertCall.outputDir == "/tmp/melix-convert")
+        #expect(convertCall.ext["target_format"] == "melix_model_bundle")
+        #expect(quantizePayload["job_id"] as? String == "quantize-job-1")
+        #expect(quantizeCall.operation == "quantize")
+        #expect(quantizeCall.outputDir == "/tmp/melix-quantize")
+        #expect(quantizeCall.quantProfileID == "q4")
+        #expect(quantizeCall.weightQuant == "q4")
+        #expect(quantizeCall.kvQuant == "q8")
+        #expect(uploadPayload["job_id"] as? String == "upload-job-1")
+        #expect(uploadCall.operation == "upload")
+        #expect(uploadCall.outputDir == "/tmp/melix-upload")
+        #expect(uploadCall.ext["target_repo"] == "melix/models/demo")
+        #expect(uploadCall.ext["artifact_path"] == "/tmp/melix-convert/convert.artifact")
+        #expect(uploadCall.ext["artifact_kind"] == "converted_model_bundle")
+        #expect(uploadCall.ext["artifact_manifest_path"] == "/tmp/melix-convert/convert.artifact/manifest.json")
+    }
+
     @Test("model hub download json renders a managed model receipt")
     func modelHubDownloadJSONRendersAManagedModelReceipt() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1308,6 +1420,64 @@ struct MelixCLIRunnerTests {
         #expect(commands[2].contains("/tmp/melix-downloads"))
     }
 
+    @Test("subprocess-backed model operations cover convert quantize and upload argument branches")
+    func subprocessBackedModelOperationsCoverPublicModelOpsBranches() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"convert","job_id":"convert-job-1","output_path":"/tmp/melix-convert/convert.artifact"}"#,
+                #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix-quantize/quantize.artifact"}"#,
+                #"{"operation":"upload","job_id":"upload-job-1","output_path":"/tmp/melix-upload/upload.receipt.json"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let convertResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "convert",
+            outputDir: "/tmp/melix-convert",
+            ext: ["target_format": "melix_model_bundle"]
+        )
+        let quantizeResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "quantize",
+            outputDir: "/tmp/melix-quantize",
+            quantProfileID: "q4",
+            weightQuant: "q4",
+            kvQuant: "q8"
+        )
+        let uploadResult = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "upload",
+            outputDir: "/tmp/melix-upload",
+            ext: [
+                "target_repo": "melix/models/demo",
+                "artifact_path": "/tmp/melix-convert/convert.artifact",
+                "artifact_kind": "converted_model_bundle",
+                "artifact_manifest_path": "/tmp/melix-convert/convert.artifact/manifest.json",
+            ]
+        )
+        let commands = await executor.commands
+
+        #expect(convertResult.jobID == "convert-job-1")
+        #expect(quantizeResult.jobID == "quantize-job-1")
+        #expect(uploadResult.jobID == "upload-job-1")
+        #expect(commands.count == 3)
+        #expect(commands[0].starts(with: ["convert", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
+        #expect(commands[0].contains("--output-dir"))
+        #expect(commands[0].contains("/tmp/melix-convert"))
+        #expect(commands[0].contains("--target-format"))
+        #expect(commands[1].starts(with: ["quantize", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
+        #expect(commands[1].contains("--quant-profile-id"))
+        #expect(commands[1].contains("--weight-quant"))
+        #expect(commands[1].contains("--kv-quant"))
+        #expect(commands[2].starts(with: ["upload", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
+        #expect(commands[2].contains("--target-repo"))
+        #expect(commands[2].contains("--artifact-path"))
+        #expect(commands[2].contains("--artifact-kind"))
+        #expect(commands[2].contains("--artifact-manifest-path"))
+    }
+
     @Test("subprocess-backed model operations preserve raw manifest output when JSON decoding is unavailable")
     func subprocessBackedModelOperationsPreserveRawManifestOutput() async throws {
         let client = StubControlPlaneXPCClient()
@@ -2037,8 +2207,8 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("eval-1\tmmlu\tmmlu.dev.v1\tcompleted\teval.mmlu.accuracy=0.75ratio"))
     }
 
-    @Test("eval compare preloads target models and forwards comparison parameters")
-    func evalComparePreloadsTargetsAndReturnsJSON() async throws {
+    @Test("eval compare preloads base and target models and forwards comparison parameters")
+    func evalComparePreloadsBaseAndTargetsAndReturnsJSON() async throws {
         let client = StubControlPlaneXPCClient()
         await client.setEvaluationResults([
             makeEvaluationRunResult(
@@ -2075,7 +2245,7 @@ struct MelixCLIRunnerTests {
         let firstRun = try #require(payload.first as? [String: Any])
         let firstJob = try #require(firstRun["job"] as? [String: Any])
 
-        #expect(await client.loadedModelIDs == ["melix-dev-text-lora-a", "melix-dev-text-lora-b"])
+        #expect(await client.loadedModelIDs == ["melix-dev-text", "melix-dev-text-lora-a", "melix-dev-text-lora-b"])
         #expect(requests.count == 1)
         #expect(requests[0].modelID == "melix-dev-text")
         #expect(requests[0].suiteID == "mmlu")
@@ -2334,7 +2504,8 @@ struct MelixCLIRunnerTests {
         #expect(info.ok == false)
         #expect(generated.jobID.isEmpty)
         #expect(edited.jobID.isEmpty)
-        #expect(doctor.isEmpty)
+        #expect(doctor.markdown.isEmpty)
+        #expect(doctor.findings.isEmpty)
         #expect(cancelled == false)
         #expect(parseJSONObject("not-json") == nil)
         #expect(parseJSONObject(#"{"ok":true}"#)?["ok"] as? Bool == true)
@@ -2671,6 +2842,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     struct ModelOperationCall: Sendable, Equatable {
         let modelID: String
         let operation: String
+        let outputDir: String
+        let quantProfileID: String
+        let weightQuant: String
+        let kvQuant: String
         let ext: [String: String]
     }
 
@@ -2718,6 +2893,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     )
     private var hubSearchResult = Melix_Controlplane_V1_HubSearchResult()
     private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
+    private var doctorReport = makeDoctorReport()
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
@@ -2747,6 +2923,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setHubModelCard(_ card: Melix_Controlplane_V1_HubModelCard) {
         self.hubModelCard = card
+    }
+
+    func setDoctorReport(_ report: Melix_Controlplane_V1_DoctorReport) {
+        doctorReport = report
     }
 
     func setEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
@@ -2904,11 +3084,15 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         kvQuant: String,
         ext: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
-        _ = outputDir
-        _ = quantProfileID
-        _ = weightQuant
-        _ = kvQuant
-        lastModelOperationCall = ModelOperationCall(modelID: modelID, operation: operation, ext: ext)
+        lastModelOperationCall = ModelOperationCall(
+            modelID: modelID,
+            operation: operation,
+            outputDir: outputDir,
+            quantProfileID: quantProfileID,
+            weightQuant: weightQuant,
+            kvQuant: kvQuant,
+            ext: ext
+        )
         return modelOperationResult
     }
 
@@ -2944,8 +3128,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         return Melix_Controlplane_V1_ImageJobSummary()
     }
 
-    func runDoctor() async throws -> String {
-        ""
+    func runDoctor() async throws -> Melix_Controlplane_V1_DoctorReport {
+        doctorReport
     }
 
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
@@ -3102,6 +3286,25 @@ private func makeModelOperationResult(
     result.outputPath = outputPath
     result.manifestJson = manifestJSON
     return result
+}
+
+private func makeDoctorReport(
+    markdown: String = "",
+    healthStatus: Melix_Controlplane_V1_DoctorHealthStatus = .unspecified,
+    findings: [(code: String, severity: Melix_Controlplane_V1_DoctorHealthStatus, summary: String, detail: String)] = []
+) -> Melix_Controlplane_V1_DoctorReport {
+    var report = Melix_Controlplane_V1_DoctorReport()
+    report.markdown = markdown
+    report.healthStatus = healthStatus
+    report.findings = findings.map { finding in
+        var item = Melix_Controlplane_V1_DoctorFinding()
+        item.code = finding.code
+        item.severity = finding.severity
+        item.summary = finding.summary
+        item.detail = finding.detail
+        return item
+    }
+    return report
 }
 
 private func parseJSONObject(_ text: String) -> [String: Any]? {

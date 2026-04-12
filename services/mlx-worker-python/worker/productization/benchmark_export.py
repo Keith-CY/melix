@@ -80,6 +80,7 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
         Path(jobs_root),
         fallback_dir="evaluation",
         job_filename="evaluation-job.json",
+        alternate_job_filenames=["evaluation-compare-job.json"],
     )
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
@@ -272,6 +273,7 @@ def _resolve_artifact_root(
     fallback_dir: str,
     job_filename: str,
     summary_filename: str | None = None,
+    alternate_job_filenames: list[str] | None = None,
 ) -> Path:
     direct_job = jobs_root / job_filename
     direct_runs = jobs_root / "runs"
@@ -280,9 +282,22 @@ def _resolve_artifact_root(
     fallback_runs = fallback_root / "runs"
     direct_summary = jobs_root / summary_filename if summary_filename else None
     fallback_summary = fallback_root / summary_filename if summary_filename else None
-    if direct_job.is_file() or direct_runs.is_dir() or (direct_summary is not None and direct_summary.is_file()):
+    alternate_job_filenames = alternate_job_filenames or []
+    direct_alternate_jobs = [jobs_root / filename for filename in alternate_job_filenames]
+    fallback_alternate_jobs = [fallback_root / filename for filename in alternate_job_filenames]
+    if (
+        direct_job.is_file()
+        or any(path.is_file() for path in direct_alternate_jobs)
+        or direct_runs.is_dir()
+        or (direct_summary is not None and direct_summary.is_file())
+    ):
         return jobs_root
-    if fallback_job.is_file() or fallback_runs.is_dir() or (fallback_summary is not None and fallback_summary.is_file()):
+    if (
+        fallback_job.is_file()
+        or any(path.is_file() for path in fallback_alternate_jobs)
+        or fallback_runs.is_dir()
+        or (fallback_summary is not None and fallback_summary.is_file())
+    ):
         return fallback_root
     return jobs_root
 
@@ -481,6 +496,144 @@ def _collect_evaluation_run(
         for line in samples_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 samples.append(json.loads(line))
+
+    compare_job_path = run_root / "evaluation-compare-job.json"
+    if not compare_job_path.is_file():
+        return
+
+    compare_job = json.loads(compare_job_path.read_text(encoding="utf-8"))
+    jobs.append(_normalize_evaluation_compare_job(compare_job))
+
+    compare_summary_path = run_root / "evaluation-compare-summary.json"
+    if compare_summary_path.is_file():
+        compare_summary_payload = json.loads(compare_summary_path.read_text(encoding="utf-8"))
+        for summary in _compare_target_summaries(compare_summary_payload):
+            results.append(_normalize_evaluation_compare_result(summary))
+            summaries.append(_normalize_evaluation_compare_summary_row(compare_job, summary))
+
+    compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
+    if compare_samples_path.is_file():
+        for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                samples.append(_normalize_evaluation_compare_sample(json.loads(line)))
+
+
+def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:
+    parameters = dict(compare_job.get("parameters", {}) if isinstance(compare_job.get("parameters"), dict) else {})
+    target_model_ids = compare_job.get("target_model_ids", [])
+    if isinstance(target_model_ids, list) and target_model_ids and "compare_target_model_ids" not in parameters:
+        parameters["compare_target_model_ids"] = ",".join(str(item) for item in target_model_ids)
+    parameters.setdefault("compare_mode", "base_vs_targets")
+    return {
+        "schema_version": "melix.evaluation_job.v1",
+        "job_id": compare_job.get("job_id", ""),
+        "model_id": compare_job.get("base_model_id", ""),
+        "task_kind": compare_job.get("task_kind", ""),
+        "source_repo": compare_job.get("source_repo", ""),
+        "suite_id": compare_job.get("suite_id", ""),
+        "dataset_id": compare_job.get("dataset_id", ""),
+        "sample_size": compare_job.get("sample_size", 0),
+        "scoring_mode": compare_job.get("scoring_mode", ""),
+        "parameters": parameters,
+        "status": compare_job.get("status", ""),
+        "output_dir": compare_job.get("output_dir", ""),
+        "created_at_unix_ms": compare_job.get("created_at_unix_ms", 0),
+        "updated_at_unix_ms": compare_job.get("updated_at_unix_ms", 0),
+    }
+
+
+def _compare_target_summaries(compare_summary_payload: dict[str, object]) -> list[dict[str, object]]:
+    rows = compare_summary_payload.get("target_summaries", [])
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _normalize_evaluation_compare_result(summary: dict[str, object]) -> dict[str, object]:
+    preferred_metric = _preferred_compare_metric(summary)
+    correct_count = _compare_target_correct_count(summary)
+    sample_size = int(summary.get("sample_size", 0) or 0)
+    return {
+        "schema_version": "melix.evaluation_result.v1",
+        "job_id": summary.get("job_id", ""),
+        "suite_id": summary.get("suite_id", ""),
+        "dataset_id": summary.get("dataset_id", ""),
+        "sample_size": sample_size,
+        "score_name": preferred_metric.get("name", ""),
+        "score_value": preferred_metric.get("value", 0.0),
+        "correct_count": correct_count,
+        "incorrect_count": max(sample_size - correct_count, 0),
+        "duration_seconds": summary.get("duration_seconds", 0.0),
+        "metrics": summary.get("metrics", []),
+        "report_path": summary.get("report_path", ""),
+    }
+
+
+def _normalize_evaluation_compare_summary_row(
+    compare_job: dict[str, object],
+    summary: dict[str, object],
+) -> dict[str, object]:
+    preferred_metric = _preferred_compare_metric(summary)
+    sample_size = int(summary.get("sample_size", compare_job.get("sample_size", 0)) or 0)
+    correct_count = _compare_target_correct_count(summary)
+    return {
+        "schema_version": "melix.evaluation_summary.v1",
+        "job_id": compare_job.get("job_id", ""),
+        "task_kind": compare_job.get("task_kind", ""),
+        "source_repo": compare_job.get("source_repo", ""),
+        "model_id": summary.get("target_model_id", ""),
+        "suite_id": summary.get("suite_id", compare_job.get("suite_id", "")),
+        "dataset_id": summary.get("dataset_id", compare_job.get("dataset_id", "")),
+        "score_name": preferred_metric.get("name", ""),
+        "score_value": preferred_metric.get("value", 0.0),
+        "sample_size": sample_size,
+        "correct_count": correct_count,
+        "incorrect_count": max(sample_size - correct_count, 0),
+        "duration_seconds": summary.get("duration_seconds", 0.0),
+        "created_at_unix_ms": compare_job.get("created_at_unix_ms", 0),
+    }
+
+
+def _normalize_evaluation_compare_sample(sample: dict[str, object]) -> dict[str, object]:
+    target_model_id = str(sample.get("target_model_id", ""))
+    sample_id = str(sample.get("sample_id", ""))
+    normalized_sample_id = f"{target_model_id}:{sample_id}" if target_model_id and sample_id else sample_id
+    return {
+        "schema_version": "melix.evaluation_sample.v1",
+        "job_id": sample.get("job_id", ""),
+        "suite_id": sample.get("suite_id", ""),
+        "dataset_id": sample.get("dataset_id", ""),
+        "sample_id": normalized_sample_id,
+        "question": sample.get("question", ""),
+        "expected": sample.get("expected", ""),
+        "predicted": sample.get("target_predicted", ""),
+        "raw_response": sample.get("target_raw_response", ""),
+        "correct": sample.get("target_correct", False),
+        "time_s": sample.get("target_time_s", 0.0),
+        "parse_status": sample.get("target_parse_status", ""),
+    }
+
+
+def _preferred_compare_metric(summary: dict[str, object]) -> dict[str, object]:
+    metrics = summary.get("metrics", [])
+    if not isinstance(metrics, list):
+        return {"name": "", "value": 0.0}
+    for preferred_name in (
+        "eval.compare.delta_accuracy",
+        "eval.compare.target_accuracy",
+        "eval.compare.win_count",
+    ):
+        for metric in metrics:
+            if isinstance(metric, dict) and metric.get("name") == preferred_name:
+                return metric
+    for metric in metrics:
+        if isinstance(metric, dict):
+            return metric
+    return {"name": "", "value": 0.0}
+
+
+def _compare_target_correct_count(summary: dict[str, object]) -> int:
+    sample_size = int(summary.get("sample_size", 0) or 0)
+    target_accuracy = float(summary.get("target_accuracy", 0.0) or 0.0)
+    return max(int(round(target_accuracy * sample_size)), 0)
 
 
 def _build_evaluation_summary_row(job: dict[str, object], result: dict[str, object]) -> dict[str, object]:

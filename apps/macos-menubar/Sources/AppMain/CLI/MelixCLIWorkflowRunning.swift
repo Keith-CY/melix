@@ -333,6 +333,14 @@ private func melixCLIConvertedDecodingKey(_ rawKey: String) -> String {
 extension MelixCLICommand {
     var workflowCommandID: String {
         switch self {
+        case .doctor:
+            return "doctor"
+        case .convert:
+            return "convert"
+        case .quantize:
+            return "quantize"
+        case .upload:
+            return "upload"
         case .modelList:
             return "model.list"
         case .modelInspect:
