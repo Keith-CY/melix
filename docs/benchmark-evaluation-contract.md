@@ -429,32 +429,49 @@ be materialized into a Melix evaluation dataset package before execution.
 The authoritative runtime contract is the materialized evaluation package rather than any external
 source schema.
 
-### Planned Structured Output Evaluation Profile
+### Evaluation Profiles
 
-This section defines the planned long-term contract for structured-output evaluation. It is not yet
-implemented by the current Melix runtime.
+This section defines the planned long-term evaluation profile contract. It is not yet implemented
+by the current Melix runtime.
 
-Structured-output evaluation packages use sample rows with these fields:
+Every evaluation dataset package declares its evaluation profile in `manifest.json`. The declared
+`profile_type` determines the sample shape, parsing rules, and scoring semantics for that package.
+
+Three profile types are defined:
+
+#### `structured_output` Profile
+
+Used for LoRA workflows that train models to emit schema-constrained JSON output.
+
+Sample rows use these fields:
 
 - `system`
 - `input`
 - `target`
 
-Structured-output package manifests must declare an evaluation profile that includes:
+`target` must be valid JSON whose root type matches the root type declared in the package
+`output_schema`. The profile must declare:
 
 - an output-schema reference or inline schema
-- scoring semantics
+- a `parser_mode`
+- a comparison policy
 - a correctness threshold
 - optional ignored field paths
 
-Structured-output requirements are:
+`parser_mode` controls how the parser interprets the model response:
 
-- `target` must be a JSON object
-- the parser must yield exactly one JSON object
-- wrapped prose before or after JSON is a parse failure
-- multiple JSON values are a parse failure
-- non-object JSON payloads are a parse failure
-- schema validation must succeed before field-level scoring begins
+- `strict`: the response must contain exactly one JSON value and no surrounding prose; any prose
+  before or after the JSON value is a parse failure; multiple JSON values are a parse failure
+- `extract`: the parser extracts the last valid JSON value from the response; prose before or after
+  the JSON value is permitted; this mode supports workflows where the model reasons before emitting
+  the structured result
+
+The accepted root type is determined by the `output_schema` root type declaration, not hardcoded
+to object. A schema with root `{type: "object"}` accepts only JSON objects. A schema with root
+`{type: "array"}` accepts only JSON arrays. In both modes, the parsed value must match the
+declared root type or the parse is a failure.
+
+Schema validation must succeed before field-level scoring begins.
 
 The default ignored field set for structured-output scoring is:
 
@@ -463,12 +480,47 @@ The default ignored field set for structured-output scoring is:
 - `closeness_logits`
 - `closeness_probs`
 
-The long-term structured-output contract does not retain a compatibility path for legacy
-`prompt`/`expected` sample rows.
+Manifest-declared `ignored_paths` extend the default ignored field set. They do not override it.
 
-Current repository fixtures for existing suites still largely use legacy `prompt`/`expected`
-shapes. Those rows are historical fixture formats for the current implementation rather than the
-long-term structured-output evaluation contract.
+#### `text_generation` Profile
+
+Used for standard benchmark suites and LoRA workflows evaluated against reference answers.
+
+Sample rows use these fields:
+
+- `prompt`
+- `expected`
+
+The profile must declare a `scoring_mode`. Supported values are:
+
+- `multiple_choice_accuracy`
+- `exact_match`
+- `numeric_match`
+- `code_exec`
+
+This is a permanent long-term evaluation path. Packages using `prompt` and `expected` sample rows
+with a declared `text_generation` profile are not subject to migration to the `structured_output`
+profile.
+
+#### `format_compliance` Profile
+
+Used for early-stage LoRA evaluation where ground-truth targets are not yet available. Measures
+format adherence without correctness scoring.
+
+Sample rows use these fields:
+
+- `system`
+- `input`
+
+No `target` field is required. The profile must declare a `format` value:
+
+- `json_object`: response must parse as a JSON object
+- `json_array`: response must parse as a JSON array
+- `json_any`: response must parse as any JSON value
+- `json_schema`: response must parse and validate against the declared `output_schema`
+
+Output metrics are `parse_success_rate` and `schema_valid_rate`. There are no `correct` or
+`incorrect` sample counts for this profile type.
 
 ### Evaluation Summary Outputs
 
