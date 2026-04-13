@@ -228,6 +228,34 @@ Notes:
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 
+## Planned Structured-Output Evaluation Workflow
+
+This section describes planned future direction rather than a shipped command path.
+
+For LoRA workflows that aim to improve JSON format adherence and extraction quality, the long-term
+Melix evaluation target is not multiple-choice accuracy or plain exact-match string scoring. Those
+proxies may help with narrow experiments, but they do not measure the intended operator outcome.
+
+The planned structured-output path will instead evaluate:
+
+- whether the model emits exactly one schema-valid JSON object
+- whether the extracted fields match the expected structured target
+- whether a derived model improves field quality without hiding regressions behind format failures
+
+The future structured-output contract will use an `evaluation profile` inside a Melix evaluation
+dataset package. That package remains the execution contract. Hugging Face datasets remain reusable
+as source corpora, but not as direct execution contracts for structured-output evaluation. The
+intended path is to materialize external corpora into a Melix evaluation package before execution.
+
+The future compare workflow will remain base-model versus derived-model oriented, but the target
+evidence model will expand from binary correct or incorrect counts to schema-valid rate and
+field-level score.
+
+See these planning documents for the target contract and milestone sequence:
+
+- `docs/superpowers/specs/2026-04-13-structured-output-evaluation-profile-design.md`
+- `docs/plans/2026-04-13-structured-output-evaluation-roadmap.md`
+
 ## Use LoRA With Benchmark, Matrix, Evaluation, And Compare
 
 LoRA adapters are not direct benchmark or evaluation targets. Melix benchmark and evaluation

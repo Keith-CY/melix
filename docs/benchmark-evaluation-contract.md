@@ -414,6 +414,62 @@ The first canonical `eval` suite set is:
 Multimodal evaluation datasets must package media alongside `manifest.json` and `samples.jsonl`.
 Relative media references are resolved against `dataset_root`.
 
+### Evaluation Dataset Contract
+
+Melix evaluation executes only against repository-owned evaluation dataset packages.
+
+Every execution package must provide:
+
+- `manifest.json`
+- `samples.jsonl`
+
+External datasets, including Hugging Face datasets, may be reused as source inputs, but they must
+be materialized into a Melix evaluation dataset package before execution.
+
+The authoritative runtime contract is the materialized evaluation package rather than any external
+source schema.
+
+### Planned Structured Output Evaluation Profile
+
+This section defines the planned long-term contract for structured-output evaluation. It is not yet
+implemented by the current Melix runtime.
+
+Structured-output evaluation packages use sample rows with these fields:
+
+- `system`
+- `input`
+- `target`
+
+Structured-output package manifests must declare an evaluation profile that includes:
+
+- an output-schema reference or inline schema
+- scoring semantics
+- a correctness threshold
+- optional ignored field paths
+
+Structured-output requirements are:
+
+- `target` must be a JSON object
+- the parser must yield exactly one JSON object
+- wrapped prose before or after JSON is a parse failure
+- multiple JSON values are a parse failure
+- non-object JSON payloads are a parse failure
+- schema validation must succeed before field-level scoring begins
+
+The default ignored field set for structured-output scoring is:
+
+- `evidence`
+- `confidence`
+- `closeness_logits`
+- `closeness_probs`
+
+The long-term structured-output contract does not retain a compatibility path for legacy
+`prompt`/`expected` sample rows.
+
+Current repository fixtures for existing suites still largely use legacy `prompt`/`expected`
+shapes. Those rows are historical fixture formats for the current implementation rather than the
+long-term structured-output evaluation contract.
+
 ### Evaluation Summary Outputs
 
 Each completed suite result must include:
