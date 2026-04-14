@@ -11,6 +11,34 @@
 
 ## 2026-04-12
 
+## 2026-04-14
+
+- Closed the executable-code evaluation slice for `humaneval` and `mbpp` so Melix now treats
+  repository-owned Python code execution as a first-class evaluation path instead of a text-only
+  approximation:
+  - added checked-in `humaneval.dev.v1` and `mbpp.dev.v1` fixture packages under
+    `services/mlx-worker-python/fixtures/evaluation/`
+  - gated executable-code suites behind `code_exec_policy=sandboxed`
+  - added Python candidate execution with compile/runtime/timeout/test evidence persisted on
+    sample records
+  - preserved executable-code evidence through `eval compare` sample generation and export-bundle
+    normalization
+  - added dedicated public CLI compare export commands for summary CSV, samples CSV, and samples
+    JSONL
+  - updated the canonical benchmark/evaluation contract and runbook for executable-code suites,
+    compare exports, and checked-in dev fixtures
+- Verification summary for the executable-code evaluation slice:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: `141 passed in 1.44s`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --enable-code-coverage --filter 'MelixCLIParserTests|MelixCLIRunnerTests'`: `112 tests in 3 suites passed after 0.058 seconds`
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/services/control-plane-swift/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter BenchmarkExportBundleTests`: `12 tests in 1 suite passed after 0.002 seconds`
+  - `git diff --check`: pass
+- Metrics report for the executable-code evaluation slice:
+  - Python changed-line coverage: `99.10%` (`220/222`)
+  - Swift CLI changed-line coverage: `97.77%` (`263/269`)
+  - Swift control-plane changed-line coverage: `100.00%` (`266/266`)
+  - Aggregate measurable changed-line coverage across the touched executable-code evaluation slice:
+    `98.94%` (`749/757`)
+
 - Realigned the public documentation entrypoints so the repository now presents Melix as a
   project first and an engineering archive second:
   - rewrote `README.md` around product narrative, target users, LoRA and benchmark motivation,

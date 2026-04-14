@@ -318,17 +318,31 @@ def test_run_local_suite_supports_additional_score_modes_and_job_metadata(tmp_pa
         dataset_id="mbpp-dev",
         suite_id="mbpp",
         samples=(
-            {"id": "sample-1", "question": "2+2?", "answer": "4"},
+            {
+                "id": "sample-1",
+                "prompt": "Write add(a, b) that returns the sum.",
+                "entry_point": "add",
+                "test": "assert add(2, 2) == 4\nassert add(3, 5) == 8",
+            },
         ),
     )
     jobs_root = tmp_path / "runs" / "mbpp"
-    runner = EvaluationCore(jobs_root=jobs_root)
+    backend = ScriptedEvaluationBackend(
+        (
+            "def add(a, b):\n    return a + b",
+        )
+    )
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="melix-dev-code")
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
 
     run = runner.run_local_suite(
-        model_id="melix-dev-text",
+        model_id="melix-dev-code",
+        model_handle=registry.handle,
         suite_id="mbpp",
         dataset_root=dataset_root,
         sample_size=1,
+        code_exec_policy="sandboxed",
         parameters={
             "task_kind": "text-generation",
             "source_repo": "openai_humaneval",
@@ -343,8 +357,87 @@ def test_run_local_suite_supports_additional_score_modes_and_job_metadata(tmp_pa
     assert run.job.scoring_mode == "pass_at_1"
     assert run.job.few_shot == 0
     assert run.job.seed == 0
-    assert run.job.code_exec_policy == ""
+    assert run.job.code_exec_policy == "sandboxed"
     assert metrics["eval.mbpp.pass_at_1"] == 1.0
+    assert metrics["eval.mbpp.code_exec_pass_count"] == 1.0
+    assert metrics["eval.mbpp.code_exec_fail_count"] == 0.0
+
+
+def test_run_local_suite_requires_sandboxed_code_exec_policy_for_code_suites(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="humaneval-dev",
+        suite_id="humaneval",
+        samples=(
+            {
+                "id": "sample-1",
+                "prompt": "Return the input unchanged.",
+                "entry_point": "identity",
+                "test": "assert identity(4) == 4",
+            },
+        ),
+    )
+    runner = EvaluationCore()
+
+    with pytest.raises(
+        ValueError,
+        match="requires code_exec_policy=sandboxed",
+    ):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            suite_id="humaneval",
+            dataset_root=dataset_root,
+            sample_size=1,
+        )
+
+
+def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="humaneval-dev",
+        suite_id="humaneval",
+        samples=(
+            {
+                "id": "sample-1",
+                "prompt": "Write identity(x) that returns x.",
+                "entry_point": "identity",
+                "test": "assert identity(4) == 4\nassert identity('hi') == 'hi'",
+            },
+        ),
+    )
+    backend = ScriptedEvaluationBackend(
+        (
+            "```python\ndef identity(x):\n    return x\n```",
+        )
+    )
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="live-code-eval-model")
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="live-code-eval-model",
+        model_handle=registry.handle,
+        suite_id="humaneval",
+        dataset_root=dataset_root,
+        sample_size=1,
+        code_exec_policy="sandboxed",
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+
+    assert len(backend.prompts) == 1
+    assert "Return only valid Python code." in backend.prompts[0]
+    assert run.samples[0].correct is True
+    assert run.result.score_name == "pass_at_1"
+    assert run.result.score_value == 1.0
+    assert metrics["eval.humaneval.pass_at_1"] == 1.0
+    assert metrics["eval.humaneval.code_exec_pass_count"] == 1.0
+    assert metrics["eval.humaneval.code_exec_fail_count"] == 0.0
+    assert run.samples[0].parse_status == "parsed_code_block"
 
 
 def test_run_local_suite_falls_back_to_zero_for_invalid_numeric_controls(tmp_path: Path) -> None:
@@ -622,6 +715,62 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     assert "melix-dev-text-lora-b" in report_markdown
 
 
+def test_run_local_suite_compare_preserves_code_execution_evidence_for_code_suites(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="humaneval.dev.v1",
+        suite_id="humaneval",
+        samples=(
+            {
+                "id": "sample-1",
+                "prompt": "Write identity(x) that returns x.",
+                "entry_point": "identity",
+                "test": "assert identity(4) == 4\nassert identity('hi') == 'hi'",
+            },
+        ),
+    )
+    jobs_root = tmp_path / "runs" / "compare-code"
+    registry = FakeEvaluationRegistry(
+        runtime=ScriptedComparisonRuntime(("```python\ndef identity(x):\n    return None\n```",)),
+        model_id="melix-dev-code-base",
+        additional_models={
+            "melix-dev-code-target": (
+                ScriptedComparisonRuntime(("```python\ndef identity(x):\n    return x\n```",)),
+                "text",
+            ),
+        },
+    )
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="melix-dev-code-base",
+        model_handle=registry.handle_for("melix-dev-code-base"),
+        suite_id="humaneval",
+        dataset_root=dataset_root,
+        sample_size=1,
+        code_exec_policy="sandboxed",
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-code-target",
+        },
+    )
+
+    assert run.results[0].win_count == 1
+    compare_samples = [
+        json.loads(line)
+        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert compare_samples[0]["code_language"] == "python"
+    assert compare_samples[0]["code_entry_point"] == "identity"
+    assert compare_samples[0]["base_code_test_status"] == "failed"
+    assert compare_samples[0]["target_code_test_status"] == "passed"
+    assert compare_samples[0]["base_code_tests_passed"] == 0
+    assert compare_samples[0]["target_code_tests_passed"] == 2
+
+
 def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -762,8 +911,16 @@ def test_parse_prediction_covers_empty_numeric_option_and_default_paths() -> Non
 
 
 def test_evaluation_helpers_cover_numeric_option_and_normalization_paths() -> None:
-    numeric_messages = EvaluationCore._evaluation_messages(prompt="6 + 3 = ?", expected="9")
-    option_messages = EvaluationCore._evaluation_messages(prompt="Pick one", expected="B")
+    numeric_messages = EvaluationCore._evaluation_messages(
+        suite_id="mmlu",
+        prompt="6 + 3 = ?",
+        expected="9",
+    )
+    option_messages = EvaluationCore._evaluation_messages(
+        suite_id="mmlu",
+        prompt="Pick one",
+        expected="B",
+    )
 
     assert numeric_messages[0].parts[0].text.startswith("Return only the final numeric answer.")
     assert option_messages[0].parts[0].text.startswith("Return only the single best answer choice letter.")

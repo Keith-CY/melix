@@ -259,6 +259,15 @@ class EvaluationStore:
             "parse_status",
             "input_modalities",
             "media_references",
+            "code_language",
+            "code_entry_point",
+            "code_compile_status",
+            "code_runtime_status",
+            "code_timeout_status",
+            "code_test_status",
+            "code_tests_passed",
+            "code_tests_total",
+            "code_failure_detail",
         ]
         rows = [",".join(header)]
         for sample in samples:
@@ -276,6 +285,15 @@ class EvaluationStore:
                         EvaluationStore._csv_field(sample.parse_status),
                         EvaluationStore._csv_field(",".join(sample.input_modalities)),
                         EvaluationStore._csv_field(",".join(sample.media_references)),
+                        EvaluationStore._csv_field(sample.code_language),
+                        EvaluationStore._csv_field(sample.code_entry_point),
+                        EvaluationStore._csv_field(sample.code_compile_status),
+                        EvaluationStore._csv_field(sample.code_runtime_status),
+                        EvaluationStore._csv_field(sample.code_timeout_status),
+                        EvaluationStore._csv_field(sample.code_test_status),
+                        EvaluationStore._csv_field(str(sample.code_tests_passed)),
+                        EvaluationStore._csv_field(str(sample.code_tests_total)),
+                        EvaluationStore._csv_field(sample.code_failure_detail),
                     ]
                 )
             )

@@ -9,6 +9,8 @@ from worker.productization.benchmark_export import (
     build_benchmark_context_csv,
     build_benchmark_matrix_requests_csv,
     build_benchmark_matrix_summary_csv,
+    build_evaluation_compare_samples_csv,
+    build_evaluation_compare_summary_csv,
     build_benchmark_summary_csv,
     build_evaluation_samples_csv,
     build_evaluation_summary_csv,
@@ -513,9 +515,12 @@ def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_ex
     assert result["evaluation_summary_rows"][0]["model_id"] == "melix-dev-text-lora-a"
     assert result["evaluation_summary_rows"][0]["score_name"] == "eval.compare.delta_accuracy"
     assert result["evaluation_summary_rows"][0]["score_value"] == 0.5
-    assert result["evaluation_samples"][0]["job_id"] == "eval-compare-1"
-    assert result["evaluation_samples"][0]["sample_id"] == "melix-dev-text-lora-a:sample-1"
-    assert result["evaluation_samples"][0]["predicted"] == "4"
+    assert result["evaluation_samples"] == []
+    assert result["evaluation_compare_jobs"][0]["job_id"] == "eval-compare-1"
+    assert result["evaluation_compare_summary_rows"][0]["target_model_id"] == "melix-dev-text-lora-a"
+    assert result["evaluation_compare_samples"][0]["job_id"] == "eval-compare-1"
+    assert result["evaluation_compare_samples"][0]["sample_id"] == "sample-1"
+    assert result["evaluation_compare_samples"][0]["target_predicted"] == "4"
 
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:
@@ -769,13 +774,91 @@ def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
 
     summary_csv = build_evaluation_summary_csv(empty_bundle)
     samples_csv = build_evaluation_samples_csv(empty_bundle)
+    compare_summary_csv = build_evaluation_compare_summary_csv(empty_bundle)
+    compare_samples_csv = build_evaluation_compare_samples_csv(empty_bundle)
 
     summary_lines = [line for line in summary_csv.splitlines() if line.strip()]
     samples_lines = [line for line in samples_csv.splitlines() if line.strip()]
+    compare_summary_lines = [line for line in compare_summary_csv.splitlines() if line.strip()]
+    compare_samples_lines = [line for line in compare_samples_csv.splitlines() if line.strip()]
     assert len(summary_lines) == 1
     assert summary_lines[0].startswith("job_id,task_kind")
     assert len(samples_lines) == 1
     assert samples_lines[0].startswith("job_id,suite_id")
+    assert len(compare_summary_lines) == 1
+    assert compare_summary_lines[0].startswith("job_id,base_model_id,target_model_id")
+    assert len(compare_samples_lines) == 1
+    assert compare_samples_lines[0].startswith("job_id,suite_id,dataset_id,sample_id,target_model_id")
+
+
+def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
+    bundle: dict[str, object] = {
+        "evaluation_compare_summary_rows": [
+            {
+                "job_id": "eval-compare-1",
+                "base_model_id": "melix-dev-text",
+                "target_model_id": "melix-dev-text-lora-a",
+                "suite_id": "mbpp",
+                "dataset_id": "mbpp.dev.v1",
+                "sample_size": 2,
+                "win_count": 1,
+                "loss_count": 0,
+                "tie_count": 1,
+                "regression_count": 0,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+                "duration_seconds": 1.75,
+            }
+        ],
+        "evaluation_compare_samples": [
+            {
+                "job_id": "eval-compare-1",
+                "suite_id": "mbpp",
+                "dataset_id": "mbpp.dev.v1",
+                "sample_id": "sample-1",
+                "target_model_id": "melix-dev-text-lora-a",
+                "question": "Write solve(n) that returns n",
+                "expected": "solve",
+                "base_predicted": "def solve(n):\n    return 0",
+                "target_predicted": "def solve(n):\n    return n",
+                "base_raw_response": "def solve(n):\n    return 0",
+                "target_raw_response": "def solve(n):\n    return n",
+                "base_correct": False,
+                "target_correct": True,
+                "outcome": "win",
+                "regression": False,
+                "base_time_s": 0.11,
+                "target_time_s": 0.09,
+                "base_parse_status": "parsed_code_fallback",
+                "target_parse_status": "parsed_code_fallback",
+                "code_language": "python",
+                "code_entry_point": "solve",
+                "base_code_compile_status": "compiled",
+                "target_code_compile_status": "compiled",
+                "base_code_runtime_status": "ok",
+                "target_code_runtime_status": "ok",
+                "base_code_timeout_status": "ok",
+                "target_code_timeout_status": "ok",
+                "base_code_test_status": "failed",
+                "target_code_test_status": "passed",
+                "base_code_tests_passed": 1,
+                "target_code_tests_passed": 2,
+                "base_code_tests_total": 2,
+                "target_code_tests_total": 2,
+                "base_code_failure_detail": "assertion failed",
+                "target_code_failure_detail": "",
+            }
+        ],
+    }
+
+    summary_csv = build_evaluation_compare_summary_csv(bundle)
+    samples_csv = build_evaluation_compare_samples_csv(bundle)
+
+    assert "job_id,base_model_id,target_model_id" in summary_csv
+    assert "eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75" in summary_csv
+    assert "job_id,suite_id,dataset_id,sample_id,target_model_id" in samples_csv
+    assert "assertion failed" in samples_csv
 
 
 def test_benchmark_csv_builders_return_header_only_for_empty_bundle() -> None:

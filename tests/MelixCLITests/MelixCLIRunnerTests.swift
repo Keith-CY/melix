@@ -2345,7 +2345,7 @@ struct MelixCLIRunnerTests {
         #expect(output == "No evaluation runs found.\n")
     }
 
-    @Test("eval export commands write summary csv and sample artifacts")
+    @Test("eval export commands write summary csv and sample artifacts with code evidence")
     func evalExportCommandsWriteArtifacts() async throws {
         let client = StubControlPlaneXPCClient()
         await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
@@ -2373,9 +2373,45 @@ struct MelixCLIRunnerTests {
         #expect(response["row_count"] as? Int == 1)
         #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
         #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(samplesCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
-        #expect(samplesCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
+        #expect(samplesCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(samplesCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed,python,solve,compiled,ok,ok,passed,2,2,"))
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
+        #expect(samplesJSONL.contains("\"code_language\":\"python\""))
+    }
+
+    @Test("eval compare export commands write summary csv and sample artifacts")
+    func evalCompareExportCommandsWriteArtifacts() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let summaryURL = root.appendingPathComponent("eval-compare-1-summary.csv")
+        let samplesURL = root.appendingPathComponent("eval-compare-1-samples.csv")
+        let jsonlURL = root.appendingPathComponent("eval-compare-1-samples.jsonl")
+
+        let summaryOutput = try await MelixCLIRunner(client: client).run(
+            .evalCompareExportSummaryCSV(.init(jobID: "eval-compare-1", outputPath: summaryURL.path, json: true))
+        )
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalCompareExportSamplesCSV(.init(jobID: "eval-compare-1", outputPath: samplesURL.path))
+        )
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalCompareExportSamplesJSONL(.init(jobID: "eval-compare-1", outputPath: jsonlURL.path))
+        )
+
+        let response = try #require(parseJSONObject(summaryOutput))
+        let summaryCSV = try String(contentsOf: summaryURL, encoding: .utf8)
+        let samplesCSV = try String(contentsOf: samplesURL, encoding: .utf8)
+        let samplesJSONL = try String(contentsOf: jsonlURL, encoding: .utf8)
+
+        #expect(response["job_id"] as? String == "eval-compare-1")
+        #expect(response["row_count"] as? Int == 1)
+        #expect(summaryCSV.contains("job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds"))
+        #expect(summaryCSV.contains("eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75"))
+        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted"))
+        #expect(samplesCSV.contains("eval-compare-1,mbpp,mbpp.dev.v1,sample-1,melix-dev-text-lora-a,Write solve(n) that returns n,solve,\"def solve(n):"))
+        #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,"))
+        #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
+        #expect(samplesJSONL.contains("\"base_code_failure_detail\":\"assertion failed\""))
     }
 
     @Test("eval export commands fail when the requested job has no rows")
@@ -2390,6 +2426,21 @@ struct MelixCLIRunnerTests {
             Issue.record("Expected eval export-summary-csv to fail when the job is missing.")
         } catch let error as MelixCLIError {
             #expect(error == .runtime("No evaluation rows were found for job eval-missing."))
+        }
+    }
+
+    @Test("eval compare export commands fail when the requested job has no rows")
+    func evalCompareExportCommandsFailForMissingJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .evalCompareExportSummaryCSV(.init(jobID: "eval-compare-missing", outputPath: "/tmp/eval-compare-missing.csv"))
+            )
+            Issue.record("Expected eval compare export-summary-csv to fail when the job is missing.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No evaluation compare summary rows were found for job eval-compare-missing."))
         }
     }
 
@@ -3503,7 +3554,103 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "raw_response": "4",
           "correct": true,
           "time_s": 0.01,
-          "parse_status": "parsed"
+          "parse_status": "parsed",
+          "code_language": "python",
+          "code_entry_point": "solve",
+          "code_compile_status": "compiled",
+          "code_runtime_status": "ok",
+          "code_timeout_status": "ok",
+          "code_test_status": "passed",
+          "code_tests_passed": 2,
+          "code_tests_total": 2,
+          "code_failure_detail": ""
+        }
+      ],
+      "evaluation_compare_jobs": [
+        {
+          "schema_version": "melix.evaluation_compare_job.v1",
+          "job_id": "eval-compare-1",
+          "base_model_id": "melix-dev-text",
+          "target_model_ids": ["melix-dev-text-lora-a"],
+          "task_kind": "text-generation",
+          "source_repo": "openai_humaneval",
+          "suite_id": "mbpp",
+          "dataset_id": "mbpp.dev.v1",
+          "sample_size": 2,
+          "scoring_mode": "pass_at_1",
+          "parameters": {
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-a"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/evaluation/runs/eval-compare-1",
+          "created_at_unix_ms": 1712500000000,
+          "updated_at_unix_ms": 1712500005000
+        }
+      ],
+      "evaluation_compare_summary_rows": [
+        {
+          "schema_version": "melix.evaluation_compare_summary.v1",
+          "job_id": "eval-compare-1",
+          "base_model_id": "melix-dev-text",
+          "target_model_id": "melix-dev-text-lora-a",
+          "suite_id": "mbpp",
+          "dataset_id": "mbpp.dev.v1",
+          "sample_size": 2,
+          "scoring_mode": "pass_at_1",
+          "win_count": 1,
+          "loss_count": 0,
+          "tie_count": 1,
+          "regression_count": 0,
+          "base_accuracy": 0.5,
+          "target_accuracy": 1.0,
+          "delta_accuracy": 0.5,
+          "duration_seconds": 1.75,
+          "metrics": [
+            {"name": "eval.compare.win_count", "value": 1.0, "unit": "count"},
+            {"name": "eval.compare.delta_accuracy", "value": 0.5, "unit": "ratio"}
+          ],
+          "report_path": "/tmp/melix/evaluation/runs/eval-compare-1/evaluation-compare-report.md"
+        }
+      ],
+      "evaluation_compare_samples": [
+        {
+          "schema_version": "melix.evaluation_compare_sample.v1",
+          "job_id": "eval-compare-1",
+          "suite_id": "mbpp",
+          "dataset_id": "mbpp.dev.v1",
+          "sample_id": "sample-1",
+          "target_model_id": "melix-dev-text-lora-a",
+          "question": "Write solve(n) that returns n",
+          "expected": "solve",
+          "base_predicted": "def solve(n):\\n    return 0",
+          "target_predicted": "def solve(n):\\n    return n",
+          "base_raw_response": "def solve(n):\\n    return 0",
+          "target_raw_response": "def solve(n):\\n    return n",
+          "base_correct": false,
+          "target_correct": true,
+          "outcome": "win",
+          "regression": false,
+          "base_time_s": 0.11,
+          "target_time_s": 0.09,
+          "base_parse_status": "parsed_code_fallback",
+          "target_parse_status": "parsed_code_fallback",
+          "code_language": "python",
+          "code_entry_point": "solve",
+          "base_code_compile_status": "compiled",
+          "target_code_compile_status": "compiled",
+          "base_code_runtime_status": "ok",
+          "target_code_runtime_status": "ok",
+          "base_code_timeout_status": "ok",
+          "target_code_timeout_status": "ok",
+          "base_code_test_status": "failed",
+          "target_code_test_status": "passed",
+          "base_code_tests_passed": 1,
+          "target_code_tests_passed": 2,
+          "base_code_tests_total": 2,
+          "target_code_tests_total": 2,
+          "base_code_failure_detail": "assertion failed",
+          "target_code_failure_detail": ""
         }
       ]
     }

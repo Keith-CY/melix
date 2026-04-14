@@ -377,6 +377,10 @@ Optional evaluation controls:
 - `scoring_mode`
 - `code_exec_policy`
 
+Executable-code suites add one enforcement rule:
+
+- `humaneval` and `mbpp` must reject execution unless `code_exec_policy = sandboxed`
+
 Evaluation dataset overrides may also provide:
 
 - `dataset_id`
@@ -413,6 +417,14 @@ The first canonical `eval` suite set is:
 
 Multimodal evaluation datasets must package media alongside `manifest.json` and `samples.jsonl`.
 Relative media references are resolved against `dataset_root`.
+
+The checked-in development fixtures for executable-code evaluation are:
+
+- `humaneval.dev.v1`
+- `mbpp.dev.v1`
+
+These packages live under `services/mlx-worker-python/fixtures/evaluation/` and are the canonical
+development-time execution datasets for Melix v1 code evaluation.
 
 ### Evaluation Dataset Contract
 
@@ -592,8 +604,21 @@ Each sample-level row must include:
 - `parse_status`
 - `input_modalities`
 - `media_references`
+- `code_language`
+- `code_entry_point`
+- `code_compile_status`
+- `code_runtime_status`
+- `code_timeout_status`
+- `code_test_status`
+- `code_tests_passed`
+- `code_tests_total`
+- `code_failure_detail`
 
 `parse_status` is required in Melix even when the source benchmark does not expose it directly. This field provides operator-visible debugging for extraction failures and scorer fallbacks.
+
+For executable-code suites, these additional fields are required evidence rather than optional
+metadata. Melix v1 must preserve compile, runtime, timeout, and test outcomes through persistence,
+export, and compare workflows.
 
 ### Evaluation Export Formats
 
@@ -630,6 +655,65 @@ Each sample-level row must include:
 - `media_references`
 
 `eval export-samples-jsonl` must emit the same sample-level fields as line-delimited JSON objects.
+
+`eval compare export-summary-csv` must emit one row per base-versus-target summary with these
+columns:
+
+- `job_id`
+- `base_model_id`
+- `target_model_id`
+- `suite_id`
+- `dataset_id`
+- `sample_size`
+- `win_count`
+- `loss_count`
+- `tie_count`
+- `regression_count`
+- `base_accuracy`
+- `target_accuracy`
+- `delta_accuracy`
+- `duration_seconds`
+
+`eval compare export-samples-csv` must emit one row per comparison sample with these columns:
+
+- `job_id`
+- `suite_id`
+- `dataset_id`
+- `sample_id`
+- `target_model_id`
+- `question`
+- `expected`
+- `base_predicted`
+- `target_predicted`
+- `base_raw_response`
+- `target_raw_response`
+- `base_correct`
+- `target_correct`
+- `outcome`
+- `regression`
+- `base_time_s`
+- `target_time_s`
+- `base_parse_status`
+- `target_parse_status`
+- `code_language`
+- `code_entry_point`
+- `base_code_compile_status`
+- `target_code_compile_status`
+- `base_code_runtime_status`
+- `target_code_runtime_status`
+- `base_code_timeout_status`
+- `target_code_timeout_status`
+- `base_code_test_status`
+- `target_code_test_status`
+- `base_code_tests_passed`
+- `target_code_tests_passed`
+- `base_code_tests_total`
+- `target_code_tests_total`
+- `base_code_failure_detail`
+- `target_code_failure_detail`
+
+`eval compare export-samples-jsonl` must emit the same comparison-sample fields as line-delimited
+JSON objects.
 
 ## Run History Contract
 
@@ -735,6 +819,9 @@ The public CLI surface is:
 - `melix eval export-summary-csv`
 - `melix eval export-samples-csv`
 - `melix eval export-samples-jsonl`
+- `melix eval compare export-summary-csv`
+- `melix eval compare export-samples-csv`
+- `melix eval compare export-samples-jsonl`
 
 All commands must support `--json`.
 
