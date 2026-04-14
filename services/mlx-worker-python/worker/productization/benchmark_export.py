@@ -147,11 +147,13 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
             "source_repo",
             "suite_id",
             "dataset_id",
+            "primary_score_name",
+            "primary_score_value",
             "sample_size",
-            "score_name",
-            "score_value",
-            "correct_count",
-            "incorrect_count",
+            "extraction_success_count",
+            "validation_success_count",
+            "scored_sample_count",
+            "failure_count",
             "effect_threshold",
             "verdict",
             "bootstrap_lower_bound",
@@ -205,18 +207,24 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
             "dataset_id",
             "sample_id",
             "target_model_id",
-            "question",
-            "expected",
-            "base_predicted",
-            "target_predicted",
+            "input_text",
+            "target",
+            "base_extracted_result",
+            "target_extracted_result",
             "base_raw_response",
             "target_raw_response",
-            "base_correct",
-            "target_correct",
+            "base_typed_score",
+            "target_typed_score",
             "outcome",
-            "regression",
+            "regression_kind",
             "base_time_s",
             "target_time_s",
+            "base_extraction_status",
+            "target_extraction_status",
+            "base_validation_status",
+            "target_validation_status",
+            "base_failure_reason",
+            "target_failure_reason",
             "base_parse_status",
             "target_parse_status",
             "code_language",
@@ -492,13 +500,15 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "suite_id",
         "id",
         "task_kind",
-        "correct",
-        "expected",
-        "predicted",
-        "question",
+        "target",
+        "extracted_result",
+        "input_text",
         "raw_response",
+        "typed_score",
         "time_s",
-        "parse_status",
+        "extraction_status",
+        "validation_status",
+        "failure_reason",
         "input_modalities",
         "media_references",
         "code_language",
@@ -516,12 +526,38 @@ def _canonical_evaluation_sample_columns() -> list[str]:
 
 
 def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, object]:
+    parse_status = row.get("parse_status", "")
+    typed_score = row.get("typed_score")
+    if typed_score is None:
+        typed_score = 1.0 if row.get("correct", False) else 0.0
     return {
         **row,
         "id": row.get("id") or row.get("sample_id", ""),
+        "input_text": row.get("input_text", row.get("question", "")),
+        "target": row.get("target", row.get("expected", "")),
+        "extracted_result": row.get("extracted_result", row.get("predicted", "")),
+        "typed_score": typed_score,
+        "extraction_status": row.get(
+            "extraction_status",
+            "extracted" if parse_status not in ("", None) else "",
+        ),
+        "validation_status": row.get(
+            "validation_status",
+            "validated" if ("correct" in row or "predicted" in row) else "",
+        ),
+        "failure_reason": row.get("failure_reason", ""),
         "task_kind": row.get("task_kind", ""),
         "input_modalities": row.get("input_modalities", []),
         "media_references": row.get("media_references", []),
+        "code_language": row.get("code_language", ""),
+        "code_entry_point": row.get("code_entry_point", ""),
+        "code_compile_status": row.get("code_compile_status", ""),
+        "code_runtime_status": row.get("code_runtime_status", ""),
+        "code_timeout_status": row.get("code_timeout_status", ""),
+        "code_test_status": row.get("code_test_status", ""),
+        "code_tests_passed": row.get("code_tests_passed", 0),
+        "code_tests_total": row.get("code_tests_total", 0),
+        "code_failure_detail": row.get("code_failure_detail", ""),
         "category_label": row.get("category_label", ""),
         "subject_label": row.get("subject_label", ""),
     }
@@ -691,18 +727,19 @@ def _compare_target_summaries(compare_summary_payload: dict[str, object]) -> lis
 
 def _normalize_evaluation_compare_result(summary: dict[str, object]) -> dict[str, object]:
     preferred_metric = _preferred_compare_metric(summary)
-    correct_count = _compare_target_correct_count(summary)
     sample_size = int(summary.get("sample_size", 0) or 0)
     return {
-        "schema_version": "melix.evaluation_result.v1",
+        "schema_version": "melix.evaluation_result.v2",
         "job_id": summary.get("job_id", ""),
         "suite_id": summary.get("suite_id", ""),
         "dataset_id": summary.get("dataset_id", ""),
         "sample_size": sample_size,
-        "score_name": preferred_metric.get("name", ""),
-        "score_value": preferred_metric.get("value", 0.0),
-        "correct_count": correct_count,
-        "incorrect_count": max(sample_size - correct_count, 0),
+        "primary_score_name": preferred_metric.get("name", ""),
+        "primary_score_value": preferred_metric.get("value", 0.0),
+        "extraction_success_count": sample_size,
+        "validation_success_count": sample_size,
+        "scored_sample_count": sample_size,
+        "failure_count": 0,
         "duration_seconds": summary.get("duration_seconds", 0.0),
         "metrics": summary.get("metrics", []),
         "report_path": summary.get("report_path", ""),
@@ -715,23 +752,24 @@ def _normalize_evaluation_compare_summary_row(
 ) -> dict[str, object]:
     preferred_metric = _preferred_compare_metric(summary)
     sample_size = int(summary.get("sample_size", compare_job.get("sample_size", 0)) or 0)
-    correct_count = _compare_target_correct_count(summary)
     statistical_evidence = summary.get("statistical_evidence", {})
     bootstrap = statistical_evidence.get("bootstrap", {}) if isinstance(statistical_evidence, dict) else {}
     analytical = statistical_evidence.get("analytical", {}) if isinstance(statistical_evidence, dict) else {}
     return {
-        "schema_version": "melix.evaluation_summary.v1",
+        "schema_version": "melix.evaluation_summary.v2",
         "job_id": compare_job.get("job_id", ""),
         "task_kind": compare_job.get("task_kind", ""),
         "source_repo": compare_job.get("source_repo", ""),
         "model_id": summary.get("target_model_id", ""),
         "suite_id": summary.get("suite_id", compare_job.get("suite_id", "")),
         "dataset_id": summary.get("dataset_id", compare_job.get("dataset_id", "")),
-        "score_name": preferred_metric.get("name", ""),
-        "score_value": preferred_metric.get("value", 0.0),
+        "primary_score_name": preferred_metric.get("name", ""),
+        "primary_score_value": preferred_metric.get("value", 0.0),
         "sample_size": sample_size,
-        "correct_count": correct_count,
-        "incorrect_count": max(sample_size - correct_count, 0),
+        "extraction_success_count": sample_size,
+        "validation_success_count": sample_size,
+        "scored_sample_count": sample_size,
+        "failure_count": 0,
         "effect_threshold": summary.get("effect_threshold", 0.0),
         "verdict": summary.get("verdict", ""),
         "bootstrap_lower_bound": bootstrap.get("lower_bound", ""),
@@ -752,21 +790,24 @@ def _normalize_evaluation_compare_sample(
     sample_id = str(sample.get("sample_id", ""))
     normalized_sample_id = f"{target_model_id}:{sample_id}" if target_model_id and sample_id else sample_id
     return {
-        "schema_version": "melix.evaluation_sample.v1",
+        "schema_version": "melix.evaluation_sample.v2",
         "job_id": sample.get("job_id", ""),
         "suite_id": sample.get("suite_id", ""),
         "dataset_id": sample.get("dataset_id", ""),
         "sample_id": normalized_sample_id,
+        "input_text": sample.get("input_text", ""),
+        "target": sample.get("target", ""),
+        "extracted_result": sample.get("target_extracted_result", ""),
         "task_kind": compare_job.get("task_kind", ""),
-        "question": sample.get("question", ""),
-        "expected": sample.get("expected", ""),
-        "predicted": sample.get("target_predicted", ""),
         "raw_response": sample.get("target_raw_response", ""),
-        "correct": sample.get("target_correct", False),
+        "typed_score": sample.get("target_typed_score", 0.0),
         "time_s": sample.get("target_time_s", 0.0),
-        "parse_status": sample.get("target_parse_status", ""),
+        "extraction_status": sample.get("target_extraction_status", ""),
+        "validation_status": sample.get("target_validation_status", ""),
+        "failure_reason": sample.get("target_failure_reason", ""),
         "input_modalities": [],
         "media_references": [],
+        "parse_status": sample.get("target_parse_status", ""),
         "code_language": sample.get("code_language", ""),
         "code_entry_point": sample.get("code_entry_point", ""),
         "code_compile_status": sample.get("target_code_compile_status", ""),
@@ -786,6 +827,8 @@ def _preferred_compare_metric(summary: dict[str, object]) -> dict[str, object]:
     if not isinstance(metrics, list):
         return {"name": "", "value": 0.0}
     for preferred_name in (
+        "eval.compare.delta_typed_score_mean",
+        "eval.compare.target_typed_score_mean",
         "eval.compare.delta_accuracy",
         "eval.compare.target_accuracy",
         "eval.compare.win_count",
@@ -807,25 +850,27 @@ def _compare_target_correct_count(summary: dict[str, object]) -> int:
 
 def _build_evaluation_summary_row(job: dict[str, object], result: dict[str, object]) -> dict[str, object]:
     metrics = result.get("metrics", [])
-    score_name = str(result.get("score_name") or "")
-    score_value = result.get("score_value", 0.0)
-    if not score_name and isinstance(metrics, list) and metrics:
+    primary_score_name = str(result.get("primary_score_name") or "")
+    primary_score_value = result.get("primary_score_value", 0.0)
+    if not primary_score_name and isinstance(metrics, list) and metrics:
         first_metric = metrics[0] if isinstance(metrics[0], dict) else {}
-        score_name = str(first_metric.get("name", ""))
-        score_value = first_metric.get("value", 0.0)
+        primary_score_name = str(first_metric.get("name", ""))
+        primary_score_value = first_metric.get("value", 0.0)
     return {
-        "schema_version": result.get("schema_version", "melix.evaluation_summary.v1"),
+        "schema_version": result.get("schema_version", "melix.evaluation_summary.v2"),
         "job_id": job.get("job_id", ""),
         "task_kind": job.get("task_kind", ""),
         "source_repo": job.get("source_repo", ""),
         "model_id": job.get("model_id", ""),
         "suite_id": job.get("suite_id", ""),
         "dataset_id": job.get("dataset_id", ""),
-        "score_name": score_name,
-        "score_value": score_value,
+        "primary_score_name": primary_score_name,
+        "primary_score_value": primary_score_value,
         "sample_size": result.get("sample_size", job.get("sample_size", 0)),
-        "correct_count": result.get("correct_count", 0),
-        "incorrect_count": result.get("incorrect_count", 0),
+        "extraction_success_count": result.get("extraction_success_count", 0),
+        "validation_success_count": result.get("validation_success_count", 0),
+        "scored_sample_count": result.get("scored_sample_count", 0),
+        "failure_count": result.get("failure_count", 0),
         "duration_seconds": result.get("duration_seconds", 0.0),
         "created_at_unix_ms": job.get("created_at_unix_ms", 0),
     }

@@ -37,6 +37,15 @@ from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.hub_catalog import HubCatalog
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
+from worker.productization.evaluation_final_result import (
+    EvaluationFieldMapping,
+    EvaluationMaterializationRequest,
+    EvaluationProfileDefinition,
+    HFEvaluationDatasetFetcher,
+    HFEvaluationDatasetSource,
+    materialize_hf_evaluation_dataset,
+    materialize_local_evaluation_dataset,
+)
 from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -244,6 +253,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         lora_training_pipeline: LoRATrainingPipeline | None = None,
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
+        evaluation_hf_dataset_fetcher: HFEvaluationDatasetFetcher | None = None,
     ) -> None:
         root = Path(jobs_root or ".runtime/model-ops")
         self._core = MaintenanceCore(
@@ -261,6 +271,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             jobs_root=self._evaluation_jobs_root,
             registry=registry,
         )
+        self._evaluation_hf_dataset_fetcher = evaluation_hf_dataset_fetcher
 
     def ConvertModel(self, request, context):
         yield from self._core.convert_model(request)
@@ -291,12 +302,12 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 parameters.setdefault("task_kind", request.task_kind)
             if request.source_repo:
                 parameters.setdefault("source_repo", request.source_repo)
-            dataset_root = request.dataset_root or parameters.get("dataset_root", "")
+            dataset_root = self._resolve_evaluation_dataset_root(request, parameters)
             run = self._evaluation_core.run_local_suite(
                 model_id=request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text",
                 model_handle=request.model_handle or None,
                 suite_id=request.suite_id,
-                dataset_root=Path(dataset_root) if dataset_root else self._default_dataset_root(request.dataset_id),
+                dataset_root=dataset_root,
                 sample_size=request.sample_size,
                 few_shot=int(request.few_shot) if request.few_shot else None,
                 seed=int(request.seed) if request.seed else None,
@@ -396,6 +407,108 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             / "evaluation"
             / dataset_id
         ).resolve()
+
+    def _resolve_evaluation_dataset_root(
+        self,
+        request,
+        parameters: dict[str, str],
+    ) -> Path:
+        source_kind = request.source.WhichOneof("kind")
+        if source_kind == "local_csv":
+            source_path = request.source.local_csv.path
+            materialized = materialize_local_evaluation_dataset(
+                request=EvaluationMaterializationRequest(
+                    source_kind="csv",
+                    source_path=Path(source_path),
+                    profile=self._evaluation_profile_from_request(request),
+                    field_mapping=self._evaluation_field_mapping_from_request(request),
+                    dataset_id=request.dataset_id,
+                    suite_id=request.suite_id,
+                ),
+                cache_root=self._evaluation_materialization_root(),
+            )
+            parameters.setdefault("evaluation_source_kind", "csv")
+            parameters.setdefault("evaluation_source_locator", source_path)
+            parameters.setdefault("evaluation_materialized_dataset_root", str(materialized.package_path))
+            return materialized.package_path
+
+        if source_kind == "local_jsonl":
+            source_path = request.source.local_jsonl.path
+            materialized = materialize_local_evaluation_dataset(
+                request=EvaluationMaterializationRequest(
+                    source_kind="jsonl",
+                    source_path=Path(source_path),
+                    profile=self._evaluation_profile_from_request(request),
+                    field_mapping=self._evaluation_field_mapping_from_request(request),
+                    dataset_id=request.dataset_id,
+                    suite_id=request.suite_id,
+                ),
+                cache_root=self._evaluation_materialization_root(),
+            )
+            parameters.setdefault("evaluation_source_kind", "jsonl")
+            parameters.setdefault("evaluation_source_locator", source_path)
+            parameters.setdefault("evaluation_materialized_dataset_root", str(materialized.package_path))
+            return materialized.package_path
+
+        if source_kind == "hf_dataset":
+            source = request.source.hf_dataset
+            materialized = materialize_hf_evaluation_dataset(
+                source=HFEvaluationDatasetSource(
+                    dataset_path=source.dataset_path,
+                    dataset_name=source.dataset_name,
+                    dataset_revision=source.dataset_revision or "main",
+                    split=source.split or "train",
+                ),
+                profile=self._evaluation_profile_from_request(request),
+                field_mapping=self._evaluation_field_mapping_from_request(request),
+                dataset_id=request.dataset_id,
+                suite_id=request.suite_id,
+                cache_root=self._evaluation_materialization_root(),
+                fetch_json=self._evaluation_hf_dataset_fetcher,
+            )
+            parameters.setdefault("evaluation_source_kind", "hf_dataset")
+            parameters.setdefault("evaluation_source_locator", source.dataset_path)
+            parameters.setdefault("evaluation_materialized_dataset_root", str(materialized.package_path))
+            return materialized.package_path
+
+        dataset_root = request.dataset_root or parameters.get("dataset_root", "")
+        return Path(dataset_root) if dataset_root else self._default_dataset_root(request.dataset_id)
+
+    def _evaluation_materialization_root(self) -> Path:
+        return (self._evaluation_jobs_root / "datasets").resolve()
+
+    @staticmethod
+    def _evaluation_field_mapping_from_request(request) -> EvaluationFieldMapping:
+        return EvaluationFieldMapping(
+            system_path=request.field_mapping.system_path,
+            input_text_path=request.field_mapping.input_text_path,
+            target_path=request.field_mapping.target_path,
+            sample_id_path=request.field_mapping.sample_id_path,
+        )
+
+    @staticmethod
+    def _evaluation_profile_from_request(request) -> EvaluationProfileDefinition:
+        output_schema_json = request.profile.output_schema_json.strip()
+        output_schema: dict[str, Any] | None = None
+        if output_schema_json:
+            parsed = json.loads(output_schema_json)
+            if not isinstance(parsed, dict):
+                raise ValueError("evaluation profile output_schema_json must decode to a JSON object.")
+            output_schema = parsed
+
+        return EvaluationProfileDefinition(
+            profile_type=request.profile.profile_type.strip() or "final_result",
+            result_kind=request.profile.result_kind.strip() or "text",
+            extraction_mode=request.profile.extraction_mode.strip() or "heuristic_final",
+            scoring_mode=request.profile.scoring_mode.strip() or request.scoring_mode.strip() or "normalized_exact_match",
+            threshold=float(request.profile.threshold),
+            output_schema=output_schema,
+            ignored_paths=tuple(
+                value.strip()
+                for value in request.profile.ignored_paths
+                if isinstance(value, str) and value.strip()
+            ),
+        )
 
 
 def _device_identity_from_metadata(metadata: dict[str, str]) -> Any:

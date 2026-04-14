@@ -273,14 +273,19 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert run.job.seed == 7
     assert run.job.scoring_mode == "multiple_choice_accuracy"
     assert run.job.code_exec_policy == "disabled"
-    assert metrics["eval.mmlu.accuracy"] == 1.0
-    assert metrics["eval.mmlu.correct_count"] == 2.0
-    assert metrics["eval.mmlu.incorrect_count"] == 0.0
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
+    assert metrics["eval.mmlu.threshold_pass_rate"] == 1.0
+    assert metrics["eval.mmlu.extraction_success_count"] == 2.0
+    assert metrics["eval.mmlu.validation_success_count"] == 2.0
+    assert metrics["eval.mmlu.scored_sample_count"] == 2.0
+    assert metrics["eval.mmlu.failure_count"] == 0.0
     assert metrics["eval.mmlu.duration_seconds"] >= 0.0
-    assert run.result.score_name == "accuracy"
-    assert run.result.score_value == 1.0
-    assert run.result.correct_count == 2
-    assert run.result.incorrect_count == 0
+    assert run.result.primary_score_name == "typed_score_mean"
+    assert run.result.primary_score_value == 1.0
+    assert run.result.extraction_success_count == 2
+    assert run.result.validation_success_count == 2
+    assert run.result.scored_sample_count == 2
+    assert run.result.failure_count == 0
     assert run.result.duration_seconds >= 0.0
     assert run.job.job_id == "eval-0001"
     assert run.persisted_paths["job"] == jobs_root / "runs" / "eval-0001" / "evaluation-job.json"
@@ -290,8 +295,16 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert run.persisted_paths["samples_jsonl"] == jobs_root / "runs" / "eval-0001" / "evaluation-samples.jsonl"
     assert json.loads(run.persisted_paths["job"].read_text(encoding="utf-8")) == run.job.to_dict()
     assert json.loads(run.persisted_paths["result"].read_text(encoding="utf-8")) == run.result.to_dict()
-    assert json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))["score_name"] == "accuracy"
-    assert "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms" in run.persisted_paths["summary_csv"].read_text(encoding="utf-8")
+    assert (
+        json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))["primary_score_name"]
+        == "typed_score_mean"
+    )
+    assert (
+        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,"
+        "primary_score_value,sample_size,extraction_success_count,validation_success_count,"
+        "scored_sample_count,failure_count,duration_seconds,created_at_unix_ms"
+        in run.persisted_paths["summary_csv"].read_text(encoding="utf-8")
+    )
     persisted_samples = [
         json.loads(line)
         for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
@@ -300,7 +313,10 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert persisted_samples == [sample.to_dict() for sample in run.samples]
     assert len(run.samples) == 2
     assert run.samples[0].sample_id == "1"
-    assert run.samples[0].correct is True
+    assert run.samples[0].input_text == "2+2?"
+    assert run.samples[0].extracted_result == "4"
+    assert run.samples[0].typed_score == 1.0
+    assert run.samples[0].validation_status == "validated"
 
     queue_payload = json.loads((jobs_root / "queue" / f"{run.job.job_id}.json").read_text(encoding="utf-8"))
     assert queue_payload["job_kind"] == "evaluation"
@@ -333,13 +349,14 @@ def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path)
     metrics = {metric.name: metric.value for metric in run.result.metrics}
 
     assert run.job.sample_size == 2
-    assert metrics["eval.mmlu.accuracy"] == 0.0
-    assert metrics["eval.mmlu.correct_count"] == 0.0
+    assert metrics["eval.mmlu.typed_score_mean"] == 0.5
+    assert metrics["eval.mmlu.threshold_pass_rate"] == 0.5
     assert run.persisted_paths == {}
     assert len(run.samples) == 2
-    assert run.samples[0].predicted == ""
-    assert run.samples[0].correct is False
-    assert run.samples[0].parse_status == "no_live_model"
+    assert run.samples[0].extracted_result == "4"
+    assert run.samples[0].typed_score == 1.0
+    assert run.samples[1].extracted_result == ""
+    assert run.samples[1].validation_status == "not_validated"
     assert run.samples[0].code_test_status == ""
 
 
@@ -388,10 +405,12 @@ def test_run_local_suite_executes_code_candidates_for_mbpp(tmp_path: Path) -> No
     assert run.job.few_shot == 0
     assert run.job.seed == 0
     assert run.job.code_exec_policy == "sandboxed"
-    assert metrics["eval.mbpp.pass_at_1"] == 1.0
+    assert metrics["eval.mbpp.typed_score_mean"] == 1.0
     assert metrics["eval.mbpp.code_exec_pass_count"] == 1.0
     assert metrics["eval.mbpp.code_exec_fail_count"] == 0.0
-    assert run.samples[0].correct is True
+    assert run.samples[0].typed_score == 1.0
+    assert run.samples[0].extraction_status == "extracted"
+    assert run.samples[0].validation_status == "validated"
     assert run.samples[0].code_language == "python"
     assert run.samples[0].code_entry_point == "add"
     assert run.samples[0].code_compile_status == "compiled"
@@ -401,7 +420,7 @@ def test_run_local_suite_executes_code_candidates_for_mbpp(tmp_path: Path) -> No
     assert run.samples[0].code_tests_passed == 2
     assert run.samples[0].code_tests_total == 2
     assert run.samples[0].code_failure_detail == ""
-    assert "def add" in run.samples[0].predicted
+    assert "def add" in run.samples[0].extracted_result
 
 
 def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
@@ -442,14 +461,16 @@ def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
 
     assert len(backend.prompts) == 1
     assert "Return only executable Python code" in backend.prompts[0]
-    assert run.samples[0].correct is True
-    assert run.samples[0].parse_status == "parsed_code_block"
+    assert run.job.code_exec_policy == "sandboxed"
+    assert run.samples[0].typed_score == 1.0
+    assert run.samples[0].extraction_status == "extracted"
+    assert run.samples[0].validation_status == "validated"
     assert run.samples[0].code_language == "python"
     assert run.samples[0].code_entry_point == "identity"
     assert run.samples[0].code_test_status == "passed"
-    assert run.result.score_name == "pass_at_1"
-    assert run.result.score_value == 1.0
-    assert metrics["eval.humaneval.pass_at_1"] == 1.0
+    assert run.result.primary_score_name == "typed_score_mean"
+    assert run.result.primary_score_value == 1.0
+    assert metrics["eval.humaneval.typed_score_mean"] == 1.0
     assert metrics["eval.humaneval.code_exec_pass_count"] == 1.0
     assert metrics["eval.humaneval.code_exec_fail_count"] == 0.0
 
@@ -514,10 +535,11 @@ def test_run_local_suite_uses_loaded_runtime_predictions_for_live_evaluation(
     assert registry.started_requests == [("eval:eval-local:mmlu:1", "text")]
     assert registry.finished_requests == ["eval:eval-local:mmlu:1"]
     assert run.samples[0].raw_response == "Answer: Paris"
-    assert run.samples[0].predicted == "Paris"
-    assert run.samples[0].parse_status == "parsed_answer_prefix"
-    assert run.samples[0].correct is True
-    assert run.result.score_value == 1.0
+    assert run.samples[0].extracted_result == "Paris"
+    assert run.samples[0].extraction_status == "extracted"
+    assert run.samples[0].validation_status == "validated"
+    assert run.samples[0].typed_score == 1.0
+    assert run.result.primary_score_value == 1.0
 
 
 def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -> None:
@@ -544,7 +566,7 @@ def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -
         sample_size=1,
     )
 
-    assert run.samples[0].predicted == "Paris"
+    assert run.samples[0].extracted_result == "Paris"
     assert registry.vision_probes == [("vlm", {"images": 1})]
 
 
@@ -585,8 +607,9 @@ def test_run_local_suite_supports_multimodal_live_evaluation_and_persists_media_
     assert run.samples[0].task_kind == "image-text-to-text"
     assert run.samples[0].input_modalities == ("text", "image")
     assert run.samples[0].media_references == (str(image_path),)
-    assert run.samples[0].predicted == "Cat"
-    assert run.samples[0].correct is True
+    assert run.samples[0].input_text == "Name the animal in the image."
+    assert run.samples[0].extracted_result == "Cat"
+    assert run.samples[0].typed_score == 1.0
     assert registry.vision_probes == [("vlm", {"images": 1})]
     assert runtime.rendered_messages
     user_parts = runtime.rendered_messages[0][1]
@@ -643,13 +666,12 @@ def test_run_local_suite_supports_imagenette_multimodal_accuracy(tmp_path: Path)
     assert run.job.dataset_id == "imagenette.dev.v1"
     assert run.job.task_kind == "image-text-to-text"
     assert run.job.scoring_mode == "exact_match"
-    assert run.result.score_name == "accuracy"
-    assert run.result.score_value == 1.0
-    assert metrics["eval.imagenette.accuracy"] == 1.0
-    assert metrics["eval.imagenette.correct_count"] == 1.0
-    assert metrics["eval.imagenette.incorrect_count"] == 0.0
-    assert run.samples[0].predicted == "garbage truck"
-    assert run.samples[0].correct is True
+    assert run.result.primary_score_name == "typed_score_mean"
+    assert run.result.primary_score_value == 1.0
+    assert metrics["eval.imagenette.typed_score_mean"] == 1.0
+    assert metrics["eval.imagenette.threshold_pass_rate"] == 1.0
+    assert run.samples[0].extracted_result == "garbage truck"
+    assert run.samples[0].typed_score == 1.0
     assert run.samples[0].media_references == (str(image_path),)
 
 
@@ -767,12 +789,12 @@ def test_run_local_suite_scoring_mode_changes_multiple_choice_scoring(tmp_path: 
         scoring_mode="exact_match",
     )
 
-    assert multiple_choice_run.samples[0].predicted == "B"
-    assert multiple_choice_run.samples[0].correct is True
-    assert multiple_choice_run.result.score_value == 1.0
-    assert exact_match_run.samples[0].predicted == "B"
-    assert exact_match_run.samples[0].correct is False
-    assert exact_match_run.result.score_value == 0.0
+    assert multiple_choice_run.samples[0].extracted_result == "B"
+    assert multiple_choice_run.samples[0].typed_score == 1.0
+    assert multiple_choice_run.result.primary_score_value == 1.0
+    assert exact_match_run.samples[0].extracted_result == "B"
+    assert exact_match_run.samples[0].typed_score == 0.0
+    assert exact_match_run.result.primary_score_value == 0.0
 
 
 def test_run_local_suite_rejects_unsupported_scoring_mode_for_suite(tmp_path: Path) -> None:
@@ -949,6 +971,10 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
         compare_results["melix-dev-text-lora-a"].release_gate_summary["both_intervals_same_side"]
         is False
     )
+    assert any(
+        metric.name == "eval.compare.delta_typed_score_mean" and metric.value == 0.5
+        for metric in compare_results["melix-dev-text-lora-a"].metrics
+    )
     assert compare_results["melix-dev-text-lora-b"].win_count == 0
     assert compare_results["melix-dev-text-lora-b"].loss_count == 1
     assert compare_results["melix-dev-text-lora-b"].tie_count == 1
@@ -977,7 +1003,7 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
         row["target_model_id"] == "melix-dev-text-lora-b"
         and row["sample_id"] == "sample-1"
         and row["outcome"] == "loss"
-        and row["regression"] is True
+        and row["regression_kind"] == "score_regression"
         and row["category_label"] == "arithmetic"
         and row["subject_label"] == "addition"
         for row in compare_samples
@@ -1272,7 +1298,7 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert response.results[0].job_id == response.job.job_id
     assert response.results[0].dataset_id == "mmlu-dev"
     metrics = {metric.name: metric.value for metric in response.results[0].metrics}
-    assert metrics["eval.mmlu.accuracy"] == 1.0
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
     assert len(backend.prompts) == 1
     assert "capital of france?" in backend.prompts[0]
     assert "Return only the final short answer." in backend.prompts[0]
@@ -1369,6 +1395,7 @@ def test_worker_maintenance_service_run_evaluation_maps_compare_results(
     }
     assert result_metrics["mmlu:melix-dev-text-lora-a"]["eval.compare.win_count"] == 1.0
     assert result_metrics["mmlu:melix-dev-text-lora-b"]["eval.compare.loss_count"] == 1.0
+    assert result_metrics["mmlu:melix-dev-text-lora-b"]["eval.compare.delta_typed_score_mean"] == -0.5
 
 
 def _write_dataset_package(
@@ -1377,6 +1404,12 @@ def _write_dataset_package(
     dataset_id: str,
     suite_id: str,
     task_kind: str = "text-generation",
+    result_kind: str = "text",
+    extraction_mode: str = "heuristic_final",
+    scoring_mode: str = "normalized_exact_match",
+    threshold: float = 1.0,
+    output_schema: dict[str, object] | None = None,
+    ignored_paths: tuple[str, ...] = (),
     samples: tuple[dict[str, object], ...],
 ) -> Path:
     dataset_root = tmp_path / "datasets" / dataset_id
@@ -1384,7 +1417,7 @@ def _write_dataset_package(
     (dataset_root / "manifest.json").write_text(
         json.dumps(
             {
-                "schema_version": "melix.evaluation_dataset_package.v1",
+                "schema_version": "melix.evaluation_dataset_package.v2",
                 "dataset_id": dataset_id,
                 "suite_id": suite_id,
                 "task_kind": task_kind,
@@ -1392,13 +1425,57 @@ def _write_dataset_package(
                 "version": "2026-03-31",
                 "sample_count": len(samples),
                 "split": "validation",
+                "profile_type": "final_result",
+                "result_kind": result_kind,
+                "extraction_mode": extraction_mode,
+                "scoring_mode": scoring_mode,
+                "threshold": threshold,
+                "output_schema": output_schema or {},
+                "ignored_paths": list(ignored_paths),
             }
         )
         + "\n",
         encoding="utf-8",
     )
     (dataset_root / "samples.jsonl").write_text(
-        "\n".join(json.dumps(sample) for sample in samples) + "\n",
+        "\n".join(
+            json.dumps(
+                {
+                    **{
+                        key: value
+                        for key, value in sample.items()
+                        if key not in {"id", "system", "input", "target"}
+                    },
+                    "id": sample.get("id", str(index)),
+                    "system": sample.get("system", ""),
+                    "input": {
+                        **(
+                            dict(sample["input"])
+                            if isinstance(sample.get("input"), dict)
+                            else {}
+                        ),
+                        **(
+                            {"text": str(sample["input"]["text"])}
+                            if isinstance(sample.get("input"), dict)
+                            and isinstance(sample["input"].get("text"), str)
+                            else (
+                                {"text": str(sample.get("prompt", sample.get("question", "")))}
+                                if str(sample.get("prompt", sample.get("question", ""))).strip()
+                                else {}
+                            )
+                        ),
+                        **(
+                            {"image_uri": str(sample["image_uri"])}
+                            if isinstance(sample.get("image_uri"), str) and sample["image_uri"].strip()
+                            else {}
+                        ),
+                    },
+                    "target": sample.get("target", sample.get("expected", sample.get("answer", ""))),
+                }
+            )
+            for index, sample in enumerate(samples, start=1)
+        )
+        + "\n",
         encoding="utf-8",
     )
     return dataset_root

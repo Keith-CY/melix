@@ -529,6 +529,13 @@ struct AppMainBootstrapTests {
         let expectedRepoRoot = MenuBarBootstrapEnvironment.inferRepoRoot(anchorPath: #filePath)
 
         #expect(environment.repoRoot == expectedRepoRoot)
+        let repoRootURL = URL(fileURLWithPath: environment.repoRoot)
+        #expect(FileManager.default.fileExists(atPath: repoRootURL.appendingPathComponent("Package.swift").path))
+        #expect(
+            FileManager.default.fileExists(
+                atPath: repoRootURL.appendingPathComponent("apps/macos-menubar/Package.swift").path
+            )
+        )
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
         #expect(environment.startupSurface == .tray)

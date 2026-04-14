@@ -1,1 +1,1 @@
-{"id":"vision-1","prompt":"What color is the square?","expected":"red","image_uri":"sample.ppm"}
+{"id":"vision-1","system":"","input":{"text":"What color is the square?","image_uri":"sample.ppm"},"target":"red"}

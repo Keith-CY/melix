@@ -3734,7 +3734,7 @@ public actor MelixCLIRunner {
                 row.datasetID,
                 statusByJobID[row.jobID] ?? "completed",
                 row.verdict.isEmpty ? "-" : row.verdict,
-                signedDecimalText(row.scoreValue),
+                signedDecimalText(row.primaryScoreValue),
                 intervalText(lower: row.bootstrapLowerBound, upper: row.bootstrapUpperBound),
                 intervalText(lower: row.analyticalLowerBound, upper: row.analyticalUpperBound),
                 decimalText(row.effectThreshold),

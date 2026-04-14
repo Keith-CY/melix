@@ -27,6 +27,11 @@ from worker.productization.evaluation_compare import (
     parse_compare_target_model_ids,
     resolve_compare_target_models,
 )
+from worker.productization.evaluation_final_result import (
+    EvaluationProfileDefinition,
+    extract_final_result,
+    score_final_result,
+)
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
     EvaluationCompareSample,
@@ -119,9 +124,6 @@ class EvaluationCore:
         parameters: dict[str, str] | None = None,
     ) -> EvaluationRun:
         dataset_root = Path(dataset_root).resolve()
-        if suite_id not in _SUITE_SCORE_MODES:
-            raise ValueError(f"Unsupported evaluation suite: {suite_id}")
-
         manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
         if manifest["suite_id"] != suite_id:
             raise ValueError(
@@ -133,7 +135,25 @@ class EvaluationCore:
             for line in (dataset_root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        score_name, default_scoring_mode = _SUITE_SCORE_MODES[suite_id]
+        score_name, default_scoring_mode = _SUITE_SCORE_MODES.get(
+            suite_id,
+            ("typed_score_mean", str(manifest.get("scoring_mode") or "normalized_exact_match")),
+        )
+        profile = EvaluationCore._profile_from_manifest(
+            manifest,
+            suite_id=suite_id,
+            default_scoring_mode=default_scoring_mode,
+        )
+        if scoring_mode:
+            profile = EvaluationProfileDefinition(
+                profile_type=profile.profile_type,
+                result_kind=profile.result_kind,
+                extraction_mode=profile.extraction_mode,
+                scoring_mode=scoring_mode,
+                threshold=profile.threshold,
+                output_schema=profile.output_schema,
+                ignored_paths=profile.ignored_paths,
+            )
         resolved_task_kind = str(
             (parameters or {}).get("task_kind") or manifest.get("task_kind") or "text-generation"
         )
@@ -171,6 +191,15 @@ class EvaluationCore:
             suite_id=suite_id,
             requested_scoring_mode=requested_scoring_mode,
             default_scoring_mode=default_scoring_mode,
+        )
+        profile = EvaluationProfileDefinition(
+            profile_type=profile.profile_type,
+            result_kind=profile.result_kind,
+            extraction_mode=profile.extraction_mode,
+            scoring_mode=resolved_scoring_mode,
+            threshold=profile.threshold,
+            output_schema=profile.output_schema,
+            ignored_paths=profile.ignored_paths,
         )
         requested_code_exec_policy = (
             code_exec_policy
@@ -228,6 +257,13 @@ class EvaluationCore:
         job_parameters["requested_code_exec_policy"] = str(requested_code_exec_policy)
         job_parameters["effective_code_exec_policy"] = resolved_code_exec_policy
         job_parameters["code_exec_policy"] = resolved_code_exec_policy
+        job_parameters.setdefault("profile_type", profile.profile_type)
+        job_parameters.setdefault("result_kind", profile.result_kind)
+        job_parameters.setdefault("extraction_mode", profile.extraction_mode)
+        job_parameters.setdefault("threshold", str(profile.threshold))
+        job_parameters.setdefault("ignored_paths", ",".join(profile.ignored_paths))
+        if profile.output_schema:
+            job_parameters.setdefault("output_schema", json.dumps(profile.output_schema, sort_keys=True))
 
         compare_mode = str(job_parameters.get("compare_mode", "")).strip()
         if compare_mode:
@@ -236,7 +272,7 @@ class EvaluationCore:
                 resolved_model_id=resolved_model_id,
                 suite_id=suite_id,
                 dataset_id=str(manifest["dataset_id"]),
-                score_name=score_name,
+                profile=profile,
                 resolved_scoring_mode=resolved_scoring_mode,
                 resolved_task_kind=resolved_task_kind,
                 manifest_input_modalities=manifest_input_modalities,
@@ -267,22 +303,53 @@ class EvaluationCore:
             code_exec_policy=resolved_code_exec_policy,
             seed=resolved_seed,
             job_parameters=job_parameters,
+            profile=profile,
         )
         duration_seconds = round(time.perf_counter() - started_at, 6)
-        correct = sum(1 for sample in sample_records if sample.correct)
-        incorrect = len(sample_records) - correct
-        accuracy = round(correct / max(len(sample_records), 1), 4)
+        typed_score_mean = round(
+            sum(sample.typed_score for sample in sample_records) / max(len(sample_records), 1),
+            4,
+        )
+        extraction_success_count = sum(
+            1 for sample in sample_records if sample.extraction_status == "extracted"
+        )
+        validation_success_count = sum(
+            1 for sample in sample_records if sample.validation_status == "validated"
+        )
+        scored_sample_count = validation_success_count
+        failure_count = len(sample_records) - validation_success_count
+        threshold_pass_rate = round(
+            sum(
+                1
+                for sample in sample_records
+                if sample.validation_status == "validated" and sample.typed_score >= profile.threshold
+            )
+            / max(len(sample_records), 1),
+            4,
+        )
+        extraction_success_rate = round(extraction_success_count / max(len(sample_records), 1), 4)
+        validation_success_rate = round(validation_success_count / max(len(sample_records), 1), 4)
         job_parameters.setdefault("sample_size", str(len(sample_records)))
         result_metrics = {
-            f"eval.{suite_id}.{score_name}": accuracy,
-            f"eval.{suite_id}.correct_count": float(correct),
-            f"eval.{suite_id}.incorrect_count": float(incorrect),
+            f"eval.{suite_id}.typed_score_mean": typed_score_mean,
+            f"eval.{suite_id}.threshold_pass_rate": threshold_pass_rate,
+            f"eval.{suite_id}.extraction_success_rate": extraction_success_rate,
+            f"eval.{suite_id}.validation_success_rate": validation_success_rate,
+            f"eval.{suite_id}.extraction_success_count": float(extraction_success_count),
+            f"eval.{suite_id}.validation_success_count": float(validation_success_count),
+            f"eval.{suite_id}.scored_sample_count": float(scored_sample_count),
+            f"eval.{suite_id}.failure_count": float(failure_count),
             f"eval.{suite_id}.duration_seconds": duration_seconds,
         }
         result_units = {
-            f"eval.{suite_id}.{score_name}": "ratio",
-            f"eval.{suite_id}.correct_count": "count",
-            f"eval.{suite_id}.incorrect_count": "count",
+            f"eval.{suite_id}.typed_score_mean": "ratio",
+            f"eval.{suite_id}.threshold_pass_rate": "ratio",
+            f"eval.{suite_id}.extraction_success_rate": "ratio",
+            f"eval.{suite_id}.validation_success_rate": "ratio",
+            f"eval.{suite_id}.extraction_success_count": "count",
+            f"eval.{suite_id}.validation_success_count": "count",
+            f"eval.{suite_id}.scored_sample_count": "count",
+            f"eval.{suite_id}.failure_count": "count",
             f"eval.{suite_id}.duration_seconds": "s",
         }
         if suite_id in _CODE_EVAL_SUITES:
@@ -322,10 +389,12 @@ class EvaluationCore:
             suite_id=suite_id,
             dataset_id=manifest["dataset_id"],
             sample_size=len(sample_records),
-            score_name=score_name,
-            score_value=accuracy,
-            correct_count=correct,
-            incorrect_count=incorrect,
+            primary_score_name="typed_score_mean",
+            primary_score_value=typed_score_mean,
+            extraction_success_count=extraction_success_count,
+            validation_success_count=validation_success_count,
+            scored_sample_count=scored_sample_count,
+            failure_count=failure_count,
             duration_seconds=duration_seconds,
             metrics=result_metrics,
             report_path=str(report_path),
@@ -375,7 +444,7 @@ class EvaluationCore:
         resolved_model_id: str,
         suite_id: str,
         dataset_id: str,
-        score_name: str,
+        profile: EvaluationProfileDefinition,
         resolved_scoring_mode: str,
         resolved_task_kind: str,
         manifest_input_modalities: tuple[str, ...],
@@ -390,7 +459,6 @@ class EvaluationCore:
         resolved_code_exec_policy: str,
         resolved_seed: int,
     ) -> EvaluationRun:
-        _ = score_name
         target_model_ids = parse_compare_target_model_ids(job_parameters)
         target_models = resolve_compare_target_models(
             registry=self._registry,
@@ -414,6 +482,7 @@ class EvaluationCore:
             dataset_root=dataset_root,
             few_shot_examples=few_shot_examples,
             selected=selected,
+            profile=profile,
             loaded_model=loaded_model,
             scoring_mode=resolved_scoring_mode,
             code_exec_policy=resolved_code_exec_policy,
@@ -435,6 +504,7 @@ class EvaluationCore:
                 dataset_root=dataset_root,
                 few_shot_examples=few_shot_examples,
                 selected=selected,
+                profile=profile,
                 loaded_model=target_loaded_model,
                 scoring_mode=resolved_scoring_mode,
                 code_exec_policy=resolved_code_exec_policy,
@@ -447,6 +517,7 @@ class EvaluationCore:
                 suite_id=suite_id,
                 dataset_id=dataset_id,
                 target_model_id=target_model_id,
+                threshold=profile.threshold,
                 base_samples=base_samples,
                 target_samples=target_samples,
             )
@@ -460,6 +531,7 @@ class EvaluationCore:
                     dataset_id=dataset_id,
                     sample_size=len(base_samples),
                     scoring_mode=resolved_scoring_mode,
+                    threshold=profile.threshold,
                     base_samples=base_samples,
                     compare_samples=target_compare_samples,
                     effect_threshold=self._resolve_float_parameter(
@@ -561,6 +633,7 @@ class EvaluationCore:
         dataset_root: Path,
         few_shot_examples: tuple[dict[str, object], ...],
         selected: list[dict[str, object]],
+        profile: EvaluationProfileDefinition,
         loaded_model,
         scoring_mode: str,
         code_exec_policy: str,
@@ -581,6 +654,7 @@ class EvaluationCore:
                     few_shot_examples=few_shot_examples,
                     index=index,
                     sample=sample,
+                    profile=profile,
                     loaded_model=loaded_model,
                     scoring_mode=scoring_mode,
                     code_exec_policy=code_exec_policy,
@@ -717,6 +791,31 @@ class EvaluationCore:
             return float(default_value)
 
     @staticmethod
+    def _profile_from_manifest(
+        manifest: dict[str, object],
+        *,
+        suite_id: str,
+        default_scoring_mode: str,
+    ) -> EvaluationProfileDefinition:
+        return EvaluationProfileDefinition(
+            profile_type=str(manifest.get("profile_type") or "final_result"),
+            result_kind=str(manifest.get("result_kind") or "text"),
+            extraction_mode=str(manifest.get("extraction_mode") or "heuristic_final"),
+            scoring_mode=str(manifest.get("scoring_mode") or default_scoring_mode),
+            threshold=float(manifest.get("threshold") or 1.0),
+            output_schema=(
+                dict(manifest["output_schema"])
+                if isinstance(manifest.get("output_schema"), dict)
+                else None
+            ),
+            ignored_paths=tuple(
+                str(value)
+                for value in manifest.get("ignored_paths", [])
+                if str(value).strip()
+            ),
+        )
+
+    @staticmethod
     def _validate_task_kind_against_dataset(
         *,
         dataset_id: str,
@@ -768,6 +867,7 @@ class EvaluationCore:
         few_shot_examples: tuple[dict[str, object], ...],
         index: int,
         sample: dict[str, object],
+        profile: EvaluationProfileDefinition,
         loaded_model=None,
         scoring_mode: str,
         code_exec_policy: str,
@@ -775,8 +875,9 @@ class EvaluationCore:
         job_parameters: dict[str, str],
         request_label: str = "",
     ) -> EvaluationSample:
-        prompt = self._sample_prompt(sample)
-        expected = self._sample_expected(sample)
+        system_text = EvaluationCore._system_text_for_sample(sample)
+        input_text = EvaluationCore._input_text_for_sample(sample)
+        target = EvaluationCore._target_text_for_sample(sample)
         choices = self._sample_choices(sample)
         media_references = EvaluationCore._media_references_for_sample(
             task_kind=task_kind,
@@ -785,7 +886,7 @@ class EvaluationCore:
         )
         input_modalities = EvaluationCore._input_modalities_for_sample(
             task_kind=task_kind,
-            prompt=prompt,
+            prompt=input_text,
             media_references=media_references,
             manifest_input_modalities=manifest_input_modalities,
         )
@@ -805,16 +906,19 @@ class EvaluationCore:
                 registry=self._registry,
                 loaded_model=loaded_model,
                 messages=EvaluationCore._evaluation_messages(
-                    prompt=prompt,
-                    expected=expected,
+                    prompt=input_text,
+                    expected=target,
                     scoring_mode=scoring_mode,
                     choices=choices,
+                    system_text=system_text,
+                    result_kind=profile.result_kind,
                     media_references=media_references,
                     few_shot_examples=few_shot_examples,
                     dataset_root=dataset_root,
                     task_kind=task_kind,
                 ),
-                expected=expected,
+                expected=target,
+                result_kind=profile.result_kind,
                 request_id=self._request_id(
                     job_id=job_id,
                     suite_id=suite_id,
@@ -823,8 +927,42 @@ class EvaluationCore:
                 ),
                 seed=seed,
             )
-            if scoring_mode == "pass_at_1":
-                predicted, parse_status = extract_candidate_code(raw_response)
+        else:
+            if task_kind in _MULTIMODAL_TASK_KINDS:
+                raw_response = ""
+            else:
+                raw_response = EvaluationCore._deterministic_answer(input_text)
+        duration_s = round(time.perf_counter() - started_at, 6)
+        if loaded_model is None and task_kind in _MULTIMODAL_TASK_KINDS:
+            return build_evaluation_sample_record(
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=dataset_id,
+                sample_id=str(sample.get("id", index)),
+                system=system_text,
+                input_text=input_text,
+                target=target,
+                raw_response="",
+                extracted_result="",
+                typed_score=0.0,
+                time_s=duration_s,
+                extraction_status="unsupported_multimodal_offline",
+                validation_status="not_validated",
+                failure_reason="unsupported_multimodal_offline",
+                task_kind=task_kind,
+                input_modalities=input_modalities,
+                media_references=media_references,
+            )
+        extracted_result = ""
+        extraction_status = ""
+        typed_score = 0.0
+        validation_status = "not_validated"
+        failure_reason = ""
+        if scoring_mode == "pass_at_1":
+            extracted_result, parse_status = extract_candidate_code(raw_response)
+            extraction_status = "extracted" if extracted_result.strip() else (parse_status or "empty_prediction")
+            failure_reason = "" if extraction_status == "extracted" else parse_status
+            if extraction_status == "extracted":
                 test_code = self._sample_test_code(sample, job_parameters)
                 if not test_code.strip():
                     raise ValueError(
@@ -832,7 +970,7 @@ class EvaluationCore:
                     )
                 code_entry_point = self._sample_entry_point(sample, job_parameters)
                 code_result = run_python_code_evaluation(
-                    candidate_code=predicted,
+                    candidate_code=extracted_result,
                     entry_point=code_entry_point,
                     test_code=test_code,
                     timeout_seconds=max(
@@ -848,37 +986,58 @@ class EvaluationCore:
                 code_tests_passed = code_result.tests_passed
                 code_tests_total = code_result.tests_total
                 code_failure_detail = code_result.failure_detail
-                correct = code_result.passed
-            else:
-                predicted, parse_status = EvaluationCore._parse_prediction(
-                    suite_id=suite_id,
-                    raw_response=raw_response,
-                    expected=expected,
-                )
-                execution_status = "completed"
-                correct = EvaluationCore._score_prediction(
+                validation_status = "validated"
+                typed_score = 1.0 if code_result.passed else 0.0
+                failure_reason = code_result.failure_detail if not code_result.passed else ""
+        elif scoring_mode in {"multiple_choice_accuracy", "exact_match"}:
+            extracted_result, parse_status = EvaluationCore._parse_prediction(
+                suite_id=suite_id,
+                raw_response=raw_response,
+                expected=target,
+            )
+            extraction_status = "extracted" if extracted_result.strip() else (parse_status or "empty_prediction")
+            failure_reason = "" if extraction_status == "extracted" else parse_status
+            if extraction_status == "extracted":
+                validation_status = "validated"
+                typed_score = 1.0 if EvaluationCore._score_prediction(
                     sample=sample,
-                    expected=expected,
-                    predicted=predicted,
+                    expected=target,
+                    predicted=extracted_result,
                     scoring_mode=scoring_mode,
-                )
+                ) else 0.0
         else:
-            predicted = ""
-            parse_status = "no_live_model"
-            correct = False
-        duration_s = round(time.perf_counter() - started_at, 6)
+            extraction = extract_final_result(
+                raw_response=raw_response,
+                result_kind=profile.result_kind,
+                extraction_mode=profile.extraction_mode,
+            )
+            extracted_result = extraction.extracted_result
+            extraction_status = extraction.extraction_status
+            failure_reason = extraction.failure_reason
+            if extraction.extraction_status == "extracted":
+                scoring = score_final_result(
+                    extracted_result=extracted_result,
+                    target=target,
+                    profile=profile,
+                )
+                typed_score = scoring.typed_score
+                validation_status = scoring.validation_status
+                failure_reason = scoring.failure_reason
         return build_evaluation_sample_record(
             job_id=job_id,
             suite_id=suite_id,
             dataset_id=dataset_id,
             sample_id=str(sample.get("id", index)),
-            question=prompt,
-            expected=expected,
-            predicted=predicted,
+            system=system_text,
+            input_text=input_text,
+            target=target,
             raw_response=raw_response,
-            correct=correct,
+            extracted_result=extracted_result,
+            typed_score=typed_score,
             time_s=duration_s,
-            parse_status=parse_status,
+            extraction_status=extraction_status,
+            validation_status=validation_status,
+            failure_reason=failure_reason,
             task_kind=task_kind,
             input_modalities=input_modalities,
             media_references=media_references,
@@ -935,6 +1094,7 @@ class EvaluationCore:
         loaded_model,
         messages: list[common_pb2.ChatMessage],
         expected: str,
+        result_kind: str = "text",
         request_id: str,
         seed: int,
     ) -> str:
@@ -951,8 +1111,11 @@ class EvaluationCore:
                 temperature=0.0,
                 top_p=1.0,
                 top_k=1,
-                max_output_tokens=EvaluationCore._evaluation_max_output_tokens(expected),
                 seed=max(seed, 0),
+                max_output_tokens=EvaluationCore._evaluation_max_output_tokens(
+                    expected,
+                    result_kind=result_kind,
+                ),
             )
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
@@ -976,6 +1139,8 @@ class EvaluationCore:
         expected: str,
         scoring_mode: str = "",
         choices: tuple[str, ...] = (),
+        system_text: str = "",
+        result_kind: str = "text",
         media_references: tuple[str, ...] = (),
         few_shot_examples: tuple[dict[str, object], ...] = (),
         dataset_root: Path | None = None,
@@ -985,17 +1150,22 @@ class EvaluationCore:
             instruction = "Return only executable Python code for the requested solution. Do not include explanations."
         elif scoring_mode == "multiple_choice_accuracy" and choices:
             instruction = "Return only the single best answer choice letter. Do not include reasoning or explanation."
+        elif result_kind == "json":
+            instruction = "Return only the final JSON result. Do not include reasoning or explanation."
         elif EvaluationCore._looks_like_numeric(expected):
             instruction = "Return only the final numeric answer. Do not include reasoning or explanation."
         elif EvaluationCore._looks_like_option(expected):
             instruction = "Return only the single best answer choice letter. Do not include reasoning or explanation."
         else:
             instruction = "Return only the final short answer. Do not include reasoning or explanation."
+        resolved_system_text = instruction
+        if system_text.strip():
+            resolved_system_text = f"{instruction}\n\n{system_text.strip()}"
         messages = [
-            common_pb2.ChatMessage(role="system", parts=[common_pb2.MessagePart(text=instruction)]),
+            common_pb2.ChatMessage(role="system", parts=[common_pb2.MessagePart(text=resolved_system_text)]),
         ]
         for demo_sample in few_shot_examples:
-            demo_prompt = EvaluationCore._sample_prompt(demo_sample)
+            demo_prompt = EvaluationCore._input_text_for_sample(demo_sample)
             demo_media_references = EvaluationCore._media_references_for_sample(
                 task_kind=task_kind,
                 dataset_root=dataset_root or Path.cwd(),
@@ -1013,7 +1183,7 @@ class EvaluationCore:
             messages.append(
                 common_pb2.ChatMessage(
                     role="assistant",
-                    parts=[common_pb2.MessagePart(text=EvaluationCore._sample_expected(demo_sample))],
+                    parts=[common_pb2.MessagePart(text=EvaluationCore._target_text_for_sample(demo_sample))],
                 )
             )
         messages.append(
@@ -1152,6 +1322,8 @@ class EvaluationCore:
             return ()
 
         references: list[str] = []
+        sample_input = sample.get("input")
+        input_payload = sample_input if isinstance(sample_input, dict) else {}
 
         def append_reference(value: object) -> None:
             if isinstance(value, str) and value.strip():
@@ -1162,12 +1334,23 @@ class EvaluationCore:
                     )
                 )
 
+        append_reference(input_payload.get("image_uri"))
         append_reference(sample.get("image_uri"))
         for key in ("image_uris", "images"):
+            raw_value = input_payload.get(key)
+            if isinstance(raw_value, (list, tuple)):
+                for item in raw_value:
+                    append_reference(item)
             raw_value = sample.get(key)
             if isinstance(raw_value, (list, tuple)):
                 for item in raw_value:
                     append_reference(item)
+        raw_media = input_payload.get("media")
+        if isinstance(raw_media, (list, tuple)):
+            for item in raw_media:
+                if isinstance(item, dict):
+                    append_reference(item.get("image_uri"))
+                    append_reference(item.get("uri"))
         raw_media = sample.get("media")
         if isinstance(raw_media, (list, tuple)):
             for item in raw_media:
@@ -1212,6 +1395,21 @@ class EvaluationCore:
 
     @staticmethod
     def _sample_declares_image_media(sample: dict[str, object]) -> bool:
+        sample_input = sample.get("input")
+        input_payload = sample_input if isinstance(sample_input, dict) else {}
+        if isinstance(input_payload.get("image_uri"), str) and str(input_payload.get("image_uri")).strip():
+            return True
+        for key in ("image_uris", "images"):
+            raw_value = input_payload.get(key)
+            if isinstance(raw_value, (list, tuple)) and any(str(item).strip() for item in raw_value):
+                return True
+        raw_media = input_payload.get("media")
+        if isinstance(raw_media, (list, tuple)):
+            for item in raw_media:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("image_uri", "")).strip() or str(item.get("uri", "")).strip():
+                    return True
         if isinstance(sample.get("image_uri"), str) and str(sample.get("image_uri")).strip():
             return True
         for key in ("image_uris", "images"):
@@ -1228,10 +1426,35 @@ class EvaluationCore:
         return False
 
     @staticmethod
-    def _evaluation_max_output_tokens(expected: str) -> int:
+    def _evaluation_max_output_tokens(expected: str, *, result_kind: str = "text") -> int:
+        if result_kind == "json":
+            return min(max(256, len(expected.encode("utf-8")) * 2), 2048)
         if EvaluationCore._looks_like_numeric(expected) or EvaluationCore._looks_like_option(expected):
             return 32
         return 128
+
+    @staticmethod
+    def _system_text_for_sample(sample: dict[str, object]) -> str:
+        return str(sample.get("system", "") or "")
+
+    @staticmethod
+    def _input_text_for_sample(sample: dict[str, object]) -> str:
+        sample_input = sample.get("input")
+        if isinstance(sample_input, dict):
+            text = sample_input.get("text")
+            if isinstance(text, str):
+                return text
+        return str(sample.get("prompt", sample.get("question", "")) or "")
+
+    @staticmethod
+    def _target_text_for_sample(sample: dict[str, object]) -> str:
+        if "target" in sample:
+            target_value = sample.get("target")
+        else:
+            target_value = sample.get("expected", sample.get("answer", ""))
+        if isinstance(target_value, str):
+            return target_value.strip()
+        return json.dumps(target_value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     @staticmethod
     def _release_runtime_memory() -> None:

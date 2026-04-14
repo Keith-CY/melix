@@ -2,20 +2,30 @@
 
 ## Summary
 
-Melix should add final-result evaluation as the future intelligence measurement path for LoRA
+Melix adds final-result evaluation as the intelligence measurement path for LoRA
 workflows. The runtime should score only the extracted final result, not CoT or wrapper text.
 
 The roadmap keeps the runtime boundary package-based, treats external corpora as source datasets
 rather than executable contracts, and stages the work so the contract lands before extractor,
 validator, or scorer implementation.
 
-This roadmap describes future milestones only. It does not claim current implementation support.
+Current status:
+
+- Milestone 1 is implemented
+- Milestone 2 is implemented
+- Milestone 3 is implemented
+- Milestone 4 is largely implemented for typed evaluation and reporting, with remaining follow-on
+  work focused on compare entry-point parity for ad hoc custom dataset sources
 
 ## Milestone 1: Final-Result Contract
 
+### Status
+
+Implemented
+
 ### Outcome
 
-Melix has a documented future evaluation contract centered on `final_result` packages rather than
+Melix has a documented evaluation contract centered on `final_result` packages rather than
 profile splits by task style.
 
 ### Scope
@@ -38,9 +48,13 @@ profile splits by task style.
 ### Risks
 
 - over-documenting extraction details before scorer design is stable
-- mixing current implementation formats with future contract language
+- mixing current implementation formats with target contract language
 
 ## Milestone 2: Dataset Materialization
+
+### Status
+
+Implemented
 
 ### Outcome
 
@@ -66,6 +80,10 @@ repository-owned evaluation packages before execution.
 - profile metadata may drift if materialization is underspecified
 
 ## Milestone 3: Extraction And Validation Core
+
+### Status
+
+Implemented
 
 ### Outcome
 
@@ -96,6 +114,10 @@ scoring.
 
 ## Milestone 4: Typed Scoring And Compare
 
+### Status
+
+Partially implemented
+
 ### Outcome
 
 Melix compare workflows can measure LoRA deltas through extraction, validation, and typed scoring
@@ -122,3 +144,8 @@ rather than binary proxy scores alone.
 - compare summaries may over-simplify quality if extraction and validation diagnostics are too thin
 - operator expectations may drift if current proxy metrics and future typed metrics coexist without
   clear labeling
+
+### Remaining Follow-On
+
+- expose ad hoc custom dataset sources to compare entry points with the same source, field-mapping,
+  and profile controls now available on `eval run`

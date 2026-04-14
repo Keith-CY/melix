@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-_EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION = "melix.evaluation_dataset_package.v1"
-_EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v1"
-_EVALUATION_RESULT_SCHEMA_VERSION = "melix.evaluation_result.v1"
-_EVALUATION_SAMPLE_SCHEMA_VERSION = "melix.evaluation_sample.v1"
-_EVALUATION_COMPARE_JOB_SCHEMA_VERSION = "melix.evaluation_compare_job.v1"
-_EVALUATION_COMPARE_SUMMARY_SCHEMA_VERSION = "melix.evaluation_compare_summary.v1"
-_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION = "melix.evaluation_compare_sample.v1"
+_EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION = "melix.evaluation_dataset_package.v2"
+_EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v2"
+_EVALUATION_RESULT_SCHEMA_VERSION = "melix.evaluation_result.v2"
+_EVALUATION_SAMPLE_SCHEMA_VERSION = "melix.evaluation_sample.v2"
+_EVALUATION_COMPARE_JOB_SCHEMA_VERSION = "melix.evaluation_compare_job.v2"
+_EVALUATION_COMPARE_SUMMARY_SCHEMA_VERSION = "melix.evaluation_compare_summary.v2"
+_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION = "melix.evaluation_compare_sample.v2"
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,15 @@ class EvaluationDatasetPackageManifest:
     split: str
     task_kind: str
     input_modalities: tuple[str, ...]
+    profile_type: str
+    result_kind: str
+    extraction_mode: str
+    scoring_mode: str
+    threshold: float
+    output_schema: dict[str, object]
+    ignored_paths: tuple[str, ...]
+    source_kind: str = ""
+    source_path: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -33,6 +42,15 @@ class EvaluationDatasetPackageManifest:
             "split": self.split,
             "task_kind": self.task_kind,
             "input_modalities": list(self.input_modalities),
+            "profile_type": self.profile_type,
+            "result_kind": self.result_kind,
+            "extraction_mode": self.extraction_mode,
+            "scoring_mode": self.scoring_mode,
+            "threshold": self.threshold,
+            "output_schema": dict(self.output_schema),
+            "ignored_paths": list(self.ignored_paths),
+            "source_kind": self.source_kind,
+            "source_path": self.source_path,
         }
 
 
@@ -99,10 +117,12 @@ class EvaluationResult:
     suite_id: str
     dataset_id: str
     sample_size: int
-    score_name: str
-    score_value: float
-    correct_count: int
-    incorrect_count: int
+    primary_score_name: str
+    primary_score_value: float
+    extraction_success_count: int
+    validation_success_count: int
+    scored_sample_count: int
+    failure_count: int
     duration_seconds: float
     metrics: tuple[EvaluationMetricValue, ...]
     report_path: str
@@ -114,10 +134,12 @@ class EvaluationResult:
             "suite_id": self.suite_id,
             "dataset_id": self.dataset_id,
             "sample_size": self.sample_size,
-            "score_name": self.score_name,
-            "score_value": self.score_value,
-            "correct_count": self.correct_count,
-            "incorrect_count": self.incorrect_count,
+            "primary_score_name": self.primary_score_name,
+            "primary_score_value": self.primary_score_value,
+            "extraction_success_count": self.extraction_success_count,
+            "validation_success_count": self.validation_success_count,
+            "scored_sample_count": self.scored_sample_count,
+            "failure_count": self.failure_count,
             "duration_seconds": self.duration_seconds,
             "metrics": [metric.to_dict() for metric in self.metrics],
             "report_path": self.report_path,
@@ -131,13 +153,16 @@ class EvaluationSample:
     suite_id: str
     dataset_id: str
     sample_id: str
-    question: str
-    expected: str
-    predicted: str
+    system: str
+    input_text: str
+    target: str
     raw_response: str
-    correct: bool
+    extracted_result: str
+    typed_score: float
     time_s: float
-    parse_status: str
+    extraction_status: str
+    validation_status: str
+    failure_reason: str
     task_kind: str
     input_modalities: tuple[str, ...]
     media_references: tuple[str, ...]
@@ -160,13 +185,16 @@ class EvaluationSample:
             "suite_id": self.suite_id,
             "dataset_id": self.dataset_id,
             "sample_id": self.sample_id,
-            "question": self.question,
-            "expected": self.expected,
-            "predicted": self.predicted,
+            "system": self.system,
+            "input_text": self.input_text,
+            "target": self.target,
             "raw_response": self.raw_response,
-            "correct": self.correct,
+            "extracted_result": self.extracted_result,
+            "typed_score": self.typed_score,
             "time_s": self.time_s,
-            "parse_status": self.parse_status,
+            "extraction_status": self.extraction_status,
+            "validation_status": self.validation_status,
+            "failure_reason": self.failure_reason,
             "task_kind": self.task_kind,
             "input_modalities": list(self.input_modalities),
             "media_references": list(self.media_references),
@@ -290,36 +318,42 @@ class EvaluationCompareSample:
     dataset_id: str
     sample_id: str
     target_model_id: str
-    question: str
-    expected: str
-    base_predicted: str
-    target_predicted: str
+    input_text: str
+    target: str
+    base_extracted_result: str
+    target_extracted_result: str
     base_raw_response: str
     target_raw_response: str
-    base_correct: bool
-    target_correct: bool
+    base_typed_score: float
+    target_typed_score: float
     outcome: str
-    regression: bool
+    regression_kind: str
     base_time_s: float
     target_time_s: float
-    base_parse_status: str
-    target_parse_status: str
-    code_language: str
-    code_entry_point: str
-    base_code_compile_status: str
-    target_code_compile_status: str
-    base_code_runtime_status: str
-    target_code_runtime_status: str
-    base_code_timeout_status: str
-    target_code_timeout_status: str
-    base_code_test_status: str
-    target_code_test_status: str
-    base_code_tests_passed: int
-    target_code_tests_passed: int
-    base_code_tests_total: int
-    target_code_tests_total: int
-    base_code_failure_detail: str
-    target_code_failure_detail: str
+    base_extraction_status: str
+    target_extraction_status: str
+    base_validation_status: str
+    target_validation_status: str
+    base_failure_reason: str
+    target_failure_reason: str
+    base_parse_status: str = ""
+    target_parse_status: str = ""
+    code_language: str = ""
+    code_entry_point: str = ""
+    base_code_compile_status: str = ""
+    target_code_compile_status: str = ""
+    base_code_runtime_status: str = ""
+    target_code_runtime_status: str = ""
+    base_code_timeout_status: str = ""
+    target_code_timeout_status: str = ""
+    base_code_test_status: str = ""
+    target_code_test_status: str = ""
+    base_code_tests_passed: int = 0
+    target_code_tests_passed: int = 0
+    base_code_tests_total: int = 0
+    target_code_tests_total: int = 0
+    base_code_failure_detail: str = ""
+    target_code_failure_detail: str = ""
     category_label: str = ""
     subject_label: str = ""
 
@@ -331,18 +365,24 @@ class EvaluationCompareSample:
             "dataset_id": self.dataset_id,
             "sample_id": self.sample_id,
             "target_model_id": self.target_model_id,
-            "question": self.question,
-            "expected": self.expected,
-            "base_predicted": self.base_predicted,
-            "target_predicted": self.target_predicted,
+            "input_text": self.input_text,
+            "target": self.target,
+            "base_extracted_result": self.base_extracted_result,
+            "target_extracted_result": self.target_extracted_result,
             "base_raw_response": self.base_raw_response,
             "target_raw_response": self.target_raw_response,
-            "base_correct": self.base_correct,
-            "target_correct": self.target_correct,
+            "base_typed_score": self.base_typed_score,
+            "target_typed_score": self.target_typed_score,
             "outcome": self.outcome,
-            "regression": self.regression,
+            "regression_kind": self.regression_kind,
             "base_time_s": self.base_time_s,
             "target_time_s": self.target_time_s,
+            "base_extraction_status": self.base_extraction_status,
+            "target_extraction_status": self.target_extraction_status,
+            "base_validation_status": self.base_validation_status,
+            "target_validation_status": self.target_validation_status,
+            "base_failure_reason": self.base_failure_reason,
+            "target_failure_reason": self.target_failure_reason,
             "base_parse_status": self.base_parse_status,
             "target_parse_status": self.target_parse_status,
             "code_language": self.code_language,
@@ -378,6 +418,15 @@ def build_dataset_package_manifest(
     split: str,
     task_kind: str = "text-generation",
     input_modalities: tuple[str, ...] = (),
+    profile_type: str = "final_result",
+    result_kind: str = "text",
+    extraction_mode: str = "heuristic_final",
+    scoring_mode: str = "normalized_exact_match",
+    threshold: float = 1.0,
+    output_schema: dict[str, object] | None = None,
+    ignored_paths: tuple[str, ...] = (),
+    source_kind: str = "",
+    source_path: str = "",
 ) -> EvaluationDatasetPackageManifest:
     return EvaluationDatasetPackageManifest(
         schema_version=_EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION,
@@ -388,6 +437,15 @@ def build_dataset_package_manifest(
         split=split,
         task_kind=task_kind,
         input_modalities=tuple(input_modalities),
+        profile_type=profile_type,
+        result_kind=result_kind,
+        extraction_mode=extraction_mode,
+        scoring_mode=scoring_mode,
+        threshold=float(threshold),
+        output_schema=dict(output_schema or {}),
+        ignored_paths=tuple(ignored_paths),
+        source_kind=source_kind,
+        source_path=source_path,
     )
 
 
@@ -440,10 +498,12 @@ def build_evaluation_result_record(
     metrics: dict[str, float],
     report_path: str,
     units: dict[str, str] | None = None,
-    score_name: str = "",
-    score_value: float = 0.0,
-    correct_count: int = 0,
-    incorrect_count: int = 0,
+    primary_score_name: str = "",
+    primary_score_value: float = 0.0,
+    extraction_success_count: int = 0,
+    validation_success_count: int = 0,
+    scored_sample_count: int = 0,
+    failure_count: int = 0,
     duration_seconds: float = 0.0,
 ) -> EvaluationResult:
     metric_units = units or {}
@@ -457,10 +517,12 @@ def build_evaluation_result_record(
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_size=sample_size,
-        score_name=score_name,
-        score_value=float(score_value),
-        correct_count=correct_count,
-        incorrect_count=incorrect_count,
+        primary_score_name=primary_score_name,
+        primary_score_value=float(primary_score_value),
+        extraction_success_count=extraction_success_count,
+        validation_success_count=validation_success_count,
+        scored_sample_count=scored_sample_count,
+        failure_count=failure_count,
         duration_seconds=float(duration_seconds),
         metrics=ordered_metrics,
         report_path=report_path,
@@ -473,13 +535,16 @@ def build_evaluation_sample_record(
     suite_id: str,
     dataset_id: str,
     sample_id: str,
-    question: str,
-    expected: str,
-    predicted: str,
+    system: str,
+    input_text: str,
+    target: str,
     raw_response: str,
-    correct: bool,
+    extracted_result: str,
+    typed_score: float,
     time_s: float,
-    parse_status: str,
+    extraction_status: str,
+    validation_status: str,
+    failure_reason: str,
     task_kind: str = "text-generation",
     input_modalities: tuple[str, ...] = (),
     media_references: tuple[str, ...] = (),
@@ -501,13 +566,16 @@ def build_evaluation_sample_record(
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_id=sample_id,
-        question=question,
-        expected=expected,
-        predicted=predicted,
+        system=system,
+        input_text=input_text,
+        target=target,
         raw_response=raw_response,
-        correct=correct,
+        extracted_result=extracted_result,
+        typed_score=float(typed_score),
         time_s=float(time_s),
-        parse_status=parse_status,
+        extraction_status=extraction_status,
+        validation_status=validation_status,
+        failure_reason=failure_reason,
         task_kind=task_kind,
         input_modalities=tuple(input_modalities),
         media_references=tuple(media_references),
@@ -629,20 +697,26 @@ def build_evaluation_compare_sample_record(
     dataset_id: str,
     sample_id: str,
     target_model_id: str,
-    question: str,
-    expected: str,
-    base_predicted: str,
-    target_predicted: str,
+    input_text: str,
+    target: str,
+    base_extracted_result: str,
+    target_extracted_result: str,
     base_raw_response: str,
     target_raw_response: str,
-    base_correct: bool,
-    target_correct: bool,
+    base_typed_score: float,
+    target_typed_score: float,
     outcome: str,
-    regression: bool,
+    regression_kind: str,
     base_time_s: float,
     target_time_s: float,
-    base_parse_status: str,
-    target_parse_status: str,
+    base_extraction_status: str,
+    target_extraction_status: str,
+    base_validation_status: str,
+    target_validation_status: str,
+    base_failure_reason: str,
+    target_failure_reason: str,
+    base_parse_status: str = "",
+    target_parse_status: str = "",
     code_language: str = "",
     code_entry_point: str = "",
     base_code_compile_status: str = "",
@@ -669,18 +743,24 @@ def build_evaluation_compare_sample_record(
         dataset_id=dataset_id,
         sample_id=sample_id,
         target_model_id=target_model_id,
-        question=question,
-        expected=expected,
-        base_predicted=base_predicted,
-        target_predicted=target_predicted,
+        input_text=input_text,
+        target=target,
+        base_extracted_result=base_extracted_result,
+        target_extracted_result=target_extracted_result,
         base_raw_response=base_raw_response,
         target_raw_response=target_raw_response,
-        base_correct=base_correct,
-        target_correct=target_correct,
+        base_typed_score=float(base_typed_score),
+        target_typed_score=float(target_typed_score),
         outcome=outcome,
-        regression=regression,
+        regression_kind=regression_kind,
         base_time_s=float(base_time_s),
         target_time_s=float(target_time_s),
+        base_extraction_status=base_extraction_status,
+        target_extraction_status=target_extraction_status,
+        base_validation_status=base_validation_status,
+        target_validation_status=target_validation_status,
+        base_failure_reason=base_failure_reason,
+        target_failure_reason=target_failure_reason,
         base_parse_status=base_parse_status,
         target_parse_status=target_parse_status,
         code_language=code_language,

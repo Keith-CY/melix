@@ -377,6 +377,9 @@ Optional evaluation controls:
 - `seed`
 - `scoring_mode`
 - `code_exec_policy`
+- `source`
+- `field_mapping`
+- `profile`
 
 Executable-code suites add one enforcement rule:
 
@@ -413,6 +416,22 @@ The canonical normalized request shape is:
 - `seed: int`
 - `scoring_mode: string`
 - `code_exec_policy: string`
+- `source_kind: string`
+- `source_path: string`
+- `source_dataset_path: string`
+- `source_dataset_name: string`
+- `source_dataset_revision: string`
+- `source_split: string`
+- `field_mapping_system_path: string`
+- `field_mapping_input_text_path: string`
+- `field_mapping_target_path: string`
+- `field_mapping_sample_id_path: string`
+- `profile_type: string`
+- `result_kind: string`
+- `extraction_mode: string`
+- `profile_threshold: number`
+- `output_schema_json: string`
+- `ignored_paths: string[]`
 
 ### Current Control Semantics
 
@@ -501,13 +520,27 @@ These optional fields are supported for code suites:
 - `entry_point`
 - `code_timeout_seconds`
 
-### Planned Final-Result Evaluation Profile
+### Final-Result Evaluation Profile
 
-This section defines the planned long-term contract for final-result evaluation. It is not yet
-implemented by the current Melix runtime.
+Melix now executes `final_result` evaluation packages and can materialize structured sources through
+`eval run` before worker execution.
 
-Every future-oriented evaluation dataset package is expected to declare a single evaluation profile
-in `manifest.json` with these core fields:
+Current request-driven source materialization supports:
+
+- local CSV files
+- local JSONL files
+- Hugging Face datasets
+
+Current request-driven materialization also requires explicit field mapping for custom sources and
+supports profile overrides for typed extraction, validation, and scoring.
+
+Current limitation:
+
+- compare entry points still target existing suites or packages; ad hoc custom dataset sources are
+  currently exposed on `eval run`
+
+Each structured evaluation dataset package declares a single evaluation profile in `manifest.json`
+with these core fields:
 
 - `profile_type: final_result`
 - `result_kind: json | text`
@@ -515,18 +548,18 @@ in `manifest.json` with these core fields:
 - `scoring_mode`
 - `threshold`
 
-Future `final_result` sample rows use these fields:
+`final_result` sample rows use these fields:
 
 - `system`
 - `input`
 - `target`
 
-The future Melix execution contract remains the materialized evaluation package rather than any
-external dataset schema.
+The Melix execution contract remains the materialized evaluation package rather than any external
+dataset schema.
 
 #### Final-Result Principles
 
-The `final_result` profile is the planned abstraction for future structured and non-structured LoRA
+The `final_result` profile is the runtime abstraction for structured and non-structured LoRA
 evaluation.
 
 Its contract is intentionally narrow:
@@ -540,7 +573,7 @@ Its contract is intentionally narrow:
 
 #### Result Kinds
 
-The planned v1 `result_kind` set is:
+The current v1 `result_kind` set is:
 
 - `json`
 - `text`
@@ -550,8 +583,8 @@ For `result_kind: json`:
 - `target` must be valid JSON with root type `object` or `array`
 - `output_schema` defines the accepted JSON root type and schema rules
 - schema validation is required before scoring begins
-- object roots are expected to support field-level comparison in v1
-- array roots are expected to use conservative scoring in v1 rather than broad task-specific logic
+- object roots support field-level comparison in v1
+- array roots use conservative comparison in v1 rather than broad task-specific logic
 
 The default ignored field set for JSON object scoring is:
 
@@ -584,14 +617,14 @@ contract.
 `heuristic_final` must be deterministic and reproducible. Ambiguous extraction is a failure rather
 than a guess.
 
-For `result_kind: json`, the planned shared extractor ladder is:
+For `result_kind: json`, the shared extractor ladder is:
 
 - prefer the last contentful fenced `json` block
 - otherwise use the last contentful fenced block whose contents parse as JSON
 - otherwise use the last terminal balanced JSON suffix
 - if multiple same-priority candidates remain, record `ambiguous_extraction`
 
-For `result_kind: text`, the planned shared extractor ladder is:
+For `result_kind: text`, the shared extractor ladder is:
 
 - prefer the last terminal `Final answer:` or `Answer:` span
 - otherwise use the last contentful fenced text block
@@ -603,7 +636,7 @@ for the long-term contract because it is JSON-specific and under-specifies ambig
 
 #### Scoring Model
 
-The planned execution pipeline is:
+The current execution pipeline is:
 
 - capture `raw_response`
 - extract `extracted_result`
@@ -611,33 +644,29 @@ The planned execution pipeline is:
 - normalize as required by `scoring_mode`
 - score only the extracted result against `target`
 
-In the future `final_result` path, correctness is computed from `extracted_result` rather than the
+In the `final_result` path, correctness is computed from `extracted_result` rather than the
 full response text.
 
-Current repository fixtures still largely use `prompt` and `expected` sample rows. Those are
-current-state implementation formats rather than the planned long-term `final_result` contract.
+Some repository fixtures may still originate from legacy `prompt` and `expected` content, but the
+runtime contract and exported evaluation evidence are normalized around `final_result`.
 
 ### Evaluation Summary Outputs
-
-The fields below describe the current shipped summary and sample export contract. The future
-`final_result` path is expected to extend this output surface with extraction- and
-validation-oriented evidence such as `extracted_result`, `extraction_status`, `validation_status`,
-`failure_reason`, `extraction_success_count`, and `validation_success_count`. Those additions are
-planning direction only and are not implemented by the current runtime.
 
 Each completed suite result must include:
 
 - `job_id`
-- `model_id`
-- `source_repo`
 - `task_kind`
+- `source_repo`
+- `model_id`
 - `suite_id`
 - `dataset_id`
-- `score_name`
-- `score_value`
+- `primary_score_name`
+- `primary_score_value`
 - `sample_size`
-- `correct_count`
-- `incorrect_count`
+- `extraction_success_count`
+- `validation_success_count`
+- `scored_sample_count`
+- `failure_count`
 - `effect_threshold`
 - `verdict`
 - `bootstrap_lower_bound`
@@ -647,7 +676,7 @@ Each completed suite result must include:
 - `duration_seconds`
 - `created_at_unix_ms`
 
-Standard `eval run` rows may omit the statistical comparison fields.
+Standard `eval run` rows may omit the statistical comparison fields or leave them empty.
 
 `eval compare` rows must populate them.
 
@@ -705,15 +734,18 @@ Absence of category support must be represented by omission rather than an empty
 
 Each sample-level row must include:
 
+- `job_id`
+- `suite_id`
 - `id`
-- `task_kind`
-- `correct`
-- `expected`
-- `predicted`
-- `question`
+- `target`
+- `extracted_result`
+- `input_text`
 - `raw_response`
+- `typed_score`
 - `time_s`
-- `parse_status`
+- `extraction_status`
+- `validation_status`
+- `failure_reason`
 - `input_modalities`
 - `media_references`
 - `code_language`
@@ -728,7 +760,8 @@ Each sample-level row must include:
 - `category_label`
 - `subject_label`
 
-`parse_status` is required in Melix even when the source benchmark does not expose it directly. This field provides operator-visible debugging for extraction failures and scorer fallbacks.
+Summary rows report extraction and validation counts. Sample rows report the extracted result,
+typed score, and failure reason for operator-visible debugging.
 
 For executable-code suites, these additional fields are required evidence rather than optional
 metadata. Melix v1 must preserve compile, runtime, timeout, and test outcomes through persistence,
@@ -744,11 +777,13 @@ export, and compare workflows.
 - `model_id`
 - `suite_id`
 - `dataset_id`
-- `score_name`
-- `score_value`
+- `primary_score_name`
+- `primary_score_value`
 - `sample_size`
-- `correct_count`
-- `incorrect_count`
+- `extraction_success_count`
+- `validation_success_count`
+- `scored_sample_count`
+- `failure_count`
 - `effect_threshold`
 - `verdict`
 - `bootstrap_lower_bound`
@@ -763,20 +798,28 @@ export, and compare workflows.
 - `job_id`
 - `suite_id`
 - `id`
-- `task_kind`
-- `correct`
-- `expected`
-- `predicted`
-- `question`
+- `target`
+- `extracted_result`
+- `input_text`
 - `raw_response`
+- `typed_score`
 - `time_s`
-- `parse_status`
-- `category_label`
-- `subject_label`
+- `extraction_status`
+- `validation_status`
+- `failure_reason`
 - `input_modalities`
 - `media_references`
-- `execution_status`
-- `execution_metadata`
+- `code_language`
+- `code_entry_point`
+- `code_compile_status`
+- `code_runtime_status`
+- `code_timeout_status`
+- `code_test_status`
+- `code_tests_passed`
+- `code_tests_total`
+- `code_failure_detail`
+- `category_label`
+- `subject_label`
 
 `eval export-samples-jsonl` must emit the same sample-level fields as line-delimited JSON objects.
 

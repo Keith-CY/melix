@@ -272,11 +272,118 @@ public struct ControlPlaneBenchMatrixRequest: Equatable, Sendable {
 }
 
 public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
+    public struct Source: Equatable, Sendable {
+        public enum Kind: String, Equatable, Sendable {
+            case builtinPackage
+            case localCSV
+            case localJSONL
+            case huggingFaceDataset
+        }
+
+        public let kind: Kind
+        public let path: String
+        public let datasetPath: String
+        public let datasetName: String
+        public let datasetRevision: String
+        public let split: String
+
+        public init(
+            kind: Kind = .builtinPackage,
+            path: String = "",
+            datasetPath: String = "",
+            datasetName: String = "",
+            datasetRevision: String = "main",
+            split: String = "train"
+        ) {
+            self.kind = kind
+            self.path = path
+            self.datasetPath = datasetPath
+            self.datasetName = datasetName
+            self.datasetRevision = datasetRevision
+            self.split = split
+        }
+
+        public static let builtinPackage = Source()
+
+        public static func localCSV(path: String) -> Source {
+            Source(kind: .localCSV, path: path)
+        }
+
+        public static func localJSONL(path: String) -> Source {
+            Source(kind: .localJSONL, path: path)
+        }
+
+        public static func huggingFaceDataset(
+            datasetPath: String,
+            datasetName: String = "",
+            datasetRevision: String = "main",
+            split: String = "train"
+        ) -> Source {
+            Source(
+                kind: .huggingFaceDataset,
+                datasetPath: datasetPath,
+                datasetName: datasetName,
+                datasetRevision: datasetRevision,
+                split: split
+            )
+        }
+    }
+
+    public struct FieldMapping: Equatable, Sendable {
+        public let systemPath: String
+        public let inputTextPath: String
+        public let targetPath: String
+        public let sampleIDPath: String
+
+        public init(
+            systemPath: String = "",
+            inputTextPath: String = "",
+            targetPath: String = "",
+            sampleIDPath: String = ""
+        ) {
+            self.systemPath = systemPath
+            self.inputTextPath = inputTextPath
+            self.targetPath = targetPath
+            self.sampleIDPath = sampleIDPath
+        }
+    }
+
+    public struct Profile: Equatable, Sendable {
+        public let profileType: String
+        public let resultKind: String
+        public let extractionMode: String
+        public let scoringMode: String
+        public let threshold: Double
+        public let outputSchemaJSON: String
+        public let ignoredPaths: [String]
+
+        public init(
+            profileType: String = "final_result",
+            resultKind: String = "text",
+            extractionMode: String = "heuristic_final",
+            scoringMode: String = "normalized_exact_match",
+            threshold: Double = 1.0,
+            outputSchemaJSON: String = "",
+            ignoredPaths: [String] = []
+        ) {
+            self.profileType = profileType
+            self.resultKind = resultKind
+            self.extractionMode = extractionMode
+            self.scoringMode = scoringMode
+            self.threshold = threshold
+            self.outputSchemaJSON = outputSchemaJSON
+            self.ignoredPaths = ignoredPaths
+        }
+    }
+
     public let modelID: String
     public let hfRepoID: String
     public let suiteID: String
     public let datasetID: String
     public let sampleSize: UInt32
+    public let source: Source
+    public let fieldMapping: FieldMapping
+    public let profile: Profile
     public let parameters: [String: String]
 
     public init(
@@ -285,6 +392,9 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
         suiteID: String,
         datasetID: String = "",
         sampleSize: UInt32 = 0,
+        source: Source = .builtinPackage,
+        fieldMapping: FieldMapping = .init(),
+        profile: Profile = .init(),
         parameters: [String: String] = [:]
     ) {
         self.modelID = modelID
@@ -292,6 +402,9 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
         self.suiteID = suiteID
         self.datasetID = datasetID
         self.sampleSize = sampleSize
+        self.source = source
+        self.fieldMapping = fieldMapping
+        self.profile = profile
         self.parameters = parameters
     }
 }
@@ -1350,8 +1463,32 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runEvaluation.sampleSize = evaluation.sampleSize
         request.ops.runEvaluation.fewShot = UInt32(evaluation.parameters["few_shot"] ?? "") ?? 0
         request.ops.runEvaluation.seed = UInt64(evaluation.parameters["seed"] ?? "") ?? 0
-        request.ops.runEvaluation.scoringMode = evaluation.parameters["scoring_mode"] ?? ""
+        request.ops.runEvaluation.scoringMode = evaluation.parameters["scoring_mode"] ?? evaluation.profile.scoringMode
         request.ops.runEvaluation.codeExecPolicy = evaluation.parameters["code_exec_policy"] ?? ""
+        switch evaluation.source.kind {
+        case .builtinPackage:
+            break
+        case .localCSV:
+            request.ops.runEvaluation.source.localCsv.path = evaluation.source.path
+        case .localJSONL:
+            request.ops.runEvaluation.source.localJsonl.path = evaluation.source.path
+        case .huggingFaceDataset:
+            request.ops.runEvaluation.source.hfDataset.datasetPath = evaluation.source.datasetPath
+            request.ops.runEvaluation.source.hfDataset.datasetName = evaluation.source.datasetName
+            request.ops.runEvaluation.source.hfDataset.datasetRevision = evaluation.source.datasetRevision
+            request.ops.runEvaluation.source.hfDataset.split = evaluation.source.split
+        }
+        request.ops.runEvaluation.fieldMapping.systemPath = evaluation.fieldMapping.systemPath
+        request.ops.runEvaluation.fieldMapping.inputTextPath = evaluation.fieldMapping.inputTextPath
+        request.ops.runEvaluation.fieldMapping.targetPath = evaluation.fieldMapping.targetPath
+        request.ops.runEvaluation.fieldMapping.sampleIDPath = evaluation.fieldMapping.sampleIDPath
+        request.ops.runEvaluation.profile.profileType = evaluation.profile.profileType
+        request.ops.runEvaluation.profile.resultKind = evaluation.profile.resultKind
+        request.ops.runEvaluation.profile.extractionMode = evaluation.profile.extractionMode
+        request.ops.runEvaluation.profile.scoringMode = evaluation.profile.scoringMode
+        request.ops.runEvaluation.profile.threshold = evaluation.profile.threshold
+        request.ops.runEvaluation.profile.outputSchemaJson = evaluation.profile.outputSchemaJSON
+        request.ops.runEvaluation.profile.ignoredPaths = evaluation.profile.ignoredPaths
         request.ops.runEvaluation.parameters = evaluation.parameters
         return request
     }

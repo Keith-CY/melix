@@ -1,8 +1,8 @@
-{"prompt": "3 + 4 ?", "expected": "7"}
-{"prompt": "7 + 2 ?", "expected": "9"}
-{"prompt": "10 - 5 ?", "expected": "5"}
-{"prompt": "12 - 8 ?", "expected": "4"}
-{"prompt": "6 + 3 ?", "expected": "9"}
-{"prompt": "9 - 1 ?", "expected": "8"}
-{"prompt": "15 - 7 ?", "expected": "8"}
-{"prompt": "20 - 11 ?", "expected": "9"}
+{"id":"1","system":"","input":{"text":"3 + 4 ?"},"target":"7"}
+{"id":"2","system":"","input":{"text":"7 + 2 ?"},"target":"9"}
+{"id":"3","system":"","input":{"text":"10 - 5 ?"},"target":"5"}
+{"id":"4","system":"","input":{"text":"12 - 8 ?"},"target":"4"}
+{"id":"5","system":"","input":{"text":"6 + 3 ?"},"target":"9"}
+{"id":"6","system":"","input":{"text":"9 - 1 ?"},"target":"8"}
+{"id":"7","system":"","input":{"text":"15 - 7 ?"},"target":"8"}
+{"id":"8","system":"","input":{"text":"20 - 11 ?"},"target":"9"}

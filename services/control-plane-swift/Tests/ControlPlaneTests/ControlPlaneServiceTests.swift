@@ -4898,6 +4898,68 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.codeExecPolicy == "sandboxed")
     }
 
+    @Test("execute forwards structured evaluation source profile and mapping to the worker request")
+    func executeForwardsStructuredEvaluationSourceProfileAndMappingToTheWorkerRequest() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job = Melix_Worker_V1_WorkerEvaluationJob()
+            response.job.jobID = "eval-structured"
+            response.job.modelID = "melix-dev-text"
+            response.job.suiteID = "capital"
+            response.job.datasetID = "capital.dev.v1"
+            response.job.sampleSize = 1
+            response.job.status = "completed"
+            response.results = []
+            return response
+        }())
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunEvaluationRequest(
+            modelID: "melix-dev-text",
+            suiteID: "capital",
+            datasetID: "capital.dev.v1"
+        )
+        request.ops.runEvaluation.source.localCsv.path = "/tmp/eval/capital.csv"
+        request.ops.runEvaluation.fieldMapping.systemPath = "system_prompt"
+        request.ops.runEvaluation.fieldMapping.inputTextPath = "question"
+        request.ops.runEvaluation.fieldMapping.targetPath = "gold_answer"
+        request.ops.runEvaluation.fieldMapping.sampleIDPath = "sample_id"
+        request.ops.runEvaluation.profile.profileType = "final_result"
+        request.ops.runEvaluation.profile.resultKind = "text"
+        request.ops.runEvaluation.profile.extractionMode = "heuristic_final"
+        request.ops.runEvaluation.profile.scoringMode = "normalized_exact_match"
+        request.ops.runEvaluation.profile.threshold = 1.0
+
+        _ = try await service.execute(request)
+        let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        guard case .localCsv(let source)? = lastRequest.source.kind else {
+            Issue.record("Expected the worker request to carry a localCsv evaluation source.")
+            return
+        }
+
+        #expect(source.path == "/tmp/eval/capital.csv")
+        #expect(lastRequest.fieldMapping.systemPath == "system_prompt")
+        #expect(lastRequest.fieldMapping.inputTextPath == "question")
+        #expect(lastRequest.fieldMapping.targetPath == "gold_answer")
+        #expect(lastRequest.fieldMapping.sampleIDPath == "sample_id")
+        #expect(lastRequest.profile.profileType == "final_result")
+        #expect(lastRequest.profile.resultKind == "text")
+        #expect(lastRequest.profile.extractionMode == "heuristic_final")
+        #expect(lastRequest.profile.scoringMode == "normalized_exact_match")
+        #expect(lastRequest.profile.threshold == 1.0)
+    }
+
     @Test("local control-plane xpc client forwards canonical bench and evaluation request fields")
     func localControlPlaneXPCClientForwardsCanonicalBenchAndEvaluationRequestFields() async throws {
         actor RecordingService: ControlPlaneExecuting {
@@ -5098,6 +5160,20 @@ struct ControlPlaneServiceTests {
                 suiteID: "qa_smoke",
                 datasetID: "qa_smoke.dev.v1",
                 sampleSize: 8,
+                source: .localCSV(path: "/tmp/eval/qa_smoke.csv"),
+                fieldMapping: .init(
+                    systemPath: "system_prompt",
+                    inputTextPath: "question",
+                    targetPath: "gold_answer",
+                    sampleIDPath: "sample_id"
+                ),
+                profile: .init(
+                    profileType: "final_result",
+                    resultKind: "text",
+                    extractionMode: "heuristic_final",
+                    scoringMode: "normalized_exact_match",
+                    threshold: 1.0
+                ),
                 parameters: [
                     "few_shot": "4",
                     "seed": "7",
@@ -5112,6 +5188,20 @@ struct ControlPlaneServiceTests {
         #expect(evaluationRequest.seed == 7)
         #expect(evaluationRequest.scoringMode == "multiple_choice_accuracy")
         #expect(evaluationRequest.codeExecPolicy == "sandboxed")
+        guard case .localCsv(let source)? = evaluationRequest.source.kind else {
+            Issue.record("Expected the local client to emit a localCsv evaluation source.")
+            return
+        }
+        #expect(source.path == "/tmp/eval/qa_smoke.csv")
+        #expect(evaluationRequest.fieldMapping.systemPath == "system_prompt")
+        #expect(evaluationRequest.fieldMapping.inputTextPath == "question")
+        #expect(evaluationRequest.fieldMapping.targetPath == "gold_answer")
+        #expect(evaluationRequest.fieldMapping.sampleIDPath == "sample_id")
+        #expect(evaluationRequest.profile.profileType == "final_result")
+        #expect(evaluationRequest.profile.resultKind == "text")
+        #expect(evaluationRequest.profile.extractionMode == "heuristic_final")
+        #expect(evaluationRequest.profile.scoringMode == "normalized_exact_match")
+        #expect(evaluationRequest.profile.threshold == 1.0)
 
         let imageJob = try await client.editImage(
             ControlPlaneImageEditRequest(

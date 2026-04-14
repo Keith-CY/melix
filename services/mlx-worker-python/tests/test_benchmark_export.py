@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -290,29 +292,42 @@ def _write_eval_fixtures(root: Path) -> None:
     )
     (root / "evaluation-result.json").write_text(
         json.dumps({
-            "schema_version": "melix.evaluation_result.v1",
+            "schema_version": "melix.evaluation_result.v2",
             "job_id": "eval-1",
             "suite_id": "mmlu",
+            "dataset_id": "mmlu.dev.v1",
+            "sample_size": 8,
+            "primary_score_name": "typed_score_mean",
+            "primary_score_value": 0.75,
+            "extraction_success_count": 8,
+            "validation_success_count": 8,
+            "scored_sample_count": 8,
+            "failure_count": 0,
+            "duration_seconds": 1.25,
             "metrics": [
-                {"name": "eval.mmlu.accuracy", "value": 0.75, "unit": "ratio"},
+                {"name": "eval.mmlu.typed_score_mean", "value": 0.75, "unit": "ratio"},
             ],
+            "report_path": str(root / "evaluation-result.json"),
         }) + "\n"
     )
     (root / "evaluation-samples.jsonl").write_text(
         "\n".join([
             json.dumps({
-                "schema_version": "melix.evaluation_sample.v1",
+                "schema_version": "melix.evaluation_sample.v2",
                 "job_id": "eval-1",
                 "suite_id": "mmlu",
                 "dataset_id": "mmlu.dev.v1",
                 "sample_id": "1",
-                "question": "2+2?",
-                "expected": "4",
-                "predicted": "4",
+                "system": "",
+                "input_text": "2+2?",
+                "target": "4",
                 "raw_response": "4",
-                "correct": True,
+                "extracted_result": "4",
+                "typed_score": 1.0,
                 "time_s": 0.01,
-                "parse_status": "parsed",
+                "extraction_status": "extracted",
+                "validation_status": "validated",
+                "failure_reason": "",
             }),
         ]) + "\n"
     )
@@ -322,7 +337,7 @@ def _write_eval_compare_fixtures(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "evaluation-compare-job.json").write_text(
         json.dumps({
-            "schema_version": "melix.evaluation_compare_job.v1",
+            "schema_version": "melix.evaluation_compare_job.v2",
             "job_id": "eval-compare-1",
             "base_model_id": "melix-dev-text",
             "target_model_ids": ["melix-dev-text-lora-a"],
@@ -331,7 +346,7 @@ def _write_eval_compare_fixtures(root: Path) -> None:
             "suite_id": "mmlu",
             "dataset_id": "mmlu.dev.v1",
             "sample_size": 8,
-            "scoring_mode": "multiple_choice_accuracy",
+            "scoring_mode": "normalized_exact_match",
             "parameters": {
                 "compare_mode": "base_vs_targets",
                 "compare_target_model_ids": "melix-dev-text-lora-a",
@@ -353,14 +368,14 @@ def _write_eval_compare_fixtures(root: Path) -> None:
             "created_at_unix_ms": 303,
             "target_summaries": [
                 {
-                    "schema_version": "melix.evaluation_compare_summary.v1",
+                    "schema_version": "melix.evaluation_compare_summary.v2",
                     "job_id": "eval-compare-1",
                     "base_model_id": "melix-dev-text",
                     "target_model_id": "melix-dev-text-lora-a",
                     "suite_id": "mmlu",
                     "dataset_id": "mmlu.dev.v1",
                     "sample_size": 8,
-                    "scoring_mode": "multiple_choice_accuracy",
+                    "scoring_mode": "normalized_exact_match",
                     "win_count": 5,
                     "loss_count": 1,
                     "tie_count": 2,
@@ -408,6 +423,7 @@ def _write_eval_compare_fixtures(root: Path) -> None:
                     },
                     "duration_seconds": 3.25,
                     "metrics": [
+                        {"name": "eval.compare.delta_typed_score_mean", "value": 0.5, "unit": "ratio"},
                         {"name": "eval.compare.base_accuracy", "value": 0.5, "unit": "ratio"},
                         {"name": "eval.compare.delta_accuracy", "value": 0.5, "unit": "ratio"},
                         {"name": "eval.compare.target_accuracy", "value": 1.0, "unit": "ratio"},
@@ -421,24 +437,30 @@ def _write_eval_compare_fixtures(root: Path) -> None:
     (root / "evaluation-compare-samples.jsonl").write_text(
         "\n".join([
             json.dumps({
-                "schema_version": "melix.evaluation_compare_sample.v1",
+                "schema_version": "melix.evaluation_compare_sample.v2",
                 "job_id": "eval-compare-1",
                 "suite_id": "mmlu",
                 "dataset_id": "mmlu.dev.v1",
                 "sample_id": "sample-1",
                 "target_model_id": "melix-dev-text-lora-a",
-                "question": "2+2?",
-                "expected": "4",
-                "base_predicted": "3",
-                "target_predicted": "4",
+                "input_text": "2+2?",
+                "target": "4",
+                "base_extracted_result": "3",
+                "target_extracted_result": "4",
                 "base_raw_response": "3",
                 "target_raw_response": "4",
-                "base_correct": False,
-                "target_correct": True,
+                "base_typed_score": 0.0,
+                "target_typed_score": 1.0,
                 "outcome": "win",
-                "regression": False,
+                "regression_kind": "",
                 "base_time_s": 0.03,
                 "target_time_s": 0.02,
+                "base_extraction_status": "extracted",
+                "target_extraction_status": "extracted",
+                "base_validation_status": "validated",
+                "target_validation_status": "validated",
+                "base_failure_reason": "",
+                "target_failure_reason": "",
                 "base_parse_status": "parsed",
                 "target_parse_status": "parsed",
                 "category_label": "math",
@@ -553,8 +575,8 @@ def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_ex
     assert [row["job_id"] for row in result["evaluation_results"]] == ["eval-compare-1"]
     assert result["evaluation_results"][0]["report_path"].endswith("evaluation-compare-report.md")
     assert result["evaluation_summary_rows"][0]["model_id"] == "melix-dev-text-lora-a"
-    assert result["evaluation_summary_rows"][0]["score_name"] == "eval.compare.delta_accuracy"
-    assert result["evaluation_summary_rows"][0]["score_value"] == 0.5
+    assert result["evaluation_summary_rows"][0]["primary_score_name"] == "eval.compare.delta_typed_score_mean"
+    assert result["evaluation_summary_rows"][0]["primary_score_value"] == 0.5
     assert result["evaluation_summary_rows"][0]["effect_threshold"] == 0.1
     assert result["evaluation_summary_rows"][0]["verdict"] == "improvement"
     assert result["evaluation_summary_rows"][0]["bootstrap_lower_bound"] == 0.12
@@ -562,15 +584,19 @@ def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_ex
     assert result["evaluation_samples"][0]["job_id"] == "eval-compare-1"
     assert result["evaluation_samples"][0]["sample_id"] == "melix-dev-text-lora-a:sample-1"
     assert result["evaluation_samples"][0]["task_kind"] == "text-generation"
-    assert result["evaluation_samples"][0]["predicted"] == "4"
+    assert result["evaluation_samples"][0]["extracted_result"] == "4"
     assert result["evaluation_samples"][0]["code_language"] == ""
+    assert result["evaluation_samples"][0]["extraction_status"] == "extracted"
+    assert result["evaluation_samples"][0]["validation_status"] == "validated"
     assert result["evaluation_samples"][0]["category_label"] == "math"
     assert result["evaluation_samples"][0]["subject_label"] == "algebra"
     assert result["evaluation_compare_jobs"][0]["job_id"] == "eval-compare-1"
     assert result["evaluation_compare_summary_rows"][0]["target_model_id"] == "melix-dev-text-lora-a"
     assert result["evaluation_compare_samples"][0]["job_id"] == "eval-compare-1"
     assert result["evaluation_compare_samples"][0]["sample_id"] == "sample-1"
-    assert result["evaluation_compare_samples"][0]["target_predicted"] == "4"
+    assert result["evaluation_compare_samples"][0]["target_extracted_result"] == "4"
+    assert result["evaluation_compare_samples"][0]["base_extraction_status"] == "extracted"
+    assert result["evaluation_compare_samples"][0]["category_label"] == "math"
 
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:
@@ -833,11 +859,11 @@ def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
     compare_samples_lines = [line for line in compare_samples_csv.splitlines() if line.strip()]
     assert len(summary_lines) == 1
     assert summary_lines[0].startswith(
-        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
+        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
     )
     assert len(samples_lines) == 1
     assert samples_lines[0].startswith(
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
     )
     assert len(compare_summary_lines) == 1
     assert compare_summary_lines[0].startswith("job_id,base_model_id,target_model_id")
@@ -878,15 +904,19 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     }
 
     samples_csv = build_evaluation_samples_csv(bundle)
-    lines = [line for line in samples_csv.splitlines() if line.strip()]
+    rows = list(csv.DictReader(io.StringIO(samples_csv)))
 
-    assert lines[0] == (
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,"
-        "parse_status,input_modalities,media_references,code_language,code_entry_point,"
-        "code_compile_status,code_runtime_status,code_timeout_status,code_test_status,"
-        "code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
-    )
-    assert "eval-1,humaneval,sample-1,text-generation,True,identity," in lines[1]
+    assert rows[0]["job_id"] == "eval-1"
+    assert rows[0]["suite_id"] == "humaneval"
+    assert rows[0]["id"] == "sample-1"
+    assert rows[0]["task_kind"] == "text-generation"
+    assert rows[0]["target"] == "identity"
+    assert rows[0]["extracted_result"] == "def identity(x):\n    return x"
+    assert rows[0]["input_text"] == "Write identity(x) that returns x."
+    assert rows[0]["typed_score"] == "1.0"
+    assert rows[0]["extraction_status"] == "extracted"
+    assert rows[0]["validation_status"] == "validated"
+    assert rows[0]["input_modalities"] == "text"
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:

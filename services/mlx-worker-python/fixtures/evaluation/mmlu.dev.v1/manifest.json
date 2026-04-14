@@ -1,8 +1,17 @@
 {
-  "schema_version": "melix.evaluation_dataset_package.v1",
+  "schema_version": "melix.evaluation_dataset_package.v2",
   "dataset_id": "mmlu.dev.v1",
   "suite_id": "mmlu",
   "version": "2026-04-01",
   "sample_count": 8,
-  "split": "validation"
+  "split": "validation",
+  "task_kind": "text-generation",
+  "input_modalities": ["text"],
+  "profile_type": "final_result",
+  "result_kind": "text",
+  "extraction_mode": "heuristic_final",
+  "scoring_mode": "normalized_exact_match",
+  "threshold": 1.0,
+  "output_schema": {},
+  "ignored_paths": []
 }

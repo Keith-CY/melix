@@ -2417,6 +2417,174 @@ struct DesktopDiagnosticsToolSectionView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Dataset Source")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Dataset Source",
+                            selection: Binding(
+                                get: { viewModel.evaluationDatasetSourceKind },
+                                set: { viewModel.evaluationDatasetSourceKind = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeEvaluationDatasetSourceKind.allCases) { sourceKind in
+                                Text(sourceKind.title).tag(sourceKind)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        switch viewModel.evaluationDatasetSourceKind {
+                        case .builtinPackage:
+                            Text("Use the checked-in evaluation package selected by each suite.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        case .localCSV, .localJSONL:
+                            TextField(
+                                "Local Source Path",
+                                text: Binding(
+                                    get: { viewModel.evaluationSourcePath },
+                                    set: { viewModel.evaluationSourcePath = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        case .huggingFaceDataset:
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "Dataset Path",
+                                    text: Binding(
+                                        get: { viewModel.evaluationHFDatasetPath },
+                                        set: { viewModel.evaluationHFDatasetPath = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Config",
+                                    text: Binding(
+                                        get: { viewModel.evaluationHFDatasetName },
+                                        set: { viewModel.evaluationHFDatasetName = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "Revision",
+                                    text: Binding(
+                                        get: { viewModel.evaluationHFDatasetRevision },
+                                        set: { viewModel.evaluationHFDatasetRevision = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Split",
+                                    text: Binding(
+                                        get: { viewModel.evaluationHFDatasetSplit },
+                                        set: { viewModel.evaluationHFDatasetSplit = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
+
+                    if viewModel.evaluationDatasetSourceKind != .builtinPackage {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Field Mapping")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "System Path",
+                                    text: Binding(
+                                        get: { viewModel.evaluationFieldSystemPath },
+                                        set: { viewModel.evaluationFieldSystemPath = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Input Text Path",
+                                    text: Binding(
+                                        get: { viewModel.evaluationFieldInputTextPath },
+                                        set: { viewModel.evaluationFieldInputTextPath = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "Target Path",
+                                    text: Binding(
+                                        get: { viewModel.evaluationFieldTargetPath },
+                                        set: { viewModel.evaluationFieldTargetPath = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Sample ID Path",
+                                    text: Binding(
+                                        get: { viewModel.evaluationFieldSampleIDPath },
+                                        set: { viewModel.evaluationFieldSampleIDPath = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+
+                            Text("Profile")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "Result Kind",
+                                    text: Binding(
+                                        get: { viewModel.evaluationResultKind },
+                                        set: { viewModel.evaluationResultKind = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Extraction Mode",
+                                    text: Binding(
+                                        get: { viewModel.evaluationExtractionMode },
+                                        set: { viewModel.evaluationExtractionMode = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Threshold",
+                                    text: Binding(
+                                        get: { viewModel.evaluationThreshold },
+                                        set: { viewModel.evaluationThreshold = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack(spacing: 16) {
+                                TextField(
+                                    "Output Schema JSON",
+                                    text: Binding(
+                                        get: { viewModel.evaluationOutputSchemaJSON },
+                                        set: { viewModel.evaluationOutputSchemaJSON = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                TextField(
+                                    "Ignored Paths",
+                                    text: Binding(
+                                        get: { viewModel.evaluationIgnoredPaths },
+                                        set: { viewModel.evaluationIgnoredPaths = $0 }
+                                    )
+                                )
+                                .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
+
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
                         ForEach(viewModel.evaluationSuites) { suite in
                             Button {
@@ -3290,16 +3458,16 @@ struct DesktopEvaluationSamplePreviewCardView: View {
                 Text(sample.sampleID)
                     .font(.headline)
                 Spacer()
-                Text(sample.correctText)
+                Text("Score \(sample.typedScoreText)")
                     .font(.caption)
-                    .foregroundStyle(sample.correctText == "Correct" ? .green : .secondary)
+                    .foregroundStyle(.secondary)
             }
-            Text(sample.question)
+            Text(sample.inputText)
                 .font(.caption)
-            Text("Expected: \(sample.expected)")
+            Text("Target: \(sample.target)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("Predicted: \(sample.predicted)")
+            Text("Extracted: \(sample.extractedResult)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if sample.rawResponse.isEmpty == false {
@@ -3312,7 +3480,7 @@ struct DesktopEvaluationSamplePreviewCardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Text("\(sample.parseStatus) • \(sample.timeText)")
+            Text(statusLine)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -3327,6 +3495,10 @@ struct DesktopEvaluationSamplePreviewCardView: View {
             return nil
         }
         return labels.joined(separator: " • ")
+    }
+
+    var statusLine: String {
+        sample.statusText.isEmpty ? sample.timeText : "\(sample.statusText) • \(sample.timeText)"
     }
 }
 

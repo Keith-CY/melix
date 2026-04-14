@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -434,6 +435,7 @@ def build_service(
         registry,
         jobs_root=tmp_path / "model-ops",
         hub_catalog=hub_catalog,
+        evaluation_hf_dataset_fetcher=benchmark_fetcher or FakeBenchmarkHFDatasetFetcher(),
     )
     service._core = MaintenanceCore(
         registry,
@@ -2455,20 +2457,37 @@ def test_resolved_benchmark_task_kind_covers_explicit_mode_and_model_kind_branch
     assert image_default == "text-to-image"
     assert image_edit == "image-text-to-image"
 
-
-def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
-    service = build_service(tmp_path)
-    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
-    dataset_root.mkdir(parents=True)
+def _write_final_result_dataset(
+    *,
+    dataset_root: Path,
+    dataset_id: str,
+    suite_id: str,
+    samples: tuple[dict[str, object], ...],
+    task_kind: str = "text-generation",
+    input_modalities: tuple[str, ...] | None = None,
+) -> None:
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    resolved_input_modalities = input_modalities or (
+        ("text",) if task_kind == "text-generation" else ("text", "image")
+    )
     (dataset_root / "manifest.json").write_text(
         json.dumps(
             {
-                "schema_version": "melix.evaluation_dataset_package.v1",
-                "dataset_id": "qa_smoke.dev.v1",
-                "suite_id": "mmlu",
-                "version": "2026-03-31",
-                "sample_count": 2,
+                "schema_version": "melix.evaluation_dataset_package.v2",
+                "dataset_id": dataset_id,
+                "suite_id": suite_id,
+                "version": "2026-04-14",
+                "sample_count": len(samples),
                 "split": "validation",
+                "task_kind": task_kind,
+                "input_modalities": list(resolved_input_modalities),
+                "profile_type": "final_result",
+                "result_kind": "text",
+                "extraction_mode": "heuristic_final",
+                "scoring_mode": "normalized_exact_match",
+                "threshold": 1.0,
+                "output_schema": {},
+                "ignored_paths": [],
             }
         )
         + "\n",
@@ -2476,13 +2495,53 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     )
     (dataset_root / "samples.jsonl").write_text(
         "\n".join(
-            [
-                json.dumps({"prompt": "2+2?", "expected": "4"}),
-                json.dumps({"prompt": "3+3?", "expected": "6"}),
-            ]
+            json.dumps(
+                {
+                    "id": sample.get("id", str(index)),
+                    "system": sample.get("system", ""),
+                    "input": {
+                        **(
+                            dict(sample["input"])
+                            if isinstance(sample.get("input"), dict)
+                            else {}
+                        ),
+                        **(
+                            {"text": str(sample["input"]["text"])}
+                            if isinstance(sample.get("input"), dict)
+                            and isinstance(sample["input"].get("text"), str)
+                            else (
+                                {"text": str(sample.get("prompt", sample.get("question", "")))}
+                                if str(sample.get("prompt", sample.get("question", ""))).strip()
+                                else {}
+                            )
+                        ),
+                        **(
+                            {"image_uri": str(sample["image_uri"])}
+                            if isinstance(sample.get("image_uri"), str) and sample["image_uri"].strip()
+                            else {}
+                        ),
+                    },
+                    "target": sample.get("target", sample.get("expected", sample.get("answer", ""))),
+                }
+            )
+            for index, sample in enumerate(samples, start=1)
         )
         + "\n",
         encoding="utf-8",
+    )
+
+
+def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    _write_final_result_dataset(
+        dataset_root=dataset_root,
+        dataset_id="qa_smoke.dev.v1",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+            {"prompt": "3+3?", "expected": "6"},
+        ),
     )
 
     response = service.RunEvaluation(
@@ -2498,15 +2557,15 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     )
 
     assert response.ok is True
-    assert response.job.schema_version == "melix.evaluation_job.v1"
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert response.job.schema_version == "melix.evaluation_job.v2"
     assert response.job.model_id == "melix-dev-text"
     assert response.job.dataset_id == "qa_smoke.dev.v1"
     assert response.job.parameters["judge"] == "deterministic"
     assert len(response.results) == 1
-    assert response.results[0].schema_version == "melix.evaluation_result.v1"
+    assert response.results[0].schema_version == "melix.evaluation_result.v2"
     assert response.results[0].dataset_id == "qa_smoke.dev.v1"
-    assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
-    assert response.results[0].metrics[0].value == 0.0
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
 
 
 def test_search_hub_models_passes_cursor_and_filters_to_mlx_results(tmp_path: Path) -> None:
@@ -2663,24 +2722,13 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
         / "evaluation"
         / "qa_smoke.dev.v1"
     )
-    dataset_root.mkdir(parents=True)
-    (dataset_root / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "melix.evaluation_dataset_package.v1",
-                "dataset_id": "qa_smoke.dev.v1",
-                "suite_id": "mmlu",
-                "version": "2026-03-31",
-                "sample_count": 1,
-                "split": "validation",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (dataset_root / "samples.jsonl").write_text(
-        json.dumps({"prompt": "2+2?", "expected": "4"}) + "\n",
-        encoding="utf-8",
+    _write_final_result_dataset(
+        dataset_root=dataset_root,
+        dataset_id="qa_smoke.dev.v1",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
     )
     monkeypatch.chdir(tmp_path)
 
@@ -2697,7 +2745,8 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
 
     assert response.ok is True
     assert response.job.dataset_id == "qa_smoke.dev.v1"
-    assert response.results[0].metrics[0].value == 0.0
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
 
 
 def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitted(
@@ -2724,24 +2773,22 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
 
     assert response.ok is True
     assert response.job.dataset_id == "mmlu.dev.v1"
-    assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
-    assert response.results[0].metrics[0].value == 0.0
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
 
 
 @pytest.mark.parametrize(
-    ("suite_id", "dataset_id", "response_text", "metric_name"),
+    ("suite_id", "dataset_id", "response_text"),
     [
         (
             "humaneval",
             "humaneval.dev.v1",
             "```python\ndef identity(x):\n    return x\n```",
-            "eval.humaneval.pass_at_1",
         ),
         (
             "mbpp",
             "mbpp.dev.v1",
             "```python\ndef square(n):\n    return n * n\n```",
-            "eval.mbpp.pass_at_1",
         ),
     ],
 )
@@ -2751,7 +2798,6 @@ def test_run_evaluation_uses_checked_in_code_fixture_when_dataset_root_is_omitte
     suite_id: str,
     dataset_id: str,
     response_text: str,
-    metric_name: str,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / dataset_id
@@ -2780,7 +2826,7 @@ def test_run_evaluation_uses_checked_in_code_fixture_when_dataset_root_is_omitte
 
     assert response.ok is True
     assert response.job.dataset_id == dataset_id
-    assert metrics[metric_name] == 1.0
+    assert metrics[f"eval.{suite_id}.typed_score_mean"] == 1.0
     assert metrics[f"eval.{suite_id}.code_exec_pass_count"] == 1.0
     assert metrics[f"eval.{suite_id}.code_exec_fail_count"] == 0.0
 
@@ -2997,8 +3043,8 @@ def test_run_evaluation_uses_checked_in_imagenette_fixture_when_dataset_root_is_
     assert response.ok is True
     assert response.job.dataset_id == "imagenette.dev.v1"
     assert response.job.task_kind == "image-text-to-text"
-    assert response.results[0].metrics[0].name == "eval.imagenette.accuracy"
-    assert response.results[0].metrics[0].value == 1.0
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.imagenette.typed_score_mean"] == 1.0
     assert captured_prompts
     assert "Classify the main subject in this image." in captured_prompts[0]
     assert "garbage truck" in captured_prompts[0]
@@ -3011,24 +3057,13 @@ def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitt
 ) -> None:
     service = build_service(tmp_path)
     dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
-    dataset_root.mkdir(parents=True)
-    (dataset_root / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "melix.evaluation_dataset_package.v1",
-                "dataset_id": "qa_smoke.dev.v1",
-                "suite_id": "mmlu",
-                "version": "2026-03-31",
-                "sample_count": 1,
-                "split": "validation",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (dataset_root / "samples.jsonl").write_text(
-        json.dumps({"prompt": "3+4?", "expected": "7"}) + "\n",
-        encoding="utf-8",
+    _write_final_result_dataset(
+        dataset_root=dataset_root,
+        dataset_id="qa_smoke.dev.v1",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "3+4?", "expected": "7"},
+        ),
     )
 
     response = service.RunEvaluation(
@@ -3048,18 +3083,28 @@ def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitt
     assert response.ok is True
     assert response.job.dataset_id == "qa_smoke.dev.v1"
     assert response.job.parameters["dataset_root"] == str(dataset_root)
-    assert response.results[0].metrics[0].value == 0.0
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+    assert metrics["eval.mmlu.typed_score_mean"] == 1.0
 
 
-def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) -> None:
+def test_run_evaluation_returns_typed_error_for_dataset_suite_mismatch(tmp_path: Path) -> None:
     service = build_service(tmp_path)
+    dataset_root = tmp_path / "datasets" / "qa_smoke.dev.v1"
+    _write_final_result_dataset(
+        dataset_root=dataset_root,
+        dataset_id="qa_smoke.dev.v1",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
+    )
 
     response = service.RunEvaluation(
         maintenance_pb2.RunEvaluationRequest(
             model_handle="melix-dev-text::1",
             suite_id="unsupported-suite",
             dataset_id="qa_smoke.dev.v1",
-            dataset_root=str(tmp_path / "missing"),
+            dataset_root=str(dataset_root),
             sample_size=1,
         ),
         context=None,
@@ -3067,7 +3112,80 @@ def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) ->
 
     assert response.ok is False
     assert response.error.code == "invalid_argument"
-    assert "Unsupported evaluation suite" in response.error.message
+    assert "Dataset suite mismatch" in response.error.message
+
+
+def test_run_evaluation_materializes_local_csv_source_from_request(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path = tmp_path / "capital.csv"
+    with source_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["system_prompt", "question", "gold_answer", "sample_key"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "system_prompt": "Return only the final answer.",
+                "question": "Capital of France?",
+                "gold_answer": "Paris",
+                "sample_key": "capital-1",
+            }
+        )
+
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle="melix-dev-text::1",
+        suite_id="capital",
+        dataset_id="capital.dev.v1",
+        sample_size=1,
+        parameters={"judge": "deterministic"},
+    )
+    request.source.local_csv.path = str(source_path)
+    request.field_mapping.system_path = "system_prompt"
+    request.field_mapping.input_text_path = "question"
+    request.field_mapping.target_path = "gold_answer"
+    request.field_mapping.sample_id_path = "sample_key"
+    request.profile.profile_type = "final_result"
+    request.profile.result_kind = "text"
+    request.profile.extraction_mode = "heuristic_final"
+    request.profile.scoring_mode = "normalized_exact_match"
+    request.profile.threshold = 1.0
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert response.job.dataset_id == "capital.dev.v1"
+    assert response.job.parameters["evaluation_source_kind"] == "csv"
+    materialized_root = Path(response.job.parameters["evaluation_materialized_dataset_root"])
+    assert (materialized_root / "manifest.json").exists() is True
+    assert (materialized_root / "samples.jsonl").exists() is True
+
+
+def test_run_evaluation_materializes_hf_source_from_request(tmp_path: Path) -> None:
+    service = build_service(tmp_path, benchmark_fetcher=FakeBenchmarkHFDatasetFetcher())
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle="melix-dev-text::1",
+        suite_id="dolly",
+        dataset_id="dolly.dev.v1",
+        sample_size=1,
+        parameters={"judge": "deterministic"},
+    )
+    request.source.hf_dataset.dataset_path = "databricks/databricks-dolly-15k"
+    request.source.hf_dataset.dataset_revision = "main"
+    request.source.hf_dataset.split = "train"
+    request.field_mapping.input_text_path = "instruction"
+    request.field_mapping.target_path = "response"
+    request.profile.profile_type = "final_result"
+    request.profile.result_kind = "text"
+    request.profile.extraction_mode = "heuristic_final"
+    request.profile.scoring_mode = "normalized_exact_match"
+    request.profile.threshold = 1.0
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert response.job.dataset_id == "dolly.dev.v1"
+    assert response.job.parameters["evaluation_source_kind"] == "hf_dataset"
+    materialized_root = Path(response.job.parameters["evaluation_materialized_dataset_root"])
+    assert (materialized_root / "manifest.json").exists() is True
+    assert (materialized_root / "samples.jsonl").exists() is True
 
 
 def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -> None:
@@ -3683,36 +3801,22 @@ def test_bench_events_vlm_latency_suite_produces_percentile_metrics(tmp_path: Pa
 
 def test_run_evaluation_supports_relative_image_paths_with_mlx_vlm_runtime(tmp_path: Path) -> None:
     asset_root = tmp_path / "datasets" / "mmlu.vision.dev.v1"
-    asset_root.mkdir(parents=True, exist_ok=True)
     image_path = asset_root / "sample.ppm"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
     image_path.write_text("P3\n1 1\n255\n255 0 0\n", encoding="utf-8")
-    (asset_root / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "melix.evaluation_dataset_package.v1",
-                "dataset_id": "mmlu.vision.dev.v1",
-                "suite_id": "mmlu",
-                "task_kind": "image-text-to-text",
-                "input_modalities": ["text", "image"],
-                "version": "2026-04-07",
-                "sample_count": 1,
-                "split": "validation",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (asset_root / "samples.jsonl").write_text(
-        json.dumps(
+    _write_final_result_dataset(
+        dataset_root=asset_root,
+        dataset_id="mmlu.vision.dev.v1",
+        suite_id="mmlu",
+        task_kind="image-text-to-text",
+        samples=(
             {
                 "id": "vision-1",
                 "prompt": "What color is the square?",
                 "expected": "red",
                 "image_uri": "sample.ppm",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+            },
+        ),
     )
 
     def fake_load(model_path: str, revision: str = "main"):

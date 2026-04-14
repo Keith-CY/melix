@@ -2,13 +2,13 @@
 
 ## Summary
 
-Melix needs a future evaluation contract for LoRA workflows that score only the final result, even
+Melix needs an evaluation contract for LoRA workflows that scores only the final result, even
 when the model emits CoT or other wrapper text. The current `eval` path is good enough for shipped
 text-style suites with simple `prompt` and `expected` rows, but it does not define a durable
 contract for final-result extraction, typed validation, or typed scoring.
 
-This design defines one future-facing evaluation profile, `final_result`. It does not claim current
-implementation support.
+This design now documents the implemented `final_result` profile, request-driven dataset
+materialization, and the remaining follow-on limits around compare entry-point parity.
 
 ## Problem
 
@@ -29,26 +29,30 @@ Melix needs one reusable abstraction that answers three questions:
 
 ## Current State
 
-Current `eval` execution is already package-based. The worker reads `manifest.json` and
-`samples.jsonl` from a local `dataset_root`, and the checked-in fixtures for current suites are
-repository-owned package directories.
+Current `eval` execution is package-based. The worker reads `manifest.json` and `samples.jsonl`
+from a local dataset package, and the checked-in fixtures for current suites are repository-owned
+package directories.
 
-Current `eval` execution is not runtime-dependent on Hugging Face datasets. By contrast, LoRA
-training already supports direct Hugging Face dataset materialization through the training dataset
-pipeline.
+Current `RunEvaluation` requests can also materialize new evaluation packages on demand from:
+
+- local CSV files
+- local JSONL files
+- Hugging Face datasets
 
 That means the current Melix boundary is:
 
 - evaluation runs execute against Melix-defined local packages
-- external corpora such as Hugging Face datasets are reusable source datasets rather than runtime
-  contracts
-- current evaluation fixtures still largely use `prompt` and `expected` sample rows
+- external corpora such as Hugging Face datasets are reusable source datasets rather than direct
+  runtime contracts
+- request-driven materialization attaches profile metadata during package creation
+- current fixtures may still carry legacy content, but runtime evidence is normalized to
+  `final_result`
 
-This design keeps the package boundary and replaces the future evaluation abstraction.
+The package boundary is now implemented and is the foundation for the `final_result` abstraction.
 
 ## Design Goals
 
-- define one future-facing `evaluation profile` that scores only the extracted final result
+- define one durable `evaluation profile` that scores only the extracted final result
 - keep external datasets reusable as source corpora without making their raw schemas part of the
   Melix runtime contract
 - make final-result extraction a runtime-owned, deterministic contract rather than a best-effort
@@ -59,15 +63,14 @@ This design keeps the package boundary and replaces the future evaluation abstra
 
 ## Non-Goals
 
-- implementing the profile in the current transaction
-- changing the shipped CLI, protocol, or export surface now
 - defining task-specific scorer branches for individual downstream tasks
 - adding no-target or format-only evaluation to v1
 - expanding v1 text scoring to open-ended semantic similarity or subjective quality measures
+- adding compare entry-point parity for ad hoc custom dataset sources in every UI surface
 
 ## Core Terms
 
-These terms are the authoritative vocabulary for the future final-result path:
+These terms are the authoritative vocabulary for the final-result path:
 
 - `source dataset`: an external or local corpus used as the origin of evaluation content
 - `materialized evaluation package`: the repository-owned package Melix executes against
@@ -81,11 +84,11 @@ These terms are the authoritative vocabulary for the future final-result path:
 - `extracted_result`: the final artifact selected by the runtime and passed to validation and
   scoring
 
-## Recommended Contract
+## Current Contract
 
 ### Source And Execution Boundary
 
-Melix should continue to separate dataset origin from runtime execution:
+Melix separates dataset origin from runtime execution:
 
 - source datasets may come from Hugging Face, local annotation sets, or repository fixtures
 - execution must always consume a Melix evaluation dataset package
@@ -94,10 +97,10 @@ Melix should continue to separate dataset origin from runtime execution:
 This keeps the runtime boundary deterministic and lets Melix evolve one package format without
 importing the variability of external schemas into the worker core.
 
-### Future Profile Shape
+### Implemented Profile Shape
 
-Each future-oriented evaluation package should declare a single `final_result` profile in its
-manifest. The planned core fields are:
+Each structured evaluation package declares a single `final_result` profile in its manifest. The
+core fields are:
 
 - `profile_type: final_result`
 - `result_kind: json | text`
@@ -105,7 +108,7 @@ manifest. The planned core fields are:
 - `scoring_mode`
 - `threshold`
 
-Future `final_result` sample rows use:
+`final_result` sample rows use:
 
 - `system`
 - `input`
@@ -116,7 +119,7 @@ labels or dataset metadata, but they must not be the primary hook for scorer imp
 
 ### Extraction And Scoring Pipeline
 
-The planned runtime pipeline is:
+The runtime pipeline is:
 
 - capture `raw_response`
 - extract `extracted_result`
@@ -134,8 +137,8 @@ For JSON final results:
 - `target` must be valid JSON with root type `object` or `array`
 - `output_schema` defines the accepted JSON root type and schema rules
 - schema validation is required before scoring begins
-- JSON object roots are expected to support field-level comparison in v1
-- JSON array roots are expected to use conservative scoring in v1 rather than broad task-specific
+- JSON object roots support field-level comparison in v1
+- JSON array roots use conservative scoring in v1 rather than broad task-specific
   logic
 
 The default ignored field set for JSON object scoring is:
@@ -174,14 +177,14 @@ contract.
 `heuristic_final` must be deterministic and reproducible. Ambiguous extraction is a failure rather
 than a guess.
 
-For `result_kind: json`, the planned shared extractor ladder is:
+For `result_kind: json`, the shared extractor ladder is:
 
 - prefer the last contentful fenced `json` block
 - otherwise use the last contentful fenced block whose contents parse as JSON
 - otherwise use the last terminal balanced JSON suffix
 - if multiple same-priority candidates remain, record `ambiguous_extraction`
 
-For `result_kind: text`, the planned shared extractor ladder is:
+For `result_kind: text`, the shared extractor ladder is:
 
 - prefer the last terminal `Final answer:` or `Answer:` span
 - otherwise use the last contentful fenced text block
@@ -199,8 +202,8 @@ For `json`:
 
 - parse success is required before schema validation
 - schema validation success is required before scoring
-- object roots should use field-level comparison in v1
-- array roots should use conservative comparison in v1
+- object roots use field-level comparison in v1
+- array roots use conservative comparison in v1
 
 For `text`:
 
@@ -210,8 +213,8 @@ For `text`:
 
 ### Reporting Direction
 
-The current shipped export contract remains current-state behavior. The future `final_result` path
-should extend reporting with extraction- and validation-oriented evidence so LoRA compare can see:
+The current shipped export contract already includes extraction- and validation-oriented evidence so
+LoRA evaluation and compare can see:
 
 - extraction success rate
 - validation success rate
@@ -229,10 +232,15 @@ The `final_result` abstraction is preferred because it keeps the critical axes s
 This is cleaner than encoding result type, ground-truth presence, and extraction behavior into
 separate top-level profile names.
 
-## Migration Boundary
+## Compatibility Boundary
 
-Current repository fixtures that use `prompt` and `expected` remain current-state implementation
-formats. They are not the primary long-term abstraction for the future final-result contract.
+Some repository fixtures may still originate from `prompt` and `expected` content, but that is a
+compatibility detail rather than the contract surface.
 
-New package creation should drive future adoption. This document does not claim that the future
-contract is already implemented.
+New package creation and request-driven materialization should prefer the `final_result` fields and
+profile metadata described above.
+
+Current limitation:
+
+- compare entry points do not yet accept ad hoc custom dataset sources from every UI workflow; the
+  menubar compare path still targets existing suites or packages
