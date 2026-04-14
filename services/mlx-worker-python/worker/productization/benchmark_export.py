@@ -142,16 +142,22 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
         rows,
         [
             "job_id",
+            "model_id",
             "task_kind",
             "source_repo",
-            "model_id",
             "suite_id",
             "dataset_id",
+            "sample_size",
             "score_name",
             "score_value",
-            "sample_size",
             "correct_count",
             "incorrect_count",
+            "effect_threshold",
+            "verdict",
+            "bootstrap_lower_bound",
+            "bootstrap_upper_bound",
+            "analytical_lower_bound",
+            "analytical_upper_bound",
             "duration_seconds",
             "created_at_unix_ms",
         ],
@@ -229,6 +235,8 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
             "target_code_tests_total",
             "base_code_failure_detail",
             "target_code_failure_detail",
+            "category_label",
+            "subject_label",
         ],
     )
 
@@ -502,6 +510,8 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "code_tests_passed",
         "code_tests_total",
         "code_failure_detail",
+        "category_label",
+        "subject_label",
     ]
 
 
@@ -512,6 +522,8 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
         "task_kind": row.get("task_kind", ""),
         "input_modalities": row.get("input_modalities", []),
         "media_references": row.get("media_references", []),
+        "category_label": row.get("category_label", ""),
+        "subject_label": row.get("subject_label", ""),
     }
 
 
@@ -637,7 +649,15 @@ def _collect_evaluation_run(
     if compare_samples_path.is_file():
         for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                compare_samples.append(json.loads(line))
+                sample = json.loads(line)
+                compare_samples.append(sample)
+                if isinstance(sample, dict):
+                    samples.append(
+                        _normalize_evaluation_compare_sample(
+                            sample,
+                            compare_job=compare_job,
+                        )
+                    )
 
 
 def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:
@@ -696,6 +716,9 @@ def _normalize_evaluation_compare_summary_row(
     preferred_metric = _preferred_compare_metric(summary)
     sample_size = int(summary.get("sample_size", compare_job.get("sample_size", 0)) or 0)
     correct_count = _compare_target_correct_count(summary)
+    statistical_evidence = summary.get("statistical_evidence", {})
+    bootstrap = statistical_evidence.get("bootstrap", {}) if isinstance(statistical_evidence, dict) else {}
+    analytical = statistical_evidence.get("analytical", {}) if isinstance(statistical_evidence, dict) else {}
     return {
         "schema_version": "melix.evaluation_summary.v1",
         "job_id": compare_job.get("job_id", ""),
@@ -709,12 +732,22 @@ def _normalize_evaluation_compare_summary_row(
         "sample_size": sample_size,
         "correct_count": correct_count,
         "incorrect_count": max(sample_size - correct_count, 0),
+        "effect_threshold": summary.get("effect_threshold", 0.0),
+        "verdict": summary.get("verdict", ""),
+        "bootstrap_lower_bound": bootstrap.get("lower_bound", ""),
+        "bootstrap_upper_bound": bootstrap.get("upper_bound", ""),
+        "analytical_lower_bound": analytical.get("lower_bound", ""),
+        "analytical_upper_bound": analytical.get("upper_bound", ""),
         "duration_seconds": summary.get("duration_seconds", 0.0),
         "created_at_unix_ms": compare_job.get("created_at_unix_ms", 0),
     }
 
 
-def _normalize_evaluation_compare_sample(sample: dict[str, object]) -> dict[str, object]:
+def _normalize_evaluation_compare_sample(
+    sample: dict[str, object],
+    *,
+    compare_job: dict[str, object],
+) -> dict[str, object]:
     target_model_id = str(sample.get("target_model_id", ""))
     sample_id = str(sample.get("sample_id", ""))
     normalized_sample_id = f"{target_model_id}:{sample_id}" if target_model_id and sample_id else sample_id
@@ -724,6 +757,7 @@ def _normalize_evaluation_compare_sample(sample: dict[str, object]) -> dict[str,
         "suite_id": sample.get("suite_id", ""),
         "dataset_id": sample.get("dataset_id", ""),
         "sample_id": normalized_sample_id,
+        "task_kind": compare_job.get("task_kind", ""),
         "question": sample.get("question", ""),
         "expected": sample.get("expected", ""),
         "predicted": sample.get("target_predicted", ""),
@@ -731,6 +765,19 @@ def _normalize_evaluation_compare_sample(sample: dict[str, object]) -> dict[str,
         "correct": sample.get("target_correct", False),
         "time_s": sample.get("target_time_s", 0.0),
         "parse_status": sample.get("target_parse_status", ""),
+        "input_modalities": [],
+        "media_references": [],
+        "code_language": sample.get("code_language", ""),
+        "code_entry_point": sample.get("code_entry_point", ""),
+        "code_compile_status": sample.get("target_code_compile_status", ""),
+        "code_runtime_status": sample.get("target_code_runtime_status", ""),
+        "code_timeout_status": sample.get("target_code_timeout_status", ""),
+        "code_test_status": sample.get("target_code_test_status", ""),
+        "code_tests_passed": sample.get("target_code_tests_passed", 0),
+        "code_tests_total": sample.get("target_code_tests_total", 0),
+        "code_failure_detail": sample.get("target_code_failure_detail", ""),
+        "category_label": sample.get("category_label", ""),
+        "subject_label": sample.get("subject_label", ""),
     }
 
 

@@ -217,11 +217,19 @@ class EvaluationStore:
             "base_accuracy",
             "target_accuracy",
             "delta_accuracy",
+            "effect_threshold",
+            "verdict",
+            "bootstrap_lower_bound",
+            "bootstrap_upper_bound",
+            "analytical_lower_bound",
+            "analytical_upper_bound",
             "duration_seconds",
             "created_at_unix_ms",
         ]
         rows = [",".join(header)]
         for summary in summaries:
+            bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
+            analytical_interval = summary.statistical_evidence.get("analytical", {})
             rows.append(
                 ",".join(
                     [
@@ -238,6 +246,12 @@ class EvaluationStore:
                         EvaluationStore._csv_field(str(summary.base_accuracy)),
                         EvaluationStore._csv_field(str(summary.target_accuracy)),
                         EvaluationStore._csv_field(str(summary.delta_accuracy)),
+                        EvaluationStore._csv_field(str(summary.effect_threshold)),
+                        EvaluationStore._csv_field(summary.verdict),
+                        EvaluationStore._csv_field(str(bootstrap_interval.get("lower_bound", ""))),
+                        EvaluationStore._csv_field(str(bootstrap_interval.get("upper_bound", ""))),
+                        EvaluationStore._csv_field(str(analytical_interval.get("lower_bound", ""))),
+                        EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
                         EvaluationStore._csv_field(str(summary.duration_seconds)),
                         EvaluationStore._csv_field(str(job.created_at_unix_ms)),
                     ]
@@ -268,6 +282,8 @@ class EvaluationStore:
             "code_tests_passed",
             "code_tests_total",
             "code_failure_detail",
+            "category_label",
+            "subject_label",
         ]
         rows = [",".join(header)]
         for sample in samples:
@@ -294,6 +310,8 @@ class EvaluationStore:
                         EvaluationStore._csv_field(str(sample.code_tests_passed)),
                         EvaluationStore._csv_field(str(sample.code_tests_total)),
                         EvaluationStore._csv_field(sample.code_failure_detail),
+                        EvaluationStore._csv_field(sample.category_label),
+                        EvaluationStore._csv_field(sample.subject_label),
                     ]
                 )
             )

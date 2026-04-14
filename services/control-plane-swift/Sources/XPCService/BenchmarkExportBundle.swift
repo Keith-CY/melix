@@ -500,6 +500,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let codeTestsPassed: Int
     public let codeTestsTotal: Int
     public let codeFailureDetail: String
+    public let categoryLabel: String
+    public let subjectLabel: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -526,6 +528,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case codeTestsPassed = "code_tests_passed"
         case codeTestsTotal = "code_tests_total"
         case codeFailureDetail = "code_failure_detail"
+        case categoryLabel = "category_label"
+        case subjectLabel = "subject_label"
     }
 
     public init(from decoder: Decoder) throws {
@@ -554,6 +558,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         codeTestsPassed = try container.decodeIfPresent(Int.self, forKey: .codeTestsPassed) ?? 0
         codeTestsTotal = try container.decodeIfPresent(Int.self, forKey: .codeTestsTotal) ?? 0
         codeFailureDetail = try container.decodeIfPresent(String.self, forKey: .codeFailureDetail) ?? ""
+        categoryLabel = try container.decodeIfPresent(String.self, forKey: .categoryLabel) ?? ""
+        subjectLabel = try container.decodeIfPresent(String.self, forKey: .subjectLabel) ?? ""
     }
 }
 
@@ -585,6 +591,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
     public let scoreValue: Double
     public let correctCount: Int
     public let incorrectCount: Int
+    public let effectThreshold: Double?
+    public let verdict: String
+    public let bootstrapLowerBound: Double?
+    public let bootstrapUpperBound: Double?
+    public let analyticalLowerBound: Double?
+    public let analyticalUpperBound: Double?
     public let durationSeconds: Double
     public let createdAtUnixMS: Int64
 
@@ -600,6 +612,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         scoreValue: Double,
         correctCount: Int,
         incorrectCount: Int,
+        effectThreshold: Double? = nil,
+        verdict: String = "",
+        bootstrapLowerBound: Double? = nil,
+        bootstrapUpperBound: Double? = nil,
+        analyticalLowerBound: Double? = nil,
+        analyticalUpperBound: Double? = nil,
         durationSeconds: Double,
         createdAtUnixMS: Int64
     ) {
@@ -614,6 +632,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         self.scoreValue = scoreValue
         self.correctCount = correctCount
         self.incorrectCount = incorrectCount
+        self.effectThreshold = effectThreshold
+        self.verdict = verdict
+        self.bootstrapLowerBound = bootstrapLowerBound
+        self.bootstrapUpperBound = bootstrapUpperBound
+        self.analyticalLowerBound = analyticalLowerBound
+        self.analyticalUpperBound = analyticalUpperBound
         self.durationSeconds = durationSeconds
         self.createdAtUnixMS = createdAtUnixMS
     }
@@ -630,6 +654,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         case scoreValue = "score_value"
         case correctCount = "correct_count"
         case incorrectCount = "incorrect_count"
+        case effectThreshold = "effect_threshold"
+        case verdict
+        case bootstrapLowerBound = "bootstrap_lower_bound"
+        case bootstrapUpperBound = "bootstrap_upper_bound"
+        case analyticalLowerBound = "analytical_lower_bound"
+        case analyticalUpperBound = "analytical_upper_bound"
         case durationSeconds = "duration_seconds"
         case createdAtUnixMS = "created_at_unix_ms"
     }
@@ -647,6 +677,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         scoreValue = try container.decodeIfPresent(Double.self, forKey: .scoreValue) ?? 0
         correctCount = try container.decodeIfPresent(Int.self, forKey: .correctCount) ?? 0
         incorrectCount = try container.decodeIfPresent(Int.self, forKey: .incorrectCount) ?? 0
+        effectThreshold = try container.decodeFlexibleDoubleIfPresent(forKey: .effectThreshold)
+        verdict = try container.decodeIfPresent(String.self, forKey: .verdict) ?? ""
+        bootstrapLowerBound = try container.decodeFlexibleDoubleIfPresent(forKey: .bootstrapLowerBound)
+        bootstrapUpperBound = try container.decodeFlexibleDoubleIfPresent(forKey: .bootstrapUpperBound)
+        analyticalLowerBound = try container.decodeFlexibleDoubleIfPresent(forKey: .analyticalLowerBound)
+        analyticalUpperBound = try container.decodeFlexibleDoubleIfPresent(forKey: .analyticalUpperBound)
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
         createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
     }
@@ -808,6 +844,8 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
     public let targetCodeTestsTotal: Int
     public let baseCodeFailureDetail: String
     public let targetCodeFailureDetail: String
+    public let categoryLabel: String
+    public let subjectLabel: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -846,6 +884,8 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
         case targetCodeTestsTotal = "target_code_tests_total"
         case baseCodeFailureDetail = "base_code_failure_detail"
         case targetCodeFailureDetail = "target_code_failure_detail"
+        case categoryLabel = "category_label"
+        case subjectLabel = "subject_label"
     }
 
     public init(from decoder: Decoder) throws {
@@ -886,6 +926,8 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
         targetCodeTestsTotal = try container.decodeIfPresent(Int.self, forKey: .targetCodeTestsTotal) ?? 0
         baseCodeFailureDetail = try container.decodeIfPresent(String.self, forKey: .baseCodeFailureDetail) ?? ""
         targetCodeFailureDetail = try container.decodeIfPresent(String.self, forKey: .targetCodeFailureDetail) ?? ""
+        categoryLabel = try container.decodeIfPresent(String.self, forKey: .categoryLabel) ?? ""
+        subjectLabel = try container.decodeIfPresent(String.self, forKey: .subjectLabel) ?? ""
     }
 }
 
@@ -1247,6 +1289,12 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                         scoreValue: result.metrics.first?.value ?? 0,
                         correctCount: 0,
                         incorrectCount: 0,
+                        effectThreshold: nil,
+                        verdict: "",
+                        bootstrapLowerBound: nil,
+                        bootstrapUpperBound: nil,
+                        analyticalLowerBound: nil,
+                        analyticalUpperBound: nil,
                         durationSeconds: 0,
                         createdAtUnixMS: job.createdAtUnixMS
                     )
@@ -1256,28 +1304,40 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSummaryCSV(jobID: String? = nil) -> String {
         let rows = evaluationSummaryCSVRows(jobID: jobID)
-        let header = "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
-        let body = rows.map { row in
-            [
-                row.jobID,
-                row.taskKind,
-                row.sourceRepo,
-                row.modelID,
-                row.suiteID,
-                row.datasetID,
-                row.scoreName,
-                String(row.scoreValue),
-                String(row.sampleSize),
-                String(row.correctCount),
-                String(row.incorrectCount),
-                String(row.durationSeconds),
-                String(row.createdAtUnixMS),
-            ]
-            .map(Self.csvField)
-            .joined(separator: ",")
+        var body: [String] = []
+        body.reserveCapacity(rows.count)
+        for row in rows {
+            let effectThreshold = Self.optionalCSVNumber(row.effectThreshold)
+            let bootstrapLowerBound = Self.optionalCSVNumber(row.bootstrapLowerBound)
+            let bootstrapUpperBound = Self.optionalCSVNumber(row.bootstrapUpperBound)
+            let analyticalLowerBound = Self.optionalCSVNumber(row.analyticalLowerBound)
+            let analyticalUpperBound = Self.optionalCSVNumber(row.analyticalUpperBound)
+            var columns: [String] = []
+            columns.reserveCapacity(19)
+            columns.append(row.jobID)
+            columns.append(row.modelID)
+            columns.append(row.taskKind)
+            columns.append(row.sourceRepo)
+            columns.append(row.suiteID)
+            columns.append(row.datasetID)
+            columns.append(String(row.sampleSize))
+            columns.append(row.scoreName)
+            columns.append(String(row.scoreValue))
+            columns.append(String(row.correctCount))
+            columns.append(String(row.incorrectCount))
+            columns.append(effectThreshold)
+            columns.append(row.verdict)
+            columns.append(bootstrapLowerBound)
+            columns.append(bootstrapUpperBound)
+            columns.append(analyticalLowerBound)
+            columns.append(analyticalUpperBound)
+            columns.append(String(row.durationSeconds))
+            columns.append(String(row.createdAtUnixMS))
+            body.append(columns.map(Self.csvField).joined(separator: ","))
         }
         return ([header] + body).joined(separator: "\n") + "\n"
     }
@@ -1295,37 +1355,40 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationSampleRows(jobID: jobID)
-        let header = "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"
+        let header = "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
-        let body = rows.map { row in
-            [
-                row.jobID,
-                row.suiteID,
-                row.sampleID,
-                row.taskKind,
-                row.correct ? "true" : "false",
-                row.expected,
-                row.predicted,
-                row.question,
-                row.rawResponse,
-                String(row.timeS),
-                row.parseStatus,
-                row.inputModalities.joined(separator: ","),
-                row.mediaReferences.joined(separator: ","),
-                row.codeLanguage,
-                row.codeEntryPoint,
-                row.codeCompileStatus,
-                row.codeRuntimeStatus,
-                row.codeTimeoutStatus,
-                row.codeTestStatus,
-                String(row.codeTestsPassed),
-                String(row.codeTestsTotal),
-                row.codeFailureDetail,
-            ]
-            .map(Self.csvField)
-            .joined(separator: ",")
+        var body: [String] = []
+        body.reserveCapacity(rows.count)
+        for row in rows {
+            var columns: [String] = []
+            columns.reserveCapacity(24)
+            columns.append(row.jobID)
+            columns.append(row.suiteID)
+            columns.append(row.sampleID)
+            columns.append(row.taskKind)
+            columns.append(row.correct ? "true" : "false")
+            columns.append(row.expected)
+            columns.append(row.predicted)
+            columns.append(row.question)
+            columns.append(row.rawResponse)
+            columns.append(String(row.timeS))
+            columns.append(row.parseStatus)
+            columns.append(row.inputModalities.joined(separator: ","))
+            columns.append(row.mediaReferences.joined(separator: ","))
+            columns.append(row.codeLanguage)
+            columns.append(row.codeEntryPoint)
+            columns.append(row.codeCompileStatus)
+            columns.append(row.codeRuntimeStatus)
+            columns.append(row.codeTimeoutStatus)
+            columns.append(row.codeTestStatus)
+            columns.append(String(row.codeTestsPassed))
+            columns.append(String(row.codeTestsTotal))
+            columns.append(row.codeFailureDetail)
+            columns.append(row.categoryLabel)
+            columns.append(row.subjectLabel)
+            body.append(columns.map(Self.csvField).joined(separator: ","))
         }
         return ([header] + body).joined(separator: "\n") + "\n"
     }
@@ -1399,7 +1462,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationCompareSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationCompareSampleRows(jobID: jobID)
-        let header = "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail"
+        let header = "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -1440,6 +1503,8 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.targetCodeTestsTotal),
                 row.baseCodeFailureDetail,
                 row.targetCodeFailureDetail,
+                row.categoryLabel,
+                row.subjectLabel,
             ]
             .map(Self.csvField)
             .joined(separator: ",")
@@ -1544,5 +1609,28 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
             return "\"\(escaped)\""
         }
         return escaped
+    }
+
+    private static func optionalCSVNumber(_ value: Double?) -> String {
+        guard let value else {
+            return ""
+        }
+        return String(value)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeFlexibleDoubleIfPresent(forKey key: Key) throws -> Double? {
+        if let value = try? decodeIfPresent(Double.self, forKey: key) {
+            return value
+        }
+        guard let text = try decodeIfPresent(String.self, forKey: key) else {
+            return nil
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+        return Double(trimmed)
     }
 }

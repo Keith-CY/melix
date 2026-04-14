@@ -25,6 +25,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.productization.benchmark_export import collect_evaluation_artifacts
 from worker.productization.closure_audit import build_closure_audit
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
@@ -131,6 +132,15 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
     "evaluation": {
         "eval.mmlu.accuracy": {"min": 0.5},
+    },
+    "evaluation_compare": {
+        "mmlu": {
+            "effect_threshold": 0.1,
+            "confidence_level": 0.95,
+            "bootstrap_iterations": 400,
+            "bootstrap_seed": 9,
+            "required_verdict": "improvement",
+        }
     },
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
 }
@@ -418,6 +428,25 @@ def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
     }
 
 
+def collect_evaluation_compare_evidence(
+    jobs_root: str | Path,
+    *,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    suite_id = _preferred_evaluation_compare_suite_id(policy)
+    evidence, reason = _load_persisted_evaluation_compare_evidence(
+        jobs_root,
+        suite_id=suite_id,
+    )
+    if evidence is not None:
+        return evidence
+    return {
+        "suite_id": suite_id,
+        "artifact_status": "missing",
+        "reason": reason,
+    }
+
+
 def _ensure_evaluation_dataset(eval_root: Path) -> Path:
     dataset_root = eval_root / "datasets" / "mmlu-dev"
     dataset_root.mkdir(parents=True, exist_ok=True)
@@ -579,6 +608,10 @@ def build_release_gate_report(
         "audio": collect_audio_product_evidence(repo_root),
         "quantization": collect_quantization_benchmark_evidence(Path(jobs_root) / "quantization"),
         "evaluation": collect_evaluation_evidence(jobs_root),
+        "evaluation_compare": collect_evaluation_compare_evidence(
+            jobs_root,
+            policy=active_policy.get("evaluation_compare", {}),
+        ),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
     }
     if recovery is not None:
@@ -649,6 +682,17 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
             _evaluate_section_metrics(evaluation.get("metrics", {}), policy.get("evaluation", {}))
         )
 
+    evaluation_compare = report.get("evaluation_compare")
+    if not isinstance(evaluation_compare, dict):
+        failures.append("evaluation_compare evidence is missing")
+    else:
+        failures.extend(
+            _evaluate_evaluation_compare_evidence(
+                evaluation_compare,
+                policy.get("evaluation_compare", {}),
+            )
+        )
+
     m9 = report.get("m9")
     if not isinstance(m9, dict):
         failures.append("m9 evidence is missing")
@@ -657,6 +701,223 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
         failures.extend(m9_failures)
 
     return failures
+
+
+def _evaluate_evaluation_compare_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    suite_id = str(report.get("suite_id", "")).strip()
+    if not suite_id:
+        return ["evaluation_compare.suite_id is missing"]
+
+    target_summaries = report.get("target_summaries")
+    if target_summaries is not None:
+        if not isinstance(target_summaries, list) or not target_summaries:
+            return [f"evaluation_compare.{suite_id} target_summaries is missing"]
+        failures: list[str] = []
+        for index, summary in enumerate(target_summaries):
+            if not isinstance(summary, dict):
+                failures.append(
+                    f"evaluation_compare.{suite_id} target_summaries[{index}] is invalid"
+                )
+                continue
+            normalized_summary = dict(summary)
+            normalized_summary.setdefault("suite_id", suite_id)
+            failures.extend(
+                _evaluate_single_evaluation_compare_evidence(
+                    normalized_summary,
+                    policy,
+                    include_target_model_id=True,
+                )
+            )
+        return failures
+
+    return _evaluate_single_evaluation_compare_evidence(
+        report,
+        policy,
+        include_target_model_id=False,
+    )
+
+
+def _evaluate_single_evaluation_compare_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    include_target_model_id: bool,
+) -> list[str]:
+    failures: list[str] = []
+    suite_id = str(report.get("suite_id", "")).strip()
+    if not suite_id:
+        failures.append("evaluation_compare.suite_id is missing")
+        return failures
+    prefix = _evaluation_compare_failure_prefix(
+        report,
+        include_target_model_id=include_target_model_id,
+    )
+
+    suite_policy = _resolve_evaluation_compare_suite_policy(policy, suite_id)
+    if not isinstance(suite_policy, dict):
+        failures.append(f"{prefix} policy is missing")
+        return failures
+
+    required_verdict = str(suite_policy.get("required_verdict", "")).strip()
+    actual_verdict = str(report.get("verdict", "")).strip()
+    if required_verdict and actual_verdict != required_verdict:
+        failures.append(
+            f"{prefix} verdict={actual_verdict} did not satisfy required verdict {required_verdict}"
+        )
+
+    effect_threshold = float(report.get("effect_threshold", 0.0) or 0.0)
+    policy_threshold = float(suite_policy.get("effect_threshold", 0.0) or 0.0)
+    if effect_threshold < policy_threshold:
+        failures.append(
+            f"{prefix} effect_threshold={effect_threshold:.2f} fell below policy threshold {policy_threshold:.2f}"
+        )
+
+    statistical_evidence = report.get("statistical_evidence", {})
+    if not isinstance(statistical_evidence, dict):
+        failures.append(f"{prefix} statistical_evidence is missing")
+        return failures
+    bootstrap = statistical_evidence.get("bootstrap", {})
+    analytical = statistical_evidence.get("analytical", {})
+    if not isinstance(bootstrap, dict):
+        failures.append(f"{prefix} bootstrap evidence is missing")
+        bootstrap = {}
+    if not isinstance(analytical, dict):
+        failures.append(f"{prefix} analytical evidence is missing")
+        analytical = {}
+
+    bootstrap_iterations = int(bootstrap.get("iterations", 0) or 0)
+    required_iterations = int(suite_policy.get("bootstrap_iterations", 0) or 0)
+    if required_iterations and bootstrap_iterations < required_iterations:
+        failures.append(
+            f"{prefix} bootstrap_iterations={bootstrap_iterations} fell below required {required_iterations}"
+        )
+
+    confidence_level = float(bootstrap.get("confidence_level", 0.0) or 0.0)
+    required_confidence = float(suite_policy.get("confidence_level", 0.0) or 0.0)
+    if required_confidence and confidence_level < required_confidence:
+        failures.append(
+            f"{prefix} confidence_level={confidence_level:.2f} fell below required {required_confidence:.2f}"
+        )
+
+    return failures
+
+
+def _evaluation_compare_failure_prefix(
+    report: dict[str, Any],
+    *,
+    include_target_model_id: bool,
+) -> str:
+    suite_id = str(report.get("suite_id", "")).strip()
+    prefix = f"evaluation_compare.{suite_id}"
+    if include_target_model_id:
+        target_model_id = str(report.get("target_model_id", "")).strip()
+        if target_model_id:
+            prefix += f" target_model_id={target_model_id}"
+    return prefix
+
+
+def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str:
+    if isinstance(policy, dict):
+        custom_suite_ids = [
+            str(suite_id)
+            for suite_id, suite_policy in policy.items()
+            if isinstance(suite_policy, dict)
+        ]
+        if custom_suite_ids:
+            return custom_suite_ids[0]
+    default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})
+    default_suite_ids = [
+        str(suite_id)
+        for suite_id, suite_policy in default_policy.items()
+        if isinstance(suite_policy, dict)
+    ]
+    if default_suite_ids:
+        return default_suite_ids[0]
+    return ""
+
+
+def _resolve_evaluation_compare_suite_policy(
+    policy: dict[str, Any],
+    suite_id: str,
+) -> dict[str, Any] | None:
+    resolved: dict[str, Any] = {}
+    default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {}).get(suite_id)
+    if isinstance(default_policy, dict):
+        resolved.update(copy.deepcopy(default_policy))
+
+    custom_policy = policy.get(suite_id) if isinstance(policy, dict) else None
+    if custom_policy is not None:
+        if not isinstance(custom_policy, dict):
+            return None
+        resolved.update(copy.deepcopy(custom_policy))
+
+    return resolved or None
+
+
+def _load_persisted_evaluation_compare_evidence(
+    jobs_root: str | Path,
+    *,
+    suite_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    evidence_root = Path(jobs_root) / "evaluation"
+    artifacts = collect_evaluation_artifacts(Path(jobs_root))
+    compare_jobs = artifacts.get("evaluation_compare_jobs", [])
+    compare_summaries = artifacts.get("evaluation_compare_summary_rows", [])
+    if not isinstance(compare_jobs, list) or not isinstance(compare_summaries, list):
+        return (
+            None,
+            f"persisted evaluation_compare artifacts for suite {suite_id} were not found under {evidence_root}",
+        )
+
+    job_by_id = {
+        str(job.get("job_id", "")).strip(): job
+        for job in compare_jobs
+        if isinstance(job, dict) and str(job.get("job_id", "")).strip()
+    }
+    candidates: list[tuple[int, int, str, dict[str, Any]]] = []
+    for summary in compare_summaries:
+        if not isinstance(summary, dict):
+            continue
+        if str(summary.get("suite_id", "")).strip() != suite_id:
+            continue
+        job_id = str(summary.get("job_id", "")).strip()
+        job = job_by_id.get(job_id, {})
+        candidates.append(
+            (
+                int(job.get("created_at_unix_ms", 0) or 0),
+                int(job.get("updated_at_unix_ms", 0) or 0),
+                job_id,
+                copy.deepcopy(summary),
+            )
+        )
+
+    if not candidates:
+        return (
+            None,
+            f"persisted evaluation_compare artifacts for suite {suite_id} were not found under {evidence_root}",
+        )
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    latest_job_id = candidates[-1][2]
+    latest_job_summaries = [
+        summary for _, _, job_id, summary in candidates if job_id == latest_job_id
+    ]
+    if latest_job_id and len(latest_job_summaries) > 1:
+        return (
+            {
+                "suite_id": suite_id,
+                "job_id": latest_job_id,
+                "target_summaries": sorted(
+                    latest_job_summaries,
+                    key=lambda summary: str(summary.get("target_model_id", "")),
+                ),
+            },
+            "",
+        )
+    return latest_job_summaries[-1], ""
 
 
 def _build_maintenance_core(jobs_root: str | Path) -> MaintenanceCore:

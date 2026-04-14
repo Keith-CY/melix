@@ -131,6 +131,12 @@ struct BenchmarkExportBundleTests {
         #expect(summaryRows[0].scoreValue == 0.75)
         #expect(summaryRows[0].correctCount == 6)
         #expect(summaryRows[0].incorrectCount == 2)
+        #expect(summaryRows[0].effectThreshold == 0.1)
+        #expect(summaryRows[0].verdict == "improvement")
+        #expect(summaryRows[0].bootstrapLowerBound == 0.12)
+        #expect(summaryRows[0].bootstrapUpperBound == 0.41)
+        #expect(summaryRows[0].analyticalLowerBound == 0.1)
+        #expect(summaryRows[0].analyticalUpperBound == 0.38)
         #expect(summaryRows[0].durationSeconds == 12.5)
         #expect(summaryRows[0].createdAtUnixMS == 1712400000000)
         #expect(samples.count == 1)
@@ -140,10 +146,12 @@ struct BenchmarkExportBundleTests {
         #expect(samples[0].mediaReferences == [])
         #expect(samples[0].codeLanguage == "python")
         #expect(samples[0].codeEntryPoint == "solve")
-        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
-        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,"))
+        #expect(samples[0].categoryLabel == "math")
+        #expect(samples[0].subjectLabel == "algebra")
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
         #expect(sampleJSONL.contains("\"task_kind\":\"text-generation\""))
         #expect(sampleJSONL.contains("\"input_modalities\":[\"text\"]"))
@@ -169,12 +177,29 @@ struct BenchmarkExportBundleTests {
         #expect(samples[0].codeLanguage == "python")
         #expect(samples[0].baseCodeTestStatus == "failed")
         #expect(samples[0].targetCodeTestStatus == "passed")
+        #expect(samples[0].categoryLabel == "math")
+        #expect(samples[0].subjectLabel == "algebra")
         #expect(summaryCSV.contains("job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds"))
         #expect(summaryCSV.contains("eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75"))
         #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted"))
-        #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,"))
+        #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,,math,algebra"))
         #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
         #expect(samplesJSONL.contains("\"base_code_failure_detail\":\"assertion failed\""))
+    }
+
+    @Test("decodes flexible string-backed evaluation summary doubles")
+    func decodesFlexibleStringBackedEvaluationSummaryDoubles() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: flexibleEvaluationSummaryDoublesJSON
+        )
+
+        let row = try #require(bundle.evaluationSummaryCSVRows().first)
+
+        #expect(row.effectThreshold == 0.1)
+        #expect(row.bootstrapLowerBound == nil)
+        #expect(row.bootstrapUpperBound == 0.41)
+        #expect(row.analyticalLowerBound == nil)
+        #expect(row.analyticalUpperBound == 0.38)
     }
 
     @Test("evaluation exports fall back to parameters sort deterministically and emit empty headers")
@@ -201,12 +226,12 @@ struct BenchmarkExportBundleTests {
         #expect(rows[0].incorrectCount == 0)
         #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
-        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n")
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n")
         #expect(emptyBundle.evaluationCompareSummaryCSV() == "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds\n")
-        #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail\n")
+        #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label\n")
     }
 
     @Test("canonical evaluation summary rows are sorted deterministically")
@@ -221,9 +246,9 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
         #expect(rows[0].createdAtUnixMS == 1712400000000)
         #expect(rows[1].createdAtUnixMS == 1712400000000)
-        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(csv.contains("eval-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
-        #expect(csv.contains("eval-b,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,gsm8k,gsm8k.dev.v1,eval.gsm8k.exact_match,0.5,8,5,3,9.75,1712400000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,0.05,inconclusive,-0.04,0.16,-0.02,0.14,9.75,1712400000000"))
     }
 
     @Test("canonical evaluation summary rows sort by timestamp before job id")
@@ -429,6 +454,12 @@ private let benchmarkExportBundleJSON = """
       "score_value": 0.75,
       "correct_count": 6,
       "incorrect_count": 2,
+      "effect_threshold": 0.1,
+      "verdict": "improvement",
+      "bootstrap_lower_bound": 0.12,
+      "bootstrap_upper_bound": 0.41,
+      "analytical_lower_bound": 0.1,
+      "analytical_upper_bound": 0.38,
       "duration_seconds": 12.5,
       "created_at_unix_ms": 1712400000000
     }
@@ -458,7 +489,9 @@ private let benchmarkExportBundleJSON = """
       "code_test_status": "passed",
       "code_tests_passed": 2,
       "code_tests_total": 2,
-      "code_failure_detail": ""
+      "code_failure_detail": "",
+      "category_label": "math",
+      "subject_label": "algebra"
     }
   ],
   "evaluation_compare_jobs": [
@@ -545,7 +578,9 @@ private let benchmarkExportBundleJSON = """
       "base_code_tests_total": 2,
       "target_code_tests_total": 2,
       "base_code_failure_detail": "assertion failed",
-      "target_code_failure_detail": ""
+      "target_code_failure_detail": "",
+      "category_label": "math",
+      "subject_label": "algebra"
     }
   ]
 }
@@ -681,6 +716,34 @@ private let emptyEvaluationExportBundleJSON = """
 }
 """
 
+private let flexibleEvaluationSummaryDoublesJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_summary_rows": [
+    {
+      "job_id": "eval-flex",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "HuggingFaceH4/ultrachat_200k",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_size": 8,
+      "score_name": "eval.mmlu.accuracy",
+      "score_value": 0.75,
+      "correct_count": 6,
+      "incorrect_count": 2,
+      "effect_threshold": "0.1",
+      "verdict": "improvement",
+      "bootstrap_lower_bound": "",
+      "bootstrap_upper_bound": "0.41",
+      "analytical_upper_bound": "0.38",
+      "duration_seconds": 12.5,
+      "created_at_unix_ms": 1712400000000
+    }
+  ]
+}
+"""
+
 private let canonicalEvaluationSummaryRowsJSON = """
 {
   "export_schema_version": "melix.benchmark_export.v1",
@@ -697,6 +760,12 @@ private let canonicalEvaluationSummaryRowsJSON = """
       "score_value": 0.5,
       "correct_count": 5,
       "incorrect_count": 3,
+      "effect_threshold": 0.05,
+      "verdict": "inconclusive",
+      "bootstrap_lower_bound": -0.04,
+      "bootstrap_upper_bound": 0.16,
+      "analytical_lower_bound": -0.02,
+      "analytical_upper_bound": 0.14,
       "duration_seconds": 9.75,
       "created_at_unix_ms": 1712400000000
     },
@@ -712,6 +781,12 @@ private let canonicalEvaluationSummaryRowsJSON = """
       "score_value": 0.75,
       "correct_count": 6,
       "incorrect_count": 2,
+      "effect_threshold": 0.1,
+      "verdict": "improvement",
+      "bootstrap_lower_bound": 0.12,
+      "bootstrap_upper_bound": 0.41,
+      "analytical_lower_bound": 0.1,
+      "analytical_upper_bound": 0.38,
       "duration_seconds": 12.5,
       "created_at_unix_ms": 1712400000000
     }
@@ -735,6 +810,12 @@ private let canonicalEvaluationSummaryTimestampJSON = """
       "score_value": 0.5,
       "correct_count": 5,
       "incorrect_count": 3,
+      "effect_threshold": 0.05,
+      "verdict": "inconclusive",
+      "bootstrap_lower_bound": -0.04,
+      "bootstrap_upper_bound": 0.16,
+      "analytical_lower_bound": -0.02,
+      "analytical_upper_bound": 0.14,
       "duration_seconds": 9.75,
       "created_at_unix_ms": 1712400001000
     },
@@ -750,6 +831,12 @@ private let canonicalEvaluationSummaryTimestampJSON = """
       "score_value": 0.75,
       "correct_count": 6,
       "incorrect_count": 2,
+      "effect_threshold": 0.1,
+      "verdict": "improvement",
+      "bootstrap_lower_bound": 0.12,
+      "bootstrap_upper_bound": 0.41,
+      "analytical_lower_bound": 0.1,
+      "analytical_upper_bound": 0.38,
       "duration_seconds": 12.5,
       "created_at_unix_ms": 1712400000000
     }

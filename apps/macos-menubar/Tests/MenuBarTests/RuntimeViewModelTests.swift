@@ -4909,18 +4909,31 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedEvaluationHistoryEntry?.jobID == "eval-newer")
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
+        let metricCard = try #require(viewModel.evaluationMetricCards.first)
+        #expect(metricCard.verdictText == "improvement")
+        #expect(metricCard.thresholdText == "0.1000")
+        #expect(metricCard.bootstrapCIText == "[+0.1200, +0.4100]")
+        #expect(metricCard.analyticalCIText == "[+0.1000, +0.3800]")
+        let firstSample = try #require(viewModel.evaluationSamplePreview.first)
+        #expect(firstSample.categoryLabel == "math")
+        #expect(firstSample.subjectLabel == "arithmetic")
 
         await viewModel.exportSelectedEvaluationSummaryCSV()
         let summaryExport = try #require(viewModel.lastEvaluationExport)
         #expect(summaryExport.formatTitle == "summary.csv")
         #expect(summaryExport.rowCount == 1)
         #expect(FileManager.default.fileExists(atPath: summaryExport.outputPath))
+        let summaryCSV = try String(contentsOfFile: summaryExport.outputPath, encoding: .utf8)
+        #expect(summaryCSV.contains("effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound"))
+        #expect(summaryCSV.contains("0.1,improvement,0.12,0.41,0.1,0.38"))
 
         await viewModel.exportSelectedEvaluationSamplesCSV()
         let samplesCSVExport = try #require(viewModel.lastEvaluationExport)
         #expect(samplesCSVExport.formatTitle == "samples.csv")
         let samplesCSV = try String(contentsOfFile: samplesCSVExport.outputPath, encoding: .utf8)
         #expect(samplesCSV.contains("mmlu-0001"))
+        #expect(samplesCSV.contains("category_label,subject_label"))
+        #expect(samplesCSV.contains("math,arithmetic"))
 
         await viewModel.exportSelectedEvaluationSamplesJSONL()
         let samplesJSONLExport = try #require(viewModel.lastEvaluationExport)
@@ -4933,6 +4946,31 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.eval_history_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_csv_ms"] != nil)
         #expect(await metrics.snapshot()["menu.eval_export_jsonl_ms"] != nil)
+    }
+
+    @Test("evaluation metric cards omit compare evidence text when summary evidence is sparse")
+    @MainActor
+    func evaluationMetricCardsOmitCompareEvidenceTextWhenSummaryEvidenceIsSparse() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureExportResult(
+            ControlPlaneExportResult(
+                exportBundleJSON: makeBenchmarkExportBundleJSONWithSparseEvaluationCompareEvidence()
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        await viewModel.refreshEvaluationHistory()
+
+        let metricCard = try #require(viewModel.evaluationMetricCards.first)
+
+        #expect(metricCard.verdictText == "inconclusive")
+        #expect(metricCard.thresholdText.isEmpty)
+        #expect(metricCard.bootstrapCIText.isEmpty)
+        #expect(metricCard.analyticalCIText.isEmpty)
     }
 
     @Test("benchmark matrix evaluation and exports use the shared operator command runner when available")

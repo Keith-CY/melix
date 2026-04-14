@@ -150,9 +150,11 @@ class EvaluationSample:
     code_tests_passed: int
     code_tests_total: int
     code_failure_detail: str
+    category_label: str = ""
+    subject_label: str = ""
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "suite_id": self.suite_id,
@@ -178,6 +180,11 @@ class EvaluationSample:
             "code_tests_total": self.code_tests_total,
             "code_failure_detail": self.code_failure_detail,
         }
+        if self.category_label:
+            payload["category_label"] = self.category_label
+        if self.subject_label:
+            payload["subject_label"] = self.subject_label
+        return payload
 
 
 @dataclass(frozen=True)
@@ -235,6 +242,11 @@ class EvaluationCompareSummary:
     base_accuracy: float
     target_accuracy: float
     delta_accuracy: float
+    effect_threshold: float
+    verdict: str
+    category_breakdown: dict[str, dict[str, object]]
+    statistical_evidence: dict[str, object]
+    release_gate_summary: dict[str, object]
     duration_seconds: float
     metrics: tuple[EvaluationMetricValue, ...]
     report_path: str
@@ -256,6 +268,14 @@ class EvaluationCompareSummary:
             "base_accuracy": self.base_accuracy,
             "target_accuracy": self.target_accuracy,
             "delta_accuracy": self.delta_accuracy,
+            "effect_threshold": self.effect_threshold,
+            "verdict": self.verdict,
+            "category_breakdown": {
+                key: dict(value)
+                for key, value in self.category_breakdown.items()
+            },
+            "statistical_evidence": dict(self.statistical_evidence),
+            "release_gate_summary": dict(self.release_gate_summary),
             "duration_seconds": self.duration_seconds,
             "metrics": [metric.to_dict() for metric in self.metrics],
             "report_path": self.report_path,
@@ -300,9 +320,11 @@ class EvaluationCompareSample:
     target_code_tests_total: int
     base_code_failure_detail: str
     target_code_failure_detail: str
+    category_label: str = ""
+    subject_label: str = ""
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "suite_id": self.suite_id,
@@ -340,6 +362,11 @@ class EvaluationCompareSample:
             "base_code_failure_detail": self.base_code_failure_detail,
             "target_code_failure_detail": self.target_code_failure_detail,
         }
+        if self.category_label:
+            payload["category_label"] = self.category_label
+        if self.subject_label:
+            payload["subject_label"] = self.subject_label
+        return payload
 
 
 def build_dataset_package_manifest(
@@ -465,6 +492,8 @@ def build_evaluation_sample_record(
     code_tests_passed: int = 0,
     code_tests_total: int = 0,
     code_failure_detail: str = "",
+    category_label: str = "",
+    subject_label: str = "",
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -491,6 +520,8 @@ def build_evaluation_sample_record(
         code_tests_passed=code_tests_passed,
         code_tests_total=code_tests_total,
         code_failure_detail=code_failure_detail,
+        category_label=category_label,
+        subject_label=subject_label,
     )
 
 
@@ -546,6 +577,11 @@ def build_evaluation_compare_summary_record(
     base_accuracy: float,
     target_accuracy: float,
     delta_accuracy: float,
+    effect_threshold: float,
+    verdict: str,
+    category_breakdown: dict[str, dict[str, object]],
+    statistical_evidence: dict[str, object],
+    release_gate_summary: dict[str, object],
     duration_seconds: float,
     metrics: dict[str, float],
     report_path: str,
@@ -572,6 +608,14 @@ def build_evaluation_compare_summary_record(
         base_accuracy=float(base_accuracy),
         target_accuracy=float(target_accuracy),
         delta_accuracy=float(delta_accuracy),
+        effect_threshold=float(effect_threshold),
+        verdict=verdict,
+        category_breakdown={
+            key: dict(value)
+            for key, value in sorted(category_breakdown.items())
+        },
+        statistical_evidence=dict(statistical_evidence),
+        release_gate_summary=dict(release_gate_summary),
         duration_seconds=float(duration_seconds),
         metrics=ordered_metrics,
         report_path=report_path,
@@ -615,6 +659,8 @@ def build_evaluation_compare_sample_record(
     target_code_tests_total: int = 0,
     base_code_failure_detail: str = "",
     target_code_failure_detail: str = "",
+    category_label: str = "",
+    subject_label: str = "",
 ) -> EvaluationCompareSample:
     return EvaluationCompareSample(
         schema_version=_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION,
@@ -653,4 +699,6 @@ def build_evaluation_compare_sample_record(
         target_code_tests_total=target_code_tests_total,
         base_code_failure_detail=base_code_failure_detail,
         target_code_failure_detail=target_code_failure_detail,
+        category_label=category_label,
+        subject_label=subject_label,
     )

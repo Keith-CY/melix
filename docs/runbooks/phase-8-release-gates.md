@@ -25,6 +25,7 @@ The release gate checks:
 - install asset generation
 - benchmark thresholds
 - evaluation thresholds
+- evaluation comparison verdicts and paired confidence intervals
 - cache recovery benchmark evidence
 - restart recovery
 - training sanity
@@ -66,6 +67,24 @@ Update the policy in the same change as any intentional benchmark or release-thr
 The checked-in policy now includes an `evaluation` section for deterministic suite metrics such as
 `eval.mmlu.accuracy`. Treat benchmark and evaluation regressions as first-class release inputs.
 
+The checked-in policy also includes an `evaluation_compare` section for paired compare suites such
+as `mmlu`. Each suite policy owns:
+
+- `confidence_level`
+- `bootstrap_iterations`
+- `bootstrap_seed`
+- `effect_threshold`
+- `required_verdict`
+
+The compare release verdict is policy-backed and uses the same `CI + threshold` rule as runtime
+reporting:
+
+- `improvement` only when delta clears the positive effect threshold and both interval families stay
+  above zero
+- `regression` only when delta clears the negative effect threshold and both interval families stay
+  below zero
+- `inconclusive` otherwise
+
 The checked-in policy also includes an `m9` section for repository-owned ecosystem and security
 signals. The current required M9 probes include:
 
@@ -97,6 +116,14 @@ uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke
 ```
 
 Use `--fixture-mode failing` to prove the gate fails closed on missing or regressed M9 evidence.
+
+When you inspect the emitted release-gate JSON, the top-level `evaluation_compare` section is the
+operator-facing summary for compare evidence. Verify:
+
+- `verdict` matches the policy-required verdict
+- `effect_threshold` is at least the checked-in policy value
+- both `bootstrap` and `analytical` intervals are present under `statistical_evidence`
+- `release_gate_summary` explains whether a compare was accepted or rejected
 
 ## CI Workflow
 

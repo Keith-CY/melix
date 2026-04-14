@@ -103,6 +103,8 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.server)
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        view.frame = NSRect(x: 0, y: 0, width: 1200, height: 2400)
+        view.layoutSubtreeIfNeeded()
         let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
@@ -2049,6 +2051,59 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
+    }
+
+    @Test("evaluation metric card view renders statistical evidence lines")
+    @MainActor
+    func evaluationMetricCardViewRendersStatisticalEvidenceLines() async throws {
+        let metric = RuntimeEvaluationMetricCardState(
+            id: "metric-1",
+            suiteTitle: "MMLU",
+            metricName: "eval.compare.delta_accuracy",
+            metricLabel: "Delta Accuracy",
+            value: 0.25,
+            valueText: "0.25",
+            unit: "score",
+            verdictText: "improvement",
+            thresholdText: "0.1000",
+            bootstrapCIText: "[+0.1200, +0.4100]",
+            analyticalCIText: "[+0.1000, +0.3800]"
+        )
+
+        let view = DesktopEvaluationMetricCardView(metric: metric)
+        _ = view.body
+
+        #expect(
+            view.evidenceLines == [
+                "Verdict: improvement",
+                "Threshold: 0.1000",
+                "Bootstrap CI: [+0.1200, +0.4100]",
+                "Analytical CI: [+0.1000, +0.3800]",
+            ]
+        )
+    }
+
+    @Test("evaluation sample preview card view renders category and subject labels")
+    @MainActor
+    func evaluationSamplePreviewCardViewRendersCategoryAndSubjectLabels() async throws {
+        let sample = RuntimeEvaluationSamplePreviewState(
+            id: "sample-1",
+            sampleID: "mmlu-0001",
+            question: "What is 2 + 2?",
+            expected: "4",
+            predicted: "4",
+            rawResponse: "4",
+            correctText: "Correct",
+            parseStatus: "parsed",
+            timeText: "0.42s",
+            categoryLabel: "math",
+            subjectLabel: "arithmetic"
+        )
+
+        let view = DesktopEvaluationSamplePreviewCardView(sample: sample)
+        _ = view.body
+
+        #expect(view.categoryAndSubjectText == "math • arithmetic")
     }
 
     @Test("workspace diagnostics covers evaluation helper actions and direct repo configuration")

@@ -526,13 +526,37 @@ struct AppMainBootstrapTests {
     @MainActor
     func bootstrapEnvironmentFallsBackToDefaults() {
         let environment = MenuBarBootstrapEnvironment(environment: [:])
+        let expectedRepoRoot = MenuBarBootstrapEnvironment.inferRepoRoot(anchorPath: #filePath)
 
-        #expect(environment.repoRoot.hasSuffix("/melix"))
+        #expect(environment.repoRoot == expectedRepoRoot)
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
         #expect(environment.startupSurface == .tray)
         #expect(environment.presentationMode == .tray)
         #expect(environment.terminationMode == .terminate)
+    }
+
+    @Test("bootstrap environment infers repo root by locating repository markers")
+    @MainActor
+    func bootstrapEnvironmentInfersRepoRootFromAnchorPath() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let repoRoot = root.appendingPathComponent("melix-fixture")
+        let anchorPath = repoRoot
+            .appendingPathComponent("apps")
+            .appendingPathComponent("macos-menubar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("AppMain")
+            .appendingPathComponent("AppMain.swift")
+        try FileManager.default.createDirectory(
+            at: anchorPath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: repoRoot.appendingPathComponent("AGENTS.md"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let inferredRepoRoot = MenuBarBootstrapEnvironment.inferRepoRoot(anchorPath: anchorPath.path)
+
+        #expect(inferredRepoRoot == repoRoot.path)
     }
 
     @Test("bootstrap cli environment injects a default managed model root under MelixHome")

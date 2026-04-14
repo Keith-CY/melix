@@ -420,15 +420,30 @@ struct MenuBarBootstrapEnvironment {
             ?? URL(fileURLWithPath: self.pythonWorkerSocketPath).deletingLastPathComponent().path
     }
 
-    private static func inferRepoRoot() -> String {
-        let sourceFile = URL(fileURLWithPath: #filePath)
-        return sourceFile
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
+    static func inferRepoRoot(anchorPath: String = #filePath) -> String {
+        let anchorURL = URL(fileURLWithPath: anchorPath).deletingLastPathComponent()
+        if let repoRoot = locateRepoRoot(startingAt: anchorURL) {
+            return repoRoot.path
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
+    private static func locateRepoRoot(startingAt startURL: URL) -> URL? {
+        var candidate = startURL
+        while true {
+            let agentsPath = candidate.appendingPathComponent("AGENTS.md").path
+            let gitPath = candidate.appendingPathComponent(".git").path
+            if FileManager.default.fileExists(atPath: agentsPath)
+                || FileManager.default.fileExists(atPath: gitPath)
+            {
+                return candidate
+            }
+            let parent = candidate.deletingLastPathComponent()
+            if parent.path == candidate.path {
+                return nil
+            }
+            candidate = parent
+        }
     }
 
     private static func inferCLIExecutablePath(repoRoot: String) -> String {

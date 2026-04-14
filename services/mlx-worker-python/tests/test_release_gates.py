@@ -7,9 +7,15 @@ from pathlib import Path
 import pytest
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
+from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_summary_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
+    collect_evaluation_compare_evidence,
     collect_audio_product_evidence,
     collect_benchmark_evidence,
     collect_evaluation_evidence,
@@ -98,6 +104,254 @@ def _passing_m9_evidence(policy: dict[str, object] | None = None) -> dict[str, o
             "failed_threshold_count": 0.0,
         },
     }
+
+
+def _passing_evaluation_compare_evidence(verdict: str = "improvement") -> dict[str, object]:
+    return {
+        "suite_id": "mmlu",
+        "base_model_id": "melix-dev-text",
+        "target_model_id": "melix-dev-text-lora-a",
+        "sample_size": 8,
+        "effect_threshold": 0.1,
+        "verdict": verdict,
+        "metrics": {
+            "eval.compare.delta_accuracy": 0.5,
+            "eval.compare.effect_threshold": 0.1,
+        },
+        "category_breakdown": {
+            "math": {
+                "sample_size": 8,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+            }
+        },
+        "statistical_evidence": {
+            "sample_size": 8,
+            "delta_accuracy": 0.5,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 0.12,
+                "upper_bound": 0.84,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 0.18,
+                "upper_bound": 0.82,
+                "crosses_zero": False,
+            },
+        },
+        "release_gate_summary": {
+            "verdict": verdict,
+            "reason": "delta_exceeds_threshold_with_supported_intervals"
+            if verdict != "inconclusive"
+            else "confidence_intervals_cross_zero",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 0.5 if verdict != "regression" else -0.5,
+            "threshold_passed": verdict != "inconclusive",
+            "both_intervals_same_side": verdict != "inconclusive",
+        },
+        "report_path": "/tmp/evaluation-compare-report.md",
+    }
+
+
+def _write_persisted_evaluation_compare_evidence(
+    jobs_root: Path,
+    *,
+    job_id: str = "eval-compare-release-gate",
+    suite_id: str = "mmlu",
+    target_model_id: str = "melix-dev-text-lora-a",
+    verdict: str = "improvement",
+    effect_threshold: float = 0.1,
+    confidence_level: float = 0.95,
+    bootstrap_iterations: int = 400,
+    created_at_unix_ms: int = 1712600000000,
+) -> dict[str, object]:
+    evaluation_root = jobs_root / "evaluation"
+    run_root = evaluation_root / "runs" / job_id
+    store = EvaluationStore()
+    compare_job = build_evaluation_compare_job_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_ids=(target_model_id,),
+        task_kind="text-generation",
+        source_repo="melix.release-gate.fixture",
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=created_at_unix_ms + 500,
+    )
+    compare_summary = build_evaluation_compare_summary_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_id=target_model_id,
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=6 if verdict == "improvement" else 1,
+        loss_count=1 if verdict == "improvement" else 6,
+        tie_count=1,
+        regression_count=0 if verdict == "improvement" else 5,
+        base_accuracy=0.5,
+        target_accuracy=0.75 if verdict == "improvement" else 0.25,
+        delta_accuracy=0.25 if verdict == "improvement" else -0.25,
+        effect_threshold=effect_threshold,
+        verdict=verdict,
+        category_breakdown={
+            "math": {
+                "sample_size": 8,
+                "base_accuracy": 0.5,
+                "target_accuracy": 0.75 if verdict == "improvement" else 0.25,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            }
+        },
+        statistical_evidence={
+            "sample_size": 8,
+            "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": confidence_level,
+                "lower_bound": 0.12 if verdict == "improvement" else -0.41,
+                "upper_bound": 0.41 if verdict == "improvement" else -0.12,
+                "crosses_zero": False,
+                "iterations": bootstrap_iterations,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": confidence_level,
+                "lower_bound": 0.1 if verdict == "improvement" else -0.38,
+                "upper_bound": 0.38 if verdict == "improvement" else -0.1,
+                "crosses_zero": False,
+            },
+        },
+        release_gate_summary={
+            "verdict": verdict,
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": effect_threshold,
+            "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
+        duration_seconds=0.25,
+        metrics={"eval.compare.delta_accuracy": 0.25 if verdict == "improvement" else -0.25},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    store.persist_compare_result(
+        jobs_root=evaluation_root,
+        job=compare_job,
+        summaries=(compare_summary,),
+    )
+    return compare_summary.to_dict()
+
+
+def _write_persisted_multi_target_evaluation_compare_evidence(
+    jobs_root: Path,
+    *,
+    job_id: str = "eval-compare-multi-target",
+    suite_id: str = "mmlu",
+    targets: tuple[tuple[str, str], ...] = (
+        ("melix-dev-text-lora-a", "improvement"),
+        ("melix-dev-text-lora-b", "regression"),
+    ),
+    created_at_unix_ms: int = 1712600000000,
+) -> tuple[dict[str, object], ...]:
+    evaluation_root = jobs_root / "evaluation"
+    run_root = evaluation_root / "runs" / job_id
+    store = EvaluationStore()
+    compare_job = build_evaluation_compare_job_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_ids=tuple(target_model_id for target_model_id, _ in targets),
+        task_kind="text-generation",
+        source_repo="melix.release-gate.fixture",
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=created_at_unix_ms + 500,
+    )
+    summaries = tuple(
+        build_evaluation_compare_summary_record(
+            job_id=job_id,
+            base_model_id="melix-dev-text",
+            target_model_id=target_model_id,
+            suite_id=suite_id,
+            dataset_id=f"{suite_id}.dev.v1",
+            sample_size=8,
+            scoring_mode="multiple_choice_accuracy",
+            win_count=6 if verdict == "improvement" else 1,
+            loss_count=1 if verdict == "improvement" else 6,
+            tie_count=1,
+            regression_count=0 if verdict == "improvement" else 5,
+            base_accuracy=0.5,
+            target_accuracy=0.75 if verdict == "improvement" else 0.25,
+            delta_accuracy=0.25 if verdict == "improvement" else -0.25,
+            effect_threshold=0.1,
+            verdict=verdict,
+            category_breakdown={
+                "math": {
+                    "sample_size": 8,
+                    "base_accuracy": 0.5,
+                    "target_accuracy": 0.75 if verdict == "improvement" else 0.25,
+                    "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                }
+            },
+            statistical_evidence={
+                "sample_size": 8,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                "bootstrap": {
+                    "method": "paired_bootstrap_percentile",
+                    "confidence_level": 0.95,
+                    "lower_bound": 0.12 if verdict == "improvement" else -0.41,
+                    "upper_bound": 0.41 if verdict == "improvement" else -0.12,
+                    "crosses_zero": False,
+                    "iterations": 400,
+                    "seed": 9,
+                },
+                "analytical": {
+                    "method": "paired_difference_normal_approximation",
+                    "confidence_level": 0.95,
+                    "lower_bound": 0.1 if verdict == "improvement" else -0.38,
+                    "upper_bound": 0.38 if verdict == "improvement" else -0.1,
+                    "crosses_zero": False,
+                },
+            },
+            release_gate_summary={
+                "verdict": verdict,
+                "reason": "delta_exceeds_threshold_with_supported_intervals",
+                "effect_threshold": 0.1,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                "threshold_passed": True,
+                "both_intervals_same_side": True,
+            },
+            duration_seconds=0.25,
+            metrics={"eval.compare.delta_accuracy": 0.25 if verdict == "improvement" else -0.25},
+            report_path=str(run_root / "evaluation-compare-report.md"),
+        )
+        for target_model_id, verdict in targets
+    )
+    store.persist_compare_result(
+        jobs_root=evaluation_root,
+        job=compare_job,
+        summaries=summaries,
+    )
+    return tuple(summary.to_dict() for summary in summaries)
 
 
 def test_collect_install_evidence_reports_expected_artifacts(tmp_path: Path) -> None:
@@ -557,6 +811,7 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -756,6 +1011,7 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -870,6 +1126,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         "collect_m9_evidence",
         lambda repo_root, policy=None: _passing_m9_evidence(policy),
         raising=False,
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_evaluation_compare_evidence",
+        lambda jobs_root, policy=None: _passing_evaluation_compare_evidence(),
     )
 
     report = build_release_gate_report(
@@ -1051,6 +1312,9 @@ def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
     assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
 
 
 def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None:
@@ -1062,6 +1326,8 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
     assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "evaluation_compare" in policy
+    assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
     assert "m9" in policy
     assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
     assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0
@@ -1083,6 +1349,203 @@ def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt
 
     assert list(backend.generate_tokens({}, "2 + 2 ?", None, canceled)) == []
     assert list(backend.generate_tokens({}, "hello world", None, active)) == ["Answer: 0"]
+
+
+def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: Path) -> None:
+    expected = _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-real-artifact",
+        target_model_id="melix-dev-text-lora-real",
+        verdict="regression",
+        effect_threshold=0.2,
+        confidence_level=0.99,
+        bootstrap_iterations=512,
+    )
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["job_id"] == expected["job_id"]
+    assert evidence["target_model_id"] == "melix-dev-text-lora-real"
+    assert evidence["verdict"] == "regression"
+    assert evidence["effect_threshold"] == 0.2
+    assert evidence["statistical_evidence"]["bootstrap"]["iterations"] == 512
+    assert evidence["statistical_evidence"]["bootstrap"]["confidence_level"] == 0.99
+    assert evidence["release_gate_summary"]["both_intervals_same_side"] is True
+
+
+def test_collect_evaluation_compare_evidence_prefers_custom_policy_suite_when_present(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-gsm8k-artifact",
+        suite_id="gsm8k",
+        target_model_id="melix-dev-text-lora-gsm8k",
+        verdict="improvement",
+    )
+
+    evidence = collect_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        policy={
+            "gsm8k": {
+                "effect_threshold": 0.05,
+                "confidence_level": 0.9,
+                "bootstrap_iterations": 200,
+                "required_verdict": "improvement",
+            }
+        },
+    )
+
+    assert evidence["suite_id"] == "gsm8k"
+    assert evidence["job_id"] == "eval-compare-gsm8k-artifact"
+    assert evidence["target_model_id"] == "melix-dev-text-lora-gsm8k"
+
+
+def test_collect_evaluation_compare_evidence_returns_all_target_summaries_for_latest_job(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_multi_target_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-multi-target-artifact",
+    )
+
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["job_id"] == "eval-compare-multi-target-artifact"
+    target_summaries = evidence["target_summaries"]
+    assert len(target_summaries) == 2
+    assert {summary["target_model_id"] for summary in target_summaries} == {
+        "melix-dev-text-lora-a",
+        "melix-dev-text-lora-b",
+    }
+
+
+def test_collect_evaluation_compare_evidence_fails_closed_without_persisted_compare_artifacts(
+    tmp_path: Path,
+) -> None:
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["artifact_status"] == "missing"
+    assert "persisted evaluation_compare artifacts" in evidence["reason"]
+    assert "statistical_evidence" not in evidence
+
+
+def test_evaluate_evaluation_compare_evidence_requires_suite_policy_and_statistical_shapes() -> None:
+    assert release_gates_module._evaluate_evaluation_compare_evidence({}, {"mmlu": {}}) == [
+        "evaluation_compare.suite_id is missing"
+    ]
+    assert release_gates_module._evaluate_evaluation_compare_evidence(
+        {"suite_id": "mmlu"},
+        {"mmlu": []},
+    ) == [
+        "evaluation_compare.mmlu policy is missing"
+    ]
+    assert release_gates_module._evaluate_evaluation_compare_evidence(
+        {"suite_id": "mmlu", "statistical_evidence": []},
+        {"mmlu": {}},
+    ) == [
+        "evaluation_compare.mmlu verdict= did not satisfy required verdict improvement",
+        "evaluation_compare.mmlu effect_threshold=0.00 fell below policy threshold 0.10",
+        "evaluation_compare.mmlu statistical_evidence is missing",
+    ]
+
+    report = _passing_evaluation_compare_evidence()
+    report["statistical_evidence"] = {
+        "bootstrap": [],
+        "analytical": [],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"mmlu": {}},
+    )
+
+    assert "evaluation_compare.mmlu bootstrap evidence is missing" in failures
+    assert "evaluation_compare.mmlu analytical evidence is missing" in failures
+
+
+def test_evaluate_evaluation_compare_evidence_enforces_threshold_iterations_and_confidence() -> None:
+    report = _passing_evaluation_compare_evidence()
+    report["effect_threshold"] = 0.05
+    report["statistical_evidence"]["bootstrap"]["iterations"] = 399
+    report["statistical_evidence"]["bootstrap"]["confidence_level"] = 0.94
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {
+            "mmlu": {
+                "required_verdict": "improvement",
+                "effect_threshold": 0.1,
+                "bootstrap_iterations": 400,
+                "confidence_level": 0.95,
+            }
+        },
+    )
+
+    assert (
+        "evaluation_compare.mmlu effect_threshold=0.05 fell below policy threshold 0.10"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu bootstrap_iterations=399 fell below required 400"
+        in failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_falls_back_to_default_suite_policy() -> None:
+    report = _passing_evaluation_compare_evidence()
+    report["effect_threshold"] = 0.05
+    report["statistical_evidence"]["bootstrap"]["iterations"] = 399
+    report["statistical_evidence"]["bootstrap"]["confidence_level"] = 0.94
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"other-suite": {"required_verdict": "regression"}},
+    )
+
+    assert (
+        "evaluation_compare.mmlu effect_threshold=0.05 fell below policy threshold 0.10"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu bootstrap_iterations=399 fell below required 400"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu confidence_level=0.94 fell below required 0.95"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu confidence_level=0.94 fell below required 0.95"
+        in failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_checks_each_target_summary() -> None:
+    report = {
+        "suite_id": "mmlu",
+        "job_id": "eval-compare-multi-target-artifact",
+        "target_summaries": [
+            _passing_evaluation_compare_evidence(),
+            {
+                **_passing_evaluation_compare_evidence(verdict="regression"),
+                "target_model_id": "melix-dev-text-lora-b",
+            },
+        ],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"mmlu": {"required_verdict": "improvement"}},
+    )
+
+    assert (
+        "evaluation_compare.mmlu target_model_id=melix-dev-text-lora-b verdict=regression "
+        "did not satisfy required verdict improvement"
+        in failures
+    )
 
 
 def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
@@ -1159,12 +1622,96 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.3,
             },
         },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
         "m9": _passing_m9_evidence(),
     }
 
     failures = evaluate_release_gate(report, policy)
 
     assert "eval.mmlu.accuracy=0.30 fell below minimum 0.50" in failures
+
+
+def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                pid: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670.0,
+                    "manifest_bytes": 1747.0,
+                    "calibration_sample_count": 32.0,
+                    "smoke_test_passed": 1.0,
+                }
+                for pid in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {
+                "eval.mmlu.accuracy": 0.75,
+            },
+        },
+        "evaluation_compare": _passing_evaluation_compare_evidence(verdict="regression"),
+        "m9": _passing_m9_evidence(),
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    assert "evaluation_compare.mmlu verdict=regression did not satisfy required verdict improvement" in failures
 
 
 def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
@@ -1219,6 +1766,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.75,
             },
         },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
         "m9": _passing_m9_evidence(),
     }
 

@@ -962,6 +962,10 @@ public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendabl
     public let value: Double
     public let valueText: String
     public let unit: String
+    public let verdictText: String
+    public let thresholdText: String
+    public let bootstrapCIText: String
+    public let analyticalCIText: String
 }
 
 public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Sendable {
@@ -974,6 +978,8 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
     public let correctText: String
     public let parseStatus: String
     public let timeText: String
+    public let categoryLabel: String
+    public let subjectLabel: String
 
     public init(
         id: String,
@@ -984,7 +990,9 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
         rawResponse: String,
         correctText: String,
         parseStatus: String,
-        timeText: String
+        timeText: String,
+        categoryLabel: String = "",
+        subjectLabel: String = ""
     ) {
         self.id = id
         self.sampleID = RichOutputSanitizer.sanitized(sampleID)
@@ -995,6 +1003,8 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
         self.correctText = RichOutputSanitizer.sanitized(correctText)
         self.parseStatus = RichOutputSanitizer.sanitized(parseStatus)
         self.timeText = RichOutputSanitizer.sanitized(timeText)
+        self.categoryLabel = RichOutputSanitizer.sanitized(categoryLabel)
+        self.subjectLabel = RichOutputSanitizer.sanitized(subjectLabel)
     }
 }
 
@@ -8354,7 +8364,11 @@ public final class RuntimeViewModel {
             metricLabel: evaluationScoreLabel(row.scoreName),
             value: row.scoreValue,
             valueText: String(format: "%.2f", row.scoreValue),
-            unit: "score"
+            unit: "score",
+            verdictText: row.verdict,
+            thresholdText: decimalMetricText(row.effectThreshold),
+            bootstrapCIText: intervalMetricText(lower: row.bootstrapLowerBound, upper: row.bootstrapUpperBound),
+            analyticalCIText: intervalMetricText(lower: row.analyticalLowerBound, upper: row.analyticalUpperBound)
         )
     }
 
@@ -8370,8 +8384,31 @@ public final class RuntimeViewModel {
             rawResponse: row.rawResponse,
             correctText: row.correct ? "Correct" : "Incorrect",
             parseStatus: row.parseStatus,
-            timeText: String(format: "%.2fs", row.timeS)
+            timeText: String(format: "%.2fs", row.timeS),
+            categoryLabel: row.categoryLabel,
+            subjectLabel: row.subjectLabel
         )
+    }
+
+    private static func decimalMetricText(_ value: Double?) -> String {
+        guard let value else {
+            return ""
+        }
+        return String(format: "%.4f", value)
+    }
+
+    private static func signedDecimalMetricText(_ value: Double?) -> String {
+        guard let value else {
+            return ""
+        }
+        return String(format: "%+.4f", value)
+    }
+
+    private static func intervalMetricText(lower: Double?, upper: Double?) -> String {
+        guard let lower, let upper else {
+            return ""
+        }
+        return "[\(signedDecimalMetricText(lower)), \(signedDecimalMetricText(upper))]"
     }
 
     private static func makeHubModelSearchResultState(

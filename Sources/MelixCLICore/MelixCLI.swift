@@ -2673,6 +2673,10 @@ public actor MelixCLIRunner {
             if options.json {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
+            if let bundle = try? await fetchBenchmarkExportBundle(),
+               let compareText = renderEvaluationCompareRuns(results, bundle: bundle) {
+                return compareText
+            }
             return renderEvaluationRuns(results)
         case .evalList(let options):
             let bundle = try await fetchBenchmarkExportBundle()
@@ -3697,6 +3701,73 @@ public actor MelixCLIRunner {
             }
         }
         return (["job_id\tsuite\tdataset\tstatus\tmetrics"] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func renderEvaluationCompareRuns(
+        _ runs: [ControlPlaneEvaluationResult],
+        bundle: ControlPlaneBenchmarkExportBundle
+    ) -> String? {
+        let statusByJobID = runs.reduce(into: [String: String]()) { partialResult, run in
+            partialResult[run.job.jobID] = run.job.status
+        }
+        var seenJobIDs = Set<String>()
+        let orderedJobIDs = runs.compactMap { run in
+            seenJobIDs.insert(run.job.jobID).inserted ? run.job.jobID : nil
+        }
+        let rows = orderedJobIDs.flatMap { jobID in
+            bundle.evaluationSummaryCSVRows(jobID: jobID).filter { row in
+                row.verdict.isEmpty == false
+                    || row.effectThreshold != nil
+                    || row.bootstrapLowerBound != nil
+                    || row.bootstrapUpperBound != nil
+                    || row.analyticalLowerBound != nil
+                    || row.analyticalUpperBound != nil
+            }
+        }
+        guard rows.isEmpty == false else {
+            return nil
+        }
+        let lines = rows.map { row in
+            [
+                row.jobID,
+                compareSuiteLabel(for: row),
+                row.datasetID,
+                statusByJobID[row.jobID] ?? "completed",
+                row.verdict.isEmpty ? "-" : row.verdict,
+                signedDecimalText(row.scoreValue),
+                intervalText(lower: row.bootstrapLowerBound, upper: row.bootstrapUpperBound),
+                intervalText(lower: row.analyticalLowerBound, upper: row.analyticalUpperBound),
+                decimalText(row.effectThreshold),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "job_id\tsuite\tdataset\tstatus\tverdict\tdelta\tbootstrap_ci\tanalytical_ci\tthreshold",
+        ] + lines).joined(separator: "\n") + "\n"
+    }
+
+    private func compareSuiteLabel(for row: ControlPlaneEvaluationSummaryCSVRow) -> String {
+        guard row.modelID.isEmpty == false else {
+            return row.suiteID
+        }
+        return "\(row.suiteID):\(row.modelID)"
+    }
+
+    private func signedDecimalText(_ value: Double) -> String {
+        return String(format: "%+.4f", value)
+    }
+
+    private func decimalText(_ value: Double?) -> String {
+        guard let value else {
+            return "-"
+        }
+        return String(format: "%.4f", value)
+    }
+
+    private func intervalText(lower: Double?, upper: Double?) -> String {
+        guard let lower, let upper else {
+            return "-"
+        }
+        return "[\(signedDecimalText(lower)), \(signedDecimalText(upper))]"
     }
 
     private func benchmarkDatasetLabel(_ entry: ControlPlaneBenchmarkHistoryEntry) -> String {

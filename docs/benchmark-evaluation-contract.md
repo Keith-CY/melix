@@ -53,6 +53,7 @@ It is responsible for:
 - benchmark-suite execution
 - score aggregation
 - category or subject breakdowns when supported
+- paired comparison evidence for `eval compare`
 - sample-level evidence export
 
 It is not responsible for:
@@ -386,6 +387,18 @@ Evaluation dataset overrides may also provide:
 - `dataset_id`
 - `dataset_root`
 
+### Comparison Mode
+
+`eval compare` reuses the same evaluation job family while adding one base target and one or more
+comparison targets.
+
+The canonical comparison extension fields are:
+
+- `compare_mode: base_vs_targets`
+- `compare_target_model_ids: string[]`
+
+Comparison runs must persist through the same shared history and export bundle as `eval run`.
+
 ### Normalized Input Fields
 
 The canonical normalized request shape is:
@@ -625,14 +638,66 @@ Each completed suite result must include:
 - `sample_size`
 - `correct_count`
 - `incorrect_count`
+- `effect_threshold`
+- `verdict`
+- `bootstrap_lower_bound`
+- `bootstrap_upper_bound`
+- `analytical_lower_bound`
+- `analytical_upper_bound`
 - `duration_seconds`
 - `created_at_unix_ms`
+
+Standard `eval run` rows may omit the statistical comparison fields.
+
+`eval compare` rows must populate them.
+
+### Statistical Evidence
+
+When the result comes from `eval compare`, the persisted comparison summary must also retain:
+
+- `delta_accuracy`
+- `base_accuracy`
+- `target_accuracy`
+- `win_count`
+- `loss_count`
+- `tie_count`
+- `regression_count`
+- `effect_threshold`
+- `verdict`
+- `statistical_evidence`
+- `release_gate_summary`
+
+`statistical_evidence` must include both `bootstrap` and `analytical` interval families. Each
+family must record:
+
+- `method`
+- `confidence_level`
+- `lower_bound`
+- `upper_bound`
+- `crosses_zero`
+
+The shipped comparison verdict set is:
+
+- `improvement`
+- `regression`
+- `inconclusive`
+
+Melix must classify comparison verdicts with the same `CI + threshold` rule everywhere:
+
+- emit `improvement` only when observed delta clears the positive effect threshold and both
+  interval families stay above zero
+- emit `regression` only when observed delta clears the negative effect threshold and both
+  interval families stay below zero
+- emit `inconclusive` otherwise
 
 ### Category Breakdown
 
 When the suite supports category or subject scoring, the result must also include:
 
 - `category_scores: { [category_name]: number }`
+
+When the suite supports category-aware comparison evidence, `eval compare` must also emit a
+`category_breakdown` keyed by category label.
 
 Absence of category support must be represented by omission rather than an empty map.
 
@@ -660,6 +725,8 @@ Each sample-level row must include:
 - `code_tests_passed`
 - `code_tests_total`
 - `code_failure_detail`
+- `category_label`
+- `subject_label`
 
 `parse_status` is required in Melix even when the source benchmark does not expose it directly. This field provides operator-visible debugging for extraction failures and scorer fallbacks.
 
@@ -682,6 +749,12 @@ export, and compare workflows.
 - `sample_size`
 - `correct_count`
 - `incorrect_count`
+- `effect_threshold`
+- `verdict`
+- `bootstrap_lower_bound`
+- `bootstrap_upper_bound`
+- `analytical_lower_bound`
+- `analytical_upper_bound`
 - `duration_seconds`
 - `created_at_unix_ms`
 
@@ -698,6 +771,8 @@ export, and compare workflows.
 - `raw_response`
 - `time_s`
 - `parse_status`
+- `category_label`
+- `subject_label`
 - `input_modalities`
 - `media_references`
 - `execution_status`
@@ -848,6 +923,7 @@ The evaluation surface must expose:
 - summary score cards
 - suite comparison table
 - sample preview
+- compare verdict, threshold, and confidence-interval detail when statistical evidence is present
 - summary CSV export
 - sample CSV export
 - sample JSONL export
@@ -864,6 +940,7 @@ The public CLI surface is:
 - `melix bench matrix export-summary-csv`
 - `melix bench matrix export-requests-csv`
 - `melix eval run`
+- `melix eval compare`
 - `melix eval list`
 - `melix eval export-summary-csv`
 - `melix eval export-samples-csv`
