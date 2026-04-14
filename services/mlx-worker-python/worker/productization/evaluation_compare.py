@@ -9,6 +9,16 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_compare_sample_record,
     build_evaluation_compare_summary_record,
 )
+from worker.productization.statistical_evidence import (
+    build_category_breakdown,
+    build_paired_statistical_evidence,
+    classify_release_verdict,
+)
+
+_DEFAULT_COMPARE_EFFECT_THRESHOLD = 0.1
+_DEFAULT_COMPARE_CONFIDENCE_LEVEL = 0.95
+_DEFAULT_COMPARE_BOOTSTRAP_ITERATIONS = 400
+_DEFAULT_COMPARE_BOOTSTRAP_SEED = 9
 
 
 def parse_compare_target_model_ids(parameters: dict[str, str] | None) -> tuple[str, ...]:
@@ -92,6 +102,8 @@ def build_compare_samples(
                 target_code_tests_total=target_sample.code_tests_total,
                 base_code_failure_detail=base_sample.code_failure_detail,
                 target_code_failure_detail=target_sample.code_failure_detail,
+                category_label=base_sample.category_label or target_sample.category_label,
+                subject_label=base_sample.subject_label or target_sample.subject_label,
             )
         )
     return tuple(records)
@@ -108,6 +120,10 @@ def build_compare_summary(
     scoring_mode: str,
     base_samples: tuple[EvaluationSample, ...],
     compare_samples: tuple[EvaluationCompareSample, ...],
+    effect_threshold: float = _DEFAULT_COMPARE_EFFECT_THRESHOLD,
+    confidence_level: float = _DEFAULT_COMPARE_CONFIDENCE_LEVEL,
+    bootstrap_iterations: int = _DEFAULT_COMPARE_BOOTSTRAP_ITERATIONS,
+    bootstrap_seed: int = _DEFAULT_COMPARE_BOOTSTRAP_SEED,
     duration_seconds: float,
     report_path: str,
 ) -> EvaluationCompareSummary:
@@ -124,6 +140,32 @@ def build_compare_summary(
         4,
     )
     delta_accuracy = round(target_accuracy - base_accuracy, 4)
+    paired_outcomes = tuple(
+        int(sample.target_correct) - int(sample.base_correct)
+        for sample in compare_samples
+    )
+    statistical_evidence = build_paired_statistical_evidence(
+        paired_outcomes=paired_outcomes,
+        confidence_level=confidence_level,
+        bootstrap_iterations=bootstrap_iterations,
+        bootstrap_seed=bootstrap_seed,
+    )
+    release_gate_summary = classify_release_verdict(
+        delta_accuracy=delta_accuracy,
+        effect_threshold=effect_threshold,
+        bootstrap_interval=dict(statistical_evidence.get("bootstrap", {})),
+        analytical_interval=dict(statistical_evidence.get("analytical", {})),
+    )
+    category_breakdown = build_category_breakdown(
+        rows=tuple(
+            {
+                "category_label": sample.category_label,
+                "base_correct": sample.base_correct,
+                "target_correct": sample.target_correct,
+            }
+            for sample in compare_samples
+        )
+    )
     return build_evaluation_compare_summary_record(
         job_id=job_id,
         base_model_id=base_model_id,
@@ -139,10 +181,16 @@ def build_compare_summary(
         base_accuracy=base_accuracy,
         target_accuracy=target_accuracy,
         delta_accuracy=delta_accuracy,
+        effect_threshold=effect_threshold,
+        verdict=str(release_gate_summary["verdict"]),
+        category_breakdown=category_breakdown,
+        statistical_evidence=statistical_evidence,
+        release_gate_summary=release_gate_summary,
         duration_seconds=duration_seconds,
         metrics={
             "eval.compare.base_accuracy": base_accuracy,
             "eval.compare.delta_accuracy": delta_accuracy,
+            "eval.compare.effect_threshold": float(effect_threshold),
             "eval.compare.loss_count": float(loss_count),
             "eval.compare.regression_count": float(regression_count),
             "eval.compare.target_accuracy": target_accuracy,
@@ -152,6 +200,7 @@ def build_compare_summary(
         units={
             "eval.compare.base_accuracy": "ratio",
             "eval.compare.delta_accuracy": "ratio",
+            "eval.compare.effect_threshold": "ratio",
             "eval.compare.loss_count": "count",
             "eval.compare.regression_count": "count",
             "eval.compare.target_accuracy": "ratio",

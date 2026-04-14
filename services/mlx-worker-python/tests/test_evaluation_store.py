@@ -93,16 +93,16 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n"
     )
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n"
+        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
     assert len(export_bundle["evaluation_summary_rows"]) == 1
     assert build_evaluation_summary_csv(export_bundle).startswith(
-        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\r\n"
+        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\r\n"
     )
     assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\r\n"
+        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
     )
 
 
@@ -215,12 +215,12 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
     assert sample_payload["code_tests_passed"] == 2
     assert sample_payload["code_tests_total"] == 2
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n"
+        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
     assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\r\n"
+        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
     )
 
 
@@ -261,6 +261,44 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
         base_accuracy=0.5,
         target_accuracy=1.0,
         delta_accuracy=0.5,
+        effect_threshold=0.1,
+        verdict="improvement",
+        category_breakdown={
+            "math": {
+                "sample_size": 2,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+            }
+        },
+        statistical_evidence={
+            "sample_size": 2,
+            "delta_accuracy": 0.5,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 0.15,
+                "upper_bound": 0.8,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 0.12,
+                "upper_bound": 0.88,
+                "crosses_zero": False,
+            },
+        },
+        release_gate_summary={
+            "verdict": "improvement",
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 0.5,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
         duration_seconds=0.25,
         metrics={"eval.compare.win_count": 1.0, "eval.compare.delta_accuracy": 0.5},
         report_path=str(run_root / "evaluation-compare-report.md"),
@@ -285,6 +323,8 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
         target_time_s=0.02,
         base_parse_status="parsed_answer_prefix",
         target_parse_status="parsed_answer_prefix",
+        category_label="math",
+        subject_label="algebra",
     )
 
     persisted = store.persist_compare_result(
@@ -303,11 +343,23 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
     summary_payload = json.loads(persisted["summary_json"].read_text(encoding="utf-8"))
     assert summary_payload["job_id"] == "eval-compare-1"
     assert summary_payload["target_summaries"][0]["target_model_id"] == "melix-dev-text-lora-a"
+    assert summary_payload["target_summaries"][0]["verdict"] == "improvement"
+    assert summary_payload["target_summaries"][0]["category_breakdown"]["math"]["sample_size"] == 2
+    assert summary_payload["target_summaries"][0]["statistical_evidence"]["bootstrap"]["iterations"] == 400
+    assert (
+        summary_payload["target_summaries"][0]["release_gate_summary"]["both_intervals_same_side"]
+        is True
+    )
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == compare_sample.to_dict()
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
-        "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds,created_at_unix_ms\n"
+        "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n"
     )
     assert persisted["report_markdown"].read_text(encoding="utf-8").startswith("# Melix Evaluation Compare\n")
+    report_markdown = persisted["report_markdown"].read_text(encoding="utf-8")
+    assert "Verdict" in report_markdown
+    assert "Bootstrap CI" in report_markdown
+    assert "Analytical CI" in report_markdown
+    assert "Category Breakdown" in report_markdown
 
 
 def test_persist_compare_result_preserves_code_execution_evidence(tmp_path: Path) -> None:
@@ -345,6 +397,44 @@ def test_persist_compare_result_preserves_code_execution_evidence(tmp_path: Path
         base_accuracy=0.0,
         target_accuracy=1.0,
         delta_accuracy=1.0,
+        effect_threshold=0.1,
+        verdict="improvement",
+        category_breakdown={
+            "code": {
+                "sample_size": 1,
+                "base_accuracy": 0.0,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 1.0,
+            }
+        },
+        statistical_evidence={
+            "sample_size": 1,
+            "delta_accuracy": 1.0,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 1.0,
+                "upper_bound": 1.0,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 1.0,
+                "upper_bound": 1.0,
+                "crosses_zero": False,
+            },
+        },
+        release_gate_summary={
+            "verdict": "improvement",
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 1.0,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
         duration_seconds=0.25,
         metrics={"eval.compare.delta_accuracy": 1.0},
         report_path=str(run_root / "evaluation-compare-report.md"),

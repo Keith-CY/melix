@@ -2301,6 +2301,7 @@ struct MelixCLIRunnerTests {
                 ]
             ),
         ])
+        await client.setExportResult(.init(exportBundleJSON: makeEvaluationCompareExportBundleJSON()))
         let output = try await MelixCLIRunner(client: client).run(
             .evalCompare(
                 .init(
@@ -2313,9 +2314,71 @@ struct MelixCLIRunnerTests {
             )
         )
 
+        #expect(output.contains("job_id\tsuite\tdataset\tstatus\tverdict\tdelta\tbootstrap_ci\tanalytical_ci\tthreshold"))
+        #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-a\tmmlu.dev.v1\tcompleted\timprovement\t+0.2500\t[+0.1200, +0.4100]\t[+0.1000, +0.3800]\t0.1000"))
+        #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-b\tmmlu.dev.v1\tcompleted\tinconclusive\t-0.1250\t[-0.2100, +0.0200]\t[-0.1800, +0.0100]\t0.1000"))
+    }
+
+    @Test("eval compare falls back to metrics table when compare summary rows are unavailable")
+    func evalCompareFallsBackToMetricsTableWithoutCompareSummaryRows() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-2",
+                baseSuiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                targets: [
+                    ("melix-dev-text-lora-a", 0.625),
+                ]
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora-a"],
+                    suites: ["mmlu"],
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 8
+                )
+            )
+        )
+
         #expect(output.contains("job_id\tsuite\tdataset\tstatus\tmetrics"))
         #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-a\tmmlu.dev.v1\tcompleted\teval.compare.win_rate=0.625ratio"))
-        #expect(output.contains("eval-compare-2\tmmlu:melix-dev-text-lora-b\tmmlu.dev.v1\tcompleted\teval.compare.win_rate=0.375ratio"))
+    }
+
+    @Test("eval compare renders suite fallback and placeholder evidence markers")
+    func evalCompareRendersSuiteFallbackAndPlaceholderEvidenceMarkers() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-2",
+                baseSuiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                targets: [
+                    ("melix-dev-text-lora-a", 0.625),
+                ]
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeEvaluationCompareSparseExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora-a"],
+                    suites: ["mmlu"],
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 8
+                )
+            )
+        )
+
+        #expect(output.contains("job_id\tsuite\tdataset\tstatus\tverdict\tdelta\tbootstrap_ci\tanalytical_ci\tthreshold"))
+        #expect(output.contains("eval-compare-2\tmmlu\tmmlu.dev.v1\tcompleted\tinconclusive\t-0.1250\t-\t-\t-"))
     }
 
     @Test("eval list renders history rows and returns JSON when requested")
@@ -2371,10 +2434,10 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "eval-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
-        #expect(samplesCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(samplesCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(samplesCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(samplesCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
         #expect(samplesJSONL.contains("\"task_kind\":\"text-generation\""))
         #expect(samplesJSONL.contains("\"code_language\":\"python\""))
@@ -3538,6 +3601,12 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "score_value": 0.75,
           "correct_count": 6,
           "incorrect_count": 2,
+          "effect_threshold": 0.1,
+          "verdict": "improvement",
+          "bootstrap_lower_bound": 0.12,
+          "bootstrap_upper_bound": 0.41,
+          "analytical_lower_bound": 0.1,
+          "analytical_upper_bound": 0.38,
           "duration_seconds": 12.5,
           "created_at_unix_ms": 1712400000000
         }
@@ -3567,7 +3636,9 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "code_test_status": "passed",
           "code_tests_passed": 2,
           "code_tests_total": 2,
-          "code_failure_detail": ""
+          "code_failure_detail": "",
+          "category_label": "math",
+          "subject_label": "algebra"
         }
       ],
       "evaluation_compare_jobs": [
@@ -3654,7 +3725,129 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "base_code_tests_total": 2,
           "target_code_tests_total": 2,
           "base_code_failure_detail": "assertion failed",
-          "target_code_failure_detail": ""
+          "target_code_failure_detail": "",
+          "category_label": "math",
+          "subject_label": "algebra"
+        }
+      ]
+    }
+    """
+}
+
+private func makeEvaluationCompareExportBundleJSON() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "evaluation_jobs": [
+        {
+          "schema_version": "melix.evaluation_job.v1",
+          "job_id": "eval-compare-2",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "scoring_mode": "multiple_choice_accuracy",
+          "parameters": {
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-a,melix-dev-text-lora-b"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/evaluation/runs/eval-compare-2",
+          "created_at_unix_ms": 1712400000000,
+          "updated_at_unix_ms": 1712400005000
+        }
+      ],
+      "evaluation_summary_rows": [
+        {
+          "job_id": "eval-compare-2",
+          "model_id": "melix-dev-text-lora-a",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "score_name": "eval.compare.delta_accuracy",
+          "score_value": 0.25,
+          "correct_count": 7,
+          "incorrect_count": 1,
+          "effect_threshold": 0.1,
+          "verdict": "improvement",
+          "bootstrap_lower_bound": 0.12,
+          "bootstrap_upper_bound": 0.41,
+          "analytical_lower_bound": 0.1,
+          "analytical_upper_bound": 0.38,
+          "duration_seconds": 12.5,
+          "created_at_unix_ms": 1712400000000
+        },
+        {
+          "job_id": "eval-compare-2",
+          "model_id": "melix-dev-text-lora-b",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "score_name": "eval.compare.delta_accuracy",
+          "score_value": -0.125,
+          "correct_count": 3,
+          "incorrect_count": 5,
+          "effect_threshold": 0.1,
+          "verdict": "inconclusive",
+          "bootstrap_lower_bound": -0.21,
+          "bootstrap_upper_bound": 0.02,
+          "analytical_lower_bound": -0.18,
+          "analytical_upper_bound": 0.01,
+          "duration_seconds": 12.5,
+          "created_at_unix_ms": 1712400000000
+        }
+      ]
+    }
+    """
+}
+
+private func makeEvaluationCompareSparseExportBundleJSON() -> String {
+    """
+    {
+      "export_schema_version": "melix.benchmark_export.v1",
+      "evaluation_jobs": [
+        {
+          "schema_version": "melix.evaluation_job.v1",
+          "job_id": "eval-compare-2",
+          "model_id": "melix-dev-text",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "scoring_mode": "multiple_choice_accuracy",
+          "parameters": {
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-a"
+          },
+          "status": "completed",
+          "output_dir": "/tmp/melix/evaluation/runs/eval-compare-2",
+          "created_at_unix_ms": 1712400000000,
+          "updated_at_unix_ms": 1712400005000
+        }
+      ],
+      "evaluation_summary_rows": [
+        {
+          "job_id": "eval-compare-2",
+          "model_id": "",
+          "task_kind": "text-generation",
+          "source_repo": "HuggingFaceH4/ultrachat_200k",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "score_name": "eval.compare.delta_accuracy",
+          "score_value": -0.125,
+          "correct_count": 3,
+          "incorrect_count": 5,
+          "verdict": "inconclusive",
+          "duration_seconds": 12.5,
+          "created_at_unix_ms": 1712400000000
         }
       ]
     }

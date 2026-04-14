@@ -457,6 +457,10 @@ Important compare rules:
 - every `--target-model-id` must already exist in the local catalog
 - compare results persist through the same evaluation export bundle as `eval run`, but compare exports use dedicated compare subcommands
 - compare sample exports preserve executable-code evidence for both the base and target responses when the suite executes code
+- human-readable compare output now includes `verdict`, observed delta, bootstrap CI, analytical CI,
+  and the configured effect threshold for each target model
+- `improvement` and `regression` are only emitted when delta clears the effect threshold and both
+  interval families remain on the same side of zero; otherwise the result is `inconclusive`
 
 Export the resulting comparison evidence with the dedicated compare export commands:
 
@@ -475,6 +479,18 @@ swift run melix eval compare export-samples-jsonl \
   --job-id <compare-job-id> \
   --output /tmp/melix-evaluation-compare-samples.jsonl
 ```
+
+The exported compare summary CSV adds these release-facing columns:
+
+- `effect_threshold`
+- `verdict`
+- `bootstrap_lower_bound`
+- `bootstrap_upper_bound`
+- `analytical_lower_bound`
+- `analytical_upper_bound`
+
+The exported compare sample rows also retain `category_label` and `subject_label` when the suite
+material provides stable category metadata.
 
 Benchmark and matrix workflows remain one target per run, so benchmark-to-benchmark comparison is
 still a serial job review workflow using `bench list`, `bench matrix list`, and CSV exports across

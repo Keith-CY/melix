@@ -146,6 +146,8 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         task_kind="image-text-to-text",
         input_modalities=("text", "image"),
         media_references=("/tmp/cat.png",),
+        category_label="animals",
+        subject_label="imagenette",
     )
 
     assert sample.to_dict() == {
@@ -173,6 +175,8 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "code_tests_passed": 0,
         "code_tests_total": 0,
         "code_failure_detail": "",
+        "category_label": "animals",
+        "subject_label": "imagenette",
     }
 
 
@@ -208,6 +212,44 @@ def test_build_evaluation_compare_records_preserve_target_metadata() -> None:
         base_accuracy=0.5,
         target_accuracy=1.0,
         delta_accuracy=0.5,
+        effect_threshold=0.1,
+        verdict="improvement",
+        category_breakdown={
+            "math": {
+                "sample_size": 2,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+            }
+        },
+        statistical_evidence={
+            "sample_size": 2,
+            "delta_accuracy": 0.5,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 0.15,
+                "upper_bound": 0.8,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 0.12,
+                "upper_bound": 0.88,
+                "crosses_zero": False,
+            },
+        },
+        release_gate_summary={
+            "verdict": "improvement",
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 0.5,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
         duration_seconds=0.25,
         metrics={"eval.compare.win_count": 1.0, "eval.compare.delta_accuracy": 0.5},
         report_path="/tmp/melix/evaluation/runs/eval-compare-1/evaluation-compare-report.md",
@@ -232,10 +274,19 @@ def test_build_evaluation_compare_records_preserve_target_metadata() -> None:
         target_time_s=0.02,
         base_parse_status="parsed_answer_prefix",
         target_parse_status="parsed_answer_prefix",
+        category_label="math",
+        subject_label="algebra",
     )
 
     assert job.to_dict()["target_model_ids"] == ["melix-dev-text-lora-a", "melix-dev-text-lora-b"]
     assert summary.to_dict()["target_model_id"] == "melix-dev-text-lora-a"
+    assert summary.to_dict()["effect_threshold"] == 0.1
+    assert summary.to_dict()["verdict"] == "improvement"
+    assert summary.to_dict()["category_breakdown"]["math"]["delta_accuracy"] == 0.5
+    assert summary.to_dict()["statistical_evidence"]["bootstrap"]["iterations"] == 400
+    assert summary.to_dict()["release_gate_summary"]["threshold_passed"] is True
+    assert sample.to_dict()["category_label"] == "math"
+    assert sample.to_dict()["subject_label"] == "algebra"
     assert summary.to_dict()["metrics"][0]["name"] == "eval.compare.delta_accuracy"
     assert sample.to_dict()["base_predicted"] == "4"
     assert sample.to_dict()["target_predicted"] == "4"

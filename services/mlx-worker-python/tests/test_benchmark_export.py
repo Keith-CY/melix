@@ -368,6 +368,44 @@ def _write_eval_compare_fixtures(root: Path) -> None:
                     "base_accuracy": 0.5,
                     "target_accuracy": 1.0,
                     "delta_accuracy": 0.5,
+                    "effect_threshold": 0.1,
+                    "verdict": "improvement",
+                    "category_breakdown": {
+                        "math": {
+                            "sample_size": 8,
+                            "base_accuracy": 0.5,
+                            "target_accuracy": 1.0,
+                            "delta_accuracy": 0.5,
+                        }
+                    },
+                    "statistical_evidence": {
+                        "sample_size": 8,
+                        "delta_accuracy": 0.5,
+                        "bootstrap": {
+                            "method": "paired_bootstrap_percentile",
+                            "confidence_level": 0.95,
+                            "lower_bound": 0.12,
+                            "upper_bound": 0.84,
+                            "crosses_zero": False,
+                            "iterations": 400,
+                            "seed": 9,
+                        },
+                        "analytical": {
+                            "method": "paired_difference_normal_approximation",
+                            "confidence_level": 0.95,
+                            "lower_bound": 0.18,
+                            "upper_bound": 0.82,
+                            "crosses_zero": False,
+                        },
+                    },
+                    "release_gate_summary": {
+                        "verdict": "improvement",
+                        "reason": "delta_exceeds_threshold_with_supported_intervals",
+                        "effect_threshold": 0.1,
+                        "delta_accuracy": 0.5,
+                        "threshold_passed": True,
+                        "both_intervals_same_side": True,
+                    },
                     "duration_seconds": 3.25,
                     "metrics": [
                         {"name": "eval.compare.base_accuracy", "value": 0.5, "unit": "ratio"},
@@ -403,6 +441,8 @@ def _write_eval_compare_fixtures(root: Path) -> None:
                 "target_time_s": 0.02,
                 "base_parse_status": "parsed",
                 "target_parse_status": "parsed",
+                "category_label": "math",
+                "subject_label": "algebra",
             }),
         ]) + "\n"
     )
@@ -515,7 +555,17 @@ def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_ex
     assert result["evaluation_summary_rows"][0]["model_id"] == "melix-dev-text-lora-a"
     assert result["evaluation_summary_rows"][0]["score_name"] == "eval.compare.delta_accuracy"
     assert result["evaluation_summary_rows"][0]["score_value"] == 0.5
-    assert result["evaluation_samples"] == []
+    assert result["evaluation_summary_rows"][0]["effect_threshold"] == 0.1
+    assert result["evaluation_summary_rows"][0]["verdict"] == "improvement"
+    assert result["evaluation_summary_rows"][0]["bootstrap_lower_bound"] == 0.12
+    assert result["evaluation_summary_rows"][0]["analytical_upper_bound"] == 0.82
+    assert result["evaluation_samples"][0]["job_id"] == "eval-compare-1"
+    assert result["evaluation_samples"][0]["sample_id"] == "melix-dev-text-lora-a:sample-1"
+    assert result["evaluation_samples"][0]["task_kind"] == "text-generation"
+    assert result["evaluation_samples"][0]["predicted"] == "4"
+    assert result["evaluation_samples"][0]["code_language"] == ""
+    assert result["evaluation_samples"][0]["category_label"] == "math"
+    assert result["evaluation_samples"][0]["subject_label"] == "algebra"
     assert result["evaluation_compare_jobs"][0]["job_id"] == "eval-compare-1"
     assert result["evaluation_compare_summary_rows"][0]["target_model_id"] == "melix-dev-text-lora-a"
     assert result["evaluation_compare_samples"][0]["job_id"] == "eval-compare-1"
@@ -782,13 +832,19 @@ def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
     compare_summary_lines = [line for line in compare_summary_csv.splitlines() if line.strip()]
     compare_samples_lines = [line for line in compare_samples_csv.splitlines() if line.strip()]
     assert len(summary_lines) == 1
-    assert summary_lines[0].startswith("job_id,task_kind")
+    assert summary_lines[0].startswith(
+        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
+    )
     assert len(samples_lines) == 1
-    assert samples_lines[0].startswith("job_id,suite_id,id,task_kind")
+    assert samples_lines[0].startswith(
+        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+    )
     assert len(compare_summary_lines) == 1
     assert compare_summary_lines[0].startswith("job_id,base_model_id,target_model_id")
     assert len(compare_samples_lines) == 1
-    assert compare_samples_lines[0].startswith("job_id,suite_id,dataset_id,sample_id,target_model_id")
+    assert compare_samples_lines[0].startswith(
+        "job_id,suite_id,dataset_id,sample_id,target_model_id"
+    )
 
 
 def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities() -> None:
@@ -828,7 +884,7 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
         "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,"
         "parse_status,input_modalities,media_references,code_language,code_entry_point,"
         "code_compile_status,code_runtime_status,code_timeout_status,code_test_status,"
-        "code_tests_passed,code_tests_total,code_failure_detail"
+        "code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
     )
     assert "eval-1,humaneval,sample-1,text-generation,True,identity," in lines[1]
 
@@ -890,6 +946,8 @@ def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
                 "target_code_tests_total": 2,
                 "base_code_failure_detail": "assertion failed",
                 "target_code_failure_detail": "",
+                "category_label": "math",
+                "subject_label": "algebra",
             }
         ],
     }
@@ -901,6 +959,7 @@ def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
     assert "eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75" in summary_csv
     assert "job_id,suite_id,dataset_id,sample_id,target_model_id" in samples_csv
     assert "assertion failed" in samples_csv
+    assert "math,algebra" in samples_csv
 
 
 def test_benchmark_csv_builders_return_header_only_for_empty_bundle() -> None:

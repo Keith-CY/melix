@@ -1853,6 +1853,29 @@ func makeBenchmarkExportBundleJSON() -> String {
           "report_path": "/tmp/melix/evaluation/runs/eval-newer/evaluation-report.md"
         }
       ],
+      "evaluation_summary_rows": [
+        {
+          "job_id": "eval-newer",
+          "model_id": "melix-dev-text-lora",
+          "task_kind": "text-generation",
+          "source_repo": "cais/mmlu",
+          "suite_id": "mmlu",
+          "dataset_id": "mmlu.dev.v1",
+          "sample_size": 8,
+          "score_name": "eval.compare.delta_accuracy",
+          "score_value": 0.25,
+          "correct_count": 6,
+          "incorrect_count": 2,
+          "effect_threshold": 0.1,
+          "verdict": "improvement",
+          "bootstrap_lower_bound": 0.12,
+          "bootstrap_upper_bound": 0.41,
+          "analytical_lower_bound": 0.1,
+          "analytical_upper_bound": 0.38,
+          "duration_seconds": 12.5,
+          "created_at_unix_ms": 1712300000000
+        }
+      ],
       "evaluation_samples": [
         {
           "schema_version": "melix.evaluation_sample.v1",
@@ -1866,7 +1889,9 @@ func makeBenchmarkExportBundleJSON() -> String {
           "raw_response": "4",
           "correct": true,
           "time_s": 0.42,
-          "parse_status": "parsed"
+          "parse_status": "parsed",
+          "category_label": "math",
+          "subject_label": "arithmetic"
         },
         {
           "schema_version": "melix.evaluation_sample.v1",
@@ -1880,11 +1905,23 @@ func makeBenchmarkExportBundleJSON() -> String {
           "raw_response": "Lyon",
           "correct": false,
           "time_s": 0.51,
-          "parse_status": "parsed"
+          "parse_status": "parsed",
+          "category_label": "geography",
+          "subject_label": "europe"
         }
       ]
     }
     """
+}
+
+func makeBenchmarkExportBundleJSONWithSparseEvaluationCompareEvidence() -> String {
+    makeBenchmarkExportBundleJSON()
+        .replacingOccurrences(of: #""effect_threshold": 0.1,"#, with: "")
+        .replacingOccurrences(of: #""verdict": "improvement""#, with: #""verdict": "inconclusive""#)
+        .replacingOccurrences(of: #""bootstrap_lower_bound": 0.12,"#, with: "")
+        .replacingOccurrences(of: #""bootstrap_upper_bound": 0.41,"#, with: "")
+        .replacingOccurrences(of: #""analytical_lower_bound": 0.1,"#, with: "")
+        .replacingOccurrences(of: #""analytical_upper_bound": 0.38,"#, with: "")
 }
 
 func makeBenchmarkExportBundleJSONWithoutResults() -> String {

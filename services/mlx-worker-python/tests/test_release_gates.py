@@ -10,6 +10,7 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
+    collect_evaluation_compare_evidence,
     collect_audio_product_evidence,
     collect_benchmark_evidence,
     collect_evaluation_evidence,
@@ -97,6 +98,60 @@ def _passing_m9_evidence(policy: dict[str, object] | None = None) -> dict[str, o
             "missing_probe_count": 0.0,
             "failed_threshold_count": 0.0,
         },
+    }
+
+
+def _passing_evaluation_compare_evidence(verdict: str = "improvement") -> dict[str, object]:
+    return {
+        "suite_id": "mmlu",
+        "base_model_id": "melix-dev-text",
+        "target_model_id": "melix-dev-text-lora-a",
+        "sample_size": 8,
+        "effect_threshold": 0.1,
+        "verdict": verdict,
+        "metrics": {
+            "eval.compare.delta_accuracy": 0.5,
+            "eval.compare.effect_threshold": 0.1,
+        },
+        "category_breakdown": {
+            "math": {
+                "sample_size": 8,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+            }
+        },
+        "statistical_evidence": {
+            "sample_size": 8,
+            "delta_accuracy": 0.5,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 0.12,
+                "upper_bound": 0.84,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 0.18,
+                "upper_bound": 0.82,
+                "crosses_zero": False,
+            },
+        },
+        "release_gate_summary": {
+            "verdict": verdict,
+            "reason": "delta_exceeds_threshold_with_supported_intervals"
+            if verdict != "inconclusive"
+            else "confidence_intervals_cross_zero",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 0.5 if verdict != "regression" else -0.5,
+            "threshold_passed": verdict != "inconclusive",
+            "both_intervals_same_side": verdict != "inconclusive",
+        },
+        "report_path": "/tmp/evaluation-compare-report.md",
     }
 
 
@@ -1051,6 +1106,9 @@ def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
     assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
 
 
 def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None:
@@ -1062,6 +1120,8 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
     assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "evaluation_compare" in policy
+    assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
     assert "m9" in policy
     assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
     assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0
@@ -1083,6 +1143,80 @@ def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt
 
     assert list(backend.generate_tokens({}, "2 + 2 ?", None, canceled)) == []
     assert list(backend.generate_tokens({}, "hello world", None, active)) == ["Answer: 0"]
+
+
+def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: Path) -> None:
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["verdict"] == "improvement"
+    assert evidence["effect_threshold"] == 0.1
+    assert evidence["statistical_evidence"]["bootstrap"]["iterations"] == 400
+    assert evidence["release_gate_summary"]["both_intervals_same_side"] is True
+
+
+def test_evaluate_evaluation_compare_evidence_requires_suite_policy_and_statistical_shapes() -> None:
+    assert release_gates_module._evaluate_evaluation_compare_evidence({}, {"mmlu": {}}) == [
+        "evaluation_compare.suite_id is missing"
+    ]
+    assert release_gates_module._evaluate_evaluation_compare_evidence(
+        {"suite_id": "mmlu"},
+        {"mmlu": []},
+    ) == [
+        "evaluation_compare.mmlu policy is missing"
+    ]
+    assert release_gates_module._evaluate_evaluation_compare_evidence(
+        {"suite_id": "mmlu", "statistical_evidence": []},
+        {"mmlu": {}},
+    ) == [
+        "evaluation_compare.mmlu statistical_evidence is missing"
+    ]
+
+    report = _passing_evaluation_compare_evidence()
+    report["statistical_evidence"] = {
+        "bootstrap": [],
+        "analytical": [],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"mmlu": {}},
+    )
+
+    assert "evaluation_compare.mmlu bootstrap evidence is missing" in failures
+    assert "evaluation_compare.mmlu analytical evidence is missing" in failures
+
+
+def test_evaluate_evaluation_compare_evidence_enforces_threshold_iterations_and_confidence() -> None:
+    report = _passing_evaluation_compare_evidence()
+    report["effect_threshold"] = 0.05
+    report["statistical_evidence"]["bootstrap"]["iterations"] = 399
+    report["statistical_evidence"]["bootstrap"]["confidence_level"] = 0.94
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {
+            "mmlu": {
+                "required_verdict": "improvement",
+                "effect_threshold": 0.1,
+                "bootstrap_iterations": 400,
+                "confidence_level": 0.95,
+            }
+        },
+    )
+
+    assert (
+        "evaluation_compare.mmlu effect_threshold=0.05 fell below policy threshold 0.10"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu bootstrap_iterations=399 fell below required 400"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu confidence_level=0.94 fell below required 0.95"
+        in failures
+    )
 
 
 def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
@@ -1159,12 +1293,96 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.3,
             },
         },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
         "m9": _passing_m9_evidence(),
     }
 
     failures = evaluate_release_gate(report, policy)
 
     assert "eval.mmlu.accuracy=0.30 fell below minimum 0.50" in failures
+
+
+def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                pid: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670.0,
+                    "manifest_bytes": 1747.0,
+                    "calibration_sample_count": 32.0,
+                    "smoke_test_passed": 1.0,
+                }
+                for pid in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {
+                "eval.mmlu.accuracy": 0.75,
+            },
+        },
+        "evaluation_compare": _passing_evaluation_compare_evidence(verdict="regression"),
+        "m9": _passing_m9_evidence(),
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    assert "evaluation_compare.mmlu verdict=regression did not satisfy required verdict improvement" in failures
 
 
 def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
@@ -1219,6 +1437,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
                 "eval.mmlu.accuracy": 0.75,
             },
         },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
         "m9": _passing_m9_evidence(),
     }
 

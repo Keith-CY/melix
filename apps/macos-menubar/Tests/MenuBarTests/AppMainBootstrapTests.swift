@@ -526,8 +526,15 @@ struct AppMainBootstrapTests {
     @MainActor
     func bootstrapEnvironmentFallsBackToDefaults() {
         let environment = MenuBarBootstrapEnvironment(environment: [:])
+        let expectedRepoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
 
-        #expect(environment.repoRoot.hasSuffix("/melix"))
+        #expect(environment.repoRoot == expectedRepoRoot)
         #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
         #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
         #expect(environment.startupSurface == .tray)

@@ -31,6 +31,12 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
+from worker.productization.evaluation_compare import build_compare_samples, build_compare_summary
+from worker.productization.evaluation_reports import build_evaluation_compare_report_markdown
+from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_sample_record,
+)
 from worker.productization.quantization_gates import (
     DEFAULT_QUANTIZATION_GATE_POLICY,
     collect_quantization_benchmark_evidence,
@@ -131,6 +137,15 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
     "evaluation": {
         "eval.mmlu.accuracy": {"min": 0.5},
+    },
+    "evaluation_compare": {
+        "mmlu": {
+            "effect_threshold": 0.1,
+            "confidence_level": 0.95,
+            "bootstrap_iterations": 400,
+            "bootstrap_seed": 9,
+            "required_verdict": "improvement",
+        }
     },
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
 }
@@ -418,6 +433,116 @@ def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
     }
 
 
+def collect_evaluation_compare_evidence(
+    jobs_root: str | Path,
+    *,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    suite_id = "mmlu"
+    suite_policy = dict((policy or DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})).get(suite_id, {}))
+    effect_threshold = float(suite_policy.get("effect_threshold", 0.1))
+    confidence_level = float(suite_policy.get("confidence_level", 0.95))
+    bootstrap_iterations = int(suite_policy.get("bootstrap_iterations", 400))
+    bootstrap_seed = int(suite_policy.get("bootstrap_seed", 9))
+
+    run_root = Path(jobs_root) / "evaluation" / "runs" / "eval-compare-release-gate"
+    run_root.mkdir(parents=True, exist_ok=True)
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-release-gate",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-a",),
+        task_kind="text-generation",
+        source_repo="melix.synthetic.release-gate",
+        suite_id=suite_id,
+        dataset_id="mmlu.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "effect_threshold": str(effect_threshold),
+            "confidence_level": str(confidence_level),
+            "bootstrap_iterations": str(bootstrap_iterations),
+            "bootstrap_seed": str(bootstrap_seed),
+        },
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=1712600000000,
+        updated_at_unix_ms=1712600000000,
+    )
+    base_samples = tuple(
+        build_evaluation_sample_record(
+            job_id=compare_job.job_id,
+            suite_id=suite_id,
+            dataset_id="mmlu.dev.v1",
+            sample_id=f"sample-{index + 1}",
+            question=f"Question {index + 1}",
+            expected=str(index + 1),
+            predicted="0",
+            raw_response="0",
+            correct=False,
+            time_s=0.01,
+            parse_status="parsed",
+            category_label="math",
+            subject_label="arithmetic",
+        )
+        for index in range(compare_job.sample_size)
+    )
+    target_samples = tuple(
+        build_evaluation_sample_record(
+            job_id=compare_job.job_id,
+            suite_id=suite_id,
+            dataset_id="mmlu.dev.v1",
+            sample_id=f"sample-{index + 1}",
+            question=f"Question {index + 1}",
+            expected=str(index + 1),
+            predicted=str(index + 1),
+            raw_response=str(index + 1),
+            correct=True,
+            time_s=0.01,
+            parse_status="parsed",
+            category_label="math",
+            subject_label="arithmetic",
+        )
+        for index in range(compare_job.sample_size)
+    )
+    compare_samples = build_compare_samples(
+        job_id=compare_job.job_id,
+        suite_id=suite_id,
+        dataset_id="mmlu.dev.v1",
+        target_model_id="melix-dev-text-lora-a",
+        base_samples=base_samples,
+        target_samples=target_samples,
+    )
+    compare_summary = build_compare_summary(
+        job_id=compare_job.job_id,
+        base_model_id=compare_job.base_model_id,
+        target_model_id="melix-dev-text-lora-a",
+        suite_id=suite_id,
+        dataset_id="mmlu.dev.v1",
+        sample_size=compare_job.sample_size,
+        scoring_mode=compare_job.scoring_mode,
+        base_samples=base_samples,
+        compare_samples=compare_samples,
+        effect_threshold=effect_threshold,
+        confidence_level=confidence_level,
+        bootstrap_iterations=bootstrap_iterations,
+        bootstrap_seed=bootstrap_seed,
+        duration_seconds=0.25,
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    report_path = Path(compare_summary.report_path)
+    report_path.write_text(
+        build_evaluation_compare_report_markdown(job=compare_job, summaries=(compare_summary,)),
+        encoding="utf-8",
+    )
+    evidence = compare_summary.to_dict()
+    evidence["metrics"] = {
+        "eval.compare.delta_accuracy": compare_summary.delta_accuracy,
+        "eval.compare.effect_threshold": compare_summary.effect_threshold,
+    }
+    return evidence
+
+
 def _ensure_evaluation_dataset(eval_root: Path) -> Path:
     dataset_root = eval_root / "datasets" / "mmlu-dev"
     dataset_root.mkdir(parents=True, exist_ok=True)
@@ -579,6 +704,10 @@ def build_release_gate_report(
         "audio": collect_audio_product_evidence(repo_root),
         "quantization": collect_quantization_benchmark_evidence(Path(jobs_root) / "quantization"),
         "evaluation": collect_evaluation_evidence(jobs_root),
+        "evaluation_compare": collect_evaluation_compare_evidence(
+            jobs_root,
+            policy=active_policy.get("evaluation_compare", {}),
+        ),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
     }
     if recovery is not None:
@@ -649,12 +778,82 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
             _evaluate_section_metrics(evaluation.get("metrics", {}), policy.get("evaluation", {}))
         )
 
+    evaluation_compare = report.get("evaluation_compare")
+    if not isinstance(evaluation_compare, dict):
+        failures.append("evaluation_compare evidence is missing")
+    else:
+        failures.extend(
+            _evaluate_evaluation_compare_evidence(
+                evaluation_compare,
+                policy.get("evaluation_compare", {}),
+            )
+        )
+
     m9 = report.get("m9")
     if not isinstance(m9, dict):
         failures.append("m9 evidence is missing")
     else:
         m9_failures, _ = evaluate_m9_release_evidence(m9, policy.get("m9", {}))
         failures.extend(m9_failures)
+
+    return failures
+
+
+def _evaluate_evaluation_compare_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    suite_id = str(report.get("suite_id", "")).strip()
+    if not suite_id:
+        failures.append("evaluation_compare.suite_id is missing")
+        return failures
+
+    suite_policy = policy.get(suite_id, {})
+    if not isinstance(suite_policy, dict):
+        failures.append(f"evaluation_compare.{suite_id} policy is missing")
+        return failures
+
+    required_verdict = str(suite_policy.get("required_verdict", "")).strip()
+    actual_verdict = str(report.get("verdict", "")).strip()
+    if required_verdict and actual_verdict != required_verdict:
+        failures.append(
+            f"evaluation_compare.{suite_id} verdict={actual_verdict} did not satisfy required verdict {required_verdict}"
+        )
+
+    effect_threshold = float(report.get("effect_threshold", 0.0) or 0.0)
+    policy_threshold = float(suite_policy.get("effect_threshold", 0.0) or 0.0)
+    if effect_threshold < policy_threshold:
+        failures.append(
+            f"evaluation_compare.{suite_id} effect_threshold={effect_threshold:.2f} fell below policy threshold {policy_threshold:.2f}"
+        )
+
+    statistical_evidence = report.get("statistical_evidence", {})
+    if not isinstance(statistical_evidence, dict):
+        failures.append(f"evaluation_compare.{suite_id} statistical_evidence is missing")
+        return failures
+    bootstrap = statistical_evidence.get("bootstrap", {})
+    analytical = statistical_evidence.get("analytical", {})
+    if not isinstance(bootstrap, dict):
+        failures.append(f"evaluation_compare.{suite_id} bootstrap evidence is missing")
+        bootstrap = {}
+    if not isinstance(analytical, dict):
+        failures.append(f"evaluation_compare.{suite_id} analytical evidence is missing")
+        analytical = {}
+
+    bootstrap_iterations = int(bootstrap.get("iterations", 0) or 0)
+    required_iterations = int(suite_policy.get("bootstrap_iterations", 0) or 0)
+    if required_iterations and bootstrap_iterations < required_iterations:
+        failures.append(
+            f"evaluation_compare.{suite_id} bootstrap_iterations={bootstrap_iterations} fell below required {required_iterations}"
+        )
+
+    confidence_level = float(bootstrap.get("confidence_level", 0.0) or 0.0)
+    required_confidence = float(suite_policy.get("confidence_level", 0.0) or 0.0)
+    if required_confidence and confidence_level < required_confidence:
+        failures.append(
+            f"evaluation_compare.{suite_id} confidence_level={confidence_level:.2f} fell below required {required_confidence:.2f}"
+        )
 
     return failures
 

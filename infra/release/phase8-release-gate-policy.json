@@ -208,6 +208,15 @@
       "min": 0.5
     }
   },
+  "evaluation_compare": {
+    "mmlu": {
+      "bootstrap_iterations": 400,
+      "bootstrap_seed": 9,
+      "confidence_level": 0.95,
+      "effect_threshold": 0.1,
+      "required_verdict": "improvement"
+    }
+  },
   "m9": {
     "agent_export": {
       "integration.export_generation_ms": {

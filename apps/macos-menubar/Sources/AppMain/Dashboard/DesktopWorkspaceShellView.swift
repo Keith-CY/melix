@@ -2597,54 +2597,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
                             ForEach(viewModel.evaluationMetricCards.prefix(8)) { metric in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(metric.metricLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text(metric.valueText)
-                                        .font(.headline)
-                                        .monospacedDigit()
-                                    Text(metric.suiteTitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                DesktopEvaluationMetricCardView(metric: metric)
                             }
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(viewModel.evaluationSamplePreview) { sample in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text(sample.sampleID)
-                                            .font(.headline)
-                                        Spacer()
-                                        Text(sample.correctText)
-                                            .font(.caption)
-                                            .foregroundStyle(sample.correctText == "Correct" ? .green : .secondary)
-                                    }
-                                    Text(sample.question)
-                                        .font(.caption)
-                                    Text("Expected: \(sample.expected)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text("Predicted: \(sample.predicted)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if sample.rawResponse.isEmpty == false {
-                                        Text("Raw: \(sample.rawResponse)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text("\(sample.parseStatus) • \(sample.timeText)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                DesktopEvaluationSamplePreviewCardView(sample: sample)
                             }
                         }
                     }
@@ -3276,6 +3235,98 @@ struct DesktopServerGatewayAccessSummaryView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+struct DesktopEvaluationMetricCardView: View {
+    let metric: RuntimeEvaluationMetricCardState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(metric.metricLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(metric.valueText)
+                .font(.headline)
+                .monospacedDigit()
+            Text(metric.suiteTitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(evidenceLines, id: \.self) { line in
+                Text(line)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    var evidenceLines: [String] {
+        var lines: [String] = []
+        if metric.verdictText.isEmpty == false {
+            lines.append("Verdict: \(metric.verdictText)")
+        }
+        if metric.thresholdText.isEmpty == false {
+            lines.append("Threshold: \(metric.thresholdText)")
+        }
+        if metric.bootstrapCIText.isEmpty == false {
+            lines.append("Bootstrap CI: \(metric.bootstrapCIText)")
+        }
+        if metric.analyticalCIText.isEmpty == false {
+            lines.append("Analytical CI: \(metric.analyticalCIText)")
+        }
+        return lines
+    }
+}
+
+struct DesktopEvaluationSamplePreviewCardView: View {
+    let sample: RuntimeEvaluationSamplePreviewState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(sample.sampleID)
+                    .font(.headline)
+                Spacer()
+                Text(sample.correctText)
+                    .font(.caption)
+                    .foregroundStyle(sample.correctText == "Correct" ? .green : .secondary)
+            }
+            Text(sample.question)
+                .font(.caption)
+            Text("Expected: \(sample.expected)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Predicted: \(sample.predicted)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if sample.rawResponse.isEmpty == false {
+                Text("Raw: \(sample.rawResponse)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if let categoryAndSubjectText {
+                Text(categoryAndSubjectText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(sample.parseStatus) • \(sample.timeText)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    var categoryAndSubjectText: String? {
+        let labels = [sample.categoryLabel, sample.subjectLabel].filter { $0.isEmpty == false }
+        guard labels.isEmpty == false else {
+            return nil
+        }
+        return labels.joined(separator: " • ")
     }
 }
 

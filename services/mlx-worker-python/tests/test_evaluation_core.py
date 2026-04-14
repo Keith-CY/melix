@@ -218,6 +218,24 @@ class ScriptedComparisonRuntime:
         yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
 
 
+def test_resolve_float_parameter_returns_parsed_or_default_value() -> None:
+    assert EvaluationCore._resolve_float_parameter(
+        parameters={"effect_threshold": "0.25"},
+        key="effect_threshold",
+        default_value=0.1,
+    ) == pytest.approx(0.25)
+    assert EvaluationCore._resolve_float_parameter(
+        parameters={"effect_threshold": "not-a-float"},
+        key="effect_threshold",
+        default_value=0.1,
+    ) == pytest.approx(0.1)
+    assert EvaluationCore._resolve_float_parameter(
+        parameters={},
+        key="effect_threshold",
+        default_value=0.1,
+    ) == pytest.approx(0.1)
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -869,8 +887,20 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
         dataset_id="mmlu-dev",
         suite_id="mmlu",
         samples=(
-            {"id": "sample-1", "prompt": "2+2?", "expected": "4"},
-            {"id": "sample-2", "prompt": "3+3?", "expected": "6"},
+            {
+                "id": "sample-1",
+                "prompt": "2+2?",
+                "expected": "4",
+                "category_label": "arithmetic",
+                "subject_label": "addition",
+            },
+            {
+                "id": "sample-2",
+                "prompt": "3+3?",
+                "expected": "6",
+                "category_label": "algebra",
+                "subject_label": "addition",
+            },
         ),
     )
     jobs_root = tmp_path / "runs" / "compare"
@@ -905,11 +935,30 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     assert compare_results["melix-dev-text-lora-a"].tie_count == 1
     assert compare_results["melix-dev-text-lora-a"].regression_count == 0
     assert compare_results["melix-dev-text-lora-a"].delta_accuracy == 0.5
+    assert compare_results["melix-dev-text-lora-a"].effect_threshold == 0.1
+    assert compare_results["melix-dev-text-lora-a"].verdict == "inconclusive"
+    assert (
+        compare_results["melix-dev-text-lora-a"].category_breakdown["algebra"]["delta_accuracy"]
+        == 1.0
+    )
+    assert (
+        compare_results["melix-dev-text-lora-a"].statistical_evidence["bootstrap"]["crosses_zero"]
+        is True
+    )
+    assert (
+        compare_results["melix-dev-text-lora-a"].release_gate_summary["both_intervals_same_side"]
+        is False
+    )
     assert compare_results["melix-dev-text-lora-b"].win_count == 0
     assert compare_results["melix-dev-text-lora-b"].loss_count == 1
     assert compare_results["melix-dev-text-lora-b"].tie_count == 1
     assert compare_results["melix-dev-text-lora-b"].regression_count == 1
     assert compare_results["melix-dev-text-lora-b"].delta_accuracy == -0.5
+    assert compare_results["melix-dev-text-lora-b"].verdict == "inconclusive"
+    assert (
+        compare_results["melix-dev-text-lora-b"].category_breakdown["arithmetic"]["delta_accuracy"]
+        == -1.0
+    )
     assert run.persisted_paths["job"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-job.json"
     assert run.persisted_paths["summary_json"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-summary.json"
     assert run.persisted_paths["summary_csv"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-summary.csv"
@@ -929,12 +978,17 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
         and row["sample_id"] == "sample-1"
         and row["outcome"] == "loss"
         and row["regression"] is True
+        and row["category_label"] == "arithmetic"
+        and row["subject_label"] == "addition"
         for row in compare_samples
     )
     report_markdown = run.persisted_paths["report_markdown"].read_text(encoding="utf-8")
     assert "# Melix Evaluation Compare" in report_markdown
     assert "melix-dev-text-lora-a" in report_markdown
     assert "melix-dev-text-lora-b" in report_markdown
+    assert "Verdict" in report_markdown
+    assert "Bootstrap CI" in report_markdown
+    assert "Category Breakdown" in report_markdown
 
 
 def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> None:

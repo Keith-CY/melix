@@ -18,6 +18,10 @@ from worker.engine.code_eval_runner import (
 )
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_compare import (
+    _DEFAULT_COMPARE_BOOTSTRAP_ITERATIONS,
+    _DEFAULT_COMPARE_BOOTSTRAP_SEED,
+    _DEFAULT_COMPARE_CONFIDENCE_LEVEL,
+    _DEFAULT_COMPARE_EFFECT_THRESHOLD,
     build_compare_samples,
     build_compare_summary,
     parse_compare_target_model_ids,
@@ -458,6 +462,28 @@ class EvaluationCore:
                     scoring_mode=resolved_scoring_mode,
                     base_samples=base_samples,
                     compare_samples=target_compare_samples,
+                    effect_threshold=self._resolve_float_parameter(
+                        parameters=job_parameters,
+                        key="effect_threshold",
+                        default_value=_DEFAULT_COMPARE_EFFECT_THRESHOLD,
+                    ),
+                    confidence_level=self._resolve_float_parameter(
+                        parameters=job_parameters,
+                        key="confidence_level",
+                        default_value=_DEFAULT_COMPARE_CONFIDENCE_LEVEL,
+                    ),
+                    bootstrap_iterations=self._resolve_int_parameter(
+                        explicit_value=None,
+                        parameters=job_parameters,
+                        key="bootstrap_iterations",
+                    )
+                    or _DEFAULT_COMPARE_BOOTSTRAP_ITERATIONS,
+                    bootstrap_seed=self._resolve_int_parameter(
+                        explicit_value=None,
+                        parameters=job_parameters,
+                        key="bootstrap_seed",
+                    )
+                    or _DEFAULT_COMPARE_BOOTSTRAP_SEED,
                     duration_seconds=round(time.perf_counter() - started_at, 6),
                     report_path=str(report_path),
                 )
@@ -676,6 +702,21 @@ class EvaluationCore:
         return few_shot_examples, selected
 
     @staticmethod
+    def _resolve_float_parameter(
+        *,
+        parameters: dict[str, str] | None,
+        key: str,
+        default_value: float,
+    ) -> float:
+        raw_value = (parameters or {}).get(key)
+        if raw_value is None or raw_value == "":
+            return float(default_value)
+        try:
+            return float(raw_value)
+        except ValueError:
+            return float(default_value)
+
+    @staticmethod
     def _validate_task_kind_against_dataset(
         *,
         dataset_id: str,
@@ -850,7 +891,17 @@ class EvaluationCore:
             code_tests_passed=code_tests_passed,
             code_tests_total=code_tests_total,
             code_failure_detail=code_failure_detail,
+            category_label=EvaluationCore._sample_label(sample, "category"),
+            subject_label=EvaluationCore._sample_label(sample, "subject"),
         )
+
+    @staticmethod
+    def _sample_label(sample: dict[str, object], key_root: str) -> str:
+        for key in (f"{key_root}_label", key_root):
+            value = str(sample.get(key, "")).strip()
+            if value:
+                return value
+        return ""
 
     @staticmethod
     def _request_id(
