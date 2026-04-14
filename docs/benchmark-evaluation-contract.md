@@ -414,7 +414,144 @@ The first canonical `eval` suite set is:
 Multimodal evaluation datasets must package media alongside `manifest.json` and `samples.jsonl`.
 Relative media references are resolved against `dataset_root`.
 
+### Evaluation Dataset Contract
+
+Melix evaluation executes only against repository-owned evaluation dataset packages.
+
+Every execution package must provide:
+
+- `manifest.json`
+- `samples.jsonl`
+
+External datasets, including Hugging Face datasets, may be reused as source inputs, but they must
+be materialized into a Melix evaluation dataset package before execution.
+
+The authoritative runtime contract is the materialized evaluation package rather than any external
+source schema.
+
+### Planned Final-Result Evaluation Profile
+
+This section defines the planned long-term contract for final-result evaluation. It is not yet
+implemented by the current Melix runtime.
+
+Every future-oriented evaluation dataset package is expected to declare a single evaluation profile
+in `manifest.json` with these core fields:
+
+- `profile_type: final_result`
+- `result_kind: json | text`
+- `extraction_mode: strict_full_response | heuristic_final`
+- `scoring_mode`
+- `threshold`
+
+Future `final_result` sample rows use these fields:
+
+- `system`
+- `input`
+- `target`
+
+The future Melix execution contract remains the materialized evaluation package rather than any
+external dataset schema.
+
+#### Final-Result Principles
+
+The `final_result` profile is the planned abstraction for future structured and non-structured LoRA
+evaluation.
+
+Its contract is intentionally narrow:
+
+- only the extracted final result is scored
+- `raw_response` is retained for debugging, not correctness scoring
+- CoT or other wrapper text may appear in `raw_response`, but it is not itself evaluation evidence
+- v1 covers ground-truth evaluation only; no-target or format-only evaluation is deferred
+- task names such as `extraction`, `relationship`, and `summarization` remain suite metadata rather
+  than scorer dispatch keys
+
+#### Result Kinds
+
+The planned v1 `result_kind` set is:
+
+- `json`
+- `text`
+
+For `result_kind: json`:
+
+- `target` must be valid JSON with root type `object` or `array`
+- `output_schema` defines the accepted JSON root type and schema rules
+- schema validation is required before scoring begins
+- object roots are expected to support field-level comparison in v1
+- array roots are expected to use conservative scoring in v1 rather than broad task-specific logic
+
+The default ignored field set for JSON object scoring is:
+
+- `evidence`
+- `confidence`
+- `closeness_logits`
+- `closeness_probs`
+
+Manifest-declared `ignored_paths` extend the default ignored field set. They do not override it.
+
+For `result_kind: text`:
+
+- `target` is the expected final text result after normalization
+- v1 scoring is limited to stable text comparisons such as normalized exact match, label match, and
+  regex match
+- open-ended task-specific text scorers are out of scope for this contract
+
+#### Extraction Modes
+
+The runtime owns final-result extraction. Package-specific custom extractors are not part of the v1
+contract.
+
+`extraction_mode` defines how Melix isolates the final result from `raw_response`:
+
+- `strict_full_response`: the full response must be the final result payload; wrapper prose causes
+  extraction failure
+- `heuristic_final`: Melix applies a shared runtime extractor ladder to locate the final result in a
+  response that may include CoT or other wrapper text
+
+`heuristic_final` must be deterministic and reproducible. Ambiguous extraction is a failure rather
+than a guess.
+
+For `result_kind: json`, the planned shared extractor ladder is:
+
+- prefer the last contentful fenced `json` block
+- otherwise use the last contentful fenced block whose contents parse as JSON
+- otherwise use the last terminal balanced JSON suffix
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
+
+For `result_kind: text`, the planned shared extractor ladder is:
+
+- prefer the last terminal `Final answer:` or `Answer:` span
+- otherwise use the last contentful fenced text block
+- otherwise use the last terminal non-empty line or paragraph
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
+
+The current PR direction of describing extraction as "last valid JSON value" is not stable enough
+for the long-term contract because it is JSON-specific and under-specifies ambiguity handling.
+
+#### Scoring Model
+
+The planned execution pipeline is:
+
+- capture `raw_response`
+- extract `extracted_result`
+- validate the extracted result for its declared `result_kind`
+- normalize as required by `scoring_mode`
+- score only the extracted result against `target`
+
+In the future `final_result` path, correctness is computed from `extracted_result` rather than the
+full response text.
+
+Current repository fixtures still largely use `prompt` and `expected` sample rows. Those are
+current-state implementation formats rather than the planned long-term `final_result` contract.
+
 ### Evaluation Summary Outputs
+
+The fields below describe the current shipped summary and sample export contract. The future
+`final_result` path is expected to extend this output surface with extraction- and
+validation-oriented evidence such as `extracted_result`, `extraction_status`, `validation_status`,
+`failure_reason`, `extraction_success_count`, and `validation_success_count`. Those additions are
+planning direction only and are not implemented by the current runtime.
 
 Each completed suite result must include:
 

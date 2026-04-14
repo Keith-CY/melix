@@ -228,6 +228,36 @@ Notes:
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 
+## Planned Final-Result Evaluation Workflow
+
+This section describes planned future direction rather than a shipped command path.
+
+For LoRA workflows, the long-term Melix evaluation target is final-result quality rather than CoT
+quality. A model may emit CoT or other wrapper text, but compare and eval should score only the
+final extracted result.
+
+That future path is not limited to schema-constrained JSON. The planned v1 final-result contract
+covers:
+
+- `json` final results, scored after extraction and schema-aware validation
+- `text` final results, scored after extraction and stable text normalization
+
+The future evidence model will expand from binary correct or incorrect counts alone to a layered
+view of:
+
+- extraction success
+- validation success
+- typed score against ground truth
+
+Hugging Face datasets remain reusable source corpora, but not direct execution contracts. Planned
+future execution will still require materialization into a Melix evaluation package before `eval`
+or `compare` runs.
+
+See these planning documents for the target contract and milestone sequence:
+
+- `docs/superpowers/specs/2026-04-13-structured-output-evaluation-profile-design.md`
+- `docs/plans/2026-04-13-structured-output-evaluation-roadmap.md`
+
 ## Use LoRA With Benchmark, Matrix, Evaluation, And Compare
 
 LoRA adapters are not direct benchmark or evaluation targets. Melix benchmark and evaluation
