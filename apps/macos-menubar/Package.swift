@@ -11,7 +11,7 @@ let package = Package(
         .executable(name: "melix-menubar", targets: ["AppMain"]),
     ],
     dependencies: [
-        .package(path: "../.."),
+        .package(name: "melix", path: "../.."),
         .package(path: "../../services/control-plane-swift"),
         .package(path: "../../packages/protocol/swift"),
     ],

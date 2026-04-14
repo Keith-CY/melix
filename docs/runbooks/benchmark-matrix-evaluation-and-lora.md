@@ -189,6 +189,17 @@ swift run melix eval run \
   --scoring-mode multiple_choice_accuracy
 ```
 
+Example for a code-evaluation suite:
+
+```bash
+swift run melix eval run \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --suite mbpp \
+  --sample-size 12 \
+  --seed 9 \
+  --code-exec-policy sandboxed
+```
+
 Example with a checked-in image evaluation fixture:
 
 ```bash
@@ -232,6 +243,18 @@ Notes:
 
 - if you omit `--suite`, the CLI defaults to `mmlu`
 - if you omit `--dataset-id`, the CLI defaults to `<suite>.dev.v1`
+- `few_shot` uses the same seeded dataset package as the scored samples; demo rows are excluded
+  from the scored `sample_size`
+- `seed` controls deterministic package ordering and is also forwarded to worker sampling where the
+  runtime supports it
+- `multiple_choice_accuracy` and `exact_match` are the current text scorer options; `pass_at_1`
+  is reserved for `humaneval` and `mbpp`
+- `--code-exec-policy sandboxed` is only valid for executable code suites such as `humaneval` and
+  `mbpp`
+- the current `sandboxed` implementation uses macOS `sandbox-exec`, runs inside a dedicated
+  temporary directory, blocks network access, and enforces bounded stdout plus stderr capture
+- if the worker cannot provide the `sandboxed` boundary, the evaluation request is rejected before
+  candidate code is executed
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
 - `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
 - `humaneval.dev.v1` and `mbpp.dev.v1` are checked-in executable-code fixtures under `services/mlx-worker-python/fixtures/evaluation/`
@@ -239,6 +262,8 @@ Notes:
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - `--code-exec-policy sandboxed` is mandatory for `humaneval` and `mbpp`; Melix rejects those suites without it
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
+- sample JSONL and CSV exports now include `execution_status` plus `execution_metadata` for
+  code-suite evidence and non-evidence states
 
 ## Planned Final-Result Evaluation Workflow
 

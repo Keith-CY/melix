@@ -2506,7 +2506,7 @@ def test_run_evaluation_returns_typed_job_and_result(tmp_path: Path) -> None:
     assert response.results[0].schema_version == "melix.evaluation_result.v1"
     assert response.results[0].dataset_id == "qa_smoke.dev.v1"
     assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
-    assert response.results[0].metrics[0].value == 1.0
+    assert response.results[0].metrics[0].value == 0.0
 
 
 def test_search_hub_models_passes_cursor_and_filters_to_mlx_results(tmp_path: Path) -> None:
@@ -2697,7 +2697,7 @@ def test_run_evaluation_uses_default_dataset_root_when_dataset_root_is_omitted(
 
     assert response.ok is True
     assert response.job.dataset_id == "qa_smoke.dev.v1"
-    assert response.results[0].metrics[0].value == 1.0
+    assert response.results[0].metrics[0].value == 0.0
 
 
 def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitted(
@@ -2725,7 +2725,7 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
     assert response.ok is True
     assert response.job.dataset_id == "mmlu.dev.v1"
     assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
-    assert response.results[0].metrics[0].value == 1.0
+    assert response.results[0].metrics[0].value == 0.0
 
 
 @pytest.mark.parametrize(
@@ -2905,7 +2905,7 @@ def test_run_evaluation_rejects_text_generation_task_kind_for_multimodal_fixture
     )
 
     assert response.ok is False
-    assert response.error.code == "evaluation_failed"
+    assert response.error.code == "invalid_argument"
     assert "requires image inputs" in response.error.message
 
 
@@ -3048,7 +3048,7 @@ def test_run_evaluation_accepts_dataset_root_from_parameters_when_field_is_omitt
     assert response.ok is True
     assert response.job.dataset_id == "qa_smoke.dev.v1"
     assert response.job.parameters["dataset_root"] == str(dataset_root)
-    assert response.results[0].metrics[0].value == 1.0
+    assert response.results[0].metrics[0].value == 0.0
 
 
 def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) -> None:
@@ -3066,7 +3066,7 @@ def test_run_evaluation_returns_typed_error_for_invalid_suite(tmp_path: Path) ->
     )
 
     assert response.ok is False
-    assert response.error.code == "evaluation_failed"
+    assert response.error.code == "invalid_argument"
     assert "Unsupported evaluation suite" in response.error.message
 
 

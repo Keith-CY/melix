@@ -6,6 +6,25 @@ import MelixCLICore
 
 @Suite("Melix Subprocess CLI Workflow Runner", .serialized)
 struct MelixSubprocessCLIWorkflowRunnerTests {
+    @Test("eval compare export commands expose stable workflow command ids")
+    func evalCompareExportCommandsExposeStableWorkflowCommandIDs() {
+        #expect(
+            MelixCLICommand.evalCompareExportSummaryCSV(
+                .init(jobID: "eval-compare-1", outputPath: "/tmp/eval-compare-summary.csv")
+            ).workflowCommandID == "eval.compare.export-summary-csv"
+        )
+        #expect(
+            MelixCLICommand.evalCompareExportSamplesCSV(
+                .init(jobID: "eval-compare-1", outputPath: "/tmp/eval-compare-samples.csv")
+            ).workflowCommandID == "eval.compare.export-samples-csv"
+        )
+        #expect(
+            MelixCLICommand.evalCompareExportSamplesJSONL(
+                .init(jobID: "eval-compare-1", outputPath: "/tmp/eval-compare-samples.jsonl")
+            ).workflowCommandID == "eval.compare.export-samples-jsonl"
+        )
+    }
+
     @Test("download hub model shells out through the melix cli and decodes a managed receipt")
     func downloadHubModelShellsOutThroughTheMelixCLIAndDecodesAManagedReceipt() async throws {
         let processExecutor = RecordingCLIProcessExecutor()

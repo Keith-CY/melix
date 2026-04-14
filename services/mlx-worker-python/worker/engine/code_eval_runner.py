@@ -4,15 +4,16 @@ import ast
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import sysconfig
 import tempfile
 import textwrap
-import uuid
 
-_PAYLOAD_SENTINEL_PREFIX = "__MELIX_CODE_EVAL_PAYLOAD__:"
+_CODE_BLOCK_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_DEFAULT_STDIO_LIMIT_BYTES = 32_768
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,20 @@ class CodeEvaluationResult:
         )
 
 
+def extract_candidate_code(raw_response: str) -> tuple[str, str]:
+    normalized = raw_response.strip()
+    if not normalized:
+        return "", "empty_prediction"
+    matches = _CODE_BLOCK_PATTERN.findall(normalized)
+    if matches:
+        return matches[-1].strip(), "parsed_code_block"
+    return normalized, "parsed_code"
+
+
+def is_code_execution_policy_supported(code_exec_policy: str) -> bool:
+    return code_exec_policy.strip() == "sandboxed" and bool(shutil.which("sandbox-exec"))
+
+
 def run_python_code_evaluation(
     *,
     candidate_code: str,
@@ -42,8 +57,9 @@ def run_python_code_evaluation(
     test_code: str,
     timeout_seconds: int = 3,
     memory_limit_mb: int = 256,
-    stdout_limit_bytes: int = 32_768,
-    ) -> CodeEvaluationResult:
+    stdout_limit_bytes: int = _DEFAULT_STDIO_LIMIT_BYTES,
+) -> CodeEvaluationResult:
+    tests_total = _count_tests(test_code)
     try:
         compile(candidate_code, "<candidate>", "exec")
     except SyntaxError as exc:
@@ -53,7 +69,7 @@ def run_python_code_evaluation(
             timeout_status="ok",
             test_status="not_run",
             tests_passed=0,
-            tests_total=_count_tests(test_code),
+            tests_total=tests_total,
             failure_detail=str(exc),
         )
 
@@ -65,16 +81,18 @@ def run_python_code_evaluation(
             timeout_status="ok",
             test_status="failed",
             tests_passed=0,
-            tests_total=_count_tests(test_code),
+            tests_total=tests_total,
             failure_detail="sandbox-exec is unavailable on this host.",
         )
 
     with tempfile.TemporaryDirectory(prefix="melix-code-eval-") as temp_dir:
-        temp_root = Path(temp_dir)
-        payload_sentinel = f"{_PAYLOAD_SENTINEL_PREFIX}{uuid.uuid4().hex}:"
+        temp_root = Path(temp_dir).resolve()
         candidate_path = temp_root / "candidate.py"
         config_path = temp_root / "config.json"
         runner_path = temp_root / "runner.py"
+        payload_path = temp_root / "payload.json"
+        stdout_path = temp_root / "stdout.txt"
+        stderr_path = temp_root / "stderr.txt"
         candidate_path.write_text(candidate_code, encoding="utf-8")
         config_path.write_text(
             json.dumps(
@@ -83,59 +101,92 @@ def run_python_code_evaluation(
                     "entry_point": entry_point,
                     "test_code": test_code,
                     "memory_limit_mb": memory_limit_mb,
+                    "payload_path": str(payload_path),
+                    "stdio_limit_bytes": int(max(stdout_limit_bytes, 1024)),
                 }
             ),
             encoding="utf-8",
         )
-        runner_path.write_text(_runner_script(payload_sentinel=payload_sentinel), encoding="utf-8")
+        runner_path.write_text(_runner_script(), encoding="utf-8")
 
-        try:
-            completed = subprocess.run(
-                [
-                    sandbox_exec,
-                    "-p",
-                    _sandbox_profile(temp_root=temp_root),
-                    str(_sandbox_python_executable()),
-                    "-I",
-                    "-S",
-                    str(runner_path),
-                    str(config_path),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                cwd=str(temp_root),
-                env={
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTHONNOUSERSITE": "1",
-                    "HOME": str(temp_root),
-                    "TMPDIR": str(temp_root),
-                },
-            )
-        except subprocess.TimeoutExpired:
-            return CodeEvaluationResult(
-                compile_status="compiled",
-                runtime_status="timeout",
-                timeout_status="timed_out",
-                test_status="not_run",
-                tests_passed=0,
-                tests_total=_count_tests(test_code),
-                failure_detail=f"Timed out after {timeout_seconds}s",
-            )
+        with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
+            try:
+                completed = subprocess.run(
+                    [
+                        sandbox_exec,
+                        "-p",
+                        _sandbox_profile(temp_root=temp_root),
+                        str(_sandbox_python_executable()),
+                        "-I",
+                        "-S",
+                        str(runner_path),
+                        str(config_path),
+                    ],
+                    check=False,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    timeout=timeout_seconds,
+                    cwd=str(temp_root),
+                    env={
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONNOUSERSITE": "1",
+                        "HOME": str(temp_root),
+                        "TMPDIR": str(temp_root),
+                    },
+                )
+            except subprocess.TimeoutExpired:
+                stdout_tail = _read_limited_text(stdout_path, stdout_limit_bytes)
+                stderr_tail = _read_limited_text(stderr_path, stdout_limit_bytes)
+                detail = _timeout_failure_detail(
+                    timeout_seconds=timeout_seconds,
+                    stdout_tail=stdout_tail,
+                    stderr_tail=stderr_tail,
+                )
+                return CodeEvaluationResult(
+                    compile_status="compiled",
+                    runtime_status="timeout",
+                    timeout_status="timed_out",
+                    test_status="not_run",
+                    tests_passed=0,
+                    tests_total=tests_total,
+                    failure_detail=detail,
+                )
 
-        stdout = completed.stdout[-stdout_limit_bytes:].strip()
-        stderr = completed.stderr[-stdout_limit_bytes:].strip()
-        payload = _load_payload(stdout, payload_sentinel)
-        if payload is None:
-            detail = stderr or stdout or f"Subprocess exited with status {completed.returncode}"
+        stdout_tail = _read_limited_text(stdout_path, stdout_limit_bytes)
+        stderr_tail = _read_limited_text(stderr_path, stdout_limit_bytes)
+        output_limit_exceeded = any(
+            path.exists() and path.stat().st_size >= stdout_limit_bytes
+            for path in (stdout_path, stderr_path)
+        )
+        if output_limit_exceeded:
             return CodeEvaluationResult(
                 compile_status="compiled",
                 runtime_status="error",
                 timeout_status="ok",
                 test_status="failed",
                 tests_passed=0,
-                tests_total=_count_tests(test_code),
+                tests_total=tests_total,
+                failure_detail=_output_limit_failure_detail(
+                    stdio_limit_bytes=stdout_limit_bytes,
+                    stdout_tail=stdout_tail,
+                    stderr_tail=stderr_tail,
+                ),
+            )
+
+        payload = _load_payload_file(payload_path)
+        if payload is None:
+            detail = (
+                stderr_tail
+                or stdout_tail
+                or f"Subprocess exited with status {completed.returncode} without a result payload."
+            )
+            return CodeEvaluationResult(
+                compile_status="compiled",
+                runtime_status="error",
+                timeout_status="ok",
+                test_status="failed",
+                tests_passed=0,
+                tests_total=tests_total,
                 failure_detail=detail,
             )
 
@@ -145,7 +196,7 @@ def run_python_code_evaluation(
             timeout_status=str(payload.get("timeout_status", "ok")),
             test_status=str(payload.get("test_status", "failed")),
             tests_passed=int(payload.get("tests_passed", 0) or 0),
-            tests_total=int(payload.get("tests_total", 0) or 0),
+            tests_total=int(payload.get("tests_total", tests_total) or tests_total),
             failure_detail=str(payload.get("failure_detail", "")),
         )
 
@@ -159,24 +210,53 @@ def _count_tests(test_code: str) -> int:
     return assert_count or len([line for line in test_code.splitlines() if line.strip()])
 
 
-def _load_payload(stdout: str, payload_sentinel: str) -> dict[str, object] | None:
-    if not stdout:
+def _load_payload_file(payload_path: Path) -> dict[str, object] | None:
+    if not payload_path.exists():
         return None
-    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-    for line in reversed(lines):
-        if line.startswith(payload_sentinel):
-            return _decode_payload(line.removeprefix(payload_sentinel))
-    return None
-
-
-def _decode_payload(raw_payload: str) -> dict[str, object] | None:
     try:
-        payload = json.loads(raw_payload)
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def _read_limited_text(path: Path, byte_limit: int) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as file:
+        if path.stat().st_size > byte_limit:
+            file.seek(-byte_limit, 2)
+        return file.read().decode("utf-8", errors="replace").strip()
+
+
+def _timeout_failure_detail(*, timeout_seconds: int, stdout_tail: str, stderr_tail: str) -> str:
+    summary = _summarize_stdio(stdout_tail=stdout_tail, stderr_tail=stderr_tail)
+    if summary:
+        return f"Timed out after {timeout_seconds}s. {summary}"
+    return f"Timed out after {timeout_seconds}s"
+
+
+def _output_limit_failure_detail(
+    *,
+    stdio_limit_bytes: int,
+    stdout_tail: str,
+    stderr_tail: str,
+) -> str:
+    summary = _summarize_stdio(stdout_tail=stdout_tail, stderr_tail=stderr_tail)
+    if summary:
+        return f"Code execution exceeded the {stdio_limit_bytes}-byte stdio limit. {summary}"
+    return f"Code execution exceeded the {stdio_limit_bytes}-byte stdio limit."
+
+
+def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
+    parts: list[str] = []
+    if stdout_tail:
+        parts.append(f"stdout tail: {stdout_tail}")
+    if stderr_tail:
+        parts.append(f"stderr tail: {stderr_tail}")
+    return " | ".join(parts)
 
 
 def _sandbox_profile(*, temp_root: Path) -> str:
@@ -217,6 +297,7 @@ def _sandbox_profile(*, temp_root: Path) -> str:
         for path in _sandbox_allow_path_variants((*runtime_paths, temp_root))
     )
     clauses.append(f"(allow file-read* {read_filters})")
+    clauses.append(f"(allow file-write* (subpath {json.dumps(str(temp_root))}))")
     return " ".join(clauses)
 
 
@@ -281,18 +362,17 @@ def _sandbox_allow_path_variants(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
-def _runner_script(*, payload_sentinel: str) -> str:
+def _runner_script() -> str:
     script = """
         from __future__ import annotations
 
         import ast
         import importlib.util
         import json
+        from pathlib import Path
         import resource
         import sys
         import traceback
-
-        PAYLOAD_SENTINEL = __PAYLOAD_SENTINEL__
 
 
         class _AssertInstrumentor(ast.NodeTransformer):
@@ -323,17 +403,30 @@ def _runner_script(*, payload_sentinel: str) -> str:
             return compile(instrumented, "<tests>", "exec"), instrumentor.tests_total
 
 
-        def _set_address_space_limit(memory_limit_bytes: int) -> None:
+        def _set_limits(memory_limit_bytes: int, stdio_limit_bytes: int) -> None:
             rlimit_as = getattr(resource, "RLIMIT_AS", None)
-            if rlimit_as is None:
-                return
-            current_soft, current_hard = resource.getrlimit(rlimit_as)
-            if current_hard == resource.RLIM_INFINITY:
-                address_space_limit = memory_limit_bytes
-            else:
-                address_space_limit = min(memory_limit_bytes, current_hard)
+            if rlimit_as is not None:
+                current_soft, current_hard = resource.getrlimit(rlimit_as)
+                if current_hard == resource.RLIM_INFINITY:
+                    address_space_limit = memory_limit_bytes
+                else:
+                    address_space_limit = min(memory_limit_bytes, current_hard)
+                try:
+                    resource.setrlimit(rlimit_as, (address_space_limit, current_hard))
+                except (OSError, ValueError):
+                    pass
+            cpu_soft, cpu_hard = resource.getrlimit(resource.RLIMIT_CPU)
+            cpu_limit = min(2, cpu_hard) if cpu_hard != resource.RLIM_INFINITY else 2
             try:
-                resource.setrlimit(rlimit_as, (address_space_limit, current_hard))
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_hard))
+            except (OSError, ValueError):
+                pass
+            try:
+                resource.setrlimit(resource.RLIMIT_FSIZE, (stdio_limit_bytes, stdio_limit_bytes))
+            except (OSError, ValueError):
+                pass
+            try:
+                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
             except (OSError, ValueError):
                 pass
 
@@ -342,14 +435,9 @@ def _runner_script(*, payload_sentinel: str) -> str:
             with open(sys.argv[1], "r", encoding="utf-8") as file:
                 config = json.load(file)
             memory_limit_mb = int(config.get("memory_limit_mb", 256) or 256)
-            memory_limit_bytes = memory_limit_mb * 1024 * 1024
-            _set_address_space_limit(memory_limit_bytes)
-            cpu_soft, cpu_hard = resource.getrlimit(resource.RLIMIT_CPU)
-            cpu_limit = min(2, cpu_hard) if cpu_hard != resource.RLIM_INFINITY else 2
-            try:
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_hard))
-            except (OSError, ValueError):
-                pass
+            stdio_limit_bytes = int(config.get("stdio_limit_bytes", 32768) or 32768)
+            payload_path = Path(config["payload_path"])
+            _set_limits(memory_limit_mb * 1024 * 1024, stdio_limit_bytes)
 
             candidate_path = config["candidate_path"]
             entry_point = str(config.get("entry_point", ""))
@@ -411,11 +499,11 @@ def _runner_script(*, payload_sentinel: str) -> str:
                     "failure_detail": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
                 }
 
-            print(PAYLOAD_SENTINEL + json.dumps(payload))
+            payload_path.write_text(json.dumps(payload), encoding="utf-8")
             return 0
 
 
         if __name__ == "__main__":
             raise SystemExit(main())
         """
-    return textwrap.dedent(script).replace("__PAYLOAD_SENTINEL__", repr(payload_sentinel)).strip() + "\n"
+    return textwrap.dedent(script).strip() + "\n"

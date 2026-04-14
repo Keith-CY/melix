@@ -118,6 +118,15 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "task_kind": "text-generation",
         "input_modalities": [],
         "media_references": [],
+        "code_language": "",
+        "code_entry_point": "",
+        "code_compile_status": "",
+        "code_runtime_status": "",
+        "code_timeout_status": "",
+        "code_test_status": "",
+        "code_tests_passed": 0,
+        "code_tests_total": 0,
+        "code_failure_detail": "",
     }
 
 
@@ -155,6 +164,15 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "task_kind": "image-text-to-text",
         "input_modalities": ["text", "image"],
         "media_references": ["/tmp/cat.png"],
+        "code_language": "",
+        "code_entry_point": "",
+        "code_compile_status": "",
+        "code_runtime_status": "",
+        "code_timeout_status": "",
+        "code_test_status": "",
+        "code_tests_passed": 0,
+        "code_tests_total": 0,
+        "code_failure_detail": "",
     }
 
 

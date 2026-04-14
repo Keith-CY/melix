@@ -3,12 +3,14 @@ from __future__ import annotations
 import builtins
 import json
 from pathlib import Path
+import random
 import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
+import worker.engine.evaluation_core as evaluation_core_module
 from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -22,6 +24,7 @@ class ScriptedEvaluationBackend:
     def __init__(self, responses: tuple[str, ...]) -> None:
         self._responses = list(responses)
         self.prompts: list[str] = []
+        self.samplings: list[common_pb2.SamplingConfig] = []
 
     def load_model(self, model_spec):
         return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
@@ -32,8 +35,10 @@ class ScriptedEvaluationBackend:
 
     def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
         _ = loaded_model
-        _ = sampling
         self.prompts.append(prompt)
+        sampling_snapshot = common_pb2.SamplingConfig()
+        sampling_snapshot.CopyFrom(sampling)
+        self.samplings.append(sampling_snapshot)
         if cancel_event.is_set():
             return
         text = self._responses.pop(0)
@@ -224,17 +229,21 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
         ),
     )
     jobs_root = tmp_path / "runs" / "mmlu"
-    runner = EvaluationCore(jobs_root=jobs_root)
+    backend = ScriptedEvaluationBackend(("Answer: 4", "Answer: 6"))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
 
     run = runner.run_local_suite(
-        model_id="melix-dev-text",
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
         suite_id="mmlu",
         dataset_root=dataset_root,
         sample_size=2,
-        few_shot=4,
+        few_shot=0,
         seed=7,
         scoring_mode="multiple_choice_accuracy",
-        code_exec_policy="sandboxed",
+        code_exec_policy="disabled",
     )
 
     metrics = {metric.name: metric.value for metric in run.result.metrics}
@@ -242,10 +251,10 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert run.job.dataset_id == "mmlu-dev"
     assert run.job.sample_size == 2
     assert run.job.task_kind == "text-generation"
-    assert run.job.few_shot == 4
+    assert run.job.few_shot == 0
     assert run.job.seed == 7
     assert run.job.scoring_mode == "multiple_choice_accuracy"
-    assert run.job.code_exec_policy == "sandboxed"
+    assert run.job.code_exec_policy == "disabled"
     assert metrics["eval.mmlu.accuracy"] == 1.0
     assert metrics["eval.mmlu.correct_count"] == 2.0
     assert metrics["eval.mmlu.incorrect_count"] == 0.0
@@ -283,7 +292,7 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
     assert queue_payload["completed_at_unix_ms"] > 0
 
 
-def test_run_local_suite_respects_sample_size_for_deterministic_accuracy(tmp_path: Path) -> None:
+def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
         dataset_id="mmlu-dev",
@@ -306,46 +315,49 @@ def test_run_local_suite_respects_sample_size_for_deterministic_accuracy(tmp_pat
     metrics = {metric.name: metric.value for metric in run.result.metrics}
 
     assert run.job.sample_size == 2
-    assert metrics["eval.mmlu.accuracy"] == 0.5
-    assert metrics["eval.mmlu.correct_count"] == 1.0
+    assert metrics["eval.mmlu.accuracy"] == 0.0
+    assert metrics["eval.mmlu.correct_count"] == 0.0
     assert run.persisted_paths == {}
     assert len(run.samples) == 2
+    assert run.samples[0].predicted == ""
+    assert run.samples[0].correct is False
+    assert run.samples[0].parse_status == "no_live_model"
+    assert run.samples[0].code_test_status == ""
 
 
-def test_run_local_suite_supports_additional_score_modes_and_job_metadata(tmp_path: Path) -> None:
+def test_run_local_suite_executes_code_candidates_for_mbpp(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
         dataset_id="mbpp-dev",
         suite_id="mbpp",
         samples=(
-            {
-                "id": "sample-1",
-                "prompt": "Write add(a, b) that returns the sum.",
-                "entry_point": "add",
-                "test": "assert add(2, 2) == 4\nassert add(3, 5) == 8",
-            },
+            {"id": "sample-1", "question": "2+2?", "answer": "4"},
         ),
     )
     jobs_root = tmp_path / "runs" / "mbpp"
     backend = ScriptedEvaluationBackend(
         (
-            "def add(a, b):\n    return a + b",
+            "```python\n"
+            "def add(a, b):\n"
+            "    return a + b\n"
+            "```",
         )
     )
     runtime = MLXTextRuntime(backend=backend)
-    registry = FakeEvaluationRegistry(runtime=runtime, model_id="melix-dev-code")
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="mbpp-eval-model")
     runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
 
     run = runner.run_local_suite(
-        model_id="melix-dev-code",
+        model_id="mbpp-eval-model",
         model_handle=registry.handle,
         suite_id="mbpp",
         dataset_root=dataset_root,
         sample_size=1,
-        code_exec_policy="sandboxed",
         parameters={
             "task_kind": "text-generation",
             "source_repo": "openai_humaneval",
+            "entry_point": "add",
+            "test_code": "assert add(2, 2) == 4\nassert add(-1, 1) == 0",
         },
     )
 
@@ -361,36 +373,17 @@ def test_run_local_suite_supports_additional_score_modes_and_job_metadata(tmp_pa
     assert metrics["eval.mbpp.pass_at_1"] == 1.0
     assert metrics["eval.mbpp.code_exec_pass_count"] == 1.0
     assert metrics["eval.mbpp.code_exec_fail_count"] == 0.0
-
-
-def test_run_local_suite_requires_sandboxed_code_exec_policy_for_code_suites(
-    tmp_path: Path,
-) -> None:
-    dataset_root = _write_dataset_package(
-        tmp_path=tmp_path,
-        dataset_id="humaneval-dev",
-        suite_id="humaneval",
-        samples=(
-            {
-                "id": "sample-1",
-                "prompt": "Return the input unchanged.",
-                "entry_point": "identity",
-                "test": "assert identity(4) == 4",
-            },
-        ),
-    )
-    runner = EvaluationCore()
-
-    with pytest.raises(
-        ValueError,
-        match="requires code_exec_policy=sandboxed",
-    ):
-        runner.run_local_suite(
-            model_id="melix-dev-text",
-            suite_id="humaneval",
-            dataset_root=dataset_root,
-            sample_size=1,
-        )
+    assert run.samples[0].correct is True
+    assert run.samples[0].code_language == "python"
+    assert run.samples[0].code_entry_point == "add"
+    assert run.samples[0].code_compile_status == "compiled"
+    assert run.samples[0].code_runtime_status == "ok"
+    assert run.samples[0].code_timeout_status == "ok"
+    assert run.samples[0].code_test_status == "passed"
+    assert run.samples[0].code_tests_passed == 2
+    assert run.samples[0].code_tests_total == 2
+    assert run.samples[0].code_failure_detail == ""
+    assert "def add" in run.samples[0].predicted
 
 
 def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
@@ -430,14 +423,17 @@ def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
     metrics = {metric.name: metric.value for metric in run.result.metrics}
 
     assert len(backend.prompts) == 1
-    assert "Return only valid Python code." in backend.prompts[0]
+    assert "Return only executable Python code" in backend.prompts[0]
     assert run.samples[0].correct is True
+    assert run.samples[0].parse_status == "parsed_code_block"
+    assert run.samples[0].code_language == "python"
+    assert run.samples[0].code_entry_point == "identity"
+    assert run.samples[0].code_test_status == "passed"
     assert run.result.score_name == "pass_at_1"
     assert run.result.score_value == 1.0
     assert metrics["eval.humaneval.pass_at_1"] == 1.0
     assert metrics["eval.humaneval.code_exec_pass_count"] == 1.0
     assert metrics["eval.humaneval.code_exec_fail_count"] == 0.0
-    assert run.samples[0].parse_status == "parsed_code_block"
 
 
 def test_run_local_suite_falls_back_to_zero_for_invalid_numeric_controls(tmp_path: Path) -> None:
@@ -459,13 +455,13 @@ def test_run_local_suite_falls_back_to_zero_for_invalid_numeric_controls(tmp_pat
         parameters={
             "few_shot": "invalid",
             "seed": "also-invalid",
-            "code_exec_policy": "sandboxed",
+            "code_exec_policy": "disabled",
         },
     )
 
     assert run.job.few_shot == 0
     assert run.job.seed == 0
-    assert run.job.code_exec_policy == "sandboxed"
+    assert run.job.code_exec_policy == "disabled"
     assert run.job.parameters["few_shot"] == "0"
     assert run.job.parameters["seed"] == "0"
 
@@ -639,6 +635,232 @@ def test_run_local_suite_supports_imagenette_multimodal_accuracy(tmp_path: Path)
     assert run.samples[0].media_references == (str(image_path),)
 
 
+def test_run_local_suite_applies_seeded_selection_and_few_shot_prompt_context(
+    tmp_path: Path,
+) -> None:
+    samples = [
+        {"id": "sample-1", "prompt": "Question 1", "expected": "Answer 1"},
+        {"id": "sample-2", "prompt": "Question 2", "expected": "Answer 2"},
+        {"id": "sample-3", "prompt": "Question 3", "expected": "Answer 3"},
+        {"id": "sample-4", "prompt": "Question 4", "expected": "Answer 4"},
+    ]
+    seed = 17
+    ordered = list(samples)
+    random.Random(seed).shuffle(ordered)
+    few_shot_sample = ordered[0]
+    scored_samples = ordered[1:3]
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-seeded-dev",
+        suite_id="mmlu",
+        samples=tuple(samples),
+    )
+    backend = ScriptedEvaluationBackend(
+        tuple(f"Answer: {sample['expected']}" for sample in scored_samples)
+    )
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="seeded-eval-model")
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="seeded-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        few_shot=1,
+        seed=seed,
+    )
+
+    assert [sample.sample_id for sample in run.samples] == [sample["id"] for sample in scored_samples]
+    assert len(backend.prompts) == 2
+    assert few_shot_sample["prompt"] in backend.prompts[0]
+    assert few_shot_sample["expected"] in backend.prompts[0]
+    assert scored_samples[0]["prompt"] in backend.prompts[0]
+    assert scored_samples[0]["id"] != few_shot_sample["id"]
+
+
+def test_run_local_suite_threads_seed_into_live_sampling_config(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-seed-dev",
+        suite_id="mmlu",
+        samples=(
+            {"id": "seed-1", "prompt": "capital of france?", "expected": "Paris"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("Answer: Paris",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="seed-config-model")
+    runner = EvaluationCore(registry=registry)
+
+    _ = runner.run_local_suite(
+        model_id="seed-config-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        seed=42,
+    )
+
+    assert len(backend.samplings) == 1
+    assert backend.samplings[0].seed == 42
+
+
+def test_run_local_suite_scoring_mode_changes_multiple_choice_scoring(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-mc-dev",
+        suite_id="mmlu",
+        samples=(
+            {
+                "id": "mc-1",
+                "prompt": "What is the capital of France? A) London B) Paris C) Berlin D) Rome",
+                "expected": "Paris",
+                "choices": ["London", "Paris", "Berlin", "Rome"],
+            },
+        ),
+    )
+    backend_mc = ScriptedEvaluationBackend(("B",))
+    runtime_mc = MLXTextRuntime(backend=backend_mc)
+    registry_mc = FakeEvaluationRegistry(runtime=runtime_mc, model_id="mc-model")
+    runner_mc = EvaluationCore(registry=registry_mc)
+
+    multiple_choice_run = runner_mc.run_local_suite(
+        model_id="mc-model",
+        model_handle=registry_mc.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+    )
+
+    backend_exact = ScriptedEvaluationBackend(("B",))
+    runtime_exact = MLXTextRuntime(backend=backend_exact)
+    registry_exact = FakeEvaluationRegistry(runtime=runtime_exact, model_id="mc-model")
+    runner_exact = EvaluationCore(registry=registry_exact)
+
+    exact_match_run = runner_exact.run_local_suite(
+        model_id="mc-model",
+        model_handle=registry_exact.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        scoring_mode="exact_match",
+    )
+
+    assert multiple_choice_run.samples[0].predicted == "B"
+    assert multiple_choice_run.samples[0].correct is True
+    assert multiple_choice_run.result.score_value == 1.0
+    assert exact_match_run.samples[0].predicted == "B"
+    assert exact_match_run.samples[0].correct is False
+    assert exact_match_run.result.score_value == 0.0
+
+
+def test_run_local_suite_rejects_unsupported_scoring_mode_for_suite(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
+    )
+    runner = EvaluationCore()
+
+    with pytest.raises(ValueError, match="Unsupported scoring_mode 'pass_at_1' for suite mmlu"):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            suite_id="mmlu",
+            dataset_root=dataset_root,
+            sample_size=1,
+            scoring_mode="pass_at_1",
+        )
+
+
+def test_run_local_suite_rejects_unsupported_code_exec_policy_combinations(tmp_path: Path) -> None:
+    text_dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+        ),
+    )
+    code_dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mbpp-dev",
+        suite_id="mbpp",
+        samples=(
+            {"prompt": "Write add(a, b).", "answer": "def add(a, b): return a + b"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("```python\ndef add(a, b):\n    return a + b\n```",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="code-policy-model")
+    runner = EvaluationCore(registry=registry)
+
+    with pytest.raises(ValueError, match="code_exec_policy 'sandboxed' is only supported for code evaluation suites"):
+        runner.run_local_suite(
+            model_id="code-policy-model",
+            model_handle=registry.handle,
+            suite_id="mmlu",
+            dataset_root=text_dataset_root,
+            sample_size=1,
+            code_exec_policy="sandboxed",
+        )
+
+    with pytest.raises(ValueError, match="suite mbpp requires code_exec_policy to allow execution"):
+        runner.run_local_suite(
+            model_id="code-policy-model",
+            model_handle=registry.handle,
+            suite_id="mbpp",
+            dataset_root=code_dataset_root,
+            sample_size=1,
+            code_exec_policy="disabled",
+            parameters={
+                "entry_point": "add",
+                "test_code": "assert add(2, 2) == 4",
+            },
+        )
+
+
+def test_run_local_suite_rejects_unavailable_sandboxed_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mbpp-dev",
+        suite_id="mbpp",
+        samples=(
+            {"prompt": "Write add(a, b).", "answer": "def add(a, b): return a + b"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("```python\ndef add(a, b):\n    return a + b\n```",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="code-policy-model")
+    runner = EvaluationCore(registry=registry)
+    monkeypatch.setattr(
+        evaluation_core_module,
+        "is_code_execution_policy_supported",
+        lambda policy: False,
+    )
+
+    with pytest.raises(ValueError, match="code_exec_policy 'sandboxed' is unavailable on this worker"):
+        runner.run_local_suite(
+            model_id="code-policy-model",
+            model_handle=registry.handle,
+            suite_id="mbpp",
+            dataset_root=dataset_root,
+            sample_size=1,
+            parameters={
+                "entry_point": "add",
+                "test_code": "assert add(2, 2) == 4",
+            },
+        )
+
+
 def test_run_local_suite_compares_base_against_target_models_and_persists_compare_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -713,62 +935,6 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     assert "# Melix Evaluation Compare" in report_markdown
     assert "melix-dev-text-lora-a" in report_markdown
     assert "melix-dev-text-lora-b" in report_markdown
-
-
-def test_run_local_suite_compare_preserves_code_execution_evidence_for_code_suites(
-    tmp_path: Path,
-) -> None:
-    dataset_root = _write_dataset_package(
-        tmp_path=tmp_path,
-        dataset_id="humaneval.dev.v1",
-        suite_id="humaneval",
-        samples=(
-            {
-                "id": "sample-1",
-                "prompt": "Write identity(x) that returns x.",
-                "entry_point": "identity",
-                "test": "assert identity(4) == 4\nassert identity('hi') == 'hi'",
-            },
-        ),
-    )
-    jobs_root = tmp_path / "runs" / "compare-code"
-    registry = FakeEvaluationRegistry(
-        runtime=ScriptedComparisonRuntime(("```python\ndef identity(x):\n    return None\n```",)),
-        model_id="melix-dev-code-base",
-        additional_models={
-            "melix-dev-code-target": (
-                ScriptedComparisonRuntime(("```python\ndef identity(x):\n    return x\n```",)),
-                "text",
-            ),
-        },
-    )
-    runner = EvaluationCore(jobs_root=jobs_root, registry=registry)
-
-    run = runner.run_local_suite(
-        model_id="melix-dev-code-base",
-        model_handle=registry.handle_for("melix-dev-code-base"),
-        suite_id="humaneval",
-        dataset_root=dataset_root,
-        sample_size=1,
-        code_exec_policy="sandboxed",
-        parameters={
-            "compare_mode": "base_vs_targets",
-            "compare_target_model_ids": "melix-dev-code-target",
-        },
-    )
-
-    assert run.results[0].win_count == 1
-    compare_samples = [
-        json.loads(line)
-        for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert compare_samples[0]["code_language"] == "python"
-    assert compare_samples[0]["code_entry_point"] == "identity"
-    assert compare_samples[0]["base_code_test_status"] == "failed"
-    assert compare_samples[0]["target_code_test_status"] == "passed"
-    assert compare_samples[0]["base_code_tests_passed"] == 0
-    assert compare_samples[0]["target_code_tests_passed"] == 2
 
 
 def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> None:
@@ -911,16 +1077,8 @@ def test_parse_prediction_covers_empty_numeric_option_and_default_paths() -> Non
 
 
 def test_evaluation_helpers_cover_numeric_option_and_normalization_paths() -> None:
-    numeric_messages = EvaluationCore._evaluation_messages(
-        suite_id="mmlu",
-        prompt="6 + 3 = ?",
-        expected="9",
-    )
-    option_messages = EvaluationCore._evaluation_messages(
-        suite_id="mmlu",
-        prompt="Pick one",
-        expected="B",
-    )
+    numeric_messages = EvaluationCore._evaluation_messages(prompt="6 + 3 = ?", expected="9")
+    option_messages = EvaluationCore._evaluation_messages(prompt="Pick one", expected="B")
 
     assert numeric_messages[0].parts[0].text.startswith("Return only the final numeric answer.")
     assert option_messages[0].parts[0].text.startswith("Return only the single best answer choice letter.")
@@ -932,6 +1090,24 @@ def test_evaluation_helpers_cover_numeric_option_and_normalization_paths() -> No
     assert EvaluationCore._extract_option_value("Option C is correct") == "C"
     assert EvaluationCore._answers_match(expected="Paris", predicted="") is False
     assert EvaluationCore._answers_match(expected="b", predicted="B") is True
+
+
+def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:
+    assert (
+        EvaluationCore._sample_code_timeout_seconds({}, {"code_timeout_seconds": "invalid"}) == 5.0
+    )
+    assert EvaluationCore._resolve_choice_prediction(
+        predicted="2",
+        choices=("London", "Paris", "Berlin"),
+    ) == "Paris"
+    assert (
+        EvaluationCore._multiple_choice_match(
+            expected="Paris",
+            predicted="",
+            choices=("London", "Paris", "Berlin"),
+        )
+        is False
+    )
 
 
 def test_loaded_model_lookup_returns_none_without_handle_or_registry() -> None:
@@ -1147,7 +1323,7 @@ def _write_dataset_package(
     dataset_id: str,
     suite_id: str,
     task_kind: str = "text-generation",
-    samples: tuple[dict[str, str], ...],
+    samples: tuple[dict[str, object], ...],
 ) -> Path:
     dataset_root = tmp_path / "datasets" / dataset_id
     dataset_root.mkdir(parents=True)
