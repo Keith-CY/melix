@@ -1275,6 +1275,34 @@ def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: P
     assert evidence["release_gate_summary"]["both_intervals_same_side"] is True
 
 
+def test_collect_evaluation_compare_evidence_prefers_custom_policy_suite_when_present(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-gsm8k-artifact",
+        suite_id="gsm8k",
+        target_model_id="melix-dev-text-lora-gsm8k",
+        verdict="improvement",
+    )
+
+    evidence = collect_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        policy={
+            "gsm8k": {
+                "effect_threshold": 0.05,
+                "confidence_level": 0.9,
+                "bootstrap_iterations": 200,
+                "required_verdict": "improvement",
+            }
+        },
+    )
+
+    assert evidence["suite_id"] == "gsm8k"
+    assert evidence["job_id"] == "eval-compare-gsm8k-artifact"
+    assert evidence["target_model_id"] == "melix-dev-text-lora-gsm8k"
+
+
 def test_collect_evaluation_compare_evidence_fails_closed_without_persisted_compare_artifacts(
     tmp_path: Path,
 ) -> None:

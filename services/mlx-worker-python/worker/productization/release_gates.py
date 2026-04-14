@@ -763,6 +763,14 @@ def _evaluate_evaluation_compare_evidence(
 
 
 def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str:
+    if isinstance(policy, dict):
+        custom_suite_ids = [
+            str(suite_id)
+            for suite_id, suite_policy in policy.items()
+            if isinstance(suite_policy, dict)
+        ]
+        if custom_suite_ids:
+            return custom_suite_ids[0]
     default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})
     default_suite_ids = [
         str(suite_id)
@@ -771,10 +779,6 @@ def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str
     ]
     if default_suite_ids:
         return default_suite_ids[0]
-    if isinstance(policy, dict):
-        for suite_id, suite_policy in policy.items():
-            if isinstance(suite_policy, dict):
-                return str(suite_id)
     return ""
 
 
