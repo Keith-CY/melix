@@ -784,11 +784,53 @@ def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
     assert len(summary_lines) == 1
     assert summary_lines[0].startswith("job_id,task_kind")
     assert len(samples_lines) == 1
-    assert samples_lines[0].startswith("job_id,suite_id")
+    assert samples_lines[0].startswith("job_id,suite_id,id,task_kind")
     assert len(compare_summary_lines) == 1
     assert compare_summary_lines[0].startswith("job_id,base_model_id,target_model_id")
     assert len(compare_samples_lines) == 1
     assert compare_samples_lines[0].startswith("job_id,suite_id,dataset_id,sample_id,target_model_id")
+
+
+def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities() -> None:
+    bundle: dict[str, object] = {
+        "evaluation_samples": [
+            {
+                "job_id": "eval-1",
+                "suite_id": "humaneval",
+                "sample_id": "sample-1",
+                "task_kind": "text-generation",
+                "correct": True,
+                "expected": "identity",
+                "predicted": "def identity(x):\n    return x",
+                "question": "Write identity(x) that returns x.",
+                "raw_response": "```python\ndef identity(x):\n    return x\n```",
+                "time_s": 0.02,
+                "parse_status": "parsed_code_block",
+                "input_modalities": ["text"],
+                "media_references": [],
+                "code_language": "python",
+                "code_entry_point": "identity",
+                "code_compile_status": "compiled",
+                "code_runtime_status": "ok",
+                "code_timeout_status": "ok",
+                "code_test_status": "passed",
+                "code_tests_passed": 2,
+                "code_tests_total": 2,
+                "code_failure_detail": "",
+            }
+        ]
+    }
+
+    samples_csv = build_evaluation_samples_csv(bundle)
+    lines = [line for line in samples_csv.splitlines() if line.strip()]
+
+    assert lines[0] == (
+        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,"
+        "parse_status,input_modalities,media_references,code_language,code_entry_point,"
+        "code_compile_status,code_runtime_status,code_timeout_status,code_test_status,"
+        "code_tests_passed,code_tests_total,code_failure_detail"
+    )
+    assert "eval-1,humaneval,sample-1,text-generation,True,identity," in lines[1]
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:

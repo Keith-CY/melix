@@ -2371,11 +2371,12 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "eval-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(samplesCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(samplesCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed,python,solve,compiled,ok,ok,passed,2,2,"))
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
+        #expect(samplesCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(samplesCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,"))
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
+        #expect(samplesJSONL.contains("\"task_kind\":\"text-generation\""))
         #expect(samplesJSONL.contains("\"code_language\":\"python\""))
     }
 
@@ -3548,6 +3549,7 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "suite_id": "mmlu",
           "dataset_id": "mmlu.dev.v1",
           "sample_id": "sample-1",
+          "task_kind": "text-generation",
           "question": "2+2?",
           "expected": "4",
           "predicted": "4",
@@ -3555,6 +3557,8 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "correct": true,
           "time_s": 0.01,
           "parse_status": "parsed",
+          "input_modalities": ["text"],
+          "media_references": [],
           "code_language": "python",
           "code_entry_point": "solve",
           "code_compile_status": "compiled",

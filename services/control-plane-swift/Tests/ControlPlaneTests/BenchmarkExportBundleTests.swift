@@ -135,13 +135,18 @@ struct BenchmarkExportBundleTests {
         #expect(summaryRows[0].createdAtUnixMS == 1712400000000)
         #expect(samples.count == 1)
         #expect(samples[0].sampleID == "sample-1")
+        #expect(samples[0].taskKind == "text-generation")
+        #expect(samples[0].inputModalities == ["text"])
+        #expect(samples[0].mediaReferences == [])
         #expect(samples[0].codeLanguage == "python")
         #expect(samples[0].codeEntryPoint == "solve")
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(sampleCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed,python,solve,compiled,ok,ok,passed,2,2,"))
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
+        #expect(sampleJSONL.contains("\"task_kind\":\"text-generation\""))
+        #expect(sampleJSONL.contains("\"input_modalities\":[\"text\"]"))
         #expect(sampleJSONL.contains("\"code_language\":\"python\""))
     }
 
@@ -196,10 +201,10 @@ struct BenchmarkExportBundleTests {
         #expect(rows[0].incorrectCount == 0)
         #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
-        #expect(emptyBundle.evaluationSamplesCSV() == "id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n")
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n")
         #expect(emptyBundle.evaluationCompareSummaryCSV() == "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds\n")
         #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail\n")
     }
@@ -216,9 +221,9 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
         #expect(rows[0].createdAtUnixMS == 1712400000000)
         #expect(rows[1].createdAtUnixMS == 1712400000000)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,9.75,1712400000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,gsm8k,gsm8k.dev.v1,eval.gsm8k.exact_match,0.5,8,5,3,9.75,1712400000000"))
     }
 
     @Test("canonical evaluation summary rows sort by timestamp before job id")
@@ -435,6 +440,7 @@ private let benchmarkExportBundleJSON = """
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_id": "sample-1",
+      "task_kind": "text-generation",
       "question": "2+2?",
       "expected": "4",
       "predicted": "4",
@@ -442,6 +448,8 @@ private let benchmarkExportBundleJSON = """
       "correct": true,
       "time_s": 0.01,
       "parse_status": "parsed",
+      "input_modalities": ["text"],
+      "media_references": [],
       "code_language": "python",
       "code_entry_point": "solve",
       "code_compile_status": "compiled",

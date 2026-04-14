@@ -481,6 +481,7 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let suiteID: String
     public let datasetID: String
     public let sampleID: String
+    public let taskKind: String
     public let question: String
     public let expected: String
     public let predicted: String
@@ -488,6 +489,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let correct: Bool
     public let timeS: Double
     public let parseStatus: String
+    public let inputModalities: [String]
+    public let mediaReferences: [String]
     public let codeLanguage: String
     public let codeEntryPoint: String
     public let codeCompileStatus: String
@@ -504,6 +507,7 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case suiteID = "suite_id"
         case datasetID = "dataset_id"
         case sampleID = "sample_id"
+        case taskKind = "task_kind"
         case question
         case expected
         case predicted
@@ -511,6 +515,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case correct
         case timeS = "time_s"
         case parseStatus = "parse_status"
+        case inputModalities = "input_modalities"
+        case mediaReferences = "media_references"
         case codeLanguage = "code_language"
         case codeEntryPoint = "code_entry_point"
         case codeCompileStatus = "code_compile_status"
@@ -529,6 +535,7 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
         sampleID = try container.decodeIfPresent(String.self, forKey: .sampleID) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
         question = try container.decodeIfPresent(String.self, forKey: .question) ?? ""
         expected = try container.decodeIfPresent(String.self, forKey: .expected) ?? ""
         predicted = try container.decodeIfPresent(String.self, forKey: .predicted) ?? ""
@@ -536,6 +543,8 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         correct = try container.decodeIfPresent(Bool.self, forKey: .correct) ?? false
         timeS = try container.decodeIfPresent(Double.self, forKey: .timeS) ?? 0
         parseStatus = try container.decodeIfPresent(String.self, forKey: .parseStatus) ?? ""
+        inputModalities = try container.decodeIfPresent([String].self, forKey: .inputModalities) ?? []
+        mediaReferences = try container.decodeIfPresent([String].self, forKey: .mediaReferences) ?? []
         codeLanguage = try container.decodeIfPresent(String.self, forKey: .codeLanguage) ?? ""
         codeEntryPoint = try container.decodeIfPresent(String.self, forKey: .codeEntryPoint) ?? ""
         codeCompileStatus = try container.decodeIfPresent(String.self, forKey: .codeCompileStatus) ?? ""
@@ -1247,21 +1256,21 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSummaryCSV(jobID: String? = nil) -> String {
         let rows = evaluationSummaryCSVRows(jobID: jobID)
-        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"
+        let header = "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
         let body = rows.map { row in
             [
                 row.jobID,
-                row.modelID,
                 row.taskKind,
                 row.sourceRepo,
+                row.modelID,
                 row.suiteID,
                 row.datasetID,
-                String(row.sampleSize),
                 row.scoreName,
                 String(row.scoreValue),
+                String(row.sampleSize),
                 String(row.correctCount),
                 String(row.incorrectCount),
                 String(row.durationSeconds),
@@ -1286,13 +1295,16 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationSampleRows(jobID: jobID)
-        let header = "id,correct,expected,predicted,question,raw_response,time_s,parse_status,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"
+        let header = "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
         let body = rows.map { row in
             [
+                row.jobID,
+                row.suiteID,
                 row.sampleID,
+                row.taskKind,
                 row.correct ? "true" : "false",
                 row.expected,
                 row.predicted,
@@ -1300,6 +1312,8 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 row.rawResponse,
                 String(row.timeS),
                 row.parseStatus,
+                row.inputModalities.joined(separator: ","),
+                row.mediaReferences.joined(separator: ","),
                 row.codeLanguage,
                 row.codeEntryPoint,
                 row.codeCompileStatus,

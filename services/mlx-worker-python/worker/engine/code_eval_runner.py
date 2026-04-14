@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+
+_PAYLOAD_SENTINEL = "__MELIX_CODE_EVAL_PAYLOAD__:"
 
 
 @dataclass(frozen=True)
@@ -37,7 +41,7 @@ def run_python_code_evaluation(
     timeout_seconds: int = 3,
     memory_limit_mb: int = 256,
     stdout_limit_bytes: int = 32_768,
-) -> CodeEvaluationResult:
+    ) -> CodeEvaluationResult:
     try:
         compile(candidate_code, "<candidate>", "exec")
     except SyntaxError as exc:
@@ -49,6 +53,18 @@ def run_python_code_evaluation(
             tests_passed=0,
             tests_total=_count_tests(test_code),
             failure_detail=str(exc),
+        )
+
+    sandbox_exec = shutil.which("sandbox-exec")
+    if not sandbox_exec:
+        return CodeEvaluationResult(
+            compile_status="compiled",
+            runtime_status="error",
+            timeout_status="ok",
+            test_status="failed",
+            tests_passed=0,
+            tests_total=_count_tests(test_code),
+            failure_detail="sandbox-exec is unavailable on this host.",
         )
 
     with tempfile.TemporaryDirectory(prefix="melix-code-eval-") as temp_dir:
@@ -72,14 +88,26 @@ def run_python_code_evaluation(
 
         try:
             completed = subprocess.run(
-                [sys.executable, "-I", "-S", str(runner_path), str(config_path)],
+                [
+                    sandbox_exec,
+                    "-p",
+                    _sandbox_profile(temp_root=temp_root),
+                    str(_sandbox_python_executable()),
+                    "-I",
+                    "-S",
+                    str(runner_path),
+                    str(config_path),
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                cwd=str(temp_root),
                 env={
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTHONNOUSERSITE": "1",
+                    "HOME": str(temp_root),
+                    "TMPDIR": str(temp_root),
                 },
             )
         except subprocess.TimeoutExpired:
@@ -93,8 +121,8 @@ def run_python_code_evaluation(
                 failure_detail=f"Timed out after {timeout_seconds}s",
             )
 
-        stdout = completed.stdout[:stdout_limit_bytes].strip()
-        stderr = completed.stderr[:stdout_limit_bytes].strip()
+        stdout = completed.stdout[-stdout_limit_bytes:].strip()
+        stderr = completed.stderr[-stdout_limit_bytes:].strip()
         payload = _load_payload(stdout)
         if payload is None:
             detail = stderr or stdout or f"Subprocess exited with status {completed.returncode}"
@@ -120,14 +148,29 @@ def run_python_code_evaluation(
 
 
 def _count_tests(test_code: str) -> int:
-    return len([line for line in test_code.splitlines() if line.strip()])
+    try:
+        module = ast.parse(test_code, filename="<tests>", mode="exec")
+    except SyntaxError:
+        return len([line for line in test_code.splitlines() if line.strip()])
+    assert_count = sum(1 for node in ast.walk(module) if isinstance(node, ast.Assert))
+    return assert_count or len([line for line in test_code.splitlines() if line.strip()])
 
 
 def _load_payload(stdout: str) -> dict[str, object] | None:
     if not stdout:
         return None
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith(_PAYLOAD_SENTINEL):
+            return _decode_payload(line.removeprefix(_PAYLOAD_SENTINEL))
+    if lines:
+        return _decode_payload(lines[-1])
+    return _decode_payload(stdout)
+
+
+def _decode_payload(raw_payload: str) -> dict[str, object] | None:
     try:
-        payload = json.loads(stdout)
+        payload = json.loads(raw_payload)
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
@@ -135,31 +178,128 @@ def _load_payload(stdout: str) -> dict[str, object] | None:
     return payload
 
 
+def _sandbox_profile(*, temp_root: Path) -> str:
+    executable_paths = _sandbox_executable_paths()
+    runtime_paths = _sandbox_runtime_read_paths()
+    clauses = [
+        "(version 1)",
+        "(allow default)",
+        "(deny network*)",
+        "(deny file-write*)",
+        "(deny process-fork)",
+        "(deny process-exec)",
+    ]
+    if executable_paths:
+        executable_filters = " ".join(
+            f"(literal {json.dumps(str(path))})"
+            for path in executable_paths
+        )
+        clauses.append(f"(allow process-exec {executable_filters})")
+    home_path = Path.home()
+    clauses.append(f"(deny file-read* (subpath {json.dumps(str(home_path))}))")
+    read_filters = " ".join(
+        f"(subpath {json.dumps(str(path))})"
+        for path in (*runtime_paths, temp_root)
+    )
+    clauses.append(f"(allow file-read* {read_filters})")
+    return " ".join(clauses)
+
+
+def _sandbox_executable_paths() -> tuple[Path, ...]:
+    resolved = _sandbox_python_executable()
+    paths = [resolved]
+    launcher_path = resolved.parent.parent / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+    if launcher_path.exists():
+        paths.append(launcher_path)
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append(path)
+    return tuple(deduped)
+
+
+def _sandbox_python_executable() -> Path:
+    return Path(sys.executable).resolve()
+
+
+def _sandbox_runtime_read_paths() -> tuple[Path, ...]:
+    roots = [_sandbox_python_executable().parent.parent]
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in roots:
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append(path)
+    return tuple(deduped)
+
+
 def _runner_script() -> str:
-    return textwrap.dedent(
-        """
+    script = """
         from __future__ import annotations
 
+        import ast
         import importlib.util
         import json
         import resource
         import sys
         import traceback
 
+        PAYLOAD_SENTINEL = __PAYLOAD_SENTINEL__
 
-        def main() -> int:
-            config = json.loads(open(sys.argv[1], "r", encoding="utf-8").read())
-            memory_limit_mb = int(config.get("memory_limit_mb", 256) or 256)
-            memory_limit_bytes = memory_limit_mb * 1024 * 1024
-            current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
+
+        class _AssertInstrumentor(ast.NodeTransformer):
+            def __init__(self) -> None:
+                self.tests_total = 0
+
+            def visit_Assert(self, node: ast.Assert):
+                self.tests_total += 1
+                self.generic_visit(node)
+                instrumented = ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id="__melix_assert", ctx=ast.Load()),
+                        args=[
+                            node.test,
+                            node.msg if node.msg is not None else ast.Constant(value=None),
+                        ],
+                        keywords=[],
+                    )
+                )
+                return ast.copy_location(instrumented, node)
+
+
+        def _compile_tests(test_code: str):
+            module = ast.parse(test_code, filename="<tests>", mode="exec")
+            instrumentor = _AssertInstrumentor()
+            instrumented = instrumentor.visit(module)
+            ast.fix_missing_locations(instrumented)
+            return compile(instrumented, "<tests>", "exec"), instrumentor.tests_total
+
+
+        def _set_address_space_limit(memory_limit_bytes: int) -> None:
+            rlimit_as = getattr(resource, "RLIMIT_AS", None)
+            if rlimit_as is None:
+                return
+            current_soft, current_hard = resource.getrlimit(rlimit_as)
             if current_hard == resource.RLIM_INFINITY:
                 address_space_limit = memory_limit_bytes
             else:
                 address_space_limit = min(memory_limit_bytes, current_hard)
             try:
-                resource.setrlimit(resource.RLIMIT_AS, (address_space_limit, current_hard))
+                resource.setrlimit(rlimit_as, (address_space_limit, current_hard))
             except (OSError, ValueError):
                 pass
+
+
+        def main() -> int:
+            with open(sys.argv[1], "r", encoding="utf-8") as file:
+                config = json.load(file)
+            memory_limit_mb = int(config.get("memory_limit_mb", 256) or 256)
+            memory_limit_bytes = memory_limit_mb * 1024 * 1024
+            _set_address_space_limit(memory_limit_bytes)
             cpu_soft, cpu_hard = resource.getrlimit(resource.RLIMIT_CPU)
             cpu_limit = min(2, cpu_hard) if cpu_hard != resource.RLIM_INFINITY else 2
             try:
@@ -170,7 +310,8 @@ def _runner_script() -> str:
             candidate_path = config["candidate_path"]
             entry_point = str(config.get("entry_point", ""))
             test_code = str(config.get("test_code", ""))
-            tests = [line for line in test_code.splitlines() if line.strip()]
+            tests_total = 0
+            tests_passed = 0
 
             try:
                 spec = importlib.util.spec_from_file_location("candidate", candidate_path)
@@ -182,10 +323,19 @@ def _runner_script() -> str:
                     raise AttributeError(f"Missing entry point: {entry_point}")
 
                 namespace = dict(module.__dict__)
-                tests_passed = 0
-                for test in tests:
-                    exec(test, namespace, namespace)
-                    tests_passed += 1
+                test_state = {"passed": 0}
+
+                def __melix_assert(condition, message=None):
+                    if not condition:
+                        if message is None:
+                            raise AssertionError()
+                        raise AssertionError(message)
+                    test_state["passed"] += 1
+
+                namespace["__melix_assert"] = __melix_assert
+                compiled_tests, tests_total = _compile_tests(test_code)
+                exec(compiled_tests, namespace, namespace)
+                tests_passed = int(test_state["passed"])
 
                 payload = {
                     "compile_status": "compiled",
@@ -193,7 +343,7 @@ def _runner_script() -> str:
                     "timeout_status": "ok",
                     "test_status": "passed",
                     "tests_passed": tests_passed,
-                    "tests_total": len(tests),
+                    "tests_total": tests_total,
                     "failure_detail": "",
                 }
             except AssertionError as exc:
@@ -203,7 +353,7 @@ def _runner_script() -> str:
                     "timeout_status": "ok",
                     "test_status": "failed",
                     "tests_passed": locals().get("tests_passed", 0),
-                    "tests_total": len(tests),
+                    "tests_total": locals().get("tests_total", 0),
                     "failure_detail": str(exc) or "AssertionError",
                 }
             except BaseException as exc:
@@ -213,15 +363,15 @@ def _runner_script() -> str:
                     "timeout_status": "ok",
                     "test_status": "failed",
                     "tests_passed": locals().get("tests_passed", 0),
-                    "tests_total": len(tests),
+                    "tests_total": locals().get("tests_total", 0),
                     "failure_detail": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
                 }
 
-            print(json.dumps(payload))
+            print(PAYLOAD_SENTINEL + json.dumps(payload))
             return 0
 
 
         if __name__ == "__main__":
             raise SystemExit(main())
         """
-    ).strip() + "\n"
+    return textwrap.dedent(script).replace("__PAYLOAD_SENTINEL__", repr(_PAYLOAD_SENTINEL)).strip() + "\n"

@@ -161,28 +161,8 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
 def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
     rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
-        [
-            "job_id",
-            "suite_id",
-            "id",
-            "correct",
-            "expected",
-            "predicted",
-            "question",
-            "raw_response",
-            "time_s",
-            "parse_status",
-            "code_language",
-            "code_entry_point",
-            "code_compile_status",
-            "code_runtime_status",
-            "code_timeout_status",
-            "code_test_status",
-            "code_tests_passed",
-            "code_tests_total",
-            "code_failure_detail",
-        ],
+        [_normalized_evaluation_sample_row(row) for row in rows],
+        _canonical_evaluation_sample_columns(),
     )
 
 
@@ -496,6 +476,43 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "reasoning_mode",
         "structured_output_mode",
     ]
+
+
+def _canonical_evaluation_sample_columns() -> list[str]:
+    return [
+        "job_id",
+        "suite_id",
+        "id",
+        "task_kind",
+        "correct",
+        "expected",
+        "predicted",
+        "question",
+        "raw_response",
+        "time_s",
+        "parse_status",
+        "input_modalities",
+        "media_references",
+        "code_language",
+        "code_entry_point",
+        "code_compile_status",
+        "code_runtime_status",
+        "code_timeout_status",
+        "code_test_status",
+        "code_tests_passed",
+        "code_tests_total",
+        "code_failure_detail",
+    ]
+
+
+def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        **row,
+        "id": row.get("id") or row.get("sample_id", ""),
+        "task_kind": row.get("task_kind", ""),
+        "input_modalities": row.get("input_modalities", []),
+        "media_references": row.get("media_references", []),
+    }
 
 
 def _canonical_benchmark_matrix_summary_columns() -> list[str]:
