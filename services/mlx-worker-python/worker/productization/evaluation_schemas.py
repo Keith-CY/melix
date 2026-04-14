@@ -141,6 +141,15 @@ class EvaluationSample:
     task_kind: str
     input_modalities: tuple[str, ...]
     media_references: tuple[str, ...]
+    code_language: str
+    code_entry_point: str
+    code_compile_status: str
+    code_runtime_status: str
+    code_timeout_status: str
+    code_test_status: str
+    code_tests_passed: int
+    code_tests_total: int
+    code_failure_detail: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -159,6 +168,15 @@ class EvaluationSample:
             "task_kind": self.task_kind,
             "input_modalities": list(self.input_modalities),
             "media_references": list(self.media_references),
+            "code_language": self.code_language,
+            "code_entry_point": self.code_entry_point,
+            "code_compile_status": self.code_compile_status,
+            "code_runtime_status": self.code_runtime_status,
+            "code_timeout_status": self.code_timeout_status,
+            "code_test_status": self.code_test_status,
+            "code_tests_passed": self.code_tests_passed,
+            "code_tests_total": self.code_tests_total,
+            "code_failure_detail": self.code_failure_detail,
         }
 
 
@@ -266,6 +284,22 @@ class EvaluationCompareSample:
     target_time_s: float
     base_parse_status: str
     target_parse_status: str
+    code_language: str
+    code_entry_point: str
+    base_code_compile_status: str
+    target_code_compile_status: str
+    base_code_runtime_status: str
+    target_code_runtime_status: str
+    base_code_timeout_status: str
+    target_code_timeout_status: str
+    base_code_test_status: str
+    target_code_test_status: str
+    base_code_tests_passed: int
+    target_code_tests_passed: int
+    base_code_tests_total: int
+    target_code_tests_total: int
+    base_code_failure_detail: str
+    target_code_failure_detail: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -289,6 +323,22 @@ class EvaluationCompareSample:
             "target_time_s": self.target_time_s,
             "base_parse_status": self.base_parse_status,
             "target_parse_status": self.target_parse_status,
+            "code_language": self.code_language,
+            "code_entry_point": self.code_entry_point,
+            "base_code_compile_status": self.base_code_compile_status,
+            "target_code_compile_status": self.target_code_compile_status,
+            "base_code_runtime_status": self.base_code_runtime_status,
+            "target_code_runtime_status": self.target_code_runtime_status,
+            "base_code_timeout_status": self.base_code_timeout_status,
+            "target_code_timeout_status": self.target_code_timeout_status,
+            "base_code_test_status": self.base_code_test_status,
+            "target_code_test_status": self.target_code_test_status,
+            "base_code_tests_passed": self.base_code_tests_passed,
+            "target_code_tests_passed": self.target_code_tests_passed,
+            "base_code_tests_total": self.base_code_tests_total,
+            "target_code_tests_total": self.target_code_tests_total,
+            "base_code_failure_detail": self.base_code_failure_detail,
+            "target_code_failure_detail": self.target_code_failure_detail,
         }
 
 
@@ -406,6 +456,15 @@ def build_evaluation_sample_record(
     task_kind: str = "text-generation",
     input_modalities: tuple[str, ...] = (),
     media_references: tuple[str, ...] = (),
+    code_language: str = "",
+    code_entry_point: str = "",
+    code_compile_status: str = "",
+    code_runtime_status: str = "",
+    code_timeout_status: str = "",
+    code_test_status: str = "",
+    code_tests_passed: int = 0,
+    code_tests_total: int = 0,
+    code_failure_detail: str = "",
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -423,6 +482,15 @@ def build_evaluation_sample_record(
         task_kind=task_kind,
         input_modalities=tuple(input_modalities),
         media_references=tuple(media_references),
+        code_language=code_language,
+        code_entry_point=code_entry_point,
+        code_compile_status=code_compile_status,
+        code_runtime_status=code_runtime_status,
+        code_timeout_status=code_timeout_status,
+        code_test_status=code_test_status,
+        code_tests_passed=code_tests_passed,
+        code_tests_total=code_tests_total,
+        code_failure_detail=code_failure_detail,
     )
 
 
@@ -531,6 +599,22 @@ def build_evaluation_compare_sample_record(
     target_time_s: float,
     base_parse_status: str,
     target_parse_status: str,
+    code_language: str = "",
+    code_entry_point: str = "",
+    base_code_compile_status: str = "",
+    target_code_compile_status: str = "",
+    base_code_runtime_status: str = "",
+    target_code_runtime_status: str = "",
+    base_code_timeout_status: str = "",
+    target_code_timeout_status: str = "",
+    base_code_test_status: str = "",
+    target_code_test_status: str = "",
+    base_code_tests_passed: int = 0,
+    target_code_tests_passed: int = 0,
+    base_code_tests_total: int = 0,
+    target_code_tests_total: int = 0,
+    base_code_failure_detail: str = "",
+    target_code_failure_detail: str = "",
 ) -> EvaluationCompareSample:
     return EvaluationCompareSample(
         schema_version=_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION,
@@ -553,4 +637,20 @@ def build_evaluation_compare_sample_record(
         target_time_s=float(target_time_s),
         base_parse_status=base_parse_status,
         target_parse_status=target_parse_status,
+        code_language=code_language,
+        code_entry_point=code_entry_point,
+        base_code_compile_status=base_code_compile_status,
+        target_code_compile_status=target_code_compile_status,
+        base_code_runtime_status=base_code_runtime_status,
+        target_code_runtime_status=target_code_runtime_status,
+        base_code_timeout_status=base_code_timeout_status,
+        target_code_timeout_status=target_code_timeout_status,
+        base_code_test_status=base_code_test_status,
+        target_code_test_status=target_code_test_status,
+        base_code_tests_passed=base_code_tests_passed,
+        target_code_tests_passed=target_code_tests_passed,
+        base_code_tests_total=base_code_tests_total,
+        target_code_tests_total=target_code_tests_total,
+        base_code_failure_detail=base_code_failure_detail,
+        target_code_failure_detail=target_code_failure_detail,
     )

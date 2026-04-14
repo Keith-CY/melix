@@ -135,11 +135,46 @@ struct BenchmarkExportBundleTests {
         #expect(summaryRows[0].createdAtUnixMS == 1712400000000)
         #expect(samples.count == 1)
         #expect(samples[0].sampleID == "sample-1")
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
-        #expect(sampleCSV.contains("sample-1,true,4,4,2+2?,4,0.01,parsed"))
+        #expect(samples[0].taskKind == "text-generation")
+        #expect(samples[0].inputModalities == ["text"])
+        #expect(samples[0].mediaReferences == [])
+        #expect(samples[0].codeLanguage == "python")
+        #expect(samples[0].codeEntryPoint == "solve")
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
+        #expect(sampleJSONL.contains("\"task_kind\":\"text-generation\""))
+        #expect(sampleJSONL.contains("\"input_modalities\":[\"text\"]"))
+        #expect(sampleJSONL.contains("\"code_language\":\"python\""))
+    }
+
+    @Test("decodes evaluation compare exports and preserves executable-code evidence")
+    func decodesEvaluationCompareExports() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkExportBundleJSON)
+
+        let summaryRows = bundle.evaluationCompareSummaryRows(jobID: "eval-compare-1")
+        let samples = bundle.evaluationCompareSampleRows(jobID: "eval-compare-1")
+        let summaryCSV = bundle.evaluationCompareSummaryCSV(jobID: "eval-compare-1")
+        let samplesCSV = bundle.evaluationCompareSamplesCSV(jobID: "eval-compare-1")
+        let samplesJSONL = try bundle.evaluationCompareSamplesJSONL(jobID: "eval-compare-1")
+
+        #expect(summaryRows.count == 1)
+        #expect(summaryRows[0].jobID == "eval-compare-1")
+        #expect(summaryRows[0].targetModelID == "melix-dev-text-lora-a")
+        #expect(summaryRows[0].deltaAccuracy == 0.5)
+        #expect(samples.count == 1)
+        #expect(samples[0].sampleID == "sample-1")
+        #expect(samples[0].codeLanguage == "python")
+        #expect(samples[0].baseCodeTestStatus == "failed")
+        #expect(samples[0].targetCodeTestStatus == "passed")
+        #expect(summaryCSV.contains("job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds"))
+        #expect(summaryCSV.contains("eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75"))
+        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted"))
+        #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,"))
+        #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
+        #expect(samplesJSONL.contains("\"base_code_failure_detail\":\"assertion failed\""))
     }
 
     @Test("evaluation exports fall back to parameters sort deterministically and emit empty headers")
@@ -166,10 +201,12 @@ struct BenchmarkExportBundleTests {
         #expect(rows[0].incorrectCount == 0)
         #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(sampleCSV.contains("id,correct,expected,predicted,question,raw_response,time_s,parse_status"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
-        #expect(emptyBundle.evaluationSamplesCSV() == "id,correct,expected,predicted,question,raw_response,time_s,parse_status\n")
+        #expect(summaryCSV.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail"))
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail\n")
+        #expect(emptyBundle.evaluationCompareSummaryCSV() == "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds\n")
+        #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail\n")
     }
 
     @Test("canonical evaluation summary rows are sorted deterministically")
@@ -184,9 +221,9 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
         #expect(rows[0].createdAtUnixMS == 1712400000000)
         #expect(rows[1].createdAtUnixMS == 1712400000000)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
-        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,12.5,1712400000000"))
-        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,9.75,1712400000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,mmlu,mmlu.dev.v1,eval.mmlu.accuracy,0.75,8,6,2,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,gsm8k,gsm8k.dev.v1,eval.gsm8k.exact_match,0.5,8,5,3,9.75,1712400000000"))
     }
 
     @Test("canonical evaluation summary rows sort by timestamp before job id")
@@ -200,6 +237,28 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
         #expect(rows[0].createdAtUnixMS == 1712400000000)
         #expect(rows[1].createdAtUnixMS == 1712400001000)
+    }
+
+    @Test("canonical evaluation compare rows sort by job target and sample identifiers")
+    func canonicalEvaluationCompareRowsSortDeterministically() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(
+            json: canonicalEvaluationCompareRowsJSON
+        )
+
+        let summaryRows = bundle.evaluationCompareSummaryRows()
+        let sampleRows = bundle.evaluationCompareSampleRows()
+
+        #expect(summaryRows.map { "\($0.jobID):\($0.targetModelID)" } == [
+            "eval-compare-a:target-a",
+            "eval-compare-a:target-b",
+            "eval-compare-b:target-a",
+        ])
+        #expect(sampleRows.map { "\($0.jobID):\($0.targetModelID):\($0.sampleID)" } == [
+            "eval-compare-a:target-a:sample-1",
+            "eval-compare-a:target-a:sample-2",
+            "eval-compare-a:target-b:sample-1",
+            "eval-compare-b:target-a:sample-1",
+        ])
     }
 
     @Test("decodes benchmark matrix history rows and csv exports")
@@ -381,13 +440,112 @@ private let benchmarkExportBundleJSON = """
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_id": "sample-1",
+      "task_kind": "text-generation",
       "question": "2+2?",
       "expected": "4",
       "predicted": "4",
       "raw_response": "4",
       "correct": true,
       "time_s": 0.01,
-      "parse_status": "parsed"
+      "parse_status": "parsed",
+      "input_modalities": ["text"],
+      "media_references": [],
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "code_compile_status": "compiled",
+      "code_runtime_status": "ok",
+      "code_timeout_status": "ok",
+      "code_test_status": "passed",
+      "code_tests_passed": 2,
+      "code_tests_total": 2,
+      "code_failure_detail": ""
+    }
+  ],
+  "evaluation_compare_jobs": [
+    {
+      "schema_version": "melix.evaluation_compare_job.v1",
+      "job_id": "eval-compare-1",
+      "base_model_id": "melix-dev-text",
+      "target_model_ids": ["melix-dev-text-lora-a"],
+      "task_kind": "text-generation",
+      "source_repo": "openai_humaneval",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "parameters": {
+        "compare_mode": "base_vs_targets",
+        "compare_target_model_ids": "melix-dev-text-lora-a"
+      },
+      "status": "completed",
+      "output_dir": "/tmp/melix/evaluation/runs/eval-compare-1",
+      "created_at_unix_ms": 1712500000000,
+      "updated_at_unix_ms": 1712500005000
+    }
+  ],
+  "evaluation_compare_summary_rows": [
+    {
+      "schema_version": "melix.evaluation_compare_summary.v1",
+      "job_id": "eval-compare-1",
+      "base_model_id": "melix-dev-text",
+      "target_model_id": "melix-dev-text-lora-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "win_count": 1,
+      "loss_count": 0,
+      "tie_count": 1,
+      "regression_count": 0,
+      "base_accuracy": 0.5,
+      "target_accuracy": 1.0,
+      "delta_accuracy": 0.5,
+      "duration_seconds": 1.75,
+      "metrics": [
+        {"name": "eval.compare.win_count", "value": 1.0, "unit": "count"},
+        {"name": "eval.compare.delta_accuracy", "value": 0.5, "unit": "ratio"}
+      ],
+      "report_path": "/tmp/melix/evaluation/runs/eval-compare-1/evaluation-compare-report.md"
+    }
+  ],
+  "evaluation_compare_samples": [
+    {
+      "schema_version": "melix.evaluation_compare_sample.v1",
+      "job_id": "eval-compare-1",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_id": "sample-1",
+      "target_model_id": "melix-dev-text-lora-a",
+      "question": "Write solve(n) that returns n",
+      "expected": "solve",
+      "base_predicted": "def solve(n):\\n    return 0",
+      "target_predicted": "def solve(n):\\n    return n",
+      "base_raw_response": "def solve(n):\\n    return 0",
+      "target_raw_response": "def solve(n):\\n    return n",
+      "base_correct": false,
+      "target_correct": true,
+      "outcome": "win",
+      "regression": false,
+      "base_time_s": 0.11,
+      "target_time_s": 0.09,
+      "base_parse_status": "parsed_code_fallback",
+      "target_parse_status": "parsed_code_fallback",
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "base_code_compile_status": "compiled",
+      "target_code_compile_status": "compiled",
+      "base_code_runtime_status": "ok",
+      "target_code_runtime_status": "ok",
+      "base_code_timeout_status": "ok",
+      "target_code_timeout_status": "ok",
+      "base_code_test_status": "failed",
+      "target_code_test_status": "passed",
+      "base_code_tests_passed": 1,
+      "target_code_tests_passed": 2,
+      "base_code_tests_total": 2,
+      "target_code_tests_total": 2,
+      "base_code_failure_detail": "assertion failed",
+      "target_code_failure_detail": ""
     }
   ]
 }
@@ -594,6 +752,228 @@ private let canonicalEvaluationSummaryTimestampJSON = """
       "incorrect_count": 2,
       "duration_seconds": 12.5,
       "created_at_unix_ms": 1712400000000
+    }
+  ]
+}
+"""
+
+private let canonicalEvaluationCompareRowsJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "evaluation_compare_summary_rows": [
+    {
+      "schema_version": "melix.evaluation_compare_summary.v1",
+      "job_id": "eval-compare-b",
+      "base_model_id": "base-b",
+      "target_model_id": "target-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "win_count": 1,
+      "loss_count": 0,
+      "tie_count": 1,
+      "regression_count": 0,
+      "base_accuracy": 0.5,
+      "target_accuracy": 1.0,
+      "delta_accuracy": 0.5,
+      "duration_seconds": 2.0,
+      "metrics": [],
+      "report_path": "/tmp/eval-compare-b.md"
+    },
+    {
+      "schema_version": "melix.evaluation_compare_summary.v1",
+      "job_id": "eval-compare-a",
+      "base_model_id": "base-a",
+      "target_model_id": "target-b",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "win_count": 1,
+      "loss_count": 0,
+      "tie_count": 1,
+      "regression_count": 0,
+      "base_accuracy": 0.5,
+      "target_accuracy": 1.0,
+      "delta_accuracy": 0.5,
+      "duration_seconds": 1.0,
+      "metrics": [],
+      "report_path": "/tmp/eval-compare-a-target-b.md"
+    },
+    {
+      "schema_version": "melix.evaluation_compare_summary.v1",
+      "job_id": "eval-compare-a",
+      "base_model_id": "base-a",
+      "target_model_id": "target-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_size": 2,
+      "scoring_mode": "pass_at_1",
+      "win_count": 1,
+      "loss_count": 0,
+      "tie_count": 1,
+      "regression_count": 0,
+      "base_accuracy": 0.5,
+      "target_accuracy": 1.0,
+      "delta_accuracy": 0.5,
+      "duration_seconds": 1.0,
+      "metrics": [],
+      "report_path": "/tmp/eval-compare-a-target-a.md"
+    }
+  ],
+  "evaluation_compare_samples": [
+    {
+      "schema_version": "melix.evaluation_compare_sample.v1",
+      "job_id": "eval-compare-b",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_id": "sample-1",
+      "target_model_id": "target-a",
+      "question": "Question B",
+      "expected": "solve",
+      "base_predicted": "base-b",
+      "target_predicted": "target-b",
+      "base_raw_response": "base-b",
+      "target_raw_response": "target-b",
+      "base_correct": false,
+      "target_correct": true,
+      "outcome": "win",
+      "regression": false,
+      "base_time_s": 0.2,
+      "target_time_s": 0.1,
+      "base_parse_status": "parsed",
+      "target_parse_status": "parsed",
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "base_code_compile_status": "compiled",
+      "target_code_compile_status": "compiled",
+      "base_code_runtime_status": "ok",
+      "target_code_runtime_status": "ok",
+      "base_code_timeout_status": "ok",
+      "target_code_timeout_status": "ok",
+      "base_code_test_status": "failed",
+      "target_code_test_status": "passed",
+      "base_code_tests_passed": 1,
+      "target_code_tests_passed": 2,
+      "base_code_tests_total": 2,
+      "target_code_tests_total": 2,
+      "base_code_failure_detail": "assertion failed",
+      "target_code_failure_detail": ""
+    },
+    {
+      "schema_version": "melix.evaluation_compare_sample.v1",
+      "job_id": "eval-compare-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_id": "sample-2",
+      "target_model_id": "target-a",
+      "question": "Question A2",
+      "expected": "solve",
+      "base_predicted": "base-a2",
+      "target_predicted": "target-a2",
+      "base_raw_response": "base-a2",
+      "target_raw_response": "target-a2",
+      "base_correct": false,
+      "target_correct": true,
+      "outcome": "win",
+      "regression": false,
+      "base_time_s": 0.2,
+      "target_time_s": 0.1,
+      "base_parse_status": "parsed",
+      "target_parse_status": "parsed",
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "base_code_compile_status": "compiled",
+      "target_code_compile_status": "compiled",
+      "base_code_runtime_status": "ok",
+      "target_code_runtime_status": "ok",
+      "base_code_timeout_status": "ok",
+      "target_code_timeout_status": "ok",
+      "base_code_test_status": "failed",
+      "target_code_test_status": "passed",
+      "base_code_tests_passed": 1,
+      "target_code_tests_passed": 2,
+      "base_code_tests_total": 2,
+      "target_code_tests_total": 2,
+      "base_code_failure_detail": "assertion failed",
+      "target_code_failure_detail": ""
+    },
+    {
+      "schema_version": "melix.evaluation_compare_sample.v1",
+      "job_id": "eval-compare-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_id": "sample-1",
+      "target_model_id": "target-b",
+      "question": "Question A target B",
+      "expected": "solve",
+      "base_predicted": "base-ab",
+      "target_predicted": "target-ab",
+      "base_raw_response": "base-ab",
+      "target_raw_response": "target-ab",
+      "base_correct": false,
+      "target_correct": true,
+      "outcome": "win",
+      "regression": false,
+      "base_time_s": 0.2,
+      "target_time_s": 0.1,
+      "base_parse_status": "parsed",
+      "target_parse_status": "parsed",
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "base_code_compile_status": "compiled",
+      "target_code_compile_status": "compiled",
+      "base_code_runtime_status": "ok",
+      "target_code_runtime_status": "ok",
+      "base_code_timeout_status": "ok",
+      "target_code_timeout_status": "ok",
+      "base_code_test_status": "failed",
+      "target_code_test_status": "passed",
+      "base_code_tests_passed": 1,
+      "target_code_tests_passed": 2,
+      "base_code_tests_total": 2,
+      "target_code_tests_total": 2,
+      "base_code_failure_detail": "assertion failed",
+      "target_code_failure_detail": ""
+    },
+    {
+      "schema_version": "melix.evaluation_compare_sample.v1",
+      "job_id": "eval-compare-a",
+      "suite_id": "mbpp",
+      "dataset_id": "mbpp.dev.v1",
+      "sample_id": "sample-1",
+      "target_model_id": "target-a",
+      "question": "Question A1",
+      "expected": "solve",
+      "base_predicted": "base-a1",
+      "target_predicted": "target-a1",
+      "base_raw_response": "base-a1",
+      "target_raw_response": "target-a1",
+      "base_correct": false,
+      "target_correct": true,
+      "outcome": "win",
+      "regression": false,
+      "base_time_s": 0.2,
+      "target_time_s": 0.1,
+      "base_parse_status": "parsed",
+      "target_parse_status": "parsed",
+      "code_language": "python",
+      "code_entry_point": "solve",
+      "base_code_compile_status": "compiled",
+      "target_code_compile_status": "compiled",
+      "base_code_runtime_status": "ok",
+      "target_code_runtime_status": "ok",
+      "base_code_timeout_status": "ok",
+      "target_code_timeout_status": "ok",
+      "base_code_test_status": "failed",
+      "target_code_test_status": "passed",
+      "base_code_tests_passed": 1,
+      "target_code_tests_passed": 2,
+      "base_code_tests_total": 2,
+      "target_code_tests_total": 2,
+      "base_code_failure_detail": "assertion failed",
+      "target_code_failure_detail": ""
     }
   ]
 }

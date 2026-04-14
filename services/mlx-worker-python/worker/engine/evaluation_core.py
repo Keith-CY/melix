@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.engine.code_eval_runner import run_python_code_evaluation
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_compare import (
     build_compare_samples,
@@ -50,7 +51,9 @@ _ANSWER_PREFIX_PATTERN = re.compile(
 _NUMERIC_TOKEN_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
 _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
+_CODE_BLOCK_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
+_CODE_EXEC_SUITES = {"humaneval", "mbpp"}
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,10 @@ class EvaluationCore:
             if code_exec_policy is not None and code_exec_policy != ""
             else (parameters or {}).get("code_exec_policy", "")
         )
+        if suite_id in _CODE_EXEC_SUITES and resolved_code_exec_policy != "sandboxed":
+            raise ValueError(
+                f"Evaluation suite {suite_id} requires code_exec_policy=sandboxed."
+            )
         created_at_unix_ms = int(time.time() * 1000)
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
@@ -206,6 +213,23 @@ class EvaluationCore:
         incorrect = len(sample_records) - correct
         accuracy = round(correct / max(len(sample_records), 1), 4)
         job_parameters.setdefault("sample_size", str(len(sample_records)))
+        metrics = {
+            f"eval.{suite_id}.{score_name}": accuracy,
+            f"eval.{suite_id}.correct_count": float(correct),
+            f"eval.{suite_id}.incorrect_count": float(incorrect),
+            f"eval.{suite_id}.duration_seconds": duration_seconds,
+        }
+        units = {
+            f"eval.{suite_id}.{score_name}": "ratio",
+            f"eval.{suite_id}.correct_count": "count",
+            f"eval.{suite_id}.incorrect_count": "count",
+            f"eval.{suite_id}.duration_seconds": "s",
+        }
+        if suite_id in _CODE_EXEC_SUITES:
+            metrics[f"eval.{suite_id}.code_exec_pass_count"] = float(correct)
+            metrics[f"eval.{suite_id}.code_exec_fail_count"] = float(incorrect)
+            units[f"eval.{suite_id}.code_exec_pass_count"] = "count"
+            units[f"eval.{suite_id}.code_exec_fail_count"] = "count"
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
@@ -237,19 +261,9 @@ class EvaluationCore:
             correct_count=correct,
             incorrect_count=incorrect,
             duration_seconds=duration_seconds,
-            metrics={
-                f"eval.{suite_id}.{score_name}": accuracy,
-                f"eval.{suite_id}.correct_count": float(correct),
-                f"eval.{suite_id}.incorrect_count": float(incorrect),
-                f"eval.{suite_id}.duration_seconds": duration_seconds,
-            },
+            metrics=metrics,
             report_path=str(report_path),
-            units={
-                f"eval.{suite_id}.{score_name}": "ratio",
-                f"eval.{suite_id}.correct_count": "count",
-                f"eval.{suite_id}.incorrect_count": "count",
-                f"eval.{suite_id}.duration_seconds": "s",
-            },
+            units=units,
         )
         persisted_paths: dict[str, Path] = {}
         if self._jobs_root is not None:
@@ -568,7 +582,9 @@ class EvaluationCore:
         request_label: str = "",
     ) -> EvaluationSample:
         prompt = str(sample.get("prompt", sample.get("question", "")))
-        expected = str(sample.get("expected", sample.get("answer", ""))).strip()
+        expected = str(
+            sample.get("expected", sample.get("answer", sample.get("entry_point", "")))
+        ).strip()
         media_references = EvaluationCore._media_references_for_sample(
             task_kind=task_kind,
             dataset_root=dataset_root,
@@ -587,6 +603,7 @@ class EvaluationCore:
                 registry=self._registry,
                 loaded_model=loaded_model,
                 messages=EvaluationCore._evaluation_messages(
+                    suite_id=suite_id,
                     prompt=prompt,
                     expected=expected,
                     media_references=media_references,
@@ -613,6 +630,34 @@ class EvaluationCore:
                 raw_response = predicted
                 parse_status = "parsed" if predicted else "empty_prediction"
         duration_s = round(time.perf_counter() - started_at, 6)
+        code_language = ""
+        code_entry_point = ""
+        code_compile_status = ""
+        code_runtime_status = ""
+        code_timeout_status = ""
+        code_test_status = ""
+        code_tests_passed = 0
+        code_tests_total = 0
+        code_failure_detail = ""
+        if suite_id in _CODE_EXEC_SUITES:
+            predicted, parse_status = EvaluationCore._extract_code_candidate(raw_response)
+            code_eval = run_python_code_evaluation(
+                candidate_code=predicted,
+                entry_point=str(sample.get("entry_point", "")).strip(),
+                test_code=str(sample.get("test", "")).strip(),
+            )
+            correct = code_eval.passed
+            code_language = "python"
+            code_entry_point = str(sample.get("entry_point", "")).strip()
+            code_compile_status = code_eval.compile_status
+            code_runtime_status = code_eval.runtime_status
+            code_timeout_status = code_eval.timeout_status
+            code_test_status = code_eval.test_status
+            code_tests_passed = code_eval.tests_passed
+            code_tests_total = code_eval.tests_total
+            code_failure_detail = code_eval.failure_detail
+        else:
+            correct = EvaluationCore._answers_match(expected=expected, predicted=predicted)
         return build_evaluation_sample_record(
             job_id=job_id,
             suite_id=suite_id,
@@ -622,12 +667,21 @@ class EvaluationCore:
             expected=expected,
             predicted=predicted,
             raw_response=raw_response,
-            correct=EvaluationCore._answers_match(expected=expected, predicted=predicted),
+            correct=correct,
             time_s=duration_s,
             parse_status=parse_status,
             task_kind=task_kind,
             input_modalities=input_modalities,
             media_references=media_references,
+            code_language=code_language,
+            code_entry_point=code_entry_point,
+            code_compile_status=code_compile_status,
+            code_runtime_status=code_runtime_status,
+            code_timeout_status=code_timeout_status,
+            code_test_status=code_test_status,
+            code_tests_passed=code_tests_passed,
+            code_tests_total=code_tests_total,
+            code_failure_detail=code_failure_detail,
         )
 
     @staticmethod
@@ -697,11 +751,17 @@ class EvaluationCore:
 
     @staticmethod
     def _evaluation_messages(
+        suite_id: str,
         prompt: str,
         expected: str,
         media_references: tuple[str, ...] = (),
     ) -> list[common_pb2.ChatMessage]:
-        if EvaluationCore._looks_like_numeric(expected):
+        if suite_id in _CODE_EXEC_SUITES:
+            instruction = (
+                "Return only valid Python code. "
+                "Do not include explanations, tests, or markdown fences."
+            )
+        elif EvaluationCore._looks_like_numeric(expected):
             instruction = "Return only the final numeric answer. Do not include reasoning or explanation."
         elif EvaluationCore._looks_like_option(expected):
             instruction = "Return only the single best answer choice letter. Do not include reasoning or explanation."
@@ -863,6 +923,16 @@ class EvaluationCore:
                 return parsed, "parsed_option"
         _ = suite_id
         return parsed, "parsed"
+
+    @staticmethod
+    def _extract_code_candidate(raw_response: str) -> tuple[str, str]:
+        normalized_response = raw_response.strip()
+        if not normalized_response:
+            return "", "empty_prediction"
+        matches = _CODE_BLOCK_PATTERN.findall(normalized_response)
+        if matches:
+            return matches[-1].strip(), "parsed_code_block"
+        return normalized_response, "parsed_code_fallback"
 
     @staticmethod
     def _parse_candidate_for_expected(*, candidate: str, expected: str) -> str:

@@ -86,18 +86,42 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     results: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     samples: list[dict[str, object]] = []
+    compare_jobs: list[dict[str, object]] = []
+    compare_summary_rows: list[dict[str, object]] = []
+    compare_samples: list[dict[str, object]] = []
 
-    _collect_evaluation_run(jobs_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
+    _collect_evaluation_run(
+        jobs_root,
+        jobs=jobs,
+        results=results,
+        summaries=summaries,
+        samples=samples,
+        compare_jobs=compare_jobs,
+        compare_summary_rows=compare_summary_rows,
+        compare_samples=compare_samples,
+    )
     runs_root = jobs_root / "runs"
     if runs_root.is_dir():
         for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_evaluation_run(run_root, jobs=jobs, results=results, summaries=summaries, samples=samples)
+            _collect_evaluation_run(
+                run_root,
+                jobs=jobs,
+                results=results,
+                summaries=summaries,
+                samples=samples,
+                compare_jobs=compare_jobs,
+                compare_summary_rows=compare_summary_rows,
+                compare_samples=compare_samples,
+            )
 
     return {
         "evaluation_jobs": jobs,
         "evaluation_results": results,
         "evaluation_summary_rows": summaries,
         "evaluation_samples": samples,
+        "evaluation_compare_jobs": compare_jobs,
+        "evaluation_compare_summary_rows": compare_summary_rows,
+        "evaluation_compare_samples": compare_samples,
     }
 
 
@@ -137,18 +161,74 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
 def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
     rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
+        [_normalized_evaluation_sample_row(row) for row in rows],
+        _canonical_evaluation_sample_columns(),
+    )
+
+
+def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)]
+    return _rows_to_csv(
+        rows,
+        [
+            "job_id",
+            "base_model_id",
+            "target_model_id",
+            "suite_id",
+            "dataset_id",
+            "sample_size",
+            "win_count",
+            "loss_count",
+            "tie_count",
+            "regression_count",
+            "base_accuracy",
+            "target_accuracy",
+            "delta_accuracy",
+            "duration_seconds",
+        ],
+    )
+
+
+def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
+    rows = [row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)]
+    return _rows_to_csv(
         rows,
         [
             "job_id",
             "suite_id",
-            "id",
-            "correct",
-            "expected",
-            "predicted",
+            "dataset_id",
+            "sample_id",
+            "target_model_id",
             "question",
-            "raw_response",
-            "time_s",
-            "parse_status",
+            "expected",
+            "base_predicted",
+            "target_predicted",
+            "base_raw_response",
+            "target_raw_response",
+            "base_correct",
+            "target_correct",
+            "outcome",
+            "regression",
+            "base_time_s",
+            "target_time_s",
+            "base_parse_status",
+            "target_parse_status",
+            "code_language",
+            "code_entry_point",
+            "base_code_compile_status",
+            "target_code_compile_status",
+            "base_code_runtime_status",
+            "target_code_runtime_status",
+            "base_code_timeout_status",
+            "target_code_timeout_status",
+            "base_code_test_status",
+            "target_code_test_status",
+            "base_code_tests_passed",
+            "target_code_tests_passed",
+            "base_code_tests_total",
+            "target_code_tests_total",
+            "base_code_failure_detail",
+            "target_code_failure_detail",
         ],
     )
 
@@ -398,6 +478,43 @@ def _canonical_benchmark_row_columns() -> list[str]:
     ]
 
 
+def _canonical_evaluation_sample_columns() -> list[str]:
+    return [
+        "job_id",
+        "suite_id",
+        "id",
+        "task_kind",
+        "correct",
+        "expected",
+        "predicted",
+        "question",
+        "raw_response",
+        "time_s",
+        "parse_status",
+        "input_modalities",
+        "media_references",
+        "code_language",
+        "code_entry_point",
+        "code_compile_status",
+        "code_runtime_status",
+        "code_timeout_status",
+        "code_test_status",
+        "code_tests_passed",
+        "code_tests_total",
+        "code_failure_detail",
+    ]
+
+
+def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        **row,
+        "id": row.get("id") or row.get("sample_id", ""),
+        "task_kind": row.get("task_kind", ""),
+        "input_modalities": row.get("input_modalities", []),
+        "media_references": row.get("media_references", []),
+    }
+
+
 def _canonical_benchmark_matrix_summary_columns() -> list[str]:
     return [
         "job_id",
@@ -475,6 +592,9 @@ def _collect_evaluation_run(
     results: list[dict[str, object]],
     summaries: list[dict[str, object]],
     samples: list[dict[str, object]],
+    compare_jobs: list[dict[str, object]],
+    compare_summary_rows: list[dict[str, object]],
+    compare_samples: list[dict[str, object]],
 ) -> None:
     job_path = run_root / "evaluation-job.json"
     if job_path.is_file():
@@ -502,6 +622,7 @@ def _collect_evaluation_run(
         return
 
     compare_job = json.loads(compare_job_path.read_text(encoding="utf-8"))
+    compare_jobs.append(compare_job)
     jobs.append(_normalize_evaluation_compare_job(compare_job))
 
     compare_summary_path = run_root / "evaluation-compare-summary.json"
@@ -510,12 +631,13 @@ def _collect_evaluation_run(
         for summary in _compare_target_summaries(compare_summary_payload):
             results.append(_normalize_evaluation_compare_result(summary))
             summaries.append(_normalize_evaluation_compare_summary_row(compare_job, summary))
+            compare_summary_rows.append(summary)
 
     compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
     if compare_samples_path.is_file():
         for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                samples.append(_normalize_evaluation_compare_sample(json.loads(line)))
+                compare_samples.append(json.loads(line))
 
 
 def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:

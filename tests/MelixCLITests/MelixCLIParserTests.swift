@@ -1048,7 +1048,7 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
-    @Test("parses eval list and export commands")
+    @Test("parses eval list and standard plus compare export commands")
     func parsesEvalListAndExportCommands() throws {
         let listCommand = try MelixCLIParser.parse([
             "eval",
@@ -1068,6 +1068,21 @@ struct MelixCLIParserTests {
             "--job-id", "eval-1",
             "--output", "/tmp/melix/eval-1-samples.jsonl",
         ])
+        let compareSummaryCommand = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "export-summary-csv",
+            "--job-id", "eval-compare-1",
+            "--output", "/tmp/melix/eval-compare-1-summary.csv",
+        ])
+        let compareSamplesCommand = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "export-samples-jsonl",
+            "--job-id", "eval-compare-1",
+            "--output", "/tmp/melix/eval-compare-1-samples.jsonl",
+            "--json",
+        ])
 
         guard case .evalList(let listOptions) = listCommand else {
             Issue.record("Expected evalList command")
@@ -1081,6 +1096,14 @@ struct MelixCLIParserTests {
             Issue.record("Expected evalExportSamplesJSONL command")
             return
         }
+        guard case .evalCompareExportSummaryCSV(let compareSummaryOptions) = compareSummaryCommand else {
+            Issue.record("Expected evalCompareExportSummaryCSV command")
+            return
+        }
+        guard case .evalCompareExportSamplesJSONL(let compareSamplesOptions) = compareSamplesCommand else {
+            Issue.record("Expected evalCompareExportSamplesJSONL command")
+            return
+        }
 
         #expect(listOptions.json)
         #expect(summaryOptions.jobID == "eval-1")
@@ -1089,6 +1112,12 @@ struct MelixCLIParserTests {
         #expect(samplesOptions.jobID == "eval-1")
         #expect(samplesOptions.outputPath == "/tmp/melix/eval-1-samples.jsonl")
         #expect(samplesOptions.json == false)
+        #expect(compareSummaryOptions.jobID == "eval-compare-1")
+        #expect(compareSummaryOptions.outputPath == "/tmp/melix/eval-compare-1-summary.csv")
+        #expect(compareSummaryOptions.json == false)
+        #expect(compareSamplesOptions.jobID == "eval-compare-1")
+        #expect(compareSamplesOptions.outputPath == "/tmp/melix/eval-compare-1-samples.jsonl")
+        #expect(compareSamplesOptions.json)
     }
 
     @Test("parses lora activate with explicit alias and adapter path")
@@ -1269,6 +1298,14 @@ struct MelixCLIParserTests {
                 "--target-model-id", "melix-dev-text-lora-a",
             ],
             equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
+        )
+        try assertError(
+            for: ["eval", "compare", "export-summary-csv", "--output", "/tmp/out.csv"],
+            equals: .missingRequired("--job-id is required for melix eval compare export-summary-csv.")
+        )
+        try assertError(
+            for: ["eval", "compare", "export-samples-csv", "--job-id", "eval-compare-1"],
+            equals: .missingRequired("--output is required for melix eval compare export-samples-csv.")
         )
         try assertError(for: ["eval"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["eval", "oops"], equals: .usage(MelixCLIParser.usageText))

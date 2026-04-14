@@ -1,5 +1,17 @@
 # Task Plan
 
+## 2026-04-14 Worktree Transaction
+
+- active plan: `docs/plans/2026-04-14-executable-code-eval-humaneval-mbpp.md`
+- objective:
+  - ship executable-code evaluation for `humaneval` and `mbpp`
+  - preserve code-execution evidence through standard evaluation and compare exports
+  - add dedicated public CLI compare export commands
+- status:
+  - implementation: completed
+  - focused verification: completed
+  - changed-line coverage capture: completed
+
 ## Goal
 
 Close the Phase 1 benchmark, benchmark-matrix, and evaluation acceptance slice for the designated
