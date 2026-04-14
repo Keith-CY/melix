@@ -186,7 +186,17 @@ swift run melix eval run \
   --batch-factor 2 \
   --few-shot 4 \
   --seed 9 \
-  --scoring-mode multiple_choice_accuracy \
+  --scoring-mode multiple_choice_accuracy
+```
+
+Example for a code-evaluation suite:
+
+```bash
+swift run melix eval run \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --suite mbpp \
+  --sample-size 12 \
+  --seed 9 \
   --code-exec-policy sandboxed
 ```
 
@@ -222,11 +232,21 @@ Notes:
 
 - if you omit `--suite`, the CLI defaults to `mmlu`
 - if you omit `--dataset-id`, the CLI defaults to `<suite>.dev.v1`
+- `few_shot` uses the same seeded dataset package as the scored samples; demo rows are excluded
+  from the scored `sample_size`
+- `seed` controls deterministic package ordering and is also forwarded to worker sampling where the
+  runtime supports it
+- `multiple_choice_accuracy` and `exact_match` are the current text scorer options; `pass_at_1`
+  is reserved for `humaneval` and `mbpp`
+- `--code-exec-policy sandboxed` is only valid for executable code suites such as `humaneval` and
+  `mbpp`
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
 - `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
 - relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
+- sample JSONL and CSV exports now include `execution_status` plus `execution_metadata` for
+  code-suite evidence and non-evidence states
 
 ## Planned Final-Result Evaluation Workflow
 

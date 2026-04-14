@@ -446,11 +446,11 @@ New probes required by this roadmap:
 - Modify: `services/mlx-worker-python/worker/productization/evaluation_schemas.py`
 - Modify: `services/mlx-worker-python/tests/test_evaluation_core.py`
 
-- [ ] Apply `few_shot` to prompt assembly.
-- [ ] Apply `seed` to fixture ordering and any supported sampling controls.
-- [ ] Route `scoring_mode` into real scorer selection.
-- [ ] Reject unsupported `code_exec_policy` combinations explicitly.
-- [ ] Remove default synthetic-success behavior from evidence-bearing paths.
+- [x] Apply `few_shot` to prompt assembly.
+- [x] Apply `seed` to fixture ordering and any supported sampling controls.
+- [x] Route `scoring_mode` into real scorer selection.
+- [x] Reject unsupported `code_exec_policy` combinations explicitly.
+- [x] Remove default synthetic-success behavior from evidence-bearing paths.
 
 **Verification**
 
@@ -469,9 +469,9 @@ New probes required by this roadmap:
 - Modify: `services/mlx-worker-python/worker/productization/evaluation_schemas.py`
 - Modify: `services/mlx-worker-python/tests/test_evaluation_core.py`
 
-- [ ] Execute candidate code under policy instead of text matching.
-- [ ] Persist execution diagnostics and pass or fail evidence.
-- [ ] Keep `pass_at_1` as the initial scored metric.
+- [x] Execute candidate code under policy instead of text matching.
+- [x] Persist execution diagnostics and pass or fail evidence.
+- [x] Keep `pass_at_1` as the initial scored metric.
 
 **Verification**
 

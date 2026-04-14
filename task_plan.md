@@ -1,5 +1,36 @@
 # Task Plan
 
+## 2026-04-14 Semantic Evaluation Controls
+
+### Goal
+
+Make `few_shot`, `seed`, `scoring_mode`, and `code_exec_policy` affect real Melix evaluation
+behavior, and move `humaneval` plus `mbpp` from text-match placeholders to executable
+evidence-bearing scoring.
+
+### Scope
+
+- apply seeded dataset planning before both few-shot selection and scored sample slicing
+- make few-shot examples part of the rendered prompt while excluding them from scored samples
+- thread effective seeds into worker sampling requests
+- route `scoring_mode` into real scorer dispatch instead of metadata-only persistence
+- reject unsupported scorer and code-execution-policy combinations explicitly
+- remove default offline synthetic success from evidence-bearing evaluation paths
+- add a code runner for `pass_at_1` suites and persist execution diagnostics in sample exports
+- keep export, store, release-gate evidence, and maintenance RPC behavior aligned with the new
+  runtime semantics
+
+### Status
+
+- completed
+
+### Verification Targets
+
+- `make py-test`
+- `git diff --check`
+- targeted coverage over the changed evaluation and release-gate Python scope with changed-line
+  coverage at or above `95%`
+
 ## Goal
 
 Close the Phase 1 benchmark, benchmark-matrix, and evaluation acceptance slice for the designated

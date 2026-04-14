@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ _AUDIO_RUNTIME_PACK_PROFILES = ["audio-stt", "audio-tts"]
 _AUDIO_MODEL_ID = "melix-whisper-mlx"
 _AUDIO_MODEL_REVISION = "mlx-audio"
 _AUDIO_SOURCE_MODEL_PATH = "hf/mlx-community/whisper-large-v3-turbo-asr-fp16"
+_ARITHMETIC_PROMPT_PATTERN = re.compile(r"(\d+)\s*\+\s*(\d+)\s*\?")
 DEFAULT_M9_RELEASE_GATE_POLICY: dict[str, Any] = {
     "mcp": {
         "mcp.tool_injection_count": {"min": 1.0},
@@ -181,6 +183,28 @@ class _SyntheticProductizationRunner(MLXLMRunner):
             metrics=ActivationMetrics(job_duration_ms=321.0),
             execution_backend="synthetic",
         )
+
+
+class _ReleaseGateEvaluationBackend:
+    runtime_name = "release-gate-eval"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        _ = model_spec
+        return 2_048
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        match = _ARITHMETIC_PROMPT_PATTERN.search(prompt)
+        if match is None:
+            yield "Answer: 0"
+            return
+        yield f"Answer: {int(match.group(1)) + int(match.group(2))}"
 
 
 def load_release_gate_policy(path: str | Path | None = None) -> dict[str, Any]:
@@ -370,9 +394,15 @@ def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
     eval_root.mkdir(parents=True, exist_ok=True)
     dataset_root = _ensure_evaluation_dataset(eval_root)
 
-    core = EvaluationCore(jobs_root=eval_root)
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=_ReleaseGateEvaluationBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded_model = registry.load_model(WorkerModelCatalog.dev_text_model())
+    core = EvaluationCore(jobs_root=eval_root, registry=registry)
     run = core.run_local_suite(
         model_id="melix-dev-text",
+        model_handle=loaded_model.handle,
         suite_id="mmlu",
         dataset_root=dataset_root,
         sample_size=8,

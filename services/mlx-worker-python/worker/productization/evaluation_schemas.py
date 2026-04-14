@@ -141,6 +141,8 @@ class EvaluationSample:
     task_kind: str
     input_modalities: tuple[str, ...]
     media_references: tuple[str, ...]
+    execution_status: str
+    execution_metadata: dict[str, str]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -159,6 +161,8 @@ class EvaluationSample:
             "task_kind": self.task_kind,
             "input_modalities": list(self.input_modalities),
             "media_references": list(self.media_references),
+            "execution_status": self.execution_status,
+            "execution_metadata": dict(self.execution_metadata),
         }
 
 
@@ -266,6 +270,10 @@ class EvaluationCompareSample:
     target_time_s: float
     base_parse_status: str
     target_parse_status: str
+    base_execution_status: str
+    target_execution_status: str
+    base_execution_metadata: dict[str, str]
+    target_execution_metadata: dict[str, str]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -289,6 +297,10 @@ class EvaluationCompareSample:
             "target_time_s": self.target_time_s,
             "base_parse_status": self.base_parse_status,
             "target_parse_status": self.target_parse_status,
+            "base_execution_status": self.base_execution_status,
+            "target_execution_status": self.target_execution_status,
+            "base_execution_metadata": dict(self.base_execution_metadata),
+            "target_execution_metadata": dict(self.target_execution_metadata),
         }
 
 
@@ -406,6 +418,8 @@ def build_evaluation_sample_record(
     task_kind: str = "text-generation",
     input_modalities: tuple[str, ...] = (),
     media_references: tuple[str, ...] = (),
+    execution_status: str = "",
+    execution_metadata: dict[str, str] | None = None,
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -423,6 +437,8 @@ def build_evaluation_sample_record(
         task_kind=task_kind,
         input_modalities=tuple(input_modalities),
         media_references=tuple(media_references),
+        execution_status=execution_status,
+        execution_metadata=dict(execution_metadata or {}),
     )
 
 
@@ -531,6 +547,10 @@ def build_evaluation_compare_sample_record(
     target_time_s: float,
     base_parse_status: str,
     target_parse_status: str,
+    base_execution_status: str = "",
+    target_execution_status: str = "",
+    base_execution_metadata: dict[str, str] | None = None,
+    target_execution_metadata: dict[str, str] | None = None,
 ) -> EvaluationCompareSample:
     return EvaluationCompareSample(
         schema_version=_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION,
@@ -553,4 +573,8 @@ def build_evaluation_compare_sample_record(
         target_time_s=float(target_time_s),
         base_parse_status=base_parse_status,
         target_parse_status=target_parse_status,
+        base_execution_status=base_execution_status,
+        target_execution_status=target_execution_status,
+        base_execution_metadata=dict(base_execution_metadata or {}),
+        target_execution_metadata=dict(target_execution_metadata or {}),
     )

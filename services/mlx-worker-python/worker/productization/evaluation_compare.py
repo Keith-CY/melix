@@ -76,6 +76,10 @@ def build_compare_samples(
                 target_time_s=target_sample.time_s,
                 base_parse_status=base_sample.parse_status,
                 target_parse_status=target_sample.parse_status,
+                base_execution_status=base_sample.execution_status,
+                target_execution_status=target_sample.execution_status,
+                base_execution_metadata=base_sample.execution_metadata,
+                target_execution_metadata=target_sample.execution_metadata,
             )
         )
     return tuple(records)

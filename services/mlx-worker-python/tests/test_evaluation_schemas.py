@@ -118,6 +118,8 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "task_kind": "text-generation",
         "input_modalities": [],
         "media_references": [],
+        "execution_status": "",
+        "execution_metadata": {},
     }
 
 
@@ -155,6 +157,8 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "task_kind": "image-text-to-text",
         "input_modalities": ["text", "image"],
         "media_references": ["/tmp/cat.png"],
+        "execution_status": "",
+        "execution_metadata": {},
     }
 
 

@@ -1076,6 +1076,15 @@ def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
     assert evidence["result"]["suite_id"] == "mmlu"
 
 
+def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt() -> None:
+    backend = release_gates_module._ReleaseGateEvaluationBackend()
+    canceled = type("CancelEvent", (), {"is_set": lambda self: True})()
+    active = type("CancelEvent", (), {"is_set": lambda self: False})()
+
+    assert list(backend.generate_tokens({}, "2 + 2 ?", None, canceled)) == []
+    assert list(backend.generate_tokens({}, "hello world", None, active)) == ["Answer: 0"]
+
+
 def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
     policy = load_release_gate_policy()
     report = {

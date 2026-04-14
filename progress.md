@@ -9,6 +9,43 @@
   `swiftpm-testing-helper` sat idle at `0.0%` CPU until termination. Rerun `make swift-test`
   after the fix.
 
+## 2026-04-14
+
+- Closed the semantic evaluation controls and executable code-evaluation slice for the Python
+  worker so evaluation controls now affect runtime behavior instead of only persisted metadata:
+  - seeded evaluation planning now deterministically orders packaged samples, slices few-shot
+    demonstrations from that same plan, and excludes demo rows from scored `sample_size`
+  - few-shot examples are now rendered into evaluation prompts, and compare runs reuse the same
+    seeded demo plus sample plan across base and target targets
+  - `scoring_mode` now dispatches real scorers, including multiple-choice choice-resolution,
+    exact-match scoring, and executable `pass_at_1`
+  - unsupported scorer and `code_exec_policy` combinations now fail as typed invalid arguments
+    instead of silently persisting inert metadata
+  - default offline evaluation no longer reports evidence-bearing synthetic success when no live
+    model is available
+  - added `code_eval_runner.py` so `humaneval` and `mbpp` execute candidate Python code, persist
+    execution diagnostics, and export `execution_status` plus `execution_metadata`
+  - updated evaluation persistence, export normalization, release-gate evaluation evidence, and
+    maintenance-service error mapping so the surrounding productization path matches the new worker
+    semantics
+  - refreshed the benchmark/evaluation contract, operator runbook, roadmap checklist, and local
+    task-plan records to document the shipped behavior
+- Verification summary for the semantic evaluation controls slice:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_core.py -q`: `28 passed in 0.41s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py -q`: `34 passed in 0.07s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_maintenance_service.py -k 'evaluation or export' -q`: `10 passed, 72 deselected in 0.33s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_release_gates.py -q`: `26 passed in 0.41s`
+  - `make py-test`: `692 passed in 13.01s`
+  - `git diff --check`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/semantic_eval_controls.coverage --source=services/mlx-worker-python/worker,services/mlx-worker-python/tests -m pytest services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_release_gates.py -q`: `172 passed in 1.91s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/semantic_eval_controls.coverage -o /tmp/semantic_eval_controls_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/semantic_eval_controls_coverage.json services/mlx-worker-python/worker/engine/code_eval_runner.py services/mlx-worker-python/worker/engine/evaluation_core.py services/mlx-worker-python/worker/grpc_server.py services/mlx-worker-python/worker/productization/benchmark_export.py services/mlx-worker-python/worker/productization/evaluation_compare.py services/mlx-worker-python/worker/productization/evaluation_schemas.py services/mlx-worker-python/worker/productization/evaluation_store.py services/mlx-worker-python/worker/productization/release_gates.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_release_gates.py`: `97.12%` (`303/312`)
+- Metrics report for the semantic evaluation controls slice:
+  - Python changed-line coverage across the touched evaluation, export, maintenance, and
+    release-gate scope: `97.12%` (`303/312`)
+  - full worker Python regression command for this repository slice: `make py-test` passed with
+    `692` tests
+
 ## 2026-04-12
 
 - Realigned the public documentation entrypoints so the repository now presents Melix as a

@@ -304,6 +304,11 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 code_exec_policy=request.code_exec_policy or None,
                 parameters=parameters,
             )
+        except ValueError as exc:
+            return maintenance_pb2.RunEvaluationResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="invalid_argument", message=str(exc)),
+            )
         except Exception as exc:
             return maintenance_pb2.RunEvaluationResponse(
                 ok=False,

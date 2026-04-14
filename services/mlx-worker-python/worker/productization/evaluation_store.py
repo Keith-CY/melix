@@ -259,6 +259,8 @@ class EvaluationStore:
             "parse_status",
             "input_modalities",
             "media_references",
+            "execution_status",
+            "execution_metadata_json",
         ]
         rows = [",".join(header)]
         for sample in samples:
@@ -276,6 +278,10 @@ class EvaluationStore:
                         EvaluationStore._csv_field(sample.parse_status),
                         EvaluationStore._csv_field(",".join(sample.input_modalities)),
                         EvaluationStore._csv_field(",".join(sample.media_references)),
+                        EvaluationStore._csv_field(sample.execution_status),
+                        EvaluationStore._csv_field(
+                            json.dumps(sample.execution_metadata, sort_keys=True)
+                        ),
                     ]
                 )
             )

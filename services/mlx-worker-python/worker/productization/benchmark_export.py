@@ -149,6 +149,8 @@ def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
             "raw_response",
             "time_s",
             "parse_status",
+            "execution_status",
+            "execution_metadata",
         ],
     )
 
@@ -609,6 +611,8 @@ def _normalize_evaluation_compare_sample(sample: dict[str, object]) -> dict[str,
         "correct": sample.get("target_correct", False),
         "time_s": sample.get("target_time_s", 0.0),
         "parse_status": sample.get("target_parse_status", ""),
+        "execution_status": sample.get("target_execution_status", ""),
+        "execution_metadata": sample.get("target_execution_metadata", {}),
     }
 
 

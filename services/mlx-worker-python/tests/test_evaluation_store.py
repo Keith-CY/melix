@@ -93,7 +93,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n"
     )
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references\n"
+        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,execution_status,execution_metadata_json\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
@@ -102,7 +102,7 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\r\n"
     )
     assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,correct,expected,predicted,question,raw_response,time_s,parse_status\r\n"
+        "job_id,suite_id,id,correct,expected,predicted,question,raw_response,time_s,parse_status,execution_status,execution_metadata\r\n"
     )
 
 

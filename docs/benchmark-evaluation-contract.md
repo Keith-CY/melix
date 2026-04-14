@@ -397,6 +397,39 @@ The canonical normalized request shape is:
 - `scoring_mode: string`
 - `code_exec_policy: string`
 
+### Current Control Semantics
+
+The current Melix runtime enforces these shipped control semantics:
+
+- `few_shot` consumes demonstration rows from the same materialized evaluation package used for
+  scoring.
+- `seed` deterministically orders the package rows before Melix slices out `few_shot` demos and
+  scored samples.
+- demonstration rows are never counted inside `sample_size`.
+- compare jobs must reuse the same seeded row order and the same few-shot plan across the base and
+  target runs.
+- `seed` is also threaded into worker `SamplingConfig.seed` for runtimes that honor sampling seeds.
+- `scoring_mode` selects a real scorer implementation, not only a stored label:
+  - `multiple_choice_accuracy`
+  - `exact_match`
+  - `pass_at_1`
+- unsupported scorer or policy combinations must fail with an explicit invalid-argument style
+  error.
+
+The current supported scorer matrix is:
+
+- `mmlu`, `arc_challenge`, `hellaswag`, `winogrande`, `truthfulqa_mc`:
+  `multiple_choice_accuracy` or `exact_match`
+- `imagenette`, `gsm8k`: `exact_match`
+- `humaneval`, `mbpp`: `pass_at_1`
+
+The current shipped `code_exec_policy` rules are:
+
+- non-code suites default to `disabled`
+- `humaneval` and `mbpp` default to `sandboxed`
+- non-code suites must reject execution-enabled policies such as `sandboxed`
+- code suites must reject disabled policies because executable scoring is the evidence path
+
 ### Initial Suite Set
 
 The first canonical `eval` suite set is:
@@ -428,6 +461,15 @@ be materialized into a Melix evaluation dataset package before execution.
 
 The authoritative runtime contract is the materialized evaluation package rather than any external
 source schema.
+
+For code-execution suites (`humaneval`, `mbpp`), each scored sample must also provide:
+
+- `test_code`
+
+These optional fields are supported for code suites:
+
+- `entry_point`
+- `code_timeout_seconds`
 
 ### Planned Final-Result Evaluation Profile
 
@@ -592,8 +634,13 @@ Each sample-level row must include:
 - `parse_status`
 - `input_modalities`
 - `media_references`
+- `execution_status`
+- `execution_metadata`
 
 `parse_status` is required in Melix even when the source benchmark does not expose it directly. This field provides operator-visible debugging for extraction failures and scorer fallbacks.
+
+`execution_status` and `execution_metadata` are required for evidence-bearing code-suite rows and
+for explicit non-evidence states such as missing live execution.
 
 ### Evaluation Export Formats
 
@@ -628,6 +675,8 @@ Each sample-level row must include:
 - `parse_status`
 - `input_modalities`
 - `media_references`
+- `execution_status`
+- `execution_metadata`
 
 `eval export-samples-jsonl` must emit the same sample-level fields as line-delimited JSON objects.
 
