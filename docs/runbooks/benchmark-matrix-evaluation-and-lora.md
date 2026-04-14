@@ -228,28 +228,30 @@ Notes:
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 
-## Planned Structured-Output Evaluation Workflow
+## Planned Final-Result Evaluation Workflow
 
 This section describes planned future direction rather than a shipped command path.
 
-For LoRA workflows that aim to improve JSON format adherence and extraction quality, the long-term
-Melix evaluation target is not multiple-choice accuracy or plain exact-match string scoring. Those
-proxies may help with narrow experiments, but they do not measure the intended operator outcome.
+For LoRA workflows, the long-term Melix evaluation target is final-result quality rather than CoT
+quality. A model may emit CoT or other wrapper text, but compare and eval should score only the
+final extracted result.
 
-The planned structured-output path will instead evaluate:
+That future path is not limited to schema-constrained JSON. The planned v1 final-result contract
+covers:
 
-- whether the model emits exactly one schema-valid JSON object
-- whether the extracted fields match the expected structured target
-- whether a derived model improves field quality without hiding regressions behind format failures
+- `json` final results, scored after extraction and schema-aware validation
+- `text` final results, scored after extraction and stable text normalization
 
-The future structured-output contract will use an `evaluation profile` inside a Melix evaluation
-dataset package. That package remains the execution contract. Hugging Face datasets remain reusable
-as source corpora, but not as direct execution contracts for structured-output evaluation. The
-intended path is to materialize external corpora into a Melix evaluation package before execution.
+The future evidence model will expand from binary correct or incorrect counts alone to a layered
+view of:
 
-The future compare workflow will remain base-model versus derived-model oriented, but the target
-evidence model will expand from binary correct or incorrect counts to schema-valid rate and
-field-level score.
+- extraction success
+- validation success
+- typed score against ground truth
+
+Hugging Face datasets remain reusable source corpora, but not direct execution contracts. Planned
+future execution will still require materialization into a Melix evaluation package before `eval`
+or `compare` runs.
 
 See these planning documents for the target contract and milestone sequence:
 

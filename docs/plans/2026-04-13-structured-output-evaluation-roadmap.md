@@ -1,68 +1,56 @@
-# Structured Output Evaluation Roadmap
+# Final Result Evaluation Roadmap
 
 ## Summary
 
-Melix should add structured-output evaluation as a first-class intelligence measurement path for
-LoRA workflows that target machine-readable JSON output, while also formally designating the
-existing text-generation path as a permanent long-term profile and adding a format-compliance
-profile for early-stage evaluation without ground truth.
+Melix should add final-result evaluation as the future intelligence measurement path for LoRA
+workflows. The runtime should score only the extracted final result, not CoT or wrapper text.
 
 The roadmap keeps the runtime boundary package-based, treats external corpora as source datasets
-rather than executable contracts, and stages the work so the contract lands before parser or scorer
-implementation.
+rather than executable contracts, and stages the work so the contract lands before extractor,
+validator, or scorer implementation.
 
 This roadmap describes future milestones only. It does not claim current implementation support.
 
-## Milestone 1: Contract And Package Profile
+## Milestone 1: Final-Result Contract
 
 ### Outcome
 
-Melix has a documented evaluation profile contract that covers three profile types with stable
-package shapes and vocabulary.
+Melix has a documented future evaluation contract centered on `final_result` packages rather than
+profile splits by task style.
 
 ### Scope
 
-- define three `profile_type` values: `structured_output`, `text_generation`, and
-  `format_compliance`
-- define the `structured_output` sample shape as `system`, `input`, and `target`
-- define `target` as valid JSON whose root type matches the declared `output_schema` root type
-- define `parser_mode` as a `structured_output` profile attribute with values `strict` and
-  `extract`
-- define `strict` parsing: exactly one JSON value, no surrounding prose
-- define `extract` parsing: last valid JSON value extracted from response, prose tolerated
-- define `text_generation` as a permanent long-term profile with `prompt` and `expected` sample
-  rows and a declared `scoring_mode`
-- define `format_compliance` as a profile with `system` and `input` sample rows, no `target`, and
-  `parse_success_rate` and `schema_valid_rate` as output metrics
-- define that `ignored_paths` in the manifest extend the default ignored set rather than override
-  it
-- define the no-forced-migration rule: existing `prompt` and `expected` packages belong to
-  `text_generation` and are not subject to migration
+- define `profile_type: final_result`
+- define `result_kind` as `json | text`
+- define `extraction_mode` as `strict_full_response | heuristic_final`
+- define the sample shape as `system`, `input`, and `target`
+- define that only the extracted final result is scored
+- define that CoT is retained only as `raw_response` for debugging
+- define v1 as ground-truth only
 
 ### Exit Criteria
 
-- the canonical contract describes all three profile types with their sample shapes and scoring
-  semantics
+- the canonical contract describes the `final_result` abstraction and its core manifest fields
 - the contract explicitly separates `source dataset` from `materialized evaluation package`
-- `parser_mode` vocabulary is consistent between the contract and the design spec
-- `profile_type` naming is consistent across all documents
+- the contract explicitly states that CoT and wrapper text are not correctness evidence
+- the contract does not treat no-target or format-only evaluation as part of v1
 
 ### Risks
 
-- over-documenting implementation detail before scorer design is stable
-- `extract` mode semantics may need refinement once the JSON-in-prose extractor is implemented
+- over-documenting extraction details before scorer design is stable
+- mixing current implementation formats with future contract language
 
 ## Milestone 2: Dataset Materialization
 
 ### Outcome
 
-Melix can reuse external structured corpora, including Hugging Face datasets, by materializing them
-into repository-owned evaluation packages before execution.
+Melix can reuse external corpora, including Hugging Face datasets, by materializing them into
+repository-owned evaluation packages before execution.
 
 ### Scope
 
 - define importer and materializer responsibilities
-- define how profile metadata is attached to materialized packages
+- define how `final_result` profile metadata is attached to materialized packages
 - define failure behavior for incompatible source schemas
 - preserve the rule that worker execution consumes only Melix evaluation packages
 
@@ -74,67 +62,63 @@ into repository-owned evaluation packages before execution.
 
 ### Risks
 
-- source datasets may omit fields required by structured-output scoring
+- source datasets may omit fields required by typed scoring
 - profile metadata may drift if materialization is underspecified
 
-## Milestone 3: Structured Evaluation Core
+## Milestone 3: Extraction And Validation Core
 
 ### Outcome
 
-Melix has one generic runtime core for structured-output evaluation rather than task-specific scorer
-branches, with parser mode selection controlled by the declared profile.
+Melix has one generic runtime core that extracts, validates, and normalizes final results before
+scoring.
 
 ### Scope
 
-- `strict` parser: exactly one JSON value, parse failure on surrounding prose
-- `extract` parser: last valid JSON value extracted from response, prose tolerated
-- JSON root type validation against `output_schema` root type declaration
-- schema validation gate
-- profile-driven field comparison primitives
-- default ignored-path handling with manifest extension support
-- correctness threshold handling
-- `format_compliance` profile runner: parse and optionally schema-validate, emit
-  `parse_success_rate` and `schema_valid_rate`
+- implement the shared extractor ladder for `heuristic_final`
+- implement ambiguity detection and extraction failure handling
+- implement `strict_full_response`
+- implement JSON schema gating for `result_kind: json`
+- implement text normalization gates for `result_kind: text`
+- keep validation and extraction behavior runtime-owned rather than package-customized
 
 ### Exit Criteria
 
-- worker execution semantics are described in profile-driven terms rather than suite-specific terms
-- schema validity and field score are the primary `structured_output` evidence model
-- `text_generation` packages continue to execute through the existing scorer without modification
-- `format_compliance` packages execute and produce format metrics without requiring a `target` field
-- the design leaves room for new profiles without redefining the public evaluation surface
+- worker execution semantics are described in terms of extraction and validation rather than task
+  names
+- JSON and text result kinds both have deterministic extraction rules
+- ambiguity is treated as failure rather than guessed resolution
+- validation runs before scoring for both result kinds
 
 ### Risks
 
-- `extract` mode JSON extraction heuristics may require iteration before they generalize across
-  different model output styles
-- generic comparison primitives may be too weak for some tasks
-- too many early special cases would collapse the abstraction back into task-specific scoring
+- heuristic extraction may need iteration before it generalizes across model output styles
+- text extraction rules may be noisier than JSON extraction rules
 
-## Milestone 4: Compare And Reporting
+## Milestone 4: Typed Scoring And Compare
 
 ### Outcome
 
-Melix compare workflows can measure structured-output LoRA deltas using schema-valid and field-score
-evidence instead of binary proxy scores alone.
+Melix compare workflows can measure LoRA deltas through extraction, validation, and typed scoring
+rather than binary proxy scores alone.
 
 ### Scope
 
-- compare semantics for base versus derived models
-- schema-valid rate reporting
-- field-score delta reporting
-- regression counting for structured-output workflows
-- sample-level diagnostics for parse and schema failures
+- implement JSON object field scoring
+- implement conservative JSON array scoring
+- implement normalized text scoring for exact, label, and regex match modes
+- report extraction success, validation success, and typed score in compare outputs
+- report regression counts with extraction and validation failures separated from score regressions
 
 ### Exit Criteria
 
-- compare is documented in terms of schema-valid and field-score evidence
-- reporting semantics distinguish parsing failures from low-quality but schema-valid outputs
-- LoRA comparison claims are grounded in the structured-output evidence model rather than MCQ or
-  exact-match proxies
+- compare is documented in terms of extraction success, validation success, and typed score
+- v1 does not introduce task-specific scorer branches
+- v1 does not score CoT or wrapper text
+- reporting semantics distinguish extraction failure, validation failure, and low-quality but valid
+  outputs
 
 ### Risks
 
-- compare summaries may over-simplify structured-output quality if diagnostics are too thin
-- operator expectations may drift if proxy metrics and structured-output metrics coexist without
+- compare summaries may over-simplify quality if extraction and validation diagnostics are too thin
+- operator expectations may drift if current proxy metrics and future typed metrics coexist without
   clear labeling

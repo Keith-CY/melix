@@ -1,41 +1,31 @@
-# Structured Output Evaluation Profile Design
+# Final Result Evaluation Profile Design
 
 ## Summary
 
-Melix needs real evaluation paths for LoRA workflows that cover three distinct scenarios: models
-tuned to emit schema-constrained structured output, models evaluated against reference answers, and
-early-stage models where only format adherence can be measured.
+Melix needs a future evaluation contract for LoRA workflows that score only the final result, even
+when the model emits CoT or other wrapper text. The current `eval` path is good enough for shipped
+text-style suites with simple `prompt` and `expected` rows, but it does not define a durable
+contract for final-result extraction, typed validation, or typed scoring.
 
-The current `eval` path is good enough for text-style suites with simple `prompt` and `expected`
-rows, but it does not define a durable contract for format adherence, JSON parsing semantics,
-schema validity, or field-level extraction quality. It also does not formally name the existing
-text-generation path as a permanent long-term contract.
-
-This design defines three evaluation profiles: `structured_output`, `text_generation`, and
-`format_compliance`. It does not claim current implementation support for the new profiles.
+This design defines one future-facing evaluation profile, `final_result`. It does not claim current
+implementation support.
 
 ## Problem
 
-Using `multiple_choice_accuracy` or `exact_match` as a proxy for structured-output quality creates
-the wrong incentives:
+Using task-specific scorers or scoring the entire raw response creates the wrong incentives:
 
-- multiple-choice scoring changes the task rather than evaluating the intended output format
-- exact-match scoring is too brittle for structured JSON unless the runtime also owns full
-  canonicalization
-- task-specific scorer branches for `extraction`, `relationship`, or `summarization` would turn
-  each new use case into a product-surface change
+- the runtime ends up coupled to task names such as `extraction`, `relationship`, and
+  `summarization`
+- CoT or wrapper prose can change the score even when the final answer is unchanged
+- JSON-specific extraction rules do not solve the general problem of evaluating final text answers
+- no-target or format-only ideas can distract the first implementation from the real LoRA compare
+  path, which is ground-truth evaluation of the final result
 
-A second problem is that the current eval path has no formal contract designation. Packages using
-`prompt` and `expected` rows are implicitly treated as a legacy or transitional format, which
-creates pressure to migrate working evaluation datasets without a clear benefit.
+Melix needs one reusable abstraction that answers three questions:
 
-A third problem is that early-stage LoRA experiments often cannot produce ground-truth target data.
-Without a format-only evaluation path, operators have no automated way to measure whether a newly
-trained model is emitting valid structured output at all.
-
-Melix needs three reusable abstractions: one for schema-constrained output evaluation, one that
-formally names the existing text-generation path as permanent, and one for format-compliance
-measurement without ground truth.
+- what is the final artifact being evaluated
+- how is that final artifact extracted from the raw response
+- how is the extracted artifact validated and scored against ground truth
 
 ## Current State
 
@@ -50,51 +40,46 @@ pipeline.
 That means the current Melix boundary is:
 
 - evaluation runs execute against Melix-defined local packages
-- training can materialize external Hugging Face datasets
-- existing evaluation fixtures use `prompt` and `expected` rows
+- external corpora such as Hugging Face datasets are reusable source datasets rather than runtime
+  contracts
+- current evaluation fixtures still largely use `prompt` and `expected` sample rows
 
-This design keeps the package boundary but replaces the long-term structured-output row shape and
-scoring semantics.
+This design keeps the package boundary and replaces the future evaluation abstraction.
 
 ## Design Goals
 
-- define three `evaluation profile` types that cover the full range of current LoRA evaluation
-  scenarios without making the eval core depend on task names
+- define one future-facing `evaluation profile` that scores only the extracted final result
 - keep external datasets reusable as source corpora without making their raw schemas part of the
   Melix runtime contract
-- support both strict bare-JSON parsing and prose-tolerant JSON extraction through a declared
-  `parser_mode`, so the eval path matches the training format
-- let the declared `output_schema` root type determine what JSON shapes are valid targets, rather
-  than hardcoding object-only acceptance
-- make schema validity and field-level quality the target evidence for structured-output LoRA
-  comparison
-- formally designate the `prompt`/`expected` path as a permanent long-term profile so that
-  non-structured LoRA has a stable evaluation home
-- provide a format-compliance profile for early-stage evaluation without ground-truth targets
+- make final-result extraction a runtime-owned, deterministic contract rather than a best-effort
+  prompt convention
+- support both JSON and text final results in v1
+- make validation and scoring typed by `result_kind` rather than task name
+- keep v1 ground-truth oriented so base-model versus LoRA comparison is the primary path
 
 ## Non-Goals
 
-- implementing the new profiles in the current transaction
-- adding new CLI, protocol, or export fields now
-- making Hugging Face raw dataset schemas executable without materialization
-- evaluating subjective quality such as creativity or conversational naturalness without a
-  reference answer
+- implementing the profile in the current transaction
+- changing the shipped CLI, protocol, or export surface now
+- defining task-specific scorer branches for individual downstream tasks
+- adding no-target or format-only evaluation to v1
+- expanding v1 text scoring to open-ended semantic similarity or subjective quality measures
 
 ## Core Terms
 
-These terms are the authoritative vocabulary for the future evaluation profile path:
+These terms are the authoritative vocabulary for the future final-result path:
 
 - `source dataset`: an external or local corpus used as the origin of evaluation content
 - `materialized evaluation package`: the repository-owned package Melix executes against
-- `evaluation profile`: the manifest-declared parsing, schema, and scoring contract for one package
-- `profile_type`: the top-level profile selector declared in `manifest.json`; one of
-  `structured_output`, `text_generation`, or `format_compliance`
-- `parser_mode`: a `structured_output` profile attribute that controls whether prose surrounding
-  the JSON value is a parse failure (`strict`) or is tolerated (`extract`)
-- `strict parsing`: the `strict` parser mode; accepts exactly one JSON value and no surrounding
-  prose
-- `extract parsing`: the `extract` parser mode; extracts the last valid JSON value from the
-  response; permits surrounding prose
+- `evaluation profile`: the manifest-declared extraction, validation, and scoring contract for one
+  package
+- `profile_type`: the top-level profile selector declared in `manifest.json`; v1 uses
+  `final_result`
+- `result_kind`: the type of final artifact being scored; v1 supports `json` and `text`
+- `extraction_mode`: the rule for isolating the final artifact from `raw_response`
+- `raw_response`: the full model response captured for debugging
+- `extracted_result`: the final artifact selected by the runtime and passed to validation and
+  scoring
 
 ## Recommended Contract
 
@@ -109,132 +94,145 @@ Melix should continue to separate dataset origin from runtime execution:
 This keeps the runtime boundary deterministic and lets Melix evolve one package format without
 importing the variability of external schemas into the worker core.
 
-### Profile Type Selection
+### Future Profile Shape
 
-Each evaluation package must declare a `profile_type` in its manifest. The declared type
-determines the sample shape, parsing rules, and scoring semantics for that package.
+Each future-oriented evaluation package should declare a single `final_result` profile in its
+manifest. The planned core fields are:
 
-The three profile types are described below. Task names such as `extraction`, `relationship`, and
-`summarization` may still appear as suite labels or dataset metadata, but they must not be the
-primary hook for scorer implementation.
+- `profile_type: final_result`
+- `result_kind: json | text`
+- `extraction_mode: strict_full_response | heuristic_final`
+- `scoring_mode`
+- `threshold`
 
-### `structured_output` Profile
-
-#### Sample Shape
+Future `final_result` sample rows use:
 
 - `system`
 - `input`
 - `target`
 
-`target` must be valid JSON whose root type matches the root type declared in the package
-`output_schema`. The profile declares:
+Task names such as `extraction`, `relationship`, and `summarization` may still appear as suite
+labels or dataset metadata, but they must not be the primary hook for scorer implementation.
 
-- `output_schema`: a JSON Schema reference or inline schema
-- `parser_mode`: `strict` or `extract`
-- `comparison_policy`: `field_f1`, `field_precision`, `field_recall`, or `exact_match`
-- `threshold`: the minimum score required for a sample to be counted correct
-- `ignored_paths`: paths excluded from field-level scoring (extends the default ignored set)
+### Extraction And Scoring Pipeline
 
-#### Parser Mode
+The planned runtime pipeline is:
 
-`parser_mode` should match how the model was trained to emit output:
+- capture `raw_response`
+- extract `extracted_result`
+- validate the extracted result for its declared `result_kind`
+- normalize as required by `scoring_mode`
+- score only `extracted_result` against `target`
 
-- use `strict` when the model is trained to emit bare JSON with no surrounding prose; in this mode
-  any response that contains prose before or after the JSON value is a parse failure
-- use `extract` when the model is trained with a reasoning prefix before the structured output; in
-  this mode the parser extracts the last valid JSON value from the response and ignores surrounding
-  prose
+CoT or wrapper text may appear in `raw_response`, but it is not itself evaluation evidence.
+Correctness is computed only from `extracted_result`.
 
-`extract` mode supports CoT-style LoRA workflows where the model reasons through the task and then
-emits the structured result. It does not relax schema or field-level scoring requirements.
+### `result_kind: json`
 
-#### Accepted JSON Root Type
+For JSON final results:
 
-The accepted root type for `target` and for parsed model responses is determined by the
-`output_schema` root type declaration, not hardcoded to object:
+- `target` must be valid JSON with root type `object` or `array`
+- `output_schema` defines the accepted JSON root type and schema rules
+- schema validation is required before scoring begins
+- JSON object roots are expected to support field-level comparison in v1
+- JSON array roots are expected to use conservative scoring in v1 rather than broad task-specific
+  logic
 
-- schema root `{type: "object"}` requires a JSON object
-- schema root `{type: "array"}` requires a JSON array
+The default ignored field set for JSON object scoring is:
 
-Multiple JSON values in one response are a parse failure in both `strict` and `extract` modes.
-Non-JSON payloads are a parse failure in both modes.
+- `evidence`
+- `confidence`
+- `closeness_logits`
+- `closeness_probs`
 
-#### Schema And Field Scoring
+Manifest-declared `ignored_paths` extend the default ignored field set. They do not override it.
+
+### `result_kind: text`
+
+For text final results:
+
+- `target` is the expected final text after normalization
+- v1 text scoring is intentionally narrow:
+  - `normalized_exact_match`
+  - `label_match`
+  - `regex_match`
+- task-specific text scorers are out of scope for v1
+- open-ended semantic scoring is deferred until a later design pass
+
+### Extraction Modes
+
+The runtime owns final-result extraction. Package-specific custom extractors are not part of the v1
+contract.
+
+`extraction_mode` defines how Melix isolates the final result from `raw_response`:
+
+- `strict_full_response`: the full response must be the final result payload; wrapper prose causes
+  extraction failure
+- `heuristic_final`: Melix applies a shared runtime extractor ladder to locate the final result in a
+  response that may include CoT or other wrapper text
+
+`heuristic_final` must be deterministic and reproducible. Ambiguous extraction is a failure rather
+than a guess.
+
+For `result_kind: json`, the planned shared extractor ladder is:
+
+- prefer the last contentful fenced `json` block
+- otherwise use the last contentful fenced block whose contents parse as JSON
+- otherwise use the last terminal balanced JSON suffix
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
+
+For `result_kind: text`, the planned shared extractor ladder is:
+
+- prefer the last terminal `Final answer:` or `Answer:` span
+- otherwise use the last contentful fenced text block
+- otherwise use the last terminal non-empty line or paragraph
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
+
+The current PR direction of describing extraction as "last valid JSON value" is not stable enough
+for the long-term contract because it is JSON-specific and under-specifies ambiguity handling.
+
+### Validation And Scoring
+
+Validation and scoring are typed by `result_kind`, not by task name.
+
+For `json`:
 
 - parse success is required before schema validation
-- schema validation success is required before field-level scoring
-- default ignored fields are `evidence`, `confidence`, `closeness_logits`, and `closeness_probs`
-- manifest-declared `ignored_paths` extend the default ignored set; they do not override it
-- the primary score is a field-level F1, precision, or recall measure rather than plain string
-  equality
+- schema validation success is required before scoring
+- object roots should use field-level comparison in v1
+- array roots should use conservative comparison in v1
 
-### `text_generation` Profile
+For `text`:
 
-#### Sample Shape
+- normalization happens before scoring
+- v1 text scoring remains deterministic and reference-based
+- normalization and scoring should not inspect CoT or wrapper text outside `extracted_result`
 
-- `prompt`
-- `expected`
+### Reporting Direction
 
-#### Scoring
+The current shipped export contract remains current-state behavior. The future `final_result` path
+should extend reporting with extraction- and validation-oriented evidence so LoRA compare can see:
 
-The profile declares a `scoring_mode`. Supported values are:
+- extraction success rate
+- validation success rate
+- typed score against ground truth
+- sample-level extraction or validation failure reasons
 
-- `multiple_choice_accuracy`
-- `exact_match`
-- `numeric_match`
-- `code_exec`
+## Why This Abstraction
 
-This profile is a permanent long-term evaluation path. Existing packages using `prompt` and
-`expected` rows are not subject to migration. LoRA workflows evaluated against reference answers
-should use this profile regardless of whether the underlying task involves structured data.
+The `final_result` abstraction is preferred because it keeps the critical axes separate:
 
-### `format_compliance` Profile
+- `result_kind` defines what artifact is being scored
+- `extraction_mode` defines how Melix isolates that artifact from `raw_response`
+- `scoring_mode` defines how the extracted artifact is compared to `target`
 
-#### Sample Shape
+This is cleaner than encoding result type, ground-truth presence, and extraction behavior into
+separate top-level profile names.
 
-- `system`
-- `input`
+## Migration Boundary
 
-No `target` field is required. This profile measures format adherence without correctness scoring.
+Current repository fixtures that use `prompt` and `expected` remain current-state implementation
+formats. They are not the primary long-term abstraction for the future final-result contract.
 
-#### Format Declaration
-
-The profile declares a `format` value:
-
-- `json_object`: the response must parse as a JSON object
-- `json_array`: the response must parse as a JSON array
-- `json_any`: the response must parse as any valid JSON value
-- `json_schema`: the response must parse and validate against the declared `output_schema`
-
-#### Metrics
-
-Output metrics are `parse_success_rate` and `schema_valid_rate`. There are no `correct` or
-`incorrect` sample counts for this profile type.
-
-This profile is intended for early-stage LoRA evaluation where ground-truth target data is not yet
-available. It answers the question of whether the model is producing validly formatted output,
-before annotation effort is invested in field-level correctness scoring.
-
-## Why Three Profiles Instead Of One
-
-The three-profile design avoids a false choice between structured and non-structured LoRA. Each
-profile covers a distinct evaluation scenario:
-
-- `structured_output` makes schema validity and field quality the primary evidence for LoRA
-  comparison, and `parser_mode` ensures the eval contract matches the training format
-- `text_generation` gives non-structured LoRA a stable long-term home without forcing a migration
-  to structured packages
-- `format_compliance` unblocks early-stage evaluation that would otherwise require fully annotated
-  target data
-
-Profile differences belong in manifest configuration, not in the public evaluation surface or
-scorer implementation.
-
-## Profile Boundary
-
-Existing `prompt` and `expected` evaluation fixtures belong to the `text_generation` profile. They
-are not historical formats. New structured-output packages should use the `structured_output`
-profile with an appropriate `parser_mode`. New early-stage packages should use the
-`format_compliance` profile.
-
-New package creation drives profile adoption. There is no forced migration of existing packages.
+New package creation should drive future adoption. This document does not claim that the future
+contract is already implemented.

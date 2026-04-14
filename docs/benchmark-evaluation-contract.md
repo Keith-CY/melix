@@ -429,51 +429,59 @@ be materialized into a Melix evaluation dataset package before execution.
 The authoritative runtime contract is the materialized evaluation package rather than any external
 source schema.
 
-### Evaluation Profiles
+### Planned Final-Result Evaluation Profile
 
-This section defines the planned long-term evaluation profile contract. It is not yet implemented
-by the current Melix runtime.
+This section defines the planned long-term contract for final-result evaluation. It is not yet
+implemented by the current Melix runtime.
 
-Every evaluation dataset package declares its evaluation profile in `manifest.json`. The declared
-`profile_type` determines the sample shape, parsing rules, and scoring semantics for that package.
+Every future-oriented evaluation dataset package is expected to declare a single evaluation profile
+in `manifest.json` with these core fields:
 
-Three profile types are defined:
+- `profile_type: final_result`
+- `result_kind: json | text`
+- `extraction_mode: strict_full_response | heuristic_final`
+- `scoring_mode`
+- `threshold`
 
-#### `structured_output` Profile
-
-Used for LoRA workflows that train models to emit schema-constrained JSON output.
-
-Sample rows use these fields:
+Future `final_result` sample rows use these fields:
 
 - `system`
 - `input`
 - `target`
 
-`target` must be valid JSON whose root type matches the root type declared in the package
-`output_schema`. The profile must declare:
+The future Melix execution contract remains the materialized evaluation package rather than any
+external dataset schema.
 
-- an output-schema reference or inline schema
-- a `parser_mode`
-- a comparison policy
-- a correctness threshold
-- optional ignored field paths
+#### Final-Result Principles
 
-`parser_mode` controls how the parser interprets the model response:
+The `final_result` profile is the planned abstraction for future structured and non-structured LoRA
+evaluation.
 
-- `strict`: the response must contain exactly one JSON value and no surrounding prose; any prose
-  before or after the JSON value is a parse failure; multiple JSON values are a parse failure
-- `extract`: the parser extracts the last valid JSON value from the response; prose before or after
-  the JSON value is permitted; this mode supports workflows where the model reasons before emitting
-  the structured result
+Its contract is intentionally narrow:
 
-The accepted root type is determined by the `output_schema` root type declaration, not hardcoded
-to object. A schema with root `{type: "object"}` accepts only JSON objects. A schema with root
-`{type: "array"}` accepts only JSON arrays. In both modes, the parsed value must match the
-declared root type or the parse is a failure.
+- only the extracted final result is scored
+- `raw_response` is retained for debugging, not correctness scoring
+- CoT or other wrapper text may appear in `raw_response`, but it is not itself evaluation evidence
+- v1 covers ground-truth evaluation only; no-target or format-only evaluation is deferred
+- task names such as `extraction`, `relationship`, and `summarization` remain suite metadata rather
+  than scorer dispatch keys
 
-Schema validation must succeed before field-level scoring begins.
+#### Result Kinds
 
-The default ignored field set for structured-output scoring is:
+The planned v1 `result_kind` set is:
+
+- `json`
+- `text`
+
+For `result_kind: json`:
+
+- `target` must be valid JSON with root type `object` or `array`
+- `output_schema` defines the accepted JSON root type and schema rules
+- schema validation is required before scoring begins
+- object roots are expected to support field-level comparison in v1
+- array roots are expected to use conservative scoring in v1 rather than broad task-specific logic
+
+The default ignored field set for JSON object scoring is:
 
 - `evidence`
 - `confidence`
@@ -482,47 +490,68 @@ The default ignored field set for structured-output scoring is:
 
 Manifest-declared `ignored_paths` extend the default ignored field set. They do not override it.
 
-#### `text_generation` Profile
+For `result_kind: text`:
 
-Used for standard benchmark suites and LoRA workflows evaluated against reference answers.
+- `target` is the expected final text result after normalization
+- v1 scoring is limited to stable text comparisons such as normalized exact match, label match, and
+  regex match
+- open-ended task-specific text scorers are out of scope for this contract
 
-Sample rows use these fields:
+#### Extraction Modes
 
-- `prompt`
-- `expected`
+The runtime owns final-result extraction. Package-specific custom extractors are not part of the v1
+contract.
 
-The profile must declare a `scoring_mode`. Supported values are:
+`extraction_mode` defines how Melix isolates the final result from `raw_response`:
 
-- `multiple_choice_accuracy`
-- `exact_match`
-- `numeric_match`
-- `code_exec`
+- `strict_full_response`: the full response must be the final result payload; wrapper prose causes
+  extraction failure
+- `heuristic_final`: Melix applies a shared runtime extractor ladder to locate the final result in a
+  response that may include CoT or other wrapper text
 
-This is a permanent long-term evaluation path. Packages using `prompt` and `expected` sample rows
-with a declared `text_generation` profile are not subject to migration to the `structured_output`
-profile.
+`heuristic_final` must be deterministic and reproducible. Ambiguous extraction is a failure rather
+than a guess.
 
-#### `format_compliance` Profile
+For `result_kind: json`, the planned shared extractor ladder is:
 
-Used for early-stage LoRA evaluation where ground-truth targets are not yet available. Measures
-format adherence without correctness scoring.
+- prefer the last contentful fenced `json` block
+- otherwise use the last contentful fenced block whose contents parse as JSON
+- otherwise use the last terminal balanced JSON suffix
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
 
-Sample rows use these fields:
+For `result_kind: text`, the planned shared extractor ladder is:
 
-- `system`
-- `input`
+- prefer the last terminal `Final answer:` or `Answer:` span
+- otherwise use the last contentful fenced text block
+- otherwise use the last terminal non-empty line or paragraph
+- if multiple same-priority candidates remain, record `ambiguous_extraction`
 
-No `target` field is required. The profile must declare a `format` value:
+The current PR direction of describing extraction as "last valid JSON value" is not stable enough
+for the long-term contract because it is JSON-specific and under-specifies ambiguity handling.
 
-- `json_object`: response must parse as a JSON object
-- `json_array`: response must parse as a JSON array
-- `json_any`: response must parse as any JSON value
-- `json_schema`: response must parse and validate against the declared `output_schema`
+#### Scoring Model
 
-Output metrics are `parse_success_rate` and `schema_valid_rate`. There are no `correct` or
-`incorrect` sample counts for this profile type.
+The planned execution pipeline is:
+
+- capture `raw_response`
+- extract `extracted_result`
+- validate the extracted result for its declared `result_kind`
+- normalize as required by `scoring_mode`
+- score only the extracted result against `target`
+
+In the future `final_result` path, correctness is computed from `extracted_result` rather than the
+full response text.
+
+Current repository fixtures still largely use `prompt` and `expected` sample rows. Those are
+current-state implementation formats rather than the planned long-term `final_result` contract.
 
 ### Evaluation Summary Outputs
+
+The fields below describe the current shipped summary and sample export contract. The future
+`final_result` path is expected to extend this output surface with extraction- and
+validation-oriented evidence such as `extracted_result`, `extraction_status`, `validation_status`,
+`failure_reason`, `extraction_success_count`, and `validation_success_count`. Those additions are
+planning direction only and are not implemented by the current runtime.
 
 Each completed suite result must include:
 
