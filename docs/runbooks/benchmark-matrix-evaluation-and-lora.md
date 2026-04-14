@@ -240,6 +240,10 @@ Notes:
   is reserved for `humaneval` and `mbpp`
 - `--code-exec-policy sandboxed` is only valid for executable code suites such as `humaneval` and
   `mbpp`
+- the current `sandboxed` implementation uses macOS `sandbox-exec`, runs inside a dedicated
+  temporary directory, blocks network access, and enforces bounded stdout plus stderr capture
+- if the worker cannot provide the `sandboxed` boundary, the evaluation request is rejected before
+  candidate code is executed
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
 - `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
 - relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically

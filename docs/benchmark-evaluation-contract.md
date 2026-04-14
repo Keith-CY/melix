@@ -429,6 +429,11 @@ The current shipped `code_exec_policy` rules are:
 - `humaneval` and `mbpp` default to `sandboxed`
 - non-code suites must reject execution-enabled policies such as `sandboxed`
 - code suites must reject disabled policies because executable scoring is the evidence path
+- `sandboxed` means the worker executes candidate Python inside a dedicated temporary directory
+  under macOS `sandbox-exec`, with writes confined to that directory, network denied, and stdout
+  plus stderr bounded before the result is accepted
+- workers that cannot enforce `sandboxed` execution must reject the evaluation run before code is
+  executed
 
 ### Initial Suite Set
 

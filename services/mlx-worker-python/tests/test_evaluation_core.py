@@ -10,6 +10,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
+import worker.engine.evaluation_core as evaluation_core_module
 from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -761,6 +762,42 @@ def test_run_local_suite_rejects_unsupported_code_exec_policy_combinations(tmp_p
             dataset_root=code_dataset_root,
             sample_size=1,
             code_exec_policy="disabled",
+            parameters={
+                "entry_point": "add",
+                "test_code": "assert add(2, 2) == 4",
+            },
+        )
+
+
+def test_run_local_suite_rejects_unavailable_sandboxed_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mbpp-dev",
+        suite_id="mbpp",
+        samples=(
+            {"prompt": "Write add(a, b).", "answer": "def add(a, b): return a + b"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("```python\ndef add(a, b):\n    return a + b\n```",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="code-policy-model")
+    runner = EvaluationCore(registry=registry)
+    monkeypatch.setattr(
+        evaluation_core_module,
+        "is_code_execution_policy_supported",
+        lambda policy: False,
+    )
+
+    with pytest.raises(ValueError, match="code_exec_policy 'sandboxed' is unavailable on this worker"):
+        runner.run_local_suite(
+            model_id="code-policy-model",
+            model_handle=registry.handle,
+            suite_id="mbpp",
+            dataset_root=dataset_root,
+            sample_size=1,
             parameters={
                 "entry_point": "add",
                 "test_code": "assert add(2, 2) == 4",

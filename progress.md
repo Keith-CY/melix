@@ -45,6 +45,30 @@
     release-gate scope: `97.12%` (`303/312`)
   - full worker Python regression command for this repository slice: `make py-test` passed with
     `692` tests
+- Post-review hardening for the semantic evaluation controls slice closed the unresolved executor
+  safety threads on PR `#6`:
+  - `sandboxed` now uses a real macOS `sandbox-exec` profile instead of a plain `python -I`
+    subprocess, so candidate code is confined to a dedicated temporary directory with network
+    denied and writes limited to that directory
+  - stdout plus stderr are now redirected to bounded files instead of unbounded in-memory buffers,
+    and runs that hit the limit are failed explicitly with `output_limit_exceeded`
+  - the harness now persists its payload to a sidecar JSON file so candidate stdout cannot corrupt
+    result parsing when it omits a trailing newline
+  - code-suite runs now fail fast when the worker cannot enforce `sandboxed`, and the benchmark
+    contract plus runbook now document the concrete boundary
+- Verification summary for the semantic evaluation controls review hardening:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_code_eval_runner.py -q`: `11 passed in 0.24s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_code_eval_runner.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_release_gates.py -q`: `184 passed in 1.77s`
+  - `make py-test`: `699 passed in 13.69s`
+  - `git diff --check`: pass
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage run --data-file /tmp/semantic_eval_review.coverage --source=services/mlx-worker-python/worker,services/mlx-worker-python/tests -m pytest services/mlx-worker-python/tests/test_code_eval_runner.py services/mlx-worker-python/tests/test_evaluation_core.py services/mlx-worker-python/tests/test_evaluation_schemas.py services/mlx-worker-python/tests/test_evaluation_store.py services/mlx-worker-python/tests/test_benchmark_export.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_release_gates.py -q`: `184 passed in 2.11s`
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python --extra mlx coverage json --data-file /tmp/semantic_eval_review.coverage -o /tmp/semantic_eval_review_coverage.json`: pass
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/semantic_eval_review_coverage.json services/mlx-worker-python/worker/engine/code_eval_runner.py services/mlx-worker-python/worker/engine/evaluation_core.py services/mlx-worker-python/tests/test_code_eval_runner.py services/mlx-worker-python/tests/test_evaluation_core.py`: `97.48%` (`116/119`)
+- Metrics report for the semantic evaluation controls review hardening:
+  - Python changed-line coverage across the touched handwritten executor and evaluation-core scope:
+    `97.48%` (`116/119`)
+  - full worker Python regression command for this follow-up slice: `make py-test` passed with
+    `699` tests
 
 ## 2026-04-12
 

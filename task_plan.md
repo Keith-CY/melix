@@ -17,6 +17,8 @@ evidence-bearing scoring.
 - reject unsupported scorer and code-execution-policy combinations explicitly
 - remove default offline synthetic success from evidence-bearing evaluation paths
 - add a code runner for `pass_at_1` suites and persist execution diagnostics in sample exports
+- enforce the shipped `sandboxed` policy with a real macOS sandbox boundary, temporary-directory
+  write confinement, bounded stdout plus stderr, and fail-fast worker capability checks
 - keep export, store, release-gate evidence, and maintenance RPC behavior aligned with the new
   runtime semantics
 
@@ -30,6 +32,7 @@ evidence-bearing scoring.
 - `git diff --check`
 - targeted coverage over the changed evaluation and release-gate Python scope with changed-line
   coverage at or above `95%`
+- targeted code-exec hardening regression tests over the runner and evaluation-core paths
 
 ## Goal
 

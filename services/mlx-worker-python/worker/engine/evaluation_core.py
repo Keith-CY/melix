@@ -11,7 +11,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
-from worker.engine.code_eval_runner import extract_candidate_code, execute_python_candidate
+from worker.engine.code_eval_runner import (
+    execute_python_candidate,
+    extract_candidate_code,
+    is_code_execution_policy_supported,
+)
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_compare import (
     build_compare_samples,
@@ -173,6 +177,12 @@ class EvaluationCore:
             suite_id=suite_id,
             requested_code_exec_policy=requested_code_exec_policy,
         )
+        if resolved_code_exec_policy in _CODE_EXEC_ENABLED_POLICIES and not is_code_execution_policy_supported(
+            resolved_code_exec_policy
+        ):
+            raise ValueError(
+                f"code_exec_policy '{resolved_code_exec_policy}' is unavailable on this worker"
+            )
         few_shot_examples, selected = self._plan_evaluation_samples(
             samples=samples,
             sample_size=sample_size,
@@ -770,6 +780,7 @@ class EvaluationCore:
                     candidate_code=predicted,
                     entry_point=self._sample_entry_point(sample, job_parameters),
                     test_code=test_code,
+                    code_exec_policy=code_exec_policy,
                     timeout_seconds=self._sample_code_timeout_seconds(sample, job_parameters),
                 )
                 predicted = code_result.candidate_code
