@@ -164,6 +164,30 @@ class RecordingBenchmarkBackend:
         )
 
 
+class ScriptedCodeEvalBackend:
+    runtime_name = "scripted-code-eval"
+
+    def __init__(self, responses: tuple[str, ...]) -> None:
+        self._responses = list(responses)
+        self.prompts: list[str] = []
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+    def estimate_resident_bytes(self, model_spec) -> int:
+        _ = model_spec
+        return 1_024
+
+    def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        self.prompts.append(prompt)
+        if cancel_event.is_set():
+            return
+        text = self._responses.pop(0)
+        yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
+
+
 class FakeBenchmarkHFDatasetFetcher:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
@@ -2702,6 +2726,63 @@ def test_run_evaluation_uses_checked_in_repo_fixture_when_dataset_root_is_omitte
     assert response.job.dataset_id == "mmlu.dev.v1"
     assert response.results[0].metrics[0].name == "eval.mmlu.accuracy"
     assert response.results[0].metrics[0].value == 0.0
+
+
+@pytest.mark.parametrize(
+    ("suite_id", "dataset_id", "response_text", "metric_name"),
+    [
+        (
+            "humaneval",
+            "humaneval.dev.v1",
+            "```python\ndef identity(x):\n    return x\n```",
+            "eval.humaneval.pass_at_1",
+        ),
+        (
+            "mbpp",
+            "mbpp.dev.v1",
+            "```python\ndef square(n):\n    return n * n\n```",
+            "eval.mbpp.pass_at_1",
+        ),
+    ],
+)
+def test_run_evaluation_uses_checked_in_code_fixture_when_dataset_root_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+    suite_id: str,
+    dataset_id: str,
+    response_text: str,
+    metric_name: str,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    fixture_root = repo_root / "services" / "mlx-worker-python" / "fixtures" / "evaluation" / dataset_id
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=ScriptedCodeEvalBackend((response_text,))),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+
+    assert fixture_root.exists() is True
+    monkeypatch.chdir(repo_root)
+
+    response = service.RunEvaluation(
+        maintenance_pb2.RunEvaluationRequest(
+            model_handle=loaded.handle,
+            suite_id=suite_id,
+            dataset_id=dataset_id,
+            sample_size=1,
+            code_exec_policy="sandboxed",
+        ),
+        context=None,
+    )
+
+    metrics = {metric.name: metric.value for metric in response.results[0].metrics}
+
+    assert response.ok is True
+    assert response.job.dataset_id == dataset_id
+    assert metrics[metric_name] == 1.0
+    assert metrics[f"eval.{suite_id}.code_exec_pass_count"] == 1.0
+    assert metrics[f"eval.{suite_id}.code_exec_fail_count"] == 0.0
 
 
 def test_run_evaluation_uses_checked_in_multimodal_fixture_when_dataset_root_is_omitted(

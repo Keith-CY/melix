@@ -322,7 +322,7 @@ def test_run_local_suite_marks_offline_execution_as_non_evidence(tmp_path: Path)
     assert run.samples[0].predicted == ""
     assert run.samples[0].correct is False
     assert run.samples[0].parse_status == "no_live_model"
-    assert run.samples[0].execution_status == "no_live_model"
+    assert run.samples[0].code_test_status == ""
 
 
 def test_run_local_suite_executes_code_candidates_for_mbpp(tmp_path: Path) -> None:
@@ -374,10 +374,66 @@ def test_run_local_suite_executes_code_candidates_for_mbpp(tmp_path: Path) -> No
     assert metrics["eval.mbpp.code_exec_pass_count"] == 1.0
     assert metrics["eval.mbpp.code_exec_fail_count"] == 0.0
     assert run.samples[0].correct is True
-    assert run.samples[0].execution_status == "passed"
-    assert run.samples[0].execution_metadata["test_status"] == "passed"
-    assert run.samples[0].execution_metadata["entry_point"] == "add"
+    assert run.samples[0].code_language == "python"
+    assert run.samples[0].code_entry_point == "add"
+    assert run.samples[0].code_compile_status == "compiled"
+    assert run.samples[0].code_runtime_status == "ok"
+    assert run.samples[0].code_timeout_status == "ok"
+    assert run.samples[0].code_test_status == "passed"
+    assert run.samples[0].code_tests_passed == 2
+    assert run.samples[0].code_tests_total == 2
+    assert run.samples[0].code_failure_detail == ""
     assert "def add" in run.samples[0].predicted
+
+
+def test_run_local_suite_executes_candidate_code_for_humaneval_samples(
+    tmp_path: Path,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="humaneval-dev",
+        suite_id="humaneval",
+        samples=(
+            {
+                "id": "sample-1",
+                "prompt": "Write identity(x) that returns x.",
+                "entry_point": "identity",
+                "test": "assert identity(4) == 4\nassert identity('hi') == 'hi'",
+            },
+        ),
+    )
+    backend = ScriptedEvaluationBackend(
+        (
+            "```python\ndef identity(x):\n    return x\n```",
+        )
+    )
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="live-code-eval-model")
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="live-code-eval-model",
+        model_handle=registry.handle,
+        suite_id="humaneval",
+        dataset_root=dataset_root,
+        sample_size=1,
+        code_exec_policy="sandboxed",
+    )
+
+    metrics = {metric.name: metric.value for metric in run.result.metrics}
+
+    assert len(backend.prompts) == 1
+    assert "Return only executable Python code" in backend.prompts[0]
+    assert run.samples[0].correct is True
+    assert run.samples[0].parse_status == "parsed_code_block"
+    assert run.samples[0].code_language == "python"
+    assert run.samples[0].code_entry_point == "identity"
+    assert run.samples[0].code_test_status == "passed"
+    assert run.result.score_name == "pass_at_1"
+    assert run.result.score_value == 1.0
+    assert metrics["eval.humaneval.pass_at_1"] == 1.0
+    assert metrics["eval.humaneval.code_exec_pass_count"] == 1.0
+    assert metrics["eval.humaneval.code_exec_fail_count"] == 0.0
 
 
 def test_run_local_suite_falls_back_to_zero_for_invalid_numeric_controls(tmp_path: Path) -> None:

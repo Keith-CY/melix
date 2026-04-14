@@ -1,231 +1,299 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-import sys
+import subprocess
 import tempfile
+import textwrap
 
-import pytest
-
-import worker.engine.code_eval_runner as code_eval_runner
-from worker.engine.code_eval_runner import (
-    _HarnessProcessResult,
-    _build_execution_command,
-    _load_harness_payload,
-    _output_limit_failure_message,
-    _summarize_process_output,
-    _timeout_failure_message,
-    execute_python_candidate,
-    is_code_execution_policy_supported,
-)
+from worker.engine import code_eval_runner
+from worker.engine.code_eval_runner import run_python_code_evaluation
 
 
-pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="sandboxed policy uses macOS sandbox-exec")
-
-
-def test_execute_python_candidate_sandboxed_blocks_host_file_writes(tmp_path: Path) -> None:
-    outside_path = tmp_path / "outside.txt"
-
-    result = execute_python_candidate(
-        candidate_code=(
-            f"from pathlib import Path\n"
-            f"Path({str(outside_path)!r}).write_text('escape')\n"
-            f"def add(a, b):\n"
-            f"    return a + b\n"
-        ),
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
-    )
-
-    assert result.passed is False
-    assert result.execution_status == "failed"
-    assert result.metadata["runtime_status"] == "failed"
-    assert "PermissionError" in result.metadata["failure_message"]
-    assert outside_path.exists() is False
-
-
-def test_execute_python_candidate_sandboxed_blocks_subprocess_execution() -> None:
-    result = execute_python_candidate(
-        candidate_code=(
-            "import subprocess\n"
-            "def add(a, b):\n"
-            "    return a + b\n"
-            "subprocess.run(['/bin/echo', 'escape'], check=True)\n"
-        ),
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
-    )
-
-    assert result.passed is False
-    assert result.execution_status == "failed"
-    assert result.metadata["runtime_status"] == "failed"
-    assert "Operation not permitted" in result.metadata["failure_message"]
-
-
-def test_execute_python_candidate_reads_payload_from_file_when_candidate_stdout_has_no_newline() -> None:
-    result = execute_python_candidate(
-        candidate_code=(
-            "print('noise', end='')\n"
-            "def add(a, b):\n"
-            "    return a + b\n"
-        ),
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
+def test_run_python_code_evaluation_ignores_candidate_stdout_before_payload() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            def identity(value):
+                print("candidate-noise")
+                return value
+            """
+        ).strip(),
+        entry_point="identity",
+        test_code="assert identity(4) == 4\nassert identity('hi') == 'hi'",
     )
 
     assert result.passed is True
-    assert result.execution_status == "passed"
-    assert result.metadata["test_status"] == "passed"
+    assert result.tests_passed == 2
+    assert result.tests_total == 2
 
 
-def test_execute_python_candidate_fails_when_stdout_exceeds_limit() -> None:
-    result = execute_python_candidate(
-        candidate_code=(
-            "def add(a, b):\n"
-            "    return a + b\n"
-            "print('x' * 70000)\n"
-        ),
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
-        max_stdio_bytes=4096,
+def test_run_python_code_evaluation_handles_candidate_stdout_without_trailing_newline() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            def identity(value):
+                print("candidate-noise", end="")
+                return value
+            """
+        ).strip(),
+        entry_point="identity",
+        test_code="assert identity(4) == 4",
+    )
+
+    assert result.passed is True
+    assert result.tests_passed == 1
+    assert result.tests_total == 1
+
+
+def test_run_python_code_evaluation_executes_multiline_test_blocks() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            def identity(value):
+                return value
+            """
+        ).strip(),
+        entry_point="identity",
+        test_code=textwrap.dedent(
+            """
+            def check(candidate):
+                assert candidate(4) == 4
+                assert candidate("hi") == "hi"
+
+            check(identity)
+            """
+        ).strip(),
+    )
+
+    assert result.passed is True
+    assert result.tests_passed == 2
+    assert result.tests_total == 2
+
+
+def test_run_python_code_evaluation_sandbox_blocks_home_file_reads() -> None:
+    repo_probe = Path(__file__).resolve()
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            f"""
+            from pathlib import Path
+
+            def read_probe():
+                return Path({str(repo_probe)!r}).read_text(encoding="utf-8")[:8]
+            """
+        ).strip(),
+        entry_point="read_probe",
+        test_code=f"assert read_probe() == {repo_probe.read_text(encoding='utf-8')[:8]!r}",
     )
 
     assert result.passed is False
-    assert result.execution_status == "output_limit_exceeded"
-    assert result.metadata["output_status"] == "limit_exceeded"
-    assert "stdio limit" in result.metadata["failure_message"]
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "PermissionError" in result.failure_detail
 
 
-def test_execute_python_candidate_returns_sandbox_unavailable_when_policy_cannot_be_enforced(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(code_eval_runner, "is_code_execution_policy_supported", lambda policy: False)
+def test_run_python_code_evaluation_sandbox_blocks_host_file_writes(tmp_path: Path) -> None:
+    outside_path = tmp_path / "escape.txt"
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            f"""
+            from pathlib import Path
 
-    result = execute_python_candidate(
-        candidate_code="def add(a, b):\n    return a + b\n",
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
+            def write_probe():
+                Path({str(outside_path)!r}).write_text("escape", encoding="utf-8")
+                return "ok"
+            """
+        ).strip(),
+        entry_point="write_probe",
+        test_code="assert write_probe() == 'ok'",
     )
 
     assert result.passed is False
-    assert result.execution_status == "sandbox_unavailable"
-    assert result.metadata["sandbox_status"] == "unavailable"
-    assert "requires macOS sandbox-exec" in result.metadata["failure_message"]
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "PermissionError" in result.failure_detail
+    assert outside_path.exists() is False
 
 
-def test_execute_python_candidate_times_out_and_reports_timeout_output() -> None:
-    result = execute_python_candidate(
-        candidate_code=(
-            "import time\n"
-            "print('starting', end='')\n"
-            "time.sleep(0.2)\n"
-            "def add(a, b):\n"
-            "    return a + b\n"
-        ),
-        entry_point="add",
-        test_code="assert add(2, 2) == 4",
-        timeout_seconds=0.01,
+def test_run_python_code_evaluation_sandbox_blocks_subprocess_execution() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            import subprocess
+
+            def spawn_child():
+                output = subprocess.check_output(
+                    ["/bin/sh", "-c", "printf 7"],
+                    text=True,
+                )
+                return int(output.strip())
+            """
+        ).strip(),
+        entry_point="spawn_child",
+        test_code="assert spawn_child() == 7",
     )
 
     assert result.passed is False
-    assert result.execution_status == "timed_out"
-    assert result.metadata["timeout_status"] == "timed_out"
-    assert "Timed out after" in result.metadata["failure_message"]
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "PermissionError" in result.failure_detail or "Operation not permitted" in result.failure_detail
 
 
-def test_load_harness_payload_reports_missing_payload_when_process_exits_early(tmp_path: Path) -> None:
-    payload = _load_harness_payload(
-        payload_path=tmp_path / "missing.json",
-        process_result=_HarnessProcessResult(
-            returncode=7,
-            stdout="",
-            stderr="",
-            timed_out=False,
-            output_limit_exceeded=False,
-        ),
-    )
+def test_run_python_code_evaluation_sandbox_blocks_non_temp_file_reads() -> None:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as file:
+        file.write("external-probe")
+        external_probe = Path(file.name)
 
-    assert payload["execution_status"] == "failed"
-    assert payload["metadata"]["failure_message"] == (
-        "Code execution exited with status 7 without a result payload."
-    )
+    try:
+        result = run_python_code_evaluation(
+            candidate_code=textwrap.dedent(
+                f"""
+                from pathlib import Path
 
-
-def test_load_harness_payload_reports_invalid_json_payload(tmp_path: Path) -> None:
-    payload_path = tmp_path / "payload.json"
-    payload_path.write_text("{", encoding="utf-8")
-
-    payload = _load_harness_payload(
-        payload_path=payload_path,
-        process_result=_HarnessProcessResult(
-            returncode=0,
-            stdout="stdout fallback",
-            stderr="",
-            timed_out=False,
-            output_limit_exceeded=False,
-        ),
-    )
-
-    assert payload["execution_status"] == "failed"
-    assert payload["metadata"]["failure_message"] == "stdout fallback"
-
-
-def test_load_harness_payload_rejects_non_mapping_payload(tmp_path: Path) -> None:
-    payload_path = tmp_path / "payload.json"
-    payload_path.write_text("[]", encoding="utf-8")
-
-    payload = _load_harness_payload(
-        payload_path=payload_path,
-        process_result=_HarnessProcessResult(
-            returncode=0,
-            stdout="",
-            stderr="",
-            timed_out=False,
-            output_limit_exceeded=False,
-        ),
-    )
-
-    assert payload["execution_status"] == "failed"
-    assert payload["metadata"]["failure_message"] == "Unexpected code execution payload shape."
-
-
-def test_build_execution_command_handles_disabled_and_unavailable_policies(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with tempfile.TemporaryDirectory(prefix="melix-eval-command-") as temp_dir_str:
-        temp_dir = Path(temp_dir_str)
-        script_path = temp_dir / "code_eval.py"
-        script_path.write_text("print('ok')", encoding="utf-8")
-
-        disabled_command, disabled_status, disabled_error = _build_execution_command(
-            script_path=script_path,
-            temp_dir=temp_dir,
-            code_exec_policy="disabled",
+                def read_external_probe():
+                    return Path({str(external_probe)!r}).read_text(encoding="utf-8")
+                """
+            ).strip(),
+            entry_point="read_external_probe",
+            test_code="assert read_external_probe() == 'external-probe'",
         )
-        assert disabled_status == "not_requested"
-        assert disabled_error == ""
-        assert "python" in Path(disabled_command[0]).name
+    finally:
+        external_probe.unlink(missing_ok=True)
 
-        monkeypatch.setattr(code_eval_runner, "is_code_execution_policy_supported", lambda policy: False)
-        unavailable_command, unavailable_status, unavailable_error = _build_execution_command(
-            script_path=script_path,
-            temp_dir=temp_dir,
-            code_exec_policy="sandboxed",
-        )
-        assert unavailable_status == "unavailable"
-        assert "python" in Path(unavailable_command[0]).name
-        assert "requires macOS sandbox-exec" in unavailable_error
+    assert result.passed is False
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "PermissionError" in result.failure_detail
 
 
-def test_code_exec_policy_support_and_failure_message_helpers() -> None:
-    assert is_code_execution_policy_supported("disabled") is False
-    assert "stdout tail: hello" in _summarize_process_output(stdout="hello", stderr="")
-    assert "stderr tail: boom" in _summarize_process_output(stdout="", stderr="boom")
-    assert _timeout_failure_message(timeout_seconds=1.0, stdout="", stderr="") == "Timed out after 1.0s"
-    assert "stdout tail: hello" in _timeout_failure_message(
-        timeout_seconds=1.0,
-        stdout="hello",
-        stderr="",
+def test_run_python_code_evaluation_fails_when_output_exceeds_limit() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            def identity(value):
+                print("x" * 70000)
+                return value
+            """
+        ).strip(),
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+        stdout_limit_bytes=4096,
     )
-    assert _output_limit_failure_message(stdout="", stderr="", max_stdio_bytes=128) == (
-        "Code execution exceeded the 128-byte stdio limit."
+
+    assert result.passed is False
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "stdio limit" in result.failure_detail
+
+
+def test_run_python_code_evaluation_returns_syntax_error_result() -> None:
+    result = run_python_code_evaluation(
+        candidate_code="def broken(",
+        entry_point="broken",
+        test_code="assert True",
+    )
+
+    assert result.compile_status == "syntax_error"
+    assert result.runtime_status == "not_run"
+    assert result.test_status == "not_run"
+    assert result.tests_total == 1
+
+
+def test_run_python_code_evaluation_fails_when_sandbox_exec_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: None)
+
+    result = run_python_code_evaluation(
+        candidate_code="def identity(value):\n    return value",
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+    )
+
+    assert result.compile_status == "compiled"
+    assert result.runtime_status == "error"
+    assert result.failure_detail == "sandbox-exec is unavailable on this host."
+
+
+def test_run_python_code_evaluation_returns_timeout_result(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=1)
+
+    monkeypatch.setattr(code_eval_runner.subprocess, "run", fake_run)
+
+    result = run_python_code_evaluation(
+        candidate_code="def identity(value):\n    return value",
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+        timeout_seconds=1,
+    )
+
+    assert result.runtime_status == "timeout"
+    assert result.timeout_status == "timed_out"
+    assert result.test_status == "not_run"
+    assert result.failure_detail == "Timed out after 1s"
+
+
+def test_run_python_code_evaluation_uses_stderr_when_payload_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
+
+    def fake_run(*args, **kwargs):
+        stderr_handle = kwargs["stderr"]
+        stderr_handle.write(b"runtime exploded")
+        stderr_handle.flush()
+        return subprocess.CompletedProcess(args=args[0], returncode=7)
+
+    monkeypatch.setattr(code_eval_runner.subprocess, "run", fake_run)
+
+    result = run_python_code_evaluation(
+        candidate_code="def identity(value):\n    return value",
+        entry_point="identity",
+        test_code="assert identity(1) == 1",
+    )
+
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert result.failure_detail == "runtime exploded"
+
+
+def test_count_tests_falls_back_for_syntax_error_input() -> None:
+    assert code_eval_runner._count_tests("assert True\n  assert False") == 2
+
+
+def test_count_tests_falls_back_when_no_asserts_are_present() -> None:
+    test_code = textwrap.dedent(
+        """
+        def check(candidate):
+            return candidate(1)
+
+        check(identity)
+        """
+    ).strip()
+
+    assert code_eval_runner._count_tests(test_code) == 3
+
+
+def test_load_payload_file_rejects_invalid_and_non_mapping_json(tmp_path: Path) -> None:
+    invalid_path = tmp_path / "invalid.json"
+    invalid_path.write_text("{", encoding="utf-8")
+    assert code_eval_runner._load_payload_file(invalid_path) is None
+
+    list_path = tmp_path / "list.json"
+    list_path.write_text("[1, 2, 3]", encoding="utf-8")
+    assert code_eval_runner._load_payload_file(list_path) is None
+
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(json.dumps({"runtime_status": "ok"}), encoding="utf-8")
+    assert code_eval_runner._load_payload_file(payload_path) == {"runtime_status": "ok"}
+
+
+def test_code_exec_policy_support_and_output_summary_helpers() -> None:
+    assert code_eval_runner.is_code_execution_policy_supported("disabled") is False
+    assert "stdout tail: hello" in code_eval_runner._summarize_stdio(
+        stdout_tail="hello",
+        stderr_tail="",
+    )
+    assert "stderr tail: boom" in code_eval_runner._summarize_stdio(
+        stdout_tail="",
+        stderr_tail="boom",
     )

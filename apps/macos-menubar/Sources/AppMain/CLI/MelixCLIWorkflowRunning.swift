@@ -429,6 +429,12 @@ extension MelixCLICommand {
             return "eval.export-samples-csv"
         case .evalExportSamplesJSONL:
             return "eval.export-samples-jsonl"
+        case .evalCompareExportSummaryCSV:
+            return "eval.compare.export-summary-csv"
+        case .evalCompareExportSamplesCSV:
+            return "eval.compare.export-samples-csv"
+        case .evalCompareExportSamplesJSONL:
+            return "eval.compare.export-samples-jsonl"
         }
     }
 }

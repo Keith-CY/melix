@@ -771,6 +771,9 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalRun(EvalRunOptions)
     case evalCompare(EvalCompareOptions)
     case evalList(EvalListOptions)
+    case evalCompareExportSummaryCSV(EvalExportOptions)
+    case evalCompareExportSamplesCSV(EvalExportOptions)
+    case evalCompareExportSamplesJSONL(EvalExportOptions)
     case evalExportSummaryCSV(EvalExportOptions)
     case evalExportSamplesCSV(EvalExportOptions)
     case evalExportSamplesJSONL(EvalExportOptions)
@@ -874,6 +877,9 @@ public enum MelixCLIParser {
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
       melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy MODE] [--json]
+      melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
+      melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
+      melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
       melix eval list [--json]
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -1552,11 +1558,11 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
-            multiValueOptions: ["--suite", "--target-model-id"]
-        )
         switch action {
         case "run":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
             let modelID = values.single["--model-id"] ?? ""
             let hfRepoID = values.single["--repo-id"] ?? ""
             let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
@@ -1595,39 +1601,76 @@ public enum MelixCLIParser {
                 )
             )
         case "compare":
-            let modelID = values.single["--model-id"] ?? ""
-            let hfRepoID = values.single["--repo-id"] ?? ""
-            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
-            guard explicitTargetCount == 1 else {
-                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
-            }
-            let targetModelIDs = values.multi["--target-model-id"] ?? []
-            guard targetModelIDs.isEmpty == false else {
-                throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
-            }
-            return .evalCompare(
-                EvalCompareOptions(
-                    modelID: modelID,
-                    hfRepoID: hfRepoID,
-                    targetModelIDs: targetModelIDs,
-                    suites: values.multi["--suite"] ?? [],
-                    datasetID: values.single["--dataset-id"] ?? "",
-                    sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
-                    parameters: parseEvalParameters(values),
-                    json: values.flags.contains("--json")
-                )
-            )
+            return try parseEvalCompare(Array(arguments.dropFirst()))
         case "list":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
             return .evalList(EvalListOptions(json: values.flags.contains("--json")))
         case "export-summary-csv":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
             return .evalExportSummaryCSV(try parseEvalExportOptions(values, command: "melix eval export-summary-csv"))
         case "export-samples-csv":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
             return .evalExportSamplesCSV(try parseEvalExportOptions(values, command: "melix eval export-samples-csv"))
         case "export-samples-jsonl":
+            let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+                multiValueOptions: ["--suite", "--target-model-id"]
+            )
             return .evalExportSamplesJSONL(try parseEvalExportOptions(values, command: "melix eval export-samples-jsonl"))
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseEvalCompare(_ arguments: [String]) throws -> MelixCLICommand {
+        if let action = arguments.first,
+           ["export-summary-csv", "export-samples-csv", "export-samples-jsonl"].contains(action)
+        {
+            let exportCommand = "melix eval compare \(action)"
+            let exportArguments = Array(arguments.dropFirst())
+            let exportValues = try ArgumentCursor(arguments: exportArguments).parse()
+            switch action {
+            case "export-summary-csv":
+                return .evalCompareExportSummaryCSV(try parseEvalExportOptions(exportValues, command: exportCommand))
+            case "export-samples-csv":
+                return .evalCompareExportSamplesCSV(try parseEvalExportOptions(exportValues, command: exportCommand))
+            case "export-samples-jsonl":
+                return .evalCompareExportSamplesJSONL(try parseEvalExportOptions(exportValues, command: exportCommand))
+            default:
+                break
+            }
+        }
+
+        let values = try ArgumentCursor(arguments: arguments).parse(
+            multiValueOptions: ["--suite", "--target-model-id"]
+        )
+        let modelID = values.single["--model-id"] ?? ""
+        let hfRepoID = values.single["--repo-id"] ?? ""
+        let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+        guard explicitTargetCount == 1 else {
+            throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
+        }
+        let targetModelIDs = values.multi["--target-model-id"] ?? []
+        guard targetModelIDs.isEmpty == false else {
+            throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+        }
+        return .evalCompare(
+            EvalCompareOptions(
+                modelID: modelID,
+                hfRepoID: hfRepoID,
+                targetModelIDs: targetModelIDs,
+                suites: values.multi["--suite"] ?? [],
+                datasetID: values.single["--dataset-id"] ?? "",
+                sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
+                parameters: parseEvalParameters(values),
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseEvalExportOptions(
@@ -2638,21 +2681,45 @@ public actor MelixCLIRunner {
                 return try prettyJSON(entries)
             }
             return renderEvaluationHistory(entries)
+        case .evalCompareExportSummaryCSV(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                missingRowsMessage: "No evaluation compare summary rows were found for job \(options.jobID).",
+                rowCount: { bundle in bundle.evaluationCompareSummaryRows(jobID: options.jobID).count },
+                contents: { bundle in bundle.evaluationCompareSummaryCSV(jobID: options.jobID) }
+            )
+        case .evalCompareExportSamplesCSV(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                missingRowsMessage: "No evaluation compare sample rows were found for job \(options.jobID).",
+                rowCount: { bundle in bundle.evaluationCompareSampleRows(jobID: options.jobID).count },
+                contents: { bundle in bundle.evaluationCompareSamplesCSV(jobID: options.jobID) }
+            )
+        case .evalCompareExportSamplesJSONL(let options):
+            return try await exportEvaluationArtifact(
+                options: options,
+                missingRowsMessage: "No evaluation compare sample rows were found for job \(options.jobID).",
+                rowCount: { bundle in bundle.evaluationCompareSampleRows(jobID: options.jobID).count },
+                contents: { bundle in try bundle.evaluationCompareSamplesJSONL(jobID: options.jobID) }
+            )
         case .evalExportSummaryCSV(let options):
             return try await exportEvaluationArtifact(
                 options: options,
+                missingRowsMessage: "No evaluation rows were found for job \(options.jobID).",
                 rowCount: { bundle in bundle.evaluationSummaryCSVRows(jobID: options.jobID).count },
                 contents: { bundle in bundle.evaluationSummaryCSV(jobID: options.jobID) }
             )
         case .evalExportSamplesCSV(let options):
             return try await exportEvaluationArtifact(
                 options: options,
+                missingRowsMessage: "No evaluation rows were found for job \(options.jobID).",
                 rowCount: { bundle in bundle.evaluationSampleRows(jobID: options.jobID).count },
                 contents: { bundle in bundle.evaluationSamplesCSV(jobID: options.jobID) }
             )
         case .evalExportSamplesJSONL(let options):
             return try await exportEvaluationArtifact(
                 options: options,
+                missingRowsMessage: "No evaluation rows were found for job \(options.jobID).",
                 rowCount: { bundle in bundle.evaluationSampleRows(jobID: options.jobID).count },
                 contents: { bundle in try bundle.evaluationSamplesJSONL(jobID: options.jobID) }
             )
@@ -3444,13 +3511,14 @@ public actor MelixCLIRunner {
 
     private func exportEvaluationArtifact(
         options: EvalExportOptions,
+        missingRowsMessage: String,
         rowCount: (ControlPlaneBenchmarkExportBundle) throws -> Int,
         contents: (ControlPlaneBenchmarkExportBundle) throws -> String
     ) async throws -> String {
         let bundle = try await fetchBenchmarkExportBundle()
         let rows = try rowCount(bundle)
         guard rows > 0 else {
-            throw MelixCLIError.runtime("No evaluation rows were found for job \(options.jobID).")
+            throw MelixCLIError.runtime(missingRowsMessage)
         }
         let outputURL = URL(fileURLWithPath: options.outputPath)
         try FileManager.default.createDirectory(

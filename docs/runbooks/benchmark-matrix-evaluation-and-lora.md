@@ -209,6 +209,17 @@ swift run melix eval run \
   --sample-size 10
 ```
 
+Executable-code example with a checked-in dev fixture:
+
+```bash
+swift run melix eval run \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --suite humaneval \
+  --dataset-id humaneval.dev.v1 \
+  --sample-size 5 \
+  --code-exec-policy sandboxed
+```
+
 History and exports:
 
 ```bash
@@ -246,8 +257,10 @@ Notes:
   candidate code is executed
 - `mmlu.vision.dev.v1` is a checked-in image evaluation fixture under `services/mlx-worker-python/fixtures/evaluation/`
 - `imagenette.dev.v1` is a checked-in 10-sample validation subset sourced from `frgfm/imagenette` (`160px`, validation split, Apache-2.0)
+- `humaneval.dev.v1` and `mbpp.dev.v1` are checked-in executable-code fixtures under `services/mlx-worker-python/fixtures/evaluation/`
 - relative `image_uri` entries inside multimodal datasets are resolved against the selected dataset root automatically
 - use `--dataset-root /absolute/path/to/evaluation-package` only when you want to override the checked-in fixture bundle
+- `--code-exec-policy sandboxed` is mandatory for `humaneval` and `mbpp`; Melix rejects those suites without it
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 - sample JSONL and CSV exports now include `execution_status` plus `execution_metadata` for
   code-suite evidence and non-evidence states
@@ -429,12 +442,12 @@ swift run melix eval compare \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --target-model-id <adapter-a-derived-model-id> \
   --target-model-id <adapter-b-derived-model-id> \
-  --suite mmlu \
+  --suite mbpp \
+  --dataset-id mbpp.dev.v1 \
   --sample-size 12 \
   --batch-factor 2 \
-  --few-shot 4 \
   --seed 9 \
-  --scoring-mode multiple_choice_accuracy \
+  --scoring-mode pass_at_1 \
   --code-exec-policy sandboxed
 ```
 
@@ -442,18 +455,23 @@ Important compare rules:
 
 - `eval compare` still uses model IDs, not adapter paths
 - every `--target-model-id` must already exist in the local catalog
-- compare results persist through the same evaluation history and export bundle as `eval run`
+- compare results persist through the same evaluation export bundle as `eval run`, but compare exports use dedicated compare subcommands
+- compare sample exports preserve executable-code evidence for both the base and target responses when the suite executes code
 
-Export the resulting comparison evidence with the normal evaluation export commands:
+Export the resulting comparison evidence with the dedicated compare export commands:
 
 ```bash
 swift run melix eval list --json
 
-swift run melix eval export-summary-csv \
+swift run melix eval compare export-summary-csv \
   --job-id <compare-job-id> \
   --output /tmp/melix-evaluation-compare-summary.csv
 
-swift run melix eval export-samples-jsonl \
+swift run melix eval compare export-samples-csv \
+  --job-id <compare-job-id> \
+  --output /tmp/melix-evaluation-compare-samples.csv
+
+swift run melix eval compare export-samples-jsonl \
   --job-id <compare-job-id> \
   --output /tmp/melix-evaluation-compare-samples.jsonl
 ```

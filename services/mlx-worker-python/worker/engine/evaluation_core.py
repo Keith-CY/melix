@@ -12,9 +12,9 @@ from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.engine.code_eval_runner import (
-    execute_python_candidate,
     extract_candidate_code,
     is_code_execution_policy_supported,
+    run_python_code_evaluation,
 )
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.evaluation_compare import (
@@ -282,7 +282,11 @@ class EvaluationCore:
             f"eval.{suite_id}.duration_seconds": "s",
         }
         if suite_id in _CODE_EVAL_SUITES:
-            code_exec_pass_count = sum(1 for sample in sample_records if sample.execution_status == "passed")
+            code_exec_pass_count = sum(
+                1
+                for sample in sample_records
+                if sample.code_test_status == "passed" and sample.code_runtime_status == "ok"
+            )
             code_exec_fail_count = len(sample_records) - code_exec_pass_count
             result_metrics[f"eval.{suite_id}.code_exec_pass_count"] = float(code_exec_pass_count)
             result_metrics[f"eval.{suite_id}.code_exec_fail_count"] = float(code_exec_fail_count)
@@ -746,8 +750,15 @@ class EvaluationCore:
         )
         started_at = time.perf_counter()
         raw_response = ""
-        execution_status = ""
-        execution_metadata: dict[str, str] = {}
+        code_language = ""
+        code_entry_point = ""
+        code_compile_status = ""
+        code_runtime_status = ""
+        code_timeout_status = ""
+        code_test_status = ""
+        code_tests_passed = 0
+        code_tests_total = 0
+        code_failure_detail = ""
         if loaded_model is not None:
             raw_response = EvaluationCore._execute_live_prompt(
                 registry=self._registry,
@@ -775,17 +786,27 @@ class EvaluationCore:
                 predicted, parse_status = extract_candidate_code(raw_response)
                 test_code = self._sample_test_code(sample, job_parameters)
                 if not test_code.strip():
-                    raise ValueError(f"Code evaluation sample {sample.get('id', index)} is missing test_code")
-                code_result = execute_python_candidate(
+                    raise ValueError(
+                        f"Code evaluation sample {sample.get('id', index)} is missing test_code"
+                    )
+                code_entry_point = self._sample_entry_point(sample, job_parameters)
+                code_result = run_python_code_evaluation(
                     candidate_code=predicted,
-                    entry_point=self._sample_entry_point(sample, job_parameters),
+                    entry_point=code_entry_point,
                     test_code=test_code,
-                    code_exec_policy=code_exec_policy,
-                    timeout_seconds=self._sample_code_timeout_seconds(sample, job_parameters),
+                    timeout_seconds=max(
+                        int(self._sample_code_timeout_seconds(sample, job_parameters)),
+                        1,
+                    ),
                 )
-                predicted = code_result.candidate_code
-                execution_status = code_result.execution_status
-                execution_metadata = code_result.metadata
+                code_language = "python"
+                code_compile_status = code_result.compile_status
+                code_runtime_status = code_result.runtime_status
+                code_timeout_status = code_result.timeout_status
+                code_test_status = code_result.test_status
+                code_tests_passed = code_result.tests_passed
+                code_tests_total = code_result.tests_total
+                code_failure_detail = code_result.failure_detail
                 correct = code_result.passed
             else:
                 predicted, parse_status = EvaluationCore._parse_prediction(
@@ -803,7 +824,6 @@ class EvaluationCore:
         else:
             predicted = ""
             parse_status = "no_live_model"
-            execution_status = "no_live_model"
             correct = False
         duration_s = round(time.perf_counter() - started_at, 6)
         return build_evaluation_sample_record(
@@ -821,8 +841,15 @@ class EvaluationCore:
             task_kind=task_kind,
             input_modalities=input_modalities,
             media_references=media_references,
-            execution_status=execution_status,
-            execution_metadata=execution_metadata,
+            code_language=code_language,
+            code_entry_point=code_entry_point,
+            code_compile_status=code_compile_status,
+            code_runtime_status=code_runtime_status,
+            code_timeout_status=code_timeout_status,
+            code_test_status=code_test_status,
+            code_tests_passed=code_tests_passed,
+            code_tests_total=code_tests_total,
+            code_failure_detail=code_failure_detail,
         )
 
     @staticmethod
@@ -995,7 +1022,10 @@ class EvaluationCore:
 
     @staticmethod
     def _sample_test_code(sample: dict[str, object], job_parameters: dict[str, str]) -> str:
-        raw_value = sample.get("test_code", job_parameters.get("test_code", ""))
+        raw_value = sample.get(
+            "test_code",
+            sample.get("test", job_parameters.get("test_code", job_parameters.get("test", ""))),
+        )
         return str(raw_value)
 
     @staticmethod

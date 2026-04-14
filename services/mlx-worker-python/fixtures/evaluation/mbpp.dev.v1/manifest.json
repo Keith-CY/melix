@@ -1,0 +1,16 @@
+{
+  "schema_version": "melix.evaluation_dataset_package.v1",
+  "dataset_id": "mbpp.dev.v1",
+  "suite_id": "mbpp",
+  "task_kind": "text-generation",
+  "input_modalities": ["text"],
+  "version": "2026-04-14",
+  "sample_count": 3,
+  "split": "validation",
+  "code_eval": {
+    "language": "python",
+    "timeout_seconds": 3,
+    "memory_limit_mb": 256,
+    "stdout_limit_bytes": 32768
+  }
+}
