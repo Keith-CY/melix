@@ -707,59 +707,116 @@ def _evaluate_evaluation_compare_evidence(
     report: dict[str, Any],
     policy: dict[str, Any],
 ) -> list[str]:
+    suite_id = str(report.get("suite_id", "")).strip()
+    if not suite_id:
+        return ["evaluation_compare.suite_id is missing"]
+
+    target_summaries = report.get("target_summaries")
+    if target_summaries is not None:
+        if not isinstance(target_summaries, list) or not target_summaries:
+            return [f"evaluation_compare.{suite_id} target_summaries is missing"]
+        failures: list[str] = []
+        for index, summary in enumerate(target_summaries):
+            if not isinstance(summary, dict):
+                failures.append(
+                    f"evaluation_compare.{suite_id} target_summaries[{index}] is invalid"
+                )
+                continue
+            normalized_summary = dict(summary)
+            normalized_summary.setdefault("suite_id", suite_id)
+            failures.extend(
+                _evaluate_single_evaluation_compare_evidence(
+                    normalized_summary,
+                    policy,
+                    include_target_model_id=True,
+                )
+            )
+        return failures
+
+    return _evaluate_single_evaluation_compare_evidence(
+        report,
+        policy,
+        include_target_model_id=False,
+    )
+
+
+def _evaluate_single_evaluation_compare_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    include_target_model_id: bool,
+) -> list[str]:
     failures: list[str] = []
     suite_id = str(report.get("suite_id", "")).strip()
     if not suite_id:
         failures.append("evaluation_compare.suite_id is missing")
         return failures
+    prefix = _evaluation_compare_failure_prefix(
+        report,
+        include_target_model_id=include_target_model_id,
+    )
 
     suite_policy = _resolve_evaluation_compare_suite_policy(policy, suite_id)
     if not isinstance(suite_policy, dict):
-        failures.append(f"evaluation_compare.{suite_id} policy is missing")
+        failures.append(f"{prefix} policy is missing")
         return failures
 
     required_verdict = str(suite_policy.get("required_verdict", "")).strip()
     actual_verdict = str(report.get("verdict", "")).strip()
     if required_verdict and actual_verdict != required_verdict:
         failures.append(
-            f"evaluation_compare.{suite_id} verdict={actual_verdict} did not satisfy required verdict {required_verdict}"
+            f"{prefix} verdict={actual_verdict} did not satisfy required verdict {required_verdict}"
         )
 
     effect_threshold = float(report.get("effect_threshold", 0.0) or 0.0)
     policy_threshold = float(suite_policy.get("effect_threshold", 0.0) or 0.0)
     if effect_threshold < policy_threshold:
         failures.append(
-            f"evaluation_compare.{suite_id} effect_threshold={effect_threshold:.2f} fell below policy threshold {policy_threshold:.2f}"
+            f"{prefix} effect_threshold={effect_threshold:.2f} fell below policy threshold {policy_threshold:.2f}"
         )
 
     statistical_evidence = report.get("statistical_evidence", {})
     if not isinstance(statistical_evidence, dict):
-        failures.append(f"evaluation_compare.{suite_id} statistical_evidence is missing")
+        failures.append(f"{prefix} statistical_evidence is missing")
         return failures
     bootstrap = statistical_evidence.get("bootstrap", {})
     analytical = statistical_evidence.get("analytical", {})
     if not isinstance(bootstrap, dict):
-        failures.append(f"evaluation_compare.{suite_id} bootstrap evidence is missing")
+        failures.append(f"{prefix} bootstrap evidence is missing")
         bootstrap = {}
     if not isinstance(analytical, dict):
-        failures.append(f"evaluation_compare.{suite_id} analytical evidence is missing")
+        failures.append(f"{prefix} analytical evidence is missing")
         analytical = {}
 
     bootstrap_iterations = int(bootstrap.get("iterations", 0) or 0)
     required_iterations = int(suite_policy.get("bootstrap_iterations", 0) or 0)
     if required_iterations and bootstrap_iterations < required_iterations:
         failures.append(
-            f"evaluation_compare.{suite_id} bootstrap_iterations={bootstrap_iterations} fell below required {required_iterations}"
+            f"{prefix} bootstrap_iterations={bootstrap_iterations} fell below required {required_iterations}"
         )
 
     confidence_level = float(bootstrap.get("confidence_level", 0.0) or 0.0)
     required_confidence = float(suite_policy.get("confidence_level", 0.0) or 0.0)
     if required_confidence and confidence_level < required_confidence:
         failures.append(
-            f"evaluation_compare.{suite_id} confidence_level={confidence_level:.2f} fell below required {required_confidence:.2f}"
+            f"{prefix} confidence_level={confidence_level:.2f} fell below required {required_confidence:.2f}"
         )
 
     return failures
+
+
+def _evaluation_compare_failure_prefix(
+    report: dict[str, Any],
+    *,
+    include_target_model_id: bool,
+) -> str:
+    suite_id = str(report.get("suite_id", "")).strip()
+    prefix = f"evaluation_compare.{suite_id}"
+    if include_target_model_id:
+        target_model_id = str(report.get("target_model_id", "")).strip()
+        if target_model_id:
+            prefix += f" target_model_id={target_model_id}"
+    return prefix
 
 
 def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str:
@@ -850,8 +907,15 @@ def _load_persisted_evaluation_compare_evidence(
     ]
     if latest_job_id and len(latest_job_summaries) > 1:
         return (
-            None,
-            f"persisted evaluation_compare artifacts for suite {suite_id} are ambiguous for job {latest_job_id}",
+            {
+                "suite_id": suite_id,
+                "job_id": latest_job_id,
+                "target_summaries": sorted(
+                    latest_job_summaries,
+                    key=lambda summary: str(summary.get("target_model_id", "")),
+                ),
+            },
+            "",
         )
     return latest_job_summaries[-1], ""
 

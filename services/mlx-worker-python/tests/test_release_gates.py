@@ -256,6 +256,104 @@ def _write_persisted_evaluation_compare_evidence(
     return compare_summary.to_dict()
 
 
+def _write_persisted_multi_target_evaluation_compare_evidence(
+    jobs_root: Path,
+    *,
+    job_id: str = "eval-compare-multi-target",
+    suite_id: str = "mmlu",
+    targets: tuple[tuple[str, str], ...] = (
+        ("melix-dev-text-lora-a", "improvement"),
+        ("melix-dev-text-lora-b", "regression"),
+    ),
+    created_at_unix_ms: int = 1712600000000,
+) -> tuple[dict[str, object], ...]:
+    evaluation_root = jobs_root / "evaluation"
+    run_root = evaluation_root / "runs" / job_id
+    store = EvaluationStore()
+    compare_job = build_evaluation_compare_job_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_ids=tuple(target_model_id for target_model_id, _ in targets),
+        task_kind="text-generation",
+        source_repo="melix.release-gate.fixture",
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=created_at_unix_ms + 500,
+    )
+    summaries = tuple(
+        build_evaluation_compare_summary_record(
+            job_id=job_id,
+            base_model_id="melix-dev-text",
+            target_model_id=target_model_id,
+            suite_id=suite_id,
+            dataset_id=f"{suite_id}.dev.v1",
+            sample_size=8,
+            scoring_mode="multiple_choice_accuracy",
+            win_count=6 if verdict == "improvement" else 1,
+            loss_count=1 if verdict == "improvement" else 6,
+            tie_count=1,
+            regression_count=0 if verdict == "improvement" else 5,
+            base_accuracy=0.5,
+            target_accuracy=0.75 if verdict == "improvement" else 0.25,
+            delta_accuracy=0.25 if verdict == "improvement" else -0.25,
+            effect_threshold=0.1,
+            verdict=verdict,
+            category_breakdown={
+                "math": {
+                    "sample_size": 8,
+                    "base_accuracy": 0.5,
+                    "target_accuracy": 0.75 if verdict == "improvement" else 0.25,
+                    "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                }
+            },
+            statistical_evidence={
+                "sample_size": 8,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                "bootstrap": {
+                    "method": "paired_bootstrap_percentile",
+                    "confidence_level": 0.95,
+                    "lower_bound": 0.12 if verdict == "improvement" else -0.41,
+                    "upper_bound": 0.41 if verdict == "improvement" else -0.12,
+                    "crosses_zero": False,
+                    "iterations": 400,
+                    "seed": 9,
+                },
+                "analytical": {
+                    "method": "paired_difference_normal_approximation",
+                    "confidence_level": 0.95,
+                    "lower_bound": 0.1 if verdict == "improvement" else -0.38,
+                    "upper_bound": 0.38 if verdict == "improvement" else -0.1,
+                    "crosses_zero": False,
+                },
+            },
+            release_gate_summary={
+                "verdict": verdict,
+                "reason": "delta_exceeds_threshold_with_supported_intervals",
+                "effect_threshold": 0.1,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+                "threshold_passed": True,
+                "both_intervals_same_side": True,
+            },
+            duration_seconds=0.25,
+            metrics={"eval.compare.delta_accuracy": 0.25 if verdict == "improvement" else -0.25},
+            report_path=str(run_root / "evaluation-compare-report.md"),
+        )
+        for target_model_id, verdict in targets
+    )
+    store.persist_compare_result(
+        jobs_root=evaluation_root,
+        job=compare_job,
+        summaries=summaries,
+    )
+    return tuple(summary.to_dict() for summary in summaries)
+
+
 def test_collect_install_evidence_reports_expected_artifacts(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -1303,6 +1401,26 @@ def test_collect_evaluation_compare_evidence_prefers_custom_policy_suite_when_pr
     assert evidence["target_model_id"] == "melix-dev-text-lora-gsm8k"
 
 
+def test_collect_evaluation_compare_evidence_returns_all_target_summaries_for_latest_job(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_multi_target_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-multi-target-artifact",
+    )
+
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["job_id"] == "eval-compare-multi-target-artifact"
+    target_summaries = evidence["target_summaries"]
+    assert len(target_summaries) == 2
+    assert {summary["target_model_id"] for summary in target_summaries} == {
+        "melix-dev-text-lora-a",
+        "melix-dev-text-lora-b",
+    }
+
+
 def test_collect_evaluation_compare_evidence_fails_closed_without_persisted_compare_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -1401,6 +1519,31 @@ def test_evaluate_evaluation_compare_evidence_falls_back_to_default_suite_policy
     )
     assert (
         "evaluation_compare.mmlu confidence_level=0.94 fell below required 0.95"
+        in failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_checks_each_target_summary() -> None:
+    report = {
+        "suite_id": "mmlu",
+        "job_id": "eval-compare-multi-target-artifact",
+        "target_summaries": [
+            _passing_evaluation_compare_evidence(),
+            {
+                **_passing_evaluation_compare_evidence(verdict="regression"),
+                "target_model_id": "melix-dev-text-lora-b",
+            },
+        ],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"mmlu": {"required_verdict": "improvement"}},
+    )
+
+    assert (
+        "evaluation_compare.mmlu target_model_id=melix-dev-text-lora-b verdict=regression "
+        "did not satisfy required verdict improvement"
         in failures
     )
 
