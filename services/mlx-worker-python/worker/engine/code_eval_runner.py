@@ -7,10 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import textwrap
+import uuid
 
-_PAYLOAD_SENTINEL = "__MELIX_CODE_EVAL_PAYLOAD__:"
+_PAYLOAD_SENTINEL_PREFIX = "__MELIX_CODE_EVAL_PAYLOAD__:"
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ def run_python_code_evaluation(
 
     with tempfile.TemporaryDirectory(prefix="melix-code-eval-") as temp_dir:
         temp_root = Path(temp_dir)
+        payload_sentinel = f"{_PAYLOAD_SENTINEL_PREFIX}{uuid.uuid4().hex}:"
         candidate_path = temp_root / "candidate.py"
         config_path = temp_root / "config.json"
         runner_path = temp_root / "runner.py"
@@ -84,7 +87,7 @@ def run_python_code_evaluation(
             ),
             encoding="utf-8",
         )
-        runner_path.write_text(_runner_script(), encoding="utf-8")
+        runner_path.write_text(_runner_script(payload_sentinel=payload_sentinel), encoding="utf-8")
 
         try:
             completed = subprocess.run(
@@ -123,7 +126,7 @@ def run_python_code_evaluation(
 
         stdout = completed.stdout[-stdout_limit_bytes:].strip()
         stderr = completed.stderr[-stdout_limit_bytes:].strip()
-        payload = _load_payload(stdout)
+        payload = _load_payload(stdout, payload_sentinel)
         if payload is None:
             detail = stderr or stdout or f"Subprocess exited with status {completed.returncode}"
             return CodeEvaluationResult(
@@ -156,16 +159,14 @@ def _count_tests(test_code: str) -> int:
     return assert_count or len([line for line in test_code.splitlines() if line.strip()])
 
 
-def _load_payload(stdout: str) -> dict[str, object] | None:
+def _load_payload(stdout: str, payload_sentinel: str) -> dict[str, object] | None:
     if not stdout:
         return None
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     for line in reversed(lines):
-        if line.startswith(_PAYLOAD_SENTINEL):
-            return _decode_payload(line.removeprefix(_PAYLOAD_SENTINEL))
-    if lines:
-        return _decode_payload(lines[-1])
-    return _decode_payload(stdout)
+        if line.startswith(payload_sentinel):
+            return _decode_payload(line.removeprefix(payload_sentinel))
+    return None
 
 
 def _decode_payload(raw_payload: str) -> dict[str, object] | None:
@@ -189,17 +190,31 @@ def _sandbox_profile(*, temp_root: Path) -> str:
         "(deny process-fork)",
         "(deny process-exec)",
     ]
+    denied_read_roots = (
+        Path("/Applications"),
+        Path("/Library"),
+        Path("/System"),
+        Path("/Users"),
+        Path("/Volumes"),
+        Path("/etc"),
+        Path("/opt"),
+        Path("/private"),
+        Path("/tmp"),
+        Path("/usr"),
+    )
+    clauses.extend(
+        f"(deny file-read* (subpath {json.dumps(str(path))}))"
+        for path in denied_read_roots
+    )
     if executable_paths:
         executable_filters = " ".join(
             f"(literal {json.dumps(str(path))})"
             for path in executable_paths
         )
         clauses.append(f"(allow process-exec {executable_filters})")
-    home_path = Path.home()
-    clauses.append(f"(deny file-read* (subpath {json.dumps(str(home_path))}))")
     read_filters = " ".join(
         f"(subpath {json.dumps(str(path))})"
-        for path in (*runtime_paths, temp_root)
+        for path in _sandbox_allow_path_variants((*runtime_paths, temp_root))
     )
     clauses.append(f"(allow file-read* {read_filters})")
     return " ".join(clauses)
@@ -226,7 +241,18 @@ def _sandbox_python_executable() -> Path:
 
 
 def _sandbox_runtime_read_paths() -> tuple[Path, ...]:
-    roots = [_sandbox_python_executable().parent.parent]
+    roots: list[Path] = [
+        _sandbox_python_executable().parent.parent,
+        Path(sys.prefix).resolve(),
+        Path(sys.exec_prefix).resolve(),
+        Path(sys.base_prefix).resolve(),
+        Path(sys.base_exec_prefix).resolve(),
+        Path("/System/Library"),
+        Path("/usr/lib"),
+    ]
+    for raw_path in sysconfig.get_paths().values():
+        if raw_path:
+            roots.append(Path(raw_path).resolve())
     deduped: list[Path] = []
     seen: set[Path] = set()
     for path in roots:
@@ -237,7 +263,25 @@ def _sandbox_runtime_read_paths() -> tuple[Path, ...]:
     return tuple(deduped)
 
 
-def _runner_script() -> str:
+def _sandbox_allow_path_variants(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        variants = [path]
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        variants.append(resolved)
+        for variant in variants:
+            if variant in seen:
+                continue
+            seen.add(variant)
+            deduped.append(variant)
+    return tuple(deduped)
+
+
+def _runner_script(*, payload_sentinel: str) -> str:
     script = """
         from __future__ import annotations
 
@@ -374,4 +418,4 @@ def _runner_script() -> str:
         if __name__ == "__main__":
             raise SystemExit(main())
         """
-    return textwrap.dedent(script).replace("__PAYLOAD_SENTINEL__", repr(_PAYLOAD_SENTINEL)).strip() + "\n"
+    return textwrap.dedent(script).replace("__PAYLOAD_SENTINEL__", repr(payload_sentinel)).strip() + "\n"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import tempfile
 import textwrap
 
 from worker.engine import code_eval_runner
@@ -96,6 +97,68 @@ def test_run_python_code_evaluation_sandbox_blocks_subprocess_execution() -> Non
     assert "PermissionError" in result.failure_detail or "Operation not permitted" in result.failure_detail
 
 
+def test_run_python_code_evaluation_rejects_plain_json_stdout_spoof() -> None:
+    result = run_python_code_evaluation(
+        candidate_code=textwrap.dedent(
+            """
+            import json
+            import os
+
+            def identity(value):
+                print(
+                    json.dumps(
+                        {
+                            "compile_status": "compiled",
+                            "runtime_status": "ok",
+                            "timeout_status": "ok",
+                            "test_status": "passed",
+                            "tests_passed": 999,
+                            "tests_total": 999,
+                            "failure_detail": "",
+                        }
+                    ),
+                    flush=True,
+                )
+                os._exit(0)
+            """
+        ).strip(),
+        entry_point="identity",
+        test_code="assert identity(4) == 4",
+    )
+
+    assert result.passed is False
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert result.tests_total == 1
+
+
+def test_run_python_code_evaluation_sandbox_blocks_non_temp_file_reads() -> None:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as file:
+        file.write("external-probe")
+        external_probe = Path(file.name)
+
+    try:
+        result = run_python_code_evaluation(
+            candidate_code=textwrap.dedent(
+                f"""
+                from pathlib import Path
+
+                def read_external_probe():
+                    return Path({str(external_probe)!r}).read_text(encoding="utf-8")
+                """
+            ).strip(),
+            entry_point="read_external_probe",
+            test_code="assert read_external_probe() == 'external-probe'",
+        )
+    finally:
+        external_probe.unlink(missing_ok=True)
+
+    assert result.passed is False
+    assert result.runtime_status == "error"
+    assert result.test_status == "failed"
+    assert "PermissionError" in result.failure_detail
+
+
 def test_run_python_code_evaluation_returns_syntax_error_result() -> None:
     result = run_python_code_evaluation(
         candidate_code="def broken(",
@@ -185,14 +248,21 @@ def test_count_tests_falls_back_when_no_asserts_are_present() -> None:
     assert code_eval_runner._count_tests(test_code) == 3
 
 
-def test_load_payload_accepts_last_non_empty_json_line() -> None:
-    payload = code_eval_runner._load_payload("candidate-noise\n\n{\"runtime_status\":\"ok\"}\n")
+def test_load_payload_accepts_last_matching_sentinel_line() -> None:
+    payload = code_eval_runner._load_payload(
+        'candidate-noise\n\n__MELIX__{"runtime_status":"ok"}\n',
+        "__MELIX__",
+    )
 
     assert payload == {"runtime_status": "ok"}
 
 
+def test_load_payload_rejects_plain_json_without_sentinel() -> None:
+    assert code_eval_runner._load_payload('{"runtime_status":"ok"}\n', "__MELIX__") is None
+
+
 def test_load_payload_returns_none_for_empty_stdout() -> None:
-    assert code_eval_runner._load_payload("") is None
+    assert code_eval_runner._load_payload("", "__MELIX__") is None
 
 
 def test_decode_payload_rejects_invalid_and_non_mapping_json() -> None:
