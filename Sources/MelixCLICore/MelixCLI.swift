@@ -3707,9 +3707,15 @@ public actor MelixCLIRunner {
         _ runs: [ControlPlaneEvaluationResult],
         bundle: ControlPlaneBenchmarkExportBundle
     ) -> String? {
-        let statusByJobID = Dictionary(uniqueKeysWithValues: runs.map { ($0.job.jobID, $0.job.status) })
-        let rows = runs.flatMap { run in
-            bundle.evaluationSummaryCSVRows(jobID: run.job.jobID).filter { row in
+        let statusByJobID = runs.reduce(into: [String: String]()) { partialResult, run in
+            partialResult[run.job.jobID] = run.job.status
+        }
+        var seenJobIDs = Set<String>()
+        let orderedJobIDs = runs.compactMap { run in
+            seenJobIDs.insert(run.job.jobID).inserted ? run.job.jobID : nil
+        }
+        let rows = orderedJobIDs.flatMap { jobID in
+            bundle.evaluationSummaryCSVRows(jobID: jobID).filter { row in
                 row.verdict.isEmpty == false
                     || row.effectThreshold != nil
                     || row.bootstrapLowerBound != nil

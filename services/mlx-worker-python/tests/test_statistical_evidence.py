@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from worker.productization.statistical_evidence import (
     _interval_sign,
     _percentile,
@@ -70,6 +72,19 @@ def test_build_paired_statistical_evidence_handles_empty_and_singleton_samples()
     assert singleton_evidence["analytical"]["lower_bound"] == 1.0
     assert singleton_evidence["analytical"]["upper_bound"] == 1.0
     assert singleton_evidence["analytical"]["crosses_zero"] is False
+
+
+def test_build_paired_statistical_evidence_keeps_full_confidence_intervals_finite() -> None:
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1, 0, 1, 1, 0, 1),
+        confidence_level=1.0,
+        bootstrap_iterations=200,
+        bootstrap_seed=7,
+    )
+
+    assert math.isfinite(evidence["analytical"]["lower_bound"])
+    assert math.isfinite(evidence["analytical"]["upper_bound"])
+    assert evidence["analytical"]["lower_bound"] <= evidence["analytical"]["upper_bound"]
 
 
 def test_classify_release_verdict_returns_inconclusive_when_any_interval_crosses_zero() -> None:

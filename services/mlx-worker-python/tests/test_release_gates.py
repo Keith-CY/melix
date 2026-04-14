@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
+from worker.productization.evaluation_schemas import (
+    build_evaluation_compare_job_record,
+    build_evaluation_compare_summary_record,
+)
+from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.release_gates import (
     DEFAULT_RELEASE_GATE_POLICY,
     build_release_gate_report,
@@ -153,6 +158,102 @@ def _passing_evaluation_compare_evidence(verdict: str = "improvement") -> dict[s
         },
         "report_path": "/tmp/evaluation-compare-report.md",
     }
+
+
+def _write_persisted_evaluation_compare_evidence(
+    jobs_root: Path,
+    *,
+    job_id: str = "eval-compare-release-gate",
+    suite_id: str = "mmlu",
+    target_model_id: str = "melix-dev-text-lora-a",
+    verdict: str = "improvement",
+    effect_threshold: float = 0.1,
+    confidence_level: float = 0.95,
+    bootstrap_iterations: int = 400,
+    created_at_unix_ms: int = 1712600000000,
+) -> dict[str, object]:
+    evaluation_root = jobs_root / "evaluation"
+    run_root = evaluation_root / "runs" / job_id
+    store = EvaluationStore()
+    compare_job = build_evaluation_compare_job_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_ids=(target_model_id,),
+        task_kind="text-generation",
+        source_repo="melix.release-gate.fixture",
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={"compare_mode": "base_vs_targets"},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=created_at_unix_ms,
+        updated_at_unix_ms=created_at_unix_ms + 500,
+    )
+    compare_summary = build_evaluation_compare_summary_record(
+        job_id=job_id,
+        base_model_id="melix-dev-text",
+        target_model_id=target_model_id,
+        suite_id=suite_id,
+        dataset_id=f"{suite_id}.dev.v1",
+        sample_size=8,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=6 if verdict == "improvement" else 1,
+        loss_count=1 if verdict == "improvement" else 6,
+        tie_count=1,
+        regression_count=0 if verdict == "improvement" else 5,
+        base_accuracy=0.5,
+        target_accuracy=0.75 if verdict == "improvement" else 0.25,
+        delta_accuracy=0.25 if verdict == "improvement" else -0.25,
+        effect_threshold=effect_threshold,
+        verdict=verdict,
+        category_breakdown={
+            "math": {
+                "sample_size": 8,
+                "base_accuracy": 0.5,
+                "target_accuracy": 0.75 if verdict == "improvement" else 0.25,
+                "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            }
+        },
+        statistical_evidence={
+            "sample_size": 8,
+            "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": confidence_level,
+                "lower_bound": 0.12 if verdict == "improvement" else -0.41,
+                "upper_bound": 0.41 if verdict == "improvement" else -0.12,
+                "crosses_zero": False,
+                "iterations": bootstrap_iterations,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": confidence_level,
+                "lower_bound": 0.1 if verdict == "improvement" else -0.38,
+                "upper_bound": 0.38 if verdict == "improvement" else -0.1,
+                "crosses_zero": False,
+            },
+        },
+        release_gate_summary={
+            "verdict": verdict,
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": effect_threshold,
+            "delta_accuracy": 0.25 if verdict == "improvement" else -0.25,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
+        duration_seconds=0.25,
+        metrics={"eval.compare.delta_accuracy": 0.25 if verdict == "improvement" else -0.25},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    store.persist_compare_result(
+        jobs_root=evaluation_root,
+        job=compare_job,
+        summaries=(compare_summary,),
+    )
+    return compare_summary.to_dict()
 
 
 def test_collect_install_evidence_reports_expected_artifacts(tmp_path: Path) -> None:
@@ -612,6 +713,7 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -811,6 +913,7 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -925,6 +1028,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         "collect_m9_evidence",
         lambda repo_root, policy=None: _passing_m9_evidence(policy),
         raising=False,
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_evaluation_compare_evidence",
+        lambda jobs_root, policy=None: _passing_evaluation_compare_evidence(),
     )
 
     report = build_release_gate_report(
@@ -1146,13 +1254,36 @@ def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt
 
 
 def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: Path) -> None:
+    expected = _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-real-artifact",
+        target_model_id="melix-dev-text-lora-real",
+        verdict="regression",
+        effect_threshold=0.2,
+        confidence_level=0.99,
+        bootstrap_iterations=512,
+    )
     evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
 
     assert evidence["suite_id"] == "mmlu"
-    assert evidence["verdict"] == "improvement"
-    assert evidence["effect_threshold"] == 0.1
-    assert evidence["statistical_evidence"]["bootstrap"]["iterations"] == 400
+    assert evidence["job_id"] == expected["job_id"]
+    assert evidence["target_model_id"] == "melix-dev-text-lora-real"
+    assert evidence["verdict"] == "regression"
+    assert evidence["effect_threshold"] == 0.2
+    assert evidence["statistical_evidence"]["bootstrap"]["iterations"] == 512
+    assert evidence["statistical_evidence"]["bootstrap"]["confidence_level"] == 0.99
     assert evidence["release_gate_summary"]["both_intervals_same_side"] is True
+
+
+def test_collect_evaluation_compare_evidence_fails_closed_without_persisted_compare_artifacts(
+    tmp_path: Path,
+) -> None:
+    evidence = collect_evaluation_compare_evidence(tmp_path / "jobs")
+
+    assert evidence["suite_id"] == "mmlu"
+    assert evidence["artifact_status"] == "missing"
+    assert "persisted evaluation_compare artifacts" in evidence["reason"]
+    assert "statistical_evidence" not in evidence
 
 
 def test_evaluate_evaluation_compare_evidence_requires_suite_policy_and_statistical_shapes() -> None:
@@ -1169,7 +1300,9 @@ def test_evaluate_evaluation_compare_evidence_requires_suite_policy_and_statisti
         {"suite_id": "mmlu", "statistical_evidence": []},
         {"mmlu": {}},
     ) == [
-        "evaluation_compare.mmlu statistical_evidence is missing"
+        "evaluation_compare.mmlu verdict= did not satisfy required verdict improvement",
+        "evaluation_compare.mmlu effect_threshold=0.00 fell below policy threshold 0.10",
+        "evaluation_compare.mmlu statistical_evidence is missing",
     ]
 
     report = _passing_evaluation_compare_evidence()
@@ -1211,6 +1344,31 @@ def test_evaluate_evaluation_compare_evidence_enforces_threshold_iterations_and_
     )
     assert (
         "evaluation_compare.mmlu bootstrap_iterations=399 fell below required 400"
+        in failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_falls_back_to_default_suite_policy() -> None:
+    report = _passing_evaluation_compare_evidence()
+    report["effect_threshold"] = 0.05
+    report["statistical_evidence"]["bootstrap"]["iterations"] = 399
+    report["statistical_evidence"]["bootstrap"]["confidence_level"] = 0.94
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {"other-suite": {"required_verdict": "regression"}},
+    )
+
+    assert (
+        "evaluation_compare.mmlu effect_threshold=0.05 fell below policy threshold 0.10"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu bootstrap_iterations=399 fell below required 400"
+        in failures
+    )
+    assert (
+        "evaluation_compare.mmlu confidence_level=0.94 fell below required 0.95"
         in failures
     )
     assert (

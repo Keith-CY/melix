@@ -2381,6 +2381,49 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("eval-compare-2\tmmlu\tmmlu.dev.v1\tcompleted\tinconclusive\t-0.1250\t-\t-\t-"))
     }
 
+    @Test("eval compare tolerates duplicate job identifiers in status mapping")
+    func evalCompareToleratesDuplicateJobIdentifiersInStatusMapping() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-2",
+                baseSuiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                targets: [
+                    ("melix-dev-text-lora-a", 0.625),
+                ],
+                status: "queued"
+            ),
+            makeEvaluationCompareResult(
+                jobID: "eval-compare-2",
+                baseSuiteID: "arc",
+                datasetID: "mmlu.dev.v1",
+                targets: [
+                    ("melix-dev-text-lora-a", 0.625),
+                ],
+                status: "completed"
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeEvaluationCompareExportBundleJSON()))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora-a"],
+                    suites: ["mmlu", "arc"],
+                    datasetID: "mmlu.dev.v1",
+                    sampleSize: 8
+                )
+            )
+        )
+
+        let matchingRows = output.split(separator: "\n").filter {
+            $0.contains("eval-compare-2\tmmlu:melix-dev-text-lora-a\tmmlu.dev.v1\tcompleted\timprovement")
+        }
+        #expect(matchingRows.count == 1)
+    }
+
     @Test("eval list renders history rows and returns JSON when requested")
     func evalListRendersHistoryRowsAndJSON() async throws {
         let client = StubControlPlaneXPCClient()
@@ -3968,7 +4011,8 @@ private func makeEvaluationCompareResult(
     jobID: String,
     baseSuiteID: String,
     datasetID: String,
-    targets: [(modelID: String, metricValue: Double)]
+    targets: [(modelID: String, metricValue: Double)],
+    status: String = "completed"
 ) -> ControlPlaneEvaluationResult {
     var job = Melix_Controlplane_V1_EvaluationJobSummary()
     job.schemaVersion = "melix.evaluation_job.v1"
@@ -3980,7 +4024,7 @@ private func makeEvaluationCompareResult(
     job.datasetID = datasetID
     job.sampleSize = 8
     job.scoringMode = "multiple_choice_accuracy"
-    job.status = "completed"
+    job.status = status
     job.outputDir = "/tmp/melix/evaluation/runs/\(jobID)"
     job.createdAtUnixMs = 1712400000000
     job.updatedAtUnixMs = 1712400005000

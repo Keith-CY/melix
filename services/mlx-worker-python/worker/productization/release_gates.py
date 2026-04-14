@@ -25,18 +25,13 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.productization.benchmark_export import collect_evaluation_artifacts
 from worker.productization.closure_audit import build_closure_audit
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
-from worker.productization.evaluation_compare import build_compare_samples, build_compare_summary
-from worker.productization.evaluation_reports import build_evaluation_compare_report_markdown
-from worker.productization.evaluation_schemas import (
-    build_evaluation_compare_job_record,
-    build_evaluation_sample_record,
-)
 from worker.productization.quantization_gates import (
     DEFAULT_QUANTIZATION_GATE_POLICY,
     collect_quantization_benchmark_evidence,
@@ -438,109 +433,18 @@ def collect_evaluation_compare_evidence(
     *,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    suite_id = "mmlu"
-    suite_policy = dict((policy or DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})).get(suite_id, {}))
-    effect_threshold = float(suite_policy.get("effect_threshold", 0.1))
-    confidence_level = float(suite_policy.get("confidence_level", 0.95))
-    bootstrap_iterations = int(suite_policy.get("bootstrap_iterations", 400))
-    bootstrap_seed = int(suite_policy.get("bootstrap_seed", 9))
-
-    run_root = Path(jobs_root) / "evaluation" / "runs" / "eval-compare-release-gate"
-    run_root.mkdir(parents=True, exist_ok=True)
-    compare_job = build_evaluation_compare_job_record(
-        job_id="eval-compare-release-gate",
-        base_model_id="melix-dev-text",
-        target_model_ids=("melix-dev-text-lora-a",),
-        task_kind="text-generation",
-        source_repo="melix.synthetic.release-gate",
+    suite_id = _preferred_evaluation_compare_suite_id(policy)
+    evidence, reason = _load_persisted_evaluation_compare_evidence(
+        jobs_root,
         suite_id=suite_id,
-        dataset_id="mmlu.dev.v1",
-        sample_size=8,
-        scoring_mode="multiple_choice_accuracy",
-        parameters={
-            "compare_mode": "base_vs_targets",
-            "effect_threshold": str(effect_threshold),
-            "confidence_level": str(confidence_level),
-            "bootstrap_iterations": str(bootstrap_iterations),
-            "bootstrap_seed": str(bootstrap_seed),
-        },
-        status="completed",
-        output_dir=str(run_root),
-        created_at_unix_ms=1712600000000,
-        updated_at_unix_ms=1712600000000,
     )
-    base_samples = tuple(
-        build_evaluation_sample_record(
-            job_id=compare_job.job_id,
-            suite_id=suite_id,
-            dataset_id="mmlu.dev.v1",
-            sample_id=f"sample-{index + 1}",
-            question=f"Question {index + 1}",
-            expected=str(index + 1),
-            predicted="0",
-            raw_response="0",
-            correct=False,
-            time_s=0.01,
-            parse_status="parsed",
-            category_label="math",
-            subject_label="arithmetic",
-        )
-        for index in range(compare_job.sample_size)
-    )
-    target_samples = tuple(
-        build_evaluation_sample_record(
-            job_id=compare_job.job_id,
-            suite_id=suite_id,
-            dataset_id="mmlu.dev.v1",
-            sample_id=f"sample-{index + 1}",
-            question=f"Question {index + 1}",
-            expected=str(index + 1),
-            predicted=str(index + 1),
-            raw_response=str(index + 1),
-            correct=True,
-            time_s=0.01,
-            parse_status="parsed",
-            category_label="math",
-            subject_label="arithmetic",
-        )
-        for index in range(compare_job.sample_size)
-    )
-    compare_samples = build_compare_samples(
-        job_id=compare_job.job_id,
-        suite_id=suite_id,
-        dataset_id="mmlu.dev.v1",
-        target_model_id="melix-dev-text-lora-a",
-        base_samples=base_samples,
-        target_samples=target_samples,
-    )
-    compare_summary = build_compare_summary(
-        job_id=compare_job.job_id,
-        base_model_id=compare_job.base_model_id,
-        target_model_id="melix-dev-text-lora-a",
-        suite_id=suite_id,
-        dataset_id="mmlu.dev.v1",
-        sample_size=compare_job.sample_size,
-        scoring_mode=compare_job.scoring_mode,
-        base_samples=base_samples,
-        compare_samples=compare_samples,
-        effect_threshold=effect_threshold,
-        confidence_level=confidence_level,
-        bootstrap_iterations=bootstrap_iterations,
-        bootstrap_seed=bootstrap_seed,
-        duration_seconds=0.25,
-        report_path=str(run_root / "evaluation-compare-report.md"),
-    )
-    report_path = Path(compare_summary.report_path)
-    report_path.write_text(
-        build_evaluation_compare_report_markdown(job=compare_job, summaries=(compare_summary,)),
-        encoding="utf-8",
-    )
-    evidence = compare_summary.to_dict()
-    evidence["metrics"] = {
-        "eval.compare.delta_accuracy": compare_summary.delta_accuracy,
-        "eval.compare.effect_threshold": compare_summary.effect_threshold,
+    if evidence is not None:
+        return evidence
+    return {
+        "suite_id": suite_id,
+        "artifact_status": "missing",
+        "reason": reason,
     }
-    return evidence
 
 
 def _ensure_evaluation_dataset(eval_root: Path) -> Path:
@@ -809,7 +713,7 @@ def _evaluate_evaluation_compare_evidence(
         failures.append("evaluation_compare.suite_id is missing")
         return failures
 
-    suite_policy = policy.get(suite_id, {})
+    suite_policy = _resolve_evaluation_compare_suite_policy(policy, suite_id)
     if not isinstance(suite_policy, dict):
         failures.append(f"evaluation_compare.{suite_id} policy is missing")
         return failures
@@ -856,6 +760,96 @@ def _evaluate_evaluation_compare_evidence(
         )
 
     return failures
+
+
+def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str:
+    default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})
+    default_suite_ids = [
+        str(suite_id)
+        for suite_id, suite_policy in default_policy.items()
+        if isinstance(suite_policy, dict)
+    ]
+    if default_suite_ids:
+        return default_suite_ids[0]
+    if isinstance(policy, dict):
+        for suite_id, suite_policy in policy.items():
+            if isinstance(suite_policy, dict):
+                return str(suite_id)
+    return ""
+
+
+def _resolve_evaluation_compare_suite_policy(
+    policy: dict[str, Any],
+    suite_id: str,
+) -> dict[str, Any] | None:
+    resolved: dict[str, Any] = {}
+    default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {}).get(suite_id)
+    if isinstance(default_policy, dict):
+        resolved.update(copy.deepcopy(default_policy))
+
+    custom_policy = policy.get(suite_id) if isinstance(policy, dict) else None
+    if custom_policy is not None:
+        if not isinstance(custom_policy, dict):
+            return None
+        resolved.update(copy.deepcopy(custom_policy))
+
+    return resolved or None
+
+
+def _load_persisted_evaluation_compare_evidence(
+    jobs_root: str | Path,
+    *,
+    suite_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    evidence_root = Path(jobs_root) / "evaluation"
+    artifacts = collect_evaluation_artifacts(Path(jobs_root))
+    compare_jobs = artifacts.get("evaluation_compare_jobs", [])
+    compare_summaries = artifacts.get("evaluation_compare_summary_rows", [])
+    if not isinstance(compare_jobs, list) or not isinstance(compare_summaries, list):
+        return (
+            None,
+            f"persisted evaluation_compare artifacts for suite {suite_id} were not found under {evidence_root}",
+        )
+
+    job_by_id = {
+        str(job.get("job_id", "")).strip(): job
+        for job in compare_jobs
+        if isinstance(job, dict) and str(job.get("job_id", "")).strip()
+    }
+    candidates: list[tuple[int, int, str, dict[str, Any]]] = []
+    for summary in compare_summaries:
+        if not isinstance(summary, dict):
+            continue
+        if str(summary.get("suite_id", "")).strip() != suite_id:
+            continue
+        job_id = str(summary.get("job_id", "")).strip()
+        job = job_by_id.get(job_id, {})
+        candidates.append(
+            (
+                int(job.get("created_at_unix_ms", 0) or 0),
+                int(job.get("updated_at_unix_ms", 0) or 0),
+                job_id,
+                copy.deepcopy(summary),
+            )
+        )
+
+    if not candidates:
+        return (
+            None,
+            f"persisted evaluation_compare artifacts for suite {suite_id} were not found under {evidence_root}",
+        )
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    latest_job_id = candidates[-1][2]
+    latest_job_summaries = [
+        summary for _, _, job_id, summary in candidates if job_id == latest_job_id
+    ]
+    if latest_job_id and len(latest_job_summaries) > 1:
+        return (
+            None,
+            f"persisted evaluation_compare artifacts for suite {suite_id} are ambiguous for job {latest_job_id}",
+        )
+    return latest_job_summaries[-1], ""
 
 
 def _build_maintenance_core(jobs_root: str | Path) -> MaintenanceCore:

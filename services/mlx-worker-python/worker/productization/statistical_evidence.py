@@ -156,7 +156,7 @@ def _paired_analytical_interval(
     else:
         variance = sum((value - mean_value) ** 2 for value in outcomes) / (len(outcomes) - 1)
         standard_error = math.sqrt(variance) / math.sqrt(len(outcomes))
-        z_value = NormalDist().inv_cdf(0.5 + (confidence_level / 2.0))
+        z_value = _two_sided_normal_z_value(confidence_level)
         margin = z_value * standard_error
 
     return _interval_payload(
@@ -200,6 +200,13 @@ def _interval_sign(interval: dict[str, object]) -> int:
     if lower_bound < 0.0 and upper_bound < 0.0:
         return -1
     return 0
+
+
+def _two_sided_normal_z_value(confidence_level: float) -> float:
+    bounded_confidence = min(max(float(confidence_level), 0.0), 1.0)
+    percentile = 0.5 + (bounded_confidence / 2.0)
+    bounded_percentile = min(max(percentile, 1e-12), 1.0 - 1e-12)
+    return NormalDist().inv_cdf(bounded_percentile)
 
 
 def _mean(values: list[float] | tuple[float, ...]) -> float:
