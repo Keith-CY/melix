@@ -9,9 +9,11 @@ import pytest
 from worker.model_ops.errors import ModelOperationError
 from worker.productization.evaluation_final_result import (
     EvaluationFieldMapping,
+    HFEvaluationDatasetSource,
     EvaluationMaterializationRequest,
     EvaluationProfileDefinition,
     extract_final_result,
+    materialize_hf_evaluation_dataset,
     materialize_local_evaluation_dataset,
     score_final_result,
 )
@@ -239,6 +241,93 @@ def test_materialize_local_evaluation_dataset_invalidates_cache_when_local_sourc
     second = materialize_local_evaluation_dataset(
         request=request,
         cache_root=tmp_path / "cache",
+    )
+
+    sample = json.loads((second.package_path / "samples.jsonl").read_text(encoding="utf-8").strip())
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False
+    assert second.cache_key != first.cache_key
+    assert second.package_path != first.package_path
+    assert sample["input"]["text"] == "Capital of Italy?"
+    assert sample["target"] == "Rome"
+
+
+def test_materialize_hf_evaluation_dataset_invalidates_cache_when_rows_change(
+    tmp_path: Path,
+) -> None:
+    class ChangingFetcher:
+        def __init__(self) -> None:
+            self._rows_calls = 0
+
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            if endpoint != "rows":
+                raise AssertionError(f"Unexpected endpoint: {endpoint}")
+            self._rows_calls += 1
+            if self._rows_calls == 1:
+                row = {
+                    "system_prompt": "Return only the final answer.",
+                    "question": "Capital of France?",
+                    "gold_answer": "Paris",
+                    "sample_key": "capital-1",
+                }
+            else:
+                row = {
+                    "system_prompt": "Return only the final answer.",
+                    "question": "Capital of Italy?",
+                    "gold_answer": "Rome",
+                    "sample_key": "capital-1",
+                }
+            return {"rows": [{"row": row}]}
+
+    fetcher = ChangingFetcher()
+    source = HFEvaluationDatasetSource(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        split="train",
+    )
+
+    first = materialize_hf_evaluation_dataset(
+        source=source,
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            system_path="system_prompt",
+            input_text_path="question",
+            target_path="gold_answer",
+            sample_id_path="sample_key",
+        ),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+        cache_root=tmp_path / "cache",
+        fetch_json=fetcher,
+    )
+
+    second = materialize_hf_evaluation_dataset(
+        source=source,
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            system_path="system_prompt",
+            input_text_path="question",
+            target_path="gold_answer",
+            sample_id_path="sample_key",
+        ),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+        cache_root=tmp_path / "cache",
+        fetch_json=fetcher,
     )
 
     sample = json.loads((second.package_path / "samples.jsonl").read_text(encoding="utf-8").strip())

@@ -97,6 +97,8 @@ Melix separates dataset origin from runtime execution:
 - Hugging Face remains reusable as a source, but not as the direct runtime contract
 - local-source materialization cache identity must include a source-content fingerprint so reusing
   the same path with different bytes produces a new package
+- Hugging Face materialization cache identity must include either fetched-content fingerprints or a
+  resolved immutable revision so moving refs such as `main` do not silently reuse stale packages
 
 This keeps the runtime boundary deterministic and lets Melix evolve one package format without
 importing the variability of external schemas into the worker core.

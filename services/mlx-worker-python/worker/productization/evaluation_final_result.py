@@ -181,19 +181,15 @@ def materialize_hf_evaluation_dataset(
         dataset_id=dataset_id or f"{source_slug}.dev.v1",
         suite_id=suite_id or source_slug,
         cache_root=cache_root,
-        source_metadata={
-            "source_kind": "hf_dataset",
-            "hf_dataset_path": source.dataset_path,
-            "hf_dataset_name": resolved_name,
-            "hf_dataset_revision": source.dataset_revision or "main",
-            "hf_split": source.split or "train",
-            "dataset_uri": _hf_dataset_uri(
+        source_metadata=_hf_source_metadata(
+            source=HFEvaluationDatasetSource(
                 dataset_path=source.dataset_path,
                 dataset_name=resolved_name,
                 dataset_revision=source.dataset_revision or "main",
                 split=source.split or "train",
             ),
-        },
+            rows=rows,
+        ),
     )
 
 
@@ -354,6 +350,24 @@ def _local_source_metadata(*, source_kind: str, source_path: Path) -> dict[str, 
         "source_path": str(resolved),
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "source_size_bytes": len(source_bytes),
+    }
+
+
+def _hf_source_metadata(*, source: HFEvaluationDatasetSource, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows_payload = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {
+        "source_kind": "hf_dataset",
+        "hf_dataset_path": source.dataset_path,
+        "hf_dataset_name": source.dataset_name,
+        "hf_dataset_revision": source.dataset_revision,
+        "hf_split": source.split,
+        "dataset_uri": _hf_dataset_uri(
+            dataset_path=source.dataset_path,
+            dataset_name=source.dataset_name,
+            dataset_revision=source.dataset_revision,
+            split=source.split,
+        ),
+        "hf_rows_sha256": hashlib.sha256(rows_payload.encode("utf-8")).hexdigest(),
     }
 
 
