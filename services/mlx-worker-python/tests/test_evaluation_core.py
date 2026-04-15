@@ -818,6 +818,22 @@ def test_run_local_suite_rejects_unsupported_scoring_mode_for_suite(tmp_path: Pa
         )
 
 
+def test_profile_from_manifest_defaults_invalid_threshold_to_one() -> None:
+    profile = EvaluationCore._profile_from_manifest(
+        {
+            "profile_type": "final_result",
+            "result_kind": "text",
+            "extraction_mode": "heuristic_final",
+            "scoring_mode": "normalized_exact_match",
+            "threshold": "not-a-number",
+        },
+        suite_id="mmlu",
+        default_scoring_mode="normalized_exact_match",
+    )
+
+    assert profile.threshold == 1.0
+
+
 def test_run_local_suite_rejects_unsupported_code_exec_policy_combinations(tmp_path: Path) -> None:
     text_dataset_root = _write_dataset_package(
         tmp_path=tmp_path,

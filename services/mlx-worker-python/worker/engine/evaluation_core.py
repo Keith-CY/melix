@@ -797,12 +797,17 @@ class EvaluationCore:
         suite_id: str,
         default_scoring_mode: str,
     ) -> EvaluationProfileDefinition:
+        raw_threshold = manifest.get("threshold")
+        try:
+            threshold = float(raw_threshold or 1.0)
+        except (TypeError, ValueError):
+            threshold = 1.0
         return EvaluationProfileDefinition(
             profile_type=str(manifest.get("profile_type") or "final_result"),
             result_kind=str(manifest.get("result_kind") or "text"),
             extraction_mode=str(manifest.get("extraction_mode") or "heuristic_final"),
             scoring_mode=str(manifest.get("scoring_mode") or default_scoring_mode),
-            threshold=float(manifest.get("threshold") or 1.0),
+            threshold=threshold,
             output_schema=(
                 dict(manifest["output_schema"])
                 if isinstance(manifest.get("output_schema"), dict)
