@@ -26,6 +26,8 @@ This slice does not add:
   macOS runners, which fails under `sandbox-exec` before the evaluation payload is emitted.
 - `integration-tests` run before the required Swift products are built, so the suite fails on
   missing `melix-control-plane` and `melix-text-worker-swift` executables.
+- `integration-tests` also need a larger timeout budget once the required Swift prerequisite build
+  runs in the same job on GitHub macOS runners.
 - `swift-tests` invoke Python bridge fixture processes through `uv run`, but the workflow does not
   provision Python or `uv`, so worker-client bridge tests fail even when the Swift code is valid.
 - `package-app` fails under Xcode 16.4 concurrency checks because a cached `NSImage` static
@@ -39,6 +41,8 @@ This slice does not add:
 
 - Pin `actionlint` to a resolvable published version.
 - Update the integration workflow path so Swift artifacts are built before `make integration-test`.
+- Increase the integration workflow timeout so the prerequisite build and full Python suite can both
+  complete on GitHub macOS runners.
 - Provision Python, `uv`, and the locked worker environment before running `make swift-test`.
 
 ### Python sandbox execution
@@ -62,6 +66,8 @@ Measurement points for this remediation:
 - Python sandbox regression: evaluator completes and emits its payload under the selected
   interpreter path.
 - Integration workflow preparation: required Swift binaries exist before integration tests launch.
+- Integration workflow budget: the combined prerequisite build and test duration stays within the
+  configured CI timeout window.
 - Swift worker bridge fixture execution: `uv`-backed bridge commands remain dispatchable inside the
   Swift test job.
 - Disconnect-grace test determinism: terminal failure metrics are observed before assertions run.
@@ -104,6 +110,7 @@ This remediation is complete when:
 
 - the workflow definitions no longer contain the invalid `actionlint` reference
 - integration CI provisions the Swift binaries it depends on before running the Python suite
+- integration CI has enough timeout headroom for the prerequisite Swift build plus the full suite
 - swift test CI provisions the Python bridge runtime dependencies before worker-client tests launch
 - sandboxed Python code evaluation succeeds on runner-compatible interpreter paths
 - the menu bar app package builds under the current Xcode concurrency checks
