@@ -4357,10 +4357,13 @@ struct RuntimeViewModelTests {
         )
         let maliciousExportBundle = makeBenchmarkExportBundleJSON()
             .replacingOccurrences(
-                of: "What is 2 + 2?",
-                with: "<b>What is 2 + 2?</b> [click](javascript:alert(1))"
+                of: "\"input_text\": \"What is 2 + 2?\"",
+                with: "\"input_text\": \"<b>What is 2 + 2?</b> [click](javascript:alert(1))\""
             )
-            .replacingOccurrences(of: "\"Lyon\"", with: "\"<script>alert(1)</script>Lyon\"")
+            .replacingOccurrences(
+                of: "\"extracted_result\": \"Lyon\"",
+                with: "\"extracted_result\": \"<script>alert(1)</script>Lyon\""
+            )
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: maliciousExportBundle)
         )
@@ -4374,11 +4377,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastBenchReport?.markdown == "# Bench click")
         #expect(viewModel.lastBenchReport?.metrics.first?.name == "bench.smoke.ttft_ms")
         let firstPreview = try #require(viewModel.evaluationSamplePreview.first)
-        #expect(firstPreview.question.contains("<b>") == false)
-        #expect(firstPreview.question.contains("javascript:") == false)
-        #expect(firstPreview.question == "What is 2 + 2? click")
+        #expect(firstPreview.inputText.contains("<b>") == false)
+        #expect(firstPreview.inputText.contains("javascript:") == false)
+        #expect(firstPreview.inputText == "What is 2 + 2? click")
         let secondPreview = try #require(viewModel.evaluationSamplePreview.last)
-        #expect(secondPreview.predicted == "Lyon")
+        #expect(secondPreview.extractedResult == "Lyon")
         #expect(secondPreview.rawResponse == "Lyon")
 
         await client.configureErrors(bench: MenuBarTestError(description: "<b>boom</b> [click](javascript:alert(1))"))
@@ -5600,6 +5603,53 @@ struct RuntimeViewModelTests {
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
+    }
+
+    @Test("evaluation configuration forwards structured source mapping and profile controls")
+    @MainActor
+    func evaluationConfigurationForwardsStructuredSourceMappingAndProfileControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationDatasetSourceKind = .localCSV
+        viewModel.evaluationSourcePath = "/tmp/eval/mmlu.csv"
+        viewModel.evaluationFieldSystemPath = "system_prompt"
+        viewModel.evaluationFieldInputTextPath = "question"
+        viewModel.evaluationFieldTargetPath = "gold_answer"
+        viewModel.evaluationFieldSampleIDPath = "sample_id"
+        viewModel.evaluationResultKind = "text"
+        viewModel.evaluationExtractionMode = "heuristic_final"
+        viewModel.evaluationScoringMode = "normalized_exact_match"
+        viewModel.evaluationThreshold = "1.0"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.datasetID.isEmpty)
+        #expect(request.source.kind == .localCSV)
+        #expect(request.source.path == "/tmp/eval/mmlu.csv")
+        #expect(request.fieldMapping.systemPath == "system_prompt")
+        #expect(request.fieldMapping.inputTextPath == "question")
+        #expect(request.fieldMapping.targetPath == "gold_answer")
+        #expect(request.fieldMapping.sampleIDPath == "sample_id")
+        #expect(request.profile.resultKind == "text")
+        #expect(request.profile.extractionMode == "heuristic_final")
+        #expect(request.profile.scoringMode == "normalized_exact_match")
+        #expect(request.profile.threshold == 1.0)
     }
 
     @Test("evaluation selection state and guard rails cover catalog and direct repo flows")

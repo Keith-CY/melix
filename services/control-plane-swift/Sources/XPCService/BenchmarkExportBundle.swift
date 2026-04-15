@@ -450,6 +450,13 @@ public struct ControlPlaneEvaluationResultRecord: Codable, Equatable, Sendable {
     public let suiteID: String
     public let datasetID: String
     public let sampleSize: Int
+    public let primaryScoreName: String
+    public let primaryScoreValue: Double
+    public let extractionSuccessCount: Int
+    public let validationSuccessCount: Int
+    public let scoredSampleCount: Int
+    public let failureCount: Int
+    public let durationSeconds: Double
     public let metrics: [ControlPlaneBenchmarkMetricRecord]
     public let reportPath: String
 
@@ -459,6 +466,13 @@ public struct ControlPlaneEvaluationResultRecord: Codable, Equatable, Sendable {
         case suiteID = "suite_id"
         case datasetID = "dataset_id"
         case sampleSize = "sample_size"
+        case primaryScoreName = "primary_score_name"
+        case primaryScoreValue = "primary_score_value"
+        case extractionSuccessCount = "extraction_success_count"
+        case validationSuccessCount = "validation_success_count"
+        case scoredSampleCount = "scored_sample_count"
+        case failureCount = "failure_count"
+        case durationSeconds = "duration_seconds"
         case metrics
         case reportPath = "report_path"
     }
@@ -470,6 +484,13 @@ public struct ControlPlaneEvaluationResultRecord: Codable, Equatable, Sendable {
         suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
         sampleSize = try container.decodeIfPresent(Int.self, forKey: .sampleSize) ?? 0
+        primaryScoreName = try container.decodeIfPresent(String.self, forKey: .primaryScoreName) ?? ""
+        primaryScoreValue = try container.decodeIfPresent(Double.self, forKey: .primaryScoreValue) ?? 0
+        extractionSuccessCount = try container.decodeIfPresent(Int.self, forKey: .extractionSuccessCount) ?? 0
+        validationSuccessCount = try container.decodeIfPresent(Int.self, forKey: .validationSuccessCount) ?? 0
+        scoredSampleCount = try container.decodeIfPresent(Int.self, forKey: .scoredSampleCount) ?? 0
+        failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
         metrics = try container.decodeIfPresent([ControlPlaneBenchmarkMetricRecord].self, forKey: .metrics) ?? []
         reportPath = try container.decodeIfPresent(String.self, forKey: .reportPath) ?? ""
     }
@@ -481,14 +502,17 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let suiteID: String
     public let datasetID: String
     public let sampleID: String
-    public let taskKind: String
-    public let question: String
-    public let expected: String
-    public let predicted: String
+    public let system: String
+    public let inputText: String
+    public let target: String
     public let rawResponse: String
-    public let correct: Bool
+    public let extractedResult: String
+    public let typedScore: Double
     public let timeS: Double
-    public let parseStatus: String
+    public let extractionStatus: String
+    public let validationStatus: String
+    public let failureReason: String
+    public let taskKind: String
     public let inputModalities: [String]
     public let mediaReferences: [String]
     public let codeLanguage: String
@@ -502,6 +526,7 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let codeFailureDetail: String
     public let categoryLabel: String
     public let subjectLabel: String
+    public let parseStatus: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -509,14 +534,17 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case suiteID = "suite_id"
         case datasetID = "dataset_id"
         case sampleID = "sample_id"
-        case taskKind = "task_kind"
-        case question
-        case expected
-        case predicted
+        case system
+        case inputText = "input_text"
+        case target
         case rawResponse = "raw_response"
-        case correct
+        case extractedResult = "extracted_result"
+        case typedScore = "typed_score"
         case timeS = "time_s"
-        case parseStatus = "parse_status"
+        case extractionStatus = "extraction_status"
+        case validationStatus = "validation_status"
+        case failureReason = "failure_reason"
+        case taskKind = "task_kind"
         case inputModalities = "input_modalities"
         case mediaReferences = "media_references"
         case codeLanguage = "code_language"
@@ -530,6 +558,11 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case codeFailureDetail = "code_failure_detail"
         case categoryLabel = "category_label"
         case subjectLabel = "subject_label"
+        case question
+        case expected
+        case predicted
+        case correct
+        case parseStatus = "parse_status"
     }
 
     public init(from decoder: Decoder) throws {
@@ -539,14 +572,32 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
         sampleID = try container.decodeIfPresent(String.self, forKey: .sampleID) ?? ""
-        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
-        question = try container.decodeIfPresent(String.self, forKey: .question) ?? ""
-        expected = try container.decodeIfPresent(String.self, forKey: .expected) ?? ""
-        predicted = try container.decodeIfPresent(String.self, forKey: .predicted) ?? ""
+        system = try container.decodeIfPresent(String.self, forKey: .system) ?? ""
+        inputText = try container.decodeIfPresent(String.self, forKey: .inputText)
+            ?? (try container.decodeIfPresent(String.self, forKey: .question) ?? "")
+        target = try container.decodeIfPresent(String.self, forKey: .target)
+            ?? (try container.decodeIfPresent(String.self, forKey: .expected) ?? "")
         rawResponse = try container.decodeIfPresent(String.self, forKey: .rawResponse) ?? ""
-        correct = try container.decodeIfPresent(Bool.self, forKey: .correct) ?? false
+        extractedResult = try container.decodeIfPresent(String.self, forKey: .extractedResult)
+            ?? (try container.decodeIfPresent(String.self, forKey: .predicted) ?? "")
+        if let typedScore = try container.decodeIfPresent(Double.self, forKey: .typedScore) {
+            self.typedScore = typedScore
+        } else {
+            self.typedScore = (try container.decodeIfPresent(Bool.self, forKey: .correct) ?? false) ? 1.0 : 0.0
+        }
         timeS = try container.decodeIfPresent(Double.self, forKey: .timeS) ?? 0
         parseStatus = try container.decodeIfPresent(String.self, forKey: .parseStatus) ?? ""
+        extractionStatus = try container.decodeIfPresent(String.self, forKey: .extractionStatus)
+            ?? ((parseStatus.isEmpty && extractedResult.isEmpty) ? "" : "extracted")
+        if let validationStatus = try container.decodeIfPresent(String.self, forKey: .validationStatus) {
+            self.validationStatus = validationStatus
+        } else if container.contains(.correct) || extractedResult.isEmpty == false {
+            self.validationStatus = "validated"
+        } else {
+            self.validationStatus = ""
+        }
+        failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason) ?? ""
+        taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind) ?? ""
         inputModalities = try container.decodeIfPresent([String].self, forKey: .inputModalities) ?? []
         mediaReferences = try container.decodeIfPresent([String].self, forKey: .mediaReferences) ?? []
         codeLanguage = try container.decodeIfPresent(String.self, forKey: .codeLanguage) ?? ""
@@ -560,6 +611,43 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         codeFailureDetail = try container.decodeIfPresent(String.self, forKey: .codeFailureDetail) ?? ""
         categoryLabel = try container.decodeIfPresent(String.self, forKey: .categoryLabel) ?? ""
         subjectLabel = try container.decodeIfPresent(String.self, forKey: .subjectLabel) ?? ""
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(jobID, forKey: .jobID)
+        try container.encode(suiteID, forKey: .suiteID)
+        try container.encode(datasetID, forKey: .datasetID)
+        try container.encode(sampleID, forKey: .sampleID)
+        try container.encode(system, forKey: .system)
+        try container.encode(inputText, forKey: .inputText)
+        try container.encode(target, forKey: .target)
+        try container.encode(rawResponse, forKey: .rawResponse)
+        try container.encode(extractedResult, forKey: .extractedResult)
+        try container.encode(typedScore, forKey: .typedScore)
+        try container.encode(timeS, forKey: .timeS)
+        try container.encode(extractionStatus, forKey: .extractionStatus)
+        try container.encode(validationStatus, forKey: .validationStatus)
+        try container.encode(failureReason, forKey: .failureReason)
+        try container.encode(taskKind, forKey: .taskKind)
+        try container.encode(inputModalities, forKey: .inputModalities)
+        try container.encode(mediaReferences, forKey: .mediaReferences)
+        try container.encode(codeLanguage, forKey: .codeLanguage)
+        try container.encode(codeEntryPoint, forKey: .codeEntryPoint)
+        try container.encode(codeCompileStatus, forKey: .codeCompileStatus)
+        try container.encode(codeRuntimeStatus, forKey: .codeRuntimeStatus)
+        try container.encode(codeTimeoutStatus, forKey: .codeTimeoutStatus)
+        try container.encode(codeTestStatus, forKey: .codeTestStatus)
+        try container.encode(codeTestsPassed, forKey: .codeTestsPassed)
+        try container.encode(codeTestsTotal, forKey: .codeTestsTotal)
+        try container.encode(codeFailureDetail, forKey: .codeFailureDetail)
+        if categoryLabel.isEmpty == false {
+            try container.encode(categoryLabel, forKey: .categoryLabel)
+        }
+        if subjectLabel.isEmpty == false {
+            try container.encode(subjectLabel, forKey: .subjectLabel)
+        }
     }
 }
 
@@ -587,10 +675,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
     public let suiteID: String
     public let datasetID: String
     public let sampleSize: Int
-    public let scoreName: String
-    public let scoreValue: Double
-    public let correctCount: Int
-    public let incorrectCount: Int
+    public let primaryScoreName: String
+    public let primaryScoreValue: Double
+    public let extractionSuccessCount: Int
+    public let validationSuccessCount: Int
+    public let scoredSampleCount: Int
+    public let failureCount: Int
     public let effectThreshold: Double?
     public let verdict: String
     public let bootstrapLowerBound: Double?
@@ -608,10 +698,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         suiteID: String,
         datasetID: String,
         sampleSize: Int,
-        scoreName: String,
-        scoreValue: Double,
-        correctCount: Int,
-        incorrectCount: Int,
+        primaryScoreName: String,
+        primaryScoreValue: Double,
+        extractionSuccessCount: Int,
+        validationSuccessCount: Int,
+        scoredSampleCount: Int,
+        failureCount: Int,
         effectThreshold: Double? = nil,
         verdict: String = "",
         bootstrapLowerBound: Double? = nil,
@@ -628,10 +720,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         self.suiteID = suiteID
         self.datasetID = datasetID
         self.sampleSize = sampleSize
-        self.scoreName = scoreName
-        self.scoreValue = scoreValue
-        self.correctCount = correctCount
-        self.incorrectCount = incorrectCount
+        self.primaryScoreName = primaryScoreName
+        self.primaryScoreValue = primaryScoreValue
+        self.extractionSuccessCount = extractionSuccessCount
+        self.validationSuccessCount = validationSuccessCount
+        self.scoredSampleCount = scoredSampleCount
+        self.failureCount = failureCount
         self.effectThreshold = effectThreshold
         self.verdict = verdict
         self.bootstrapLowerBound = bootstrapLowerBound
@@ -650,10 +744,12 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         case suiteID = "suite_id"
         case datasetID = "dataset_id"
         case sampleSize = "sample_size"
-        case scoreName = "score_name"
-        case scoreValue = "score_value"
-        case correctCount = "correct_count"
-        case incorrectCount = "incorrect_count"
+        case primaryScoreName = "primary_score_name"
+        case primaryScoreValue = "primary_score_value"
+        case extractionSuccessCount = "extraction_success_count"
+        case validationSuccessCount = "validation_success_count"
+        case scoredSampleCount = "scored_sample_count"
+        case failureCount = "failure_count"
         case effectThreshold = "effect_threshold"
         case verdict
         case bootstrapLowerBound = "bootstrap_lower_bound"
@@ -662,6 +758,10 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         case analyticalUpperBound = "analytical_upper_bound"
         case durationSeconds = "duration_seconds"
         case createdAtUnixMS = "created_at_unix_ms"
+        case scoreName = "score_name"
+        case scoreValue = "score_value"
+        case correctCount = "correct_count"
+        case incorrectCount = "incorrect_count"
     }
 
     public init(from decoder: Decoder) throws {
@@ -673,10 +773,20 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         suiteID = try container.decodeIfPresent(String.self, forKey: .suiteID) ?? ""
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
         sampleSize = try container.decodeIfPresent(Int.self, forKey: .sampleSize) ?? 0
-        scoreName = try container.decodeIfPresent(String.self, forKey: .scoreName) ?? ""
-        scoreValue = try container.decodeIfPresent(Double.self, forKey: .scoreValue) ?? 0
-        correctCount = try container.decodeIfPresent(Int.self, forKey: .correctCount) ?? 0
-        incorrectCount = try container.decodeIfPresent(Int.self, forKey: .incorrectCount) ?? 0
+        primaryScoreName = try container.decodeIfPresent(String.self, forKey: .primaryScoreName)
+            ?? (try container.decodeIfPresent(String.self, forKey: .scoreName) ?? "")
+        primaryScoreValue = try container.decodeIfPresent(Double.self, forKey: .primaryScoreValue)
+            ?? (try container.decodeIfPresent(Double.self, forKey: .scoreValue) ?? 0)
+        let legacyCorrectCount = try container.decodeIfPresent(Int.self, forKey: .correctCount) ?? 0
+        let legacyIncorrectCount = try container.decodeIfPresent(Int.self, forKey: .incorrectCount) ?? 0
+        let legacySampleCount = max(legacyCorrectCount + legacyIncorrectCount, 0)
+        extractionSuccessCount = try container.decodeIfPresent(Int.self, forKey: .extractionSuccessCount)
+            ?? legacySampleCount
+        validationSuccessCount = try container.decodeIfPresent(Int.self, forKey: .validationSuccessCount)
+            ?? legacySampleCount
+        scoredSampleCount = try container.decodeIfPresent(Int.self, forKey: .scoredSampleCount)
+            ?? legacySampleCount
+        failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
         effectThreshold = try container.decodeFlexibleDoubleIfPresent(forKey: .effectThreshold)
         verdict = try container.decodeIfPresent(String.self, forKey: .verdict) ?? ""
         bootstrapLowerBound = try container.decodeFlexibleDoubleIfPresent(forKey: .bootstrapLowerBound)
@@ -685,6 +795,33 @@ public struct ControlPlaneEvaluationSummaryCSVRow: Codable, Equatable, Sendable 
         analyticalUpperBound = try container.decodeFlexibleDoubleIfPresent(forKey: .analyticalUpperBound)
         durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
         createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(jobID, forKey: .jobID)
+        try container.encode(modelID, forKey: .modelID)
+        try container.encode(taskKind, forKey: .taskKind)
+        try container.encode(sourceRepo, forKey: .sourceRepo)
+        try container.encode(suiteID, forKey: .suiteID)
+        try container.encode(datasetID, forKey: .datasetID)
+        try container.encode(sampleSize, forKey: .sampleSize)
+        try container.encode(primaryScoreName, forKey: .primaryScoreName)
+        try container.encode(primaryScoreValue, forKey: .primaryScoreValue)
+        try container.encode(extractionSuccessCount, forKey: .extractionSuccessCount)
+        try container.encode(validationSuccessCount, forKey: .validationSuccessCount)
+        try container.encode(scoredSampleCount, forKey: .scoredSampleCount)
+        try container.encode(failureCount, forKey: .failureCount)
+        try container.encodeIfPresent(effectThreshold, forKey: .effectThreshold)
+        if verdict.isEmpty == false {
+            try container.encode(verdict, forKey: .verdict)
+        }
+        try container.encodeIfPresent(bootstrapLowerBound, forKey: .bootstrapLowerBound)
+        try container.encodeIfPresent(bootstrapUpperBound, forKey: .bootstrapUpperBound)
+        try container.encodeIfPresent(analyticalLowerBound, forKey: .analyticalLowerBound)
+        try container.encodeIfPresent(analyticalUpperBound, forKey: .analyticalUpperBound)
+        try container.encode(durationSeconds, forKey: .durationSeconds)
+        try container.encode(createdAtUnixMS, forKey: .createdAtUnixMS)
     }
 }
 
@@ -814,18 +951,24 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
     public let datasetID: String
     public let sampleID: String
     public let targetModelID: String
-    public let question: String
-    public let expected: String
-    public let basePredicted: String
-    public let targetPredicted: String
+    public let inputText: String
+    public let target: String
+    public let baseExtractedResult: String
+    public let targetExtractedResult: String
     public let baseRawResponse: String
     public let targetRawResponse: String
-    public let baseCorrect: Bool
-    public let targetCorrect: Bool
+    public let baseTypedScore: Double
+    public let targetTypedScore: Double
     public let outcome: String
-    public let regression: Bool
+    public let regressionKind: String
     public let baseTimeS: Double
     public let targetTimeS: Double
+    public let baseExtractionStatus: String
+    public let targetExtractionStatus: String
+    public let baseValidationStatus: String
+    public let targetValidationStatus: String
+    public let baseFailureReason: String
+    public let targetFailureReason: String
     public let baseParseStatus: String
     public let targetParseStatus: String
     public let codeLanguage: String
@@ -854,18 +997,31 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
         case datasetID = "dataset_id"
         case sampleID = "sample_id"
         case targetModelID = "target_model_id"
+        case inputText = "input_text"
+        case target
+        case baseExtractedResult = "base_extracted_result"
+        case targetExtractedResult = "target_extracted_result"
         case question
         case expected
         case basePredicted = "base_predicted"
         case targetPredicted = "target_predicted"
         case baseRawResponse = "base_raw_response"
         case targetRawResponse = "target_raw_response"
+        case baseTypedScore = "base_typed_score"
+        case targetTypedScore = "target_typed_score"
         case baseCorrect = "base_correct"
         case targetCorrect = "target_correct"
         case outcome
+        case regressionKind = "regression_kind"
         case regression
         case baseTimeS = "base_time_s"
         case targetTimeS = "target_time_s"
+        case baseExtractionStatus = "base_extraction_status"
+        case targetExtractionStatus = "target_extraction_status"
+        case baseValidationStatus = "base_validation_status"
+        case targetValidationStatus = "target_validation_status"
+        case baseFailureReason = "base_failure_reason"
+        case targetFailureReason = "target_failure_reason"
         case baseParseStatus = "base_parse_status"
         case targetParseStatus = "target_parse_status"
         case codeLanguage = "code_language"
@@ -896,18 +1052,54 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID) ?? ""
         sampleID = try container.decodeIfPresent(String.self, forKey: .sampleID) ?? ""
         targetModelID = try container.decodeIfPresent(String.self, forKey: .targetModelID) ?? ""
-        question = try container.decodeIfPresent(String.self, forKey: .question) ?? ""
-        expected = try container.decodeIfPresent(String.self, forKey: .expected) ?? ""
-        basePredicted = try container.decodeIfPresent(String.self, forKey: .basePredicted) ?? ""
-        targetPredicted = try container.decodeIfPresent(String.self, forKey: .targetPredicted) ?? ""
+        inputText = try container.decodeIfPresent(String.self, forKey: .inputText)
+            ?? (try container.decodeIfPresent(String.self, forKey: .question) ?? "")
+        target = try container.decodeIfPresent(String.self, forKey: .target)
+            ?? (try container.decodeIfPresent(String.self, forKey: .expected) ?? "")
+        baseExtractedResult = try container.decodeIfPresent(String.self, forKey: .baseExtractedResult)
+            ?? (try container.decodeIfPresent(String.self, forKey: .basePredicted) ?? "")
+        targetExtractedResult = try container.decodeIfPresent(String.self, forKey: .targetExtractedResult)
+            ?? (try container.decodeIfPresent(String.self, forKey: .targetPredicted) ?? "")
         baseRawResponse = try container.decodeIfPresent(String.self, forKey: .baseRawResponse) ?? ""
         targetRawResponse = try container.decodeIfPresent(String.self, forKey: .targetRawResponse) ?? ""
-        baseCorrect = try container.decodeIfPresent(Bool.self, forKey: .baseCorrect) ?? false
-        targetCorrect = try container.decodeIfPresent(Bool.self, forKey: .targetCorrect) ?? false
+        if let baseTypedScore = try container.decodeIfPresent(Double.self, forKey: .baseTypedScore) {
+            self.baseTypedScore = baseTypedScore
+        } else {
+            self.baseTypedScore = (try container.decodeIfPresent(Bool.self, forKey: .baseCorrect) ?? false) ? 1.0 : 0.0
+        }
+        if let targetTypedScore = try container.decodeIfPresent(Double.self, forKey: .targetTypedScore) {
+            self.targetTypedScore = targetTypedScore
+        } else {
+            self.targetTypedScore = (try container.decodeIfPresent(Bool.self, forKey: .targetCorrect) ?? false) ? 1.0 : 0.0
+        }
         outcome = try container.decodeIfPresent(String.self, forKey: .outcome) ?? ""
-        regression = try container.decodeIfPresent(Bool.self, forKey: .regression) ?? false
+        if let regressionKind = try container.decodeIfPresent(String.self, forKey: .regressionKind) {
+            self.regressionKind = regressionKind
+        } else {
+            self.regressionKind = (try container.decodeIfPresent(Bool.self, forKey: .regression) ?? false) ? "score_regression" : ""
+        }
         baseTimeS = try container.decodeIfPresent(Double.self, forKey: .baseTimeS) ?? 0
         targetTimeS = try container.decodeIfPresent(Double.self, forKey: .targetTimeS) ?? 0
+        baseExtractionStatus = try container.decodeIfPresent(String.self, forKey: .baseExtractionStatus)
+            ?? ((try container.decodeIfPresent(String.self, forKey: .baseParseStatus) ?? "").isEmpty ? "" : "extracted")
+        targetExtractionStatus = try container.decodeIfPresent(String.self, forKey: .targetExtractionStatus)
+            ?? ((try container.decodeIfPresent(String.self, forKey: .targetParseStatus) ?? "").isEmpty ? "" : "extracted")
+        if let baseValidationStatus = try container.decodeIfPresent(String.self, forKey: .baseValidationStatus) {
+            self.baseValidationStatus = baseValidationStatus
+        } else if container.contains(.baseCorrect) || baseExtractedResult.isEmpty == false {
+            self.baseValidationStatus = "validated"
+        } else {
+            self.baseValidationStatus = ""
+        }
+        if let targetValidationStatus = try container.decodeIfPresent(String.self, forKey: .targetValidationStatus) {
+            self.targetValidationStatus = targetValidationStatus
+        } else if container.contains(.targetCorrect) || targetExtractedResult.isEmpty == false {
+            self.targetValidationStatus = "validated"
+        } else {
+            self.targetValidationStatus = ""
+        }
+        baseFailureReason = try container.decodeIfPresent(String.self, forKey: .baseFailureReason) ?? ""
+        targetFailureReason = try container.decodeIfPresent(String.self, forKey: .targetFailureReason) ?? ""
         baseParseStatus = try container.decodeIfPresent(String.self, forKey: .baseParseStatus) ?? ""
         targetParseStatus = try container.decodeIfPresent(String.self, forKey: .targetParseStatus) ?? ""
         codeLanguage = try container.decodeIfPresent(String.self, forKey: .codeLanguage) ?? ""
@@ -928,6 +1120,58 @@ public struct ControlPlaneEvaluationCompareSampleRecord: Codable, Equatable, Sen
         targetCodeFailureDetail = try container.decodeIfPresent(String.self, forKey: .targetCodeFailureDetail) ?? ""
         categoryLabel = try container.decodeIfPresent(String.self, forKey: .categoryLabel) ?? ""
         subjectLabel = try container.decodeIfPresent(String.self, forKey: .subjectLabel) ?? ""
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(jobID, forKey: .jobID)
+        try container.encode(suiteID, forKey: .suiteID)
+        try container.encode(datasetID, forKey: .datasetID)
+        try container.encode(sampleID, forKey: .sampleID)
+        try container.encode(targetModelID, forKey: .targetModelID)
+        try container.encode(inputText, forKey: .inputText)
+        try container.encode(target, forKey: .target)
+        try container.encode(baseExtractedResult, forKey: .baseExtractedResult)
+        try container.encode(targetExtractedResult, forKey: .targetExtractedResult)
+        try container.encode(baseRawResponse, forKey: .baseRawResponse)
+        try container.encode(targetRawResponse, forKey: .targetRawResponse)
+        try container.encode(baseTypedScore, forKey: .baseTypedScore)
+        try container.encode(targetTypedScore, forKey: .targetTypedScore)
+        try container.encode(outcome, forKey: .outcome)
+        try container.encode(regressionKind, forKey: .regressionKind)
+        try container.encode(baseTimeS, forKey: .baseTimeS)
+        try container.encode(targetTimeS, forKey: .targetTimeS)
+        try container.encode(baseExtractionStatus, forKey: .baseExtractionStatus)
+        try container.encode(targetExtractionStatus, forKey: .targetExtractionStatus)
+        try container.encode(baseValidationStatus, forKey: .baseValidationStatus)
+        try container.encode(targetValidationStatus, forKey: .targetValidationStatus)
+        try container.encode(baseFailureReason, forKey: .baseFailureReason)
+        try container.encode(targetFailureReason, forKey: .targetFailureReason)
+        try container.encode(baseParseStatus, forKey: .baseParseStatus)
+        try container.encode(targetParseStatus, forKey: .targetParseStatus)
+        try container.encode(codeLanguage, forKey: .codeLanguage)
+        try container.encode(codeEntryPoint, forKey: .codeEntryPoint)
+        try container.encode(baseCodeCompileStatus, forKey: .baseCodeCompileStatus)
+        try container.encode(targetCodeCompileStatus, forKey: .targetCodeCompileStatus)
+        try container.encode(baseCodeRuntimeStatus, forKey: .baseCodeRuntimeStatus)
+        try container.encode(targetCodeRuntimeStatus, forKey: .targetCodeRuntimeStatus)
+        try container.encode(baseCodeTimeoutStatus, forKey: .baseCodeTimeoutStatus)
+        try container.encode(targetCodeTimeoutStatus, forKey: .targetCodeTimeoutStatus)
+        try container.encode(baseCodeTestStatus, forKey: .baseCodeTestStatus)
+        try container.encode(targetCodeTestStatus, forKey: .targetCodeTestStatus)
+        try container.encode(baseCodeTestsPassed, forKey: .baseCodeTestsPassed)
+        try container.encode(targetCodeTestsPassed, forKey: .targetCodeTestsPassed)
+        try container.encode(baseCodeTestsTotal, forKey: .baseCodeTestsTotal)
+        try container.encode(targetCodeTestsTotal, forKey: .targetCodeTestsTotal)
+        try container.encode(baseCodeFailureDetail, forKey: .baseCodeFailureDetail)
+        try container.encode(targetCodeFailureDetail, forKey: .targetCodeFailureDetail)
+        if categoryLabel.isEmpty == false {
+            try container.encode(categoryLabel, forKey: .categoryLabel)
+        }
+        if subjectLabel.isEmpty == false {
+            try container.encode(subjectLabel, forKey: .subjectLabel)
+        }
     }
 }
 
@@ -1285,17 +1529,13 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                         suiteID: job.suiteID,
                         datasetID: job.datasetID,
                         sampleSize: job.sampleSize,
-                        scoreName: result.metrics.first?.name ?? "",
-                        scoreValue: result.metrics.first?.value ?? 0,
-                        correctCount: 0,
-                        incorrectCount: 0,
-                        effectThreshold: nil,
-                        verdict: "",
-                        bootstrapLowerBound: nil,
-                        bootstrapUpperBound: nil,
-                        analyticalLowerBound: nil,
-                        analyticalUpperBound: nil,
-                        durationSeconds: 0,
+                        primaryScoreName: result.primaryScoreName.isEmpty ? (result.metrics.first?.name ?? "") : result.primaryScoreName,
+                        primaryScoreValue: result.primaryScoreName.isEmpty ? (result.metrics.first?.value ?? 0) : result.primaryScoreValue,
+                        extractionSuccessCount: result.extractionSuccessCount,
+                        validationSuccessCount: result.validationSuccessCount,
+                        scoredSampleCount: result.scoredSampleCount,
+                        failureCount: result.failureCount,
+                        durationSeconds: result.durationSeconds,
                         createdAtUnixMS: job.createdAtUnixMS
                     )
                 }
@@ -1304,40 +1544,36 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSummaryCSV(jobID: String? = nil) -> String {
         let rows = evaluationSummaryCSVRows(jobID: jobID)
-        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
+        let header = "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
-        var body: [String] = []
-        body.reserveCapacity(rows.count)
-        for row in rows {
-            let effectThreshold = Self.optionalCSVNumber(row.effectThreshold)
-            let bootstrapLowerBound = Self.optionalCSVNumber(row.bootstrapLowerBound)
-            let bootstrapUpperBound = Self.optionalCSVNumber(row.bootstrapUpperBound)
-            let analyticalLowerBound = Self.optionalCSVNumber(row.analyticalLowerBound)
-            let analyticalUpperBound = Self.optionalCSVNumber(row.analyticalUpperBound)
-            var columns: [String] = []
-            columns.reserveCapacity(19)
-            columns.append(row.jobID)
-            columns.append(row.modelID)
-            columns.append(row.taskKind)
-            columns.append(row.sourceRepo)
-            columns.append(row.suiteID)
-            columns.append(row.datasetID)
-            columns.append(String(row.sampleSize))
-            columns.append(row.scoreName)
-            columns.append(String(row.scoreValue))
-            columns.append(String(row.correctCount))
-            columns.append(String(row.incorrectCount))
-            columns.append(effectThreshold)
-            columns.append(row.verdict)
-            columns.append(bootstrapLowerBound)
-            columns.append(bootstrapUpperBound)
-            columns.append(analyticalLowerBound)
-            columns.append(analyticalUpperBound)
-            columns.append(String(row.durationSeconds))
-            columns.append(String(row.createdAtUnixMS))
-            body.append(columns.map(Self.csvField).joined(separator: ","))
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.modelID,
+                row.taskKind,
+                row.sourceRepo,
+                row.suiteID,
+                row.datasetID,
+                String(row.sampleSize),
+                row.primaryScoreName,
+                String(row.primaryScoreValue),
+                String(row.extractionSuccessCount),
+                String(row.validationSuccessCount),
+                String(row.scoredSampleCount),
+                String(row.failureCount),
+                Self.optionalCSVNumber(row.effectThreshold),
+                row.verdict,
+                Self.optionalCSVNumber(row.bootstrapLowerBound),
+                Self.optionalCSVNumber(row.bootstrapUpperBound),
+                Self.optionalCSVNumber(row.analyticalLowerBound),
+                Self.optionalCSVNumber(row.analyticalUpperBound),
+                String(row.durationSeconds),
+                String(row.createdAtUnixMS),
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
         }
         return ([header] + body).joined(separator: "\n") + "\n"
     }
@@ -1355,40 +1591,41 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationSampleRows(jobID: jobID)
-        let header = "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+        let header = "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
-        var body: [String] = []
-        body.reserveCapacity(rows.count)
-        for row in rows {
-            var columns: [String] = []
-            columns.reserveCapacity(24)
-            columns.append(row.jobID)
-            columns.append(row.suiteID)
-            columns.append(row.sampleID)
-            columns.append(row.taskKind)
-            columns.append(row.correct ? "true" : "false")
-            columns.append(row.expected)
-            columns.append(row.predicted)
-            columns.append(row.question)
-            columns.append(row.rawResponse)
-            columns.append(String(row.timeS))
-            columns.append(row.parseStatus)
-            columns.append(row.inputModalities.joined(separator: ","))
-            columns.append(row.mediaReferences.joined(separator: ","))
-            columns.append(row.codeLanguage)
-            columns.append(row.codeEntryPoint)
-            columns.append(row.codeCompileStatus)
-            columns.append(row.codeRuntimeStatus)
-            columns.append(row.codeTimeoutStatus)
-            columns.append(row.codeTestStatus)
-            columns.append(String(row.codeTestsPassed))
-            columns.append(String(row.codeTestsTotal))
-            columns.append(row.codeFailureDetail)
-            columns.append(row.categoryLabel)
-            columns.append(row.subjectLabel)
-            body.append(columns.map(Self.csvField).joined(separator: ","))
+        let body = rows.map { row in
+            [
+                row.jobID,
+                row.suiteID,
+                row.sampleID,
+                row.taskKind,
+                row.target,
+                row.extractedResult,
+                row.inputText,
+                row.rawResponse,
+                String(row.typedScore),
+                String(row.timeS),
+                row.extractionStatus,
+                row.validationStatus,
+                row.failureReason,
+                row.inputModalities.joined(separator: ","),
+                row.mediaReferences.joined(separator: ","),
+                row.codeLanguage,
+                row.codeEntryPoint,
+                row.codeCompileStatus,
+                row.codeRuntimeStatus,
+                row.codeTimeoutStatus,
+                row.codeTestStatus,
+                String(row.codeTestsPassed),
+                String(row.codeTestsTotal),
+                row.codeFailureDetail,
+                row.categoryLabel,
+                row.subjectLabel,
+            ]
+            .map(Self.csvField)
+            .joined(separator: ",")
         }
         return ([header] + body).joined(separator: "\n") + "\n"
     }
@@ -1462,7 +1699,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationCompareSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationCompareSampleRows(jobID: jobID)
-        let header = "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label"
+        let header = "job_id,suite_id,dataset_id,sample_id,target_model_id,input_text,target,base_extracted_result,target_extracted_result,base_raw_response,target_raw_response,base_typed_score,target_typed_score,outcome,regression_kind,base_time_s,target_time_s,base_extraction_status,target_extraction_status,base_validation_status,target_validation_status,base_failure_reason,target_failure_reason,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -1473,18 +1710,24 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 row.datasetID,
                 row.sampleID,
                 row.targetModelID,
-                row.question,
-                row.expected,
-                row.basePredicted,
-                row.targetPredicted,
+                row.inputText,
+                row.target,
+                row.baseExtractedResult,
+                row.targetExtractedResult,
                 row.baseRawResponse,
                 row.targetRawResponse,
-                row.baseCorrect ? "true" : "false",
-                row.targetCorrect ? "true" : "false",
+                String(row.baseTypedScore),
+                String(row.targetTypedScore),
                 row.outcome,
-                row.regression ? "true" : "false",
+                row.regressionKind,
                 String(row.baseTimeS),
                 String(row.targetTimeS),
+                row.baseExtractionStatus,
+                row.targetExtractionStatus,
+                row.baseValidationStatus,
+                row.targetValidationStatus,
+                row.baseFailureReason,
+                row.targetFailureReason,
                 row.baseParseStatus,
                 row.targetParseStatus,
                 row.codeLanguage,

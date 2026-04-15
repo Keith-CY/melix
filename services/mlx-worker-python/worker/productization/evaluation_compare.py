@@ -60,11 +60,23 @@ def build_compare_samples(
     suite_id: str,
     dataset_id: str,
     target_model_id: str,
+    threshold: float,
     base_samples: tuple[EvaluationSample, ...],
     target_samples: tuple[EvaluationSample, ...],
 ) -> tuple[EvaluationCompareSample, ...]:
     records: list[EvaluationCompareSample] = []
     for base_sample, target_sample in zip(base_samples, target_samples, strict=True):
+        outcome = compare_outcome(
+            base_typed_score=base_sample.typed_score,
+            target_typed_score=target_sample.typed_score,
+            base_validation_status=base_sample.validation_status,
+            target_validation_status=target_sample.validation_status,
+        )
+        regression_kind = compare_regression_kind(
+            threshold=threshold,
+            base_sample=base_sample,
+            target_sample=target_sample,
+        )
         records.append(
             build_evaluation_compare_sample_record(
                 job_id=job_id,
@@ -72,20 +84,26 @@ def build_compare_samples(
                 dataset_id=dataset_id,
                 sample_id=base_sample.sample_id,
                 target_model_id=target_model_id,
-                question=base_sample.question,
-                expected=base_sample.expected,
-                base_predicted=base_sample.predicted,
-                target_predicted=target_sample.predicted,
+                input_text=base_sample.input_text,
+                target=base_sample.target,
+                base_extracted_result=base_sample.extracted_result,
+                target_extracted_result=target_sample.extracted_result,
                 base_raw_response=base_sample.raw_response,
                 target_raw_response=target_sample.raw_response,
-                base_correct=base_sample.correct,
-                target_correct=target_sample.correct,
-                outcome=compare_outcome(base_correct=base_sample.correct, target_correct=target_sample.correct),
-                regression=base_sample.correct and not target_sample.correct,
+                base_typed_score=base_sample.typed_score,
+                target_typed_score=target_sample.typed_score,
+                outcome=outcome,
+                regression_kind=regression_kind,
                 base_time_s=base_sample.time_s,
                 target_time_s=target_sample.time_s,
-                base_parse_status=base_sample.parse_status,
-                target_parse_status=target_sample.parse_status,
+                base_extraction_status=base_sample.extraction_status,
+                target_extraction_status=target_sample.extraction_status,
+                base_validation_status=base_sample.validation_status,
+                target_validation_status=target_sample.validation_status,
+                base_failure_reason=base_sample.failure_reason,
+                target_failure_reason=target_sample.failure_reason,
+                base_parse_status=base_sample.extraction_status,
+                target_parse_status=target_sample.extraction_status,
                 code_language=target_sample.code_language or base_sample.code_language,
                 code_entry_point=target_sample.code_entry_point or base_sample.code_entry_point,
                 base_code_compile_status=base_sample.code_compile_status,
@@ -118,6 +136,7 @@ def build_compare_summary(
     dataset_id: str,
     sample_size: int,
     scoring_mode: str,
+    threshold: float,
     base_samples: tuple[EvaluationSample, ...],
     compare_samples: tuple[EvaluationCompareSample, ...],
     effect_threshold: float = _DEFAULT_COMPARE_EFFECT_THRESHOLD,
@@ -130,19 +149,79 @@ def build_compare_summary(
     win_count = sum(1 for sample in compare_samples if sample.outcome == "win")
     loss_count = sum(1 for sample in compare_samples if sample.outcome == "loss")
     tie_count = sum(1 for sample in compare_samples if sample.outcome == "tie")
-    regression_count = sum(1 for sample in compare_samples if sample.regression)
+    regression_count = sum(1 for sample in compare_samples if sample.regression_kind != "")
     base_accuracy = round(
-        sum(1 for sample in base_samples if sample.correct) / max(sample_size, 1),
+        sum(
+            1
+            for sample in base_samples
+            if sample.validation_status == "validated" and sample.typed_score >= threshold
+        )
+        / max(sample_size, 1),
         4,
     )
     target_accuracy = round(
-        sum(1 for sample in compare_samples if sample.target_correct) / max(sample_size, 1),
+        sum(
+            1
+            for sample in compare_samples
+            if sample.target_validation_status == "validated" and sample.target_typed_score >= threshold
+        )
+        / max(sample_size, 1),
         4,
     )
     delta_accuracy = round(target_accuracy - base_accuracy, 4)
-    paired_outcomes = tuple(
-        int(sample.target_correct) - int(sample.base_correct)
+    base_typed_score_mean = round(
+        sum(sample.typed_score for sample in base_samples) / max(sample_size, 1),
+        4,
+    )
+    target_typed_score_mean = round(
+        sum(sample.target_typed_score for sample in compare_samples) / max(sample_size, 1),
+        4,
+    )
+    delta_typed_score_mean = round(target_typed_score_mean - base_typed_score_mean, 4)
+    base_extraction_success_rate = round(
+        sum(1 for sample in base_samples if sample.extraction_status == "extracted")
+        / max(sample_size, 1),
+        4,
+    )
+    target_extraction_success_rate = round(
+        sum(1 for sample in compare_samples if sample.target_extraction_status == "extracted")
+        / max(sample_size, 1),
+        4,
+    )
+    base_validation_success_rate = round(
+        sum(1 for sample in base_samples if sample.validation_status == "validated")
+        / max(sample_size, 1),
+        4,
+    )
+    target_validation_success_rate = round(
+        sum(1 for sample in compare_samples if sample.target_validation_status == "validated")
+        / max(sample_size, 1),
+        4,
+    )
+    extraction_failure_regression_count = sum(
+        1 for sample in compare_samples if sample.regression_kind == "extraction_failure"
+    )
+    validation_failure_regression_count = sum(
+        1 for sample in compare_samples if sample.regression_kind == "validation_failure"
+    )
+    score_regression_count = sum(
+        1 for sample in compare_samples if sample.regression_kind == "score_regression"
+    )
+    category_rows: tuple[dict[str, object], ...] = tuple(
+        {
+            "category_label": sample.category_label,
+            "base_correct": (
+                sample.base_validation_status == "validated" and sample.base_typed_score >= threshold
+            ),
+            "target_correct": (
+                sample.target_validation_status == "validated" and sample.target_typed_score >= threshold
+            ),
+        }
         for sample in compare_samples
+    )
+    paired_outcomes = tuple(
+        int(row["target_correct"]) - int(row["base_correct"])
+        for row in category_rows
     )
     statistical_evidence = build_paired_statistical_evidence(
         paired_outcomes=paired_outcomes,
@@ -156,16 +235,7 @@ def build_compare_summary(
         bootstrap_interval=dict(statistical_evidence.get("bootstrap", {})),
         analytical_interval=dict(statistical_evidence.get("analytical", {})),
     )
-    category_breakdown = build_category_breakdown(
-        rows=tuple(
-            {
-                "category_label": sample.category_label,
-                "base_correct": sample.base_correct,
-                "target_correct": sample.target_correct,
-            }
-            for sample in compare_samples
-        )
-    )
+    category_breakdown = build_category_breakdown(rows=category_rows)
     return build_evaluation_compare_summary_record(
         job_id=job_id,
         base_model_id=base_model_id,
@@ -191,8 +261,18 @@ def build_compare_summary(
             "eval.compare.base_accuracy": base_accuracy,
             "eval.compare.delta_accuracy": delta_accuracy,
             "eval.compare.effect_threshold": float(effect_threshold),
+            "eval.compare.base_typed_score_mean": base_typed_score_mean,
+            "eval.compare.target_typed_score_mean": target_typed_score_mean,
+            "eval.compare.delta_typed_score_mean": delta_typed_score_mean,
+            "eval.compare.base_extraction_success_rate": base_extraction_success_rate,
+            "eval.compare.target_extraction_success_rate": target_extraction_success_rate,
+            "eval.compare.base_validation_success_rate": base_validation_success_rate,
+            "eval.compare.target_validation_success_rate": target_validation_success_rate,
             "eval.compare.loss_count": float(loss_count),
             "eval.compare.regression_count": float(regression_count),
+            "eval.compare.regression.extraction_failure_count": float(extraction_failure_regression_count),
+            "eval.compare.regression.validation_failure_count": float(validation_failure_regression_count),
+            "eval.compare.regression.score_count": float(score_regression_count),
             "eval.compare.target_accuracy": target_accuracy,
             "eval.compare.tie_count": float(tie_count),
             "eval.compare.win_count": float(win_count),
@@ -201,19 +281,58 @@ def build_compare_summary(
             "eval.compare.base_accuracy": "ratio",
             "eval.compare.delta_accuracy": "ratio",
             "eval.compare.effect_threshold": "ratio",
+            "eval.compare.base_typed_score_mean": "ratio",
+            "eval.compare.target_typed_score_mean": "ratio",
+            "eval.compare.delta_typed_score_mean": "ratio",
+            "eval.compare.base_extraction_success_rate": "ratio",
+            "eval.compare.target_extraction_success_rate": "ratio",
+            "eval.compare.base_validation_success_rate": "ratio",
+            "eval.compare.target_validation_success_rate": "ratio",
             "eval.compare.loss_count": "count",
             "eval.compare.regression_count": "count",
+            "eval.compare.regression.extraction_failure_count": "count",
+            "eval.compare.regression.validation_failure_count": "count",
+            "eval.compare.regression.score_count": "count",
             "eval.compare.target_accuracy": "ratio",
             "eval.compare.tie_count": "count",
             "eval.compare.win_count": "count",
         },
         report_path=report_path,
     )
-
-
-def compare_outcome(*, base_correct: bool, target_correct: bool) -> str:
-    if target_correct and not base_correct:
+def compare_outcome(
+    *,
+    base_typed_score: float,
+    target_typed_score: float,
+    base_validation_status: str,
+    target_validation_status: str,
+) -> str:
+    base_valid = base_validation_status == "validated"
+    target_valid = target_validation_status == "validated"
+    if target_valid and not base_valid:
         return "win"
-    if base_correct and not target_correct:
+    if base_valid and not target_valid:
         return "loss"
+    if base_valid and target_valid:
+        if target_typed_score > base_typed_score:
+            return "win"
+        if target_typed_score < base_typed_score:
+            return "loss"
     return "tie"
+
+
+def compare_regression_kind(
+    *,
+    threshold: float,
+    base_sample: EvaluationSample,
+    target_sample: EvaluationSample,
+) -> str:
+    base_valid = base_sample.validation_status == "validated"
+    target_valid = target_sample.validation_status == "validated"
+    if base_valid and not target_valid:
+        if target_sample.extraction_status != "extracted":
+            return "extraction_failure"
+        return "validation_failure"
+    if base_valid and target_valid and target_sample.typed_score < base_sample.typed_score:
+        if base_sample.typed_score >= threshold or target_sample.typed_score < threshold:
+            return "score_regression"
+    return ""

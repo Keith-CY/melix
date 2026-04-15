@@ -2089,12 +2089,12 @@ struct DesktopFoundationViewTests {
         let sample = RuntimeEvaluationSamplePreviewState(
             id: "sample-1",
             sampleID: "mmlu-0001",
-            question: "What is 2 + 2?",
-            expected: "4",
-            predicted: "4",
+            inputText: "What is 2 + 2?",
+            target: "4",
+            extractedResult: "4",
             rawResponse: "4",
-            correctText: "Correct",
-            parseStatus: "parsed",
+            typedScoreText: "1.0000",
+            statusText: "validated • extracted",
             timeText: "0.42s",
             categoryLabel: "math",
             subjectLabel: "arithmetic"

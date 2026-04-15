@@ -46,10 +46,12 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=2,
-        score_name="accuracy",
-        score_value=1.0,
-        correct_count=2,
-        incorrect_count=0,
+        primary_score_name="normalized_exact_match",
+        primary_score_value=1.0,
+        extraction_success_count=2,
+        validation_success_count=2,
+        scored_sample_count=2,
+        failure_count=0,
         duration_seconds=0.25,
         metrics={"eval.mmlu.accuracy": 1.0},
         report_path=str(run_root / "evaluation-result.json"),
@@ -60,13 +62,16 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_id="sample-1",
-        question="2+2?",
-        expected="4",
-        predicted="4",
+        system="Return only the final answer.",
+        input_text="2+2?",
+        target="4",
         raw_response="4",
-        correct=True,
+        extracted_result="4",
+        typed_score=1.0,
         time_s=0.01,
-        parse_status="parsed",
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
         task_kind="image-text-to-text",
         input_modalities=("text", "image"),
         media_references=("/tmp/cat.png",),
@@ -87,22 +92,22 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["samples_csv"] == run_root / "evaluation-samples.csv"
     assert json.loads(persisted["job"].read_text(encoding="utf-8")) == job.to_dict()
     assert json.loads(persisted["result"].read_text(encoding="utf-8")) == result.to_dict()
-    assert json.loads(persisted["summary_json"].read_text(encoding="utf-8"))["correct_count"] == 2
+    assert json.loads(persisted["summary_json"].read_text(encoding="utf-8"))["scored_sample_count"] == 2
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == sample.to_dict()
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
-        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,score_name,score_value,sample_size,correct_count,incorrect_count,duration_seconds,created_at_unix_ms\n"
+        "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
+        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
     assert len(export_bundle["evaluation_summary_rows"]) == 1
     assert build_evaluation_summary_csv(export_bundle).startswith(
-        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\r\n"
+        "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\r\n"
     )
     assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
+        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
     )
 
 
@@ -112,13 +117,16 @@ def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_id="sample-1",
-        question="line 1,\nline 2",
-        expected='say "hello"',
-        predicted="value,with,comma",
+        system="Return only the final answer.",
+        input_text="line 1,\nline 2",
+        target='say "hello"',
         raw_response='quoted "response"',
-        correct=True,
+        extracted_result="value,with,comma",
+        typed_score=1.0,
         time_s=0.01,
-        parse_status="parsed",
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
         task_kind="image-text-to-text",
         input_modalities=("text", "image"),
         media_references=("/tmp/a,1.png", '/tmp/b"2".png'),
@@ -159,18 +167,20 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
         suite_id="humaneval",
         dataset_id="humaneval.dev.v1",
         sample_size=1,
-        score_name="pass_at_1",
-        score_value=1.0,
-        correct_count=1,
-        incorrect_count=0,
+        primary_score_name="typed_score_mean",
+        primary_score_value=1.0,
+        extraction_success_count=1,
+        validation_success_count=1,
+        scored_sample_count=1,
+        failure_count=0,
         duration_seconds=0.25,
         metrics={
-            "eval.humaneval.pass_at_1": 1.0,
+            "eval.humaneval.typed_score_mean": 1.0,
             "eval.humaneval.code_exec_pass_count": 1.0,
         },
         report_path=str(run_root / "evaluation-result.json"),
         units={
-            "eval.humaneval.pass_at_1": "ratio",
+            "eval.humaneval.typed_score_mean": "ratio",
             "eval.humaneval.code_exec_pass_count": "count",
         },
     )
@@ -179,13 +189,16 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
         suite_id="humaneval",
         dataset_id="humaneval.dev.v1",
         sample_id="sample-1",
-        question="Write identity(x) that returns x.",
-        expected="identity",
-        predicted="def identity(x):\n    return x",
+        system="Return only executable Python code.",
+        input_text="Write identity(x) that returns x.",
+        target="identity",
         raw_response="```python\ndef identity(x):\n    return x\n```",
-        correct=True,
+        extracted_result="def identity(x):\n    return x",
+        typed_score=1.0,
         time_s=0.02,
-        parse_status="parsed_code_block",
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
         task_kind="text-generation",
         code_language="python",
         code_entry_point="identity",
@@ -215,12 +228,12 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
     assert sample_payload["code_tests_passed"] == 2
     assert sample_payload["code_tests_total"] == 2
     assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
+        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
     assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
+        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
     )
 
 
@@ -309,18 +322,24 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
         dataset_id="mmlu-dev",
         sample_id="sample-1",
         target_model_id="melix-dev-text-lora-a",
-        question="2+2?",
-        expected="4",
-        base_predicted="4",
-        target_predicted="4",
+        input_text="2+2?",
+        target="4",
+        base_extracted_result="4",
+        target_extracted_result="4",
         base_raw_response="Answer: 4",
         target_raw_response="Answer: 4",
-        base_correct=True,
-        target_correct=True,
-        outcome="tie",
-        regression=False,
+        base_typed_score=1.0,
+        target_typed_score=1.0,
+        outcome="score_tie",
+        regression_kind="",
         base_time_s=0.01,
         target_time_s=0.02,
+        base_extraction_status="extracted",
+        target_extraction_status="extracted",
+        base_validation_status="validated",
+        target_validation_status="validated",
+        base_failure_reason="",
+        target_failure_reason="",
         base_parse_status="parsed_answer_prefix",
         target_parse_status="parsed_answer_prefix",
         category_label="math",
@@ -445,18 +464,24 @@ def test_persist_compare_result_preserves_code_execution_evidence(tmp_path: Path
         dataset_id="humaneval.dev.v1",
         sample_id="sample-1",
         target_model_id="melix-dev-code-target",
-        question="Write identity(x) that returns x.",
-        expected="identity",
-        base_predicted="def identity(x):\n    return None",
-        target_predicted="def identity(x):\n    return x",
+        input_text="Write identity(x) that returns x.",
+        target="identity",
+        base_extracted_result="def identity(x):\n    return None",
+        target_extracted_result="def identity(x):\n    return x",
         base_raw_response="```python\ndef identity(x):\n    return None\n```",
         target_raw_response="```python\ndef identity(x):\n    return x\n```",
-        base_correct=False,
-        target_correct=True,
+        base_typed_score=0.0,
+        target_typed_score=1.0,
         outcome="win",
-        regression=False,
+        regression_kind="",
         base_time_s=0.01,
         target_time_s=0.02,
+        base_extraction_status="extracted",
+        target_extraction_status="extracted",
+        base_validation_status="validated",
+        target_validation_status="validated",
+        base_failure_reason="AssertionError",
+        target_failure_reason="",
         base_parse_status="parsed_code_block",
         target_parse_status="parsed_code_block",
         code_language="python",

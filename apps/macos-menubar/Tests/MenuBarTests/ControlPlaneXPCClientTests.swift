@@ -973,6 +973,20 @@ struct ControlPlaneXPCClientTests {
                 suiteID: "mmlu",
                 datasetID: "mmlu.dev.v1",
                 sampleSize: 8,
+                source: .localCSV(path: "/tmp/eval/mmlu.csv"),
+                fieldMapping: .init(
+                    systemPath: "system_prompt",
+                    inputTextPath: "question",
+                    targetPath: "gold_answer",
+                    sampleIDPath: "sample_id"
+                ),
+                profile: .init(
+                    profileType: "final_result",
+                    resultKind: "text",
+                    extractionMode: "heuristic_final",
+                    scoringMode: "normalized_exact_match",
+                    threshold: 1.0
+                ),
                 parameters: [
                     "batch_factor": "2",
                     "few_shot": "4",
@@ -988,6 +1002,21 @@ struct ControlPlaneXPCClientTests {
         #expect(request.ops.runEvaluation.suiteID == "mmlu")
         #expect(request.ops.runEvaluation.datasetID == "mmlu.dev.v1")
         #expect(request.ops.runEvaluation.sampleSize == 8)
+        guard case .localCsv(let source)? = request.ops.runEvaluation.source.kind else {
+            Issue.record("Expected the control-plane request to carry a localCsv evaluation source.")
+            return
+        }
+
+        #expect(source.path == "/tmp/eval/mmlu.csv")
+        #expect(request.ops.runEvaluation.fieldMapping.systemPath == "system_prompt")
+        #expect(request.ops.runEvaluation.fieldMapping.inputTextPath == "question")
+        #expect(request.ops.runEvaluation.fieldMapping.targetPath == "gold_answer")
+        #expect(request.ops.runEvaluation.fieldMapping.sampleIDPath == "sample_id")
+        #expect(request.ops.runEvaluation.profile.profileType == "final_result")
+        #expect(request.ops.runEvaluation.profile.resultKind == "text")
+        #expect(request.ops.runEvaluation.profile.extractionMode == "heuristic_final")
+        #expect(request.ops.runEvaluation.profile.scoringMode == "normalized_exact_match")
+        #expect(request.ops.runEvaluation.profile.threshold == 1.0)
         #expect(request.ops.runEvaluation.parameters["batch_factor"] == "2")
         #expect(result.job.jobID == "eval-1")
         #expect(result.job.suiteID == "mmlu")

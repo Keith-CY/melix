@@ -19,10 +19,15 @@ def test_build_dataset_package_manifest_preserves_dataset_identity() -> None:
         sample_count=2,
         split="validation",
         task_kind="text-generation",
+        profile_type="final_result",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+        scoring_mode="normalized_exact_match",
+        threshold=1.0,
     )
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == "melix.evaluation_dataset_package.v1"
+    assert payload["schema_version"] == "melix.evaluation_dataset_package.v2"
     assert payload["dataset_id"] == "mmlu-dev"
     assert payload["suite_id"] == "mmlu"
     assert payload["version"] == "2026-03-31"
@@ -30,6 +35,12 @@ def test_build_dataset_package_manifest_preserves_dataset_identity() -> None:
     assert payload["split"] == "validation"
     assert payload["task_kind"] == "text-generation"
     assert payload["input_modalities"] == []
+    assert payload["profile_type"] == "final_result"
+    assert payload["result_kind"] == "text"
+    assert payload["extraction_mode"] == "heuristic_final"
+    assert payload["scoring_mode"] == "normalized_exact_match"
+    assert payload["threshold"] == 1.0
+    assert payload["ignored_paths"] == []
 
 
 def test_build_evaluation_job_record_preserves_core_fields() -> None:
@@ -50,7 +61,7 @@ def test_build_evaluation_job_record_preserves_core_fields() -> None:
     )
     payload = job.to_dict()
 
-    assert payload["schema_version"] == "melix.evaluation_job.v1"
+    assert payload["schema_version"] == "melix.evaluation_job.v2"
     assert payload["job_id"] == "eval-1"
     assert payload["model_id"] == "melix-dev-text"
     assert payload["task_kind"] == "text-generation"
@@ -72,18 +83,32 @@ def test_build_evaluation_result_record_orders_metrics_stably() -> None:
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=8,
+        primary_score_name="json_field_match",
+        primary_score_value=0.75,
+        extraction_success_count=7,
+        validation_success_count=6,
+        scored_sample_count=6,
+        failure_count=2,
+        duration_seconds=1.25,
         metrics={"eval.mmlu.loss": 0.25, "eval.mmlu.accuracy": 0.75},
         report_path="/tmp/mmlu.json",
         units={"eval.mmlu.accuracy": "ratio", "eval.mmlu.loss": "loss"},
     )
 
-    metrics = result.to_dict()["metrics"]
+    payload = result.to_dict()
+    metrics = payload["metrics"]
     assert [row["name"] for row in metrics] == [
         "eval.mmlu.accuracy",
         "eval.mmlu.loss",
     ]
     assert metrics[0]["unit"] == "ratio"
     assert metrics[1]["unit"] == "loss"
+    assert payload["primary_score_name"] == "json_field_match"
+    assert payload["primary_score_value"] == 0.75
+    assert payload["extraction_success_count"] == 7
+    assert payload["validation_success_count"] == 6
+    assert payload["scored_sample_count"] == 6
+    assert payload["failure_count"] == 2
 
 
 def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
@@ -92,29 +117,35 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_id="sample-1",
-        question="2+2?",
-        expected="4",
-        predicted="4",
+        system="Return only the final answer.",
+        input_text="2+2?",
+        target="4",
         raw_response="4",
-        correct=True,
+        extracted_result="4",
+        typed_score=1.0,
         time_s=0.0123,
-        parse_status="parsed",
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
         task_kind="text-generation",
     )
 
     assert sample.to_dict() == {
-        "schema_version": "melix.evaluation_sample.v1",
+        "schema_version": "melix.evaluation_sample.v2",
         "job_id": "eval-1",
         "suite_id": "mmlu",
         "dataset_id": "mmlu-dev",
         "sample_id": "sample-1",
-        "question": "2+2?",
-        "expected": "4",
-        "predicted": "4",
+        "system": "Return only the final answer.",
+        "input_text": "2+2?",
+        "target": "4",
         "raw_response": "4",
-        "correct": True,
+        "extracted_result": "4",
+        "typed_score": 1.0,
         "time_s": 0.0123,
-        "parse_status": "parsed",
+        "extraction_status": "extracted",
+        "validation_status": "validated",
+        "failure_reason": "",
         "task_kind": "text-generation",
         "input_modalities": [],
         "media_references": [],
@@ -136,13 +167,16 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         suite_id="mmlu",
         dataset_id="vision-dev",
         sample_id="vision-1",
-        question="Describe the image.",
-        expected="Cat",
-        predicted="Cat",
+        system="Describe the image.",
+        input_text="Describe the image.",
+        target="Cat",
         raw_response="Answer: Cat",
-        correct=True,
+        extracted_result="Cat",
+        typed_score=1.0,
         time_s=0.045,
-        parse_status="parsed_answer_prefix",
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
         task_kind="image-text-to-text",
         input_modalities=("text", "image"),
         media_references=("/tmp/cat.png",),
@@ -151,18 +185,21 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
     )
 
     assert sample.to_dict() == {
-        "schema_version": "melix.evaluation_sample.v1",
+        "schema_version": "melix.evaluation_sample.v2",
         "job_id": "eval-1",
         "suite_id": "mmlu",
         "dataset_id": "vision-dev",
         "sample_id": "vision-1",
-        "question": "Describe the image.",
-        "expected": "Cat",
-        "predicted": "Cat",
+        "system": "Describe the image.",
+        "input_text": "Describe the image.",
+        "target": "Cat",
         "raw_response": "Answer: Cat",
-        "correct": True,
+        "extracted_result": "Cat",
+        "typed_score": 1.0,
         "time_s": 0.045,
-        "parse_status": "parsed_answer_prefix",
+        "extraction_status": "extracted",
+        "validation_status": "validated",
+        "failure_reason": "",
         "task_kind": "image-text-to-text",
         "input_modalities": ["text", "image"],
         "media_references": ["/tmp/cat.png"],
@@ -260,18 +297,24 @@ def test_build_evaluation_compare_records_preserve_target_metadata() -> None:
         dataset_id="mmlu-dev",
         sample_id="sample-1",
         target_model_id="melix-dev-text-lora-a",
-        question="2+2?",
-        expected="4",
-        base_predicted="4",
-        target_predicted="4",
+        input_text="2+2?",
+        target="4",
+        base_extracted_result="4",
+        target_extracted_result="4",
         base_raw_response="Answer: 4",
         target_raw_response="Answer: 4",
-        base_correct=True,
-        target_correct=True,
-        outcome="tie",
-        regression=False,
+        base_typed_score=1.0,
+        target_typed_score=1.0,
+        outcome="score_tie",
+        regression_kind="",
         base_time_s=0.01,
         target_time_s=0.02,
+        base_extraction_status="extracted",
+        target_extraction_status="extracted",
+        base_validation_status="validated",
+        target_validation_status="validated",
+        base_failure_reason="",
+        target_failure_reason="",
         base_parse_status="parsed_answer_prefix",
         target_parse_status="parsed_answer_prefix",
         category_label="math",
@@ -288,7 +331,7 @@ def test_build_evaluation_compare_records_preserve_target_metadata() -> None:
     assert sample.to_dict()["category_label"] == "math"
     assert sample.to_dict()["subject_label"] == "algebra"
     assert summary.to_dict()["metrics"][0]["name"] == "eval.compare.delta_accuracy"
-    assert sample.to_dict()["base_predicted"] == "4"
-    assert sample.to_dict()["target_predicted"] == "4"
-    assert sample.to_dict()["outcome"] == "tie"
-    assert sample.to_dict()["regression"] is False
+    assert sample.to_dict()["base_extracted_result"] == "4"
+    assert sample.to_dict()["target_extracted_result"] == "4"
+    assert sample.to_dict()["outcome"] == "score_tie"
+    assert sample.to_dict()["regression_kind"] == ""

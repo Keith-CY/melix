@@ -127,10 +127,12 @@ struct BenchmarkExportBundleTests {
         #expect(summaryRows[0].suiteID == "mmlu")
         #expect(summaryRows[0].datasetID == "mmlu.dev.v1")
         #expect(summaryRows[0].sampleSize == 8)
-        #expect(summaryRows[0].scoreName == "eval.mmlu.accuracy")
-        #expect(summaryRows[0].scoreValue == 0.75)
-        #expect(summaryRows[0].correctCount == 6)
-        #expect(summaryRows[0].incorrectCount == 2)
+        #expect(summaryRows[0].primaryScoreName == "typed_score_mean")
+        #expect(summaryRows[0].primaryScoreValue == 0.75)
+        #expect(summaryRows[0].extractionSuccessCount == 8)
+        #expect(summaryRows[0].validationSuccessCount == 8)
+        #expect(summaryRows[0].scoredSampleCount == 8)
+        #expect(summaryRows[0].failureCount == 0)
         #expect(summaryRows[0].effectThreshold == 0.1)
         #expect(summaryRows[0].verdict == "improvement")
         #expect(summaryRows[0].bootstrapLowerBound == 0.12)
@@ -148,10 +150,10 @@ struct BenchmarkExportBundleTests {
         #expect(samples[0].codeEntryPoint == "solve")
         #expect(samples[0].categoryLabel == "math")
         #expect(samples[0].subjectLabel == "algebra")
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
-        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
-        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,typed_score_mean,0.75,8,8,8,0,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(sampleCSV.contains("eval-1,mmlu,sample-1,text-generation,4,4,2+2?,4,1.0,0.01,extracted,validated,,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
         #expect(sampleJSONL.contains("\"sample_id\":\"sample-1\""))
         #expect(sampleJSONL.contains("\"task_kind\":\"text-generation\""))
         #expect(sampleJSONL.contains("\"input_modalities\":[\"text\"]"))
@@ -181,7 +183,7 @@ struct BenchmarkExportBundleTests {
         #expect(samples[0].subjectLabel == "algebra")
         #expect(summaryCSV.contains("job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds"))
         #expect(summaryCSV.contains("eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75"))
-        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted"))
+        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,input_text,target,base_extracted_result,target_extracted_result"))
         #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,,math,algebra"))
         #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
         #expect(samplesJSONL.contains("\"base_code_failure_detail\":\"assertion failed\""))
@@ -220,18 +222,18 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b", "eval-z"])
         #expect(rows[0].taskKind == "text-generation")
         #expect(rows[1].sourceRepo == "fallback/repo")
-        #expect(rows[0].scoreName == "eval.mmlu.accuracy")
-        #expect(rows[0].scoreValue == 0.5)
-        #expect(rows[0].correctCount == 0)
-        #expect(rows[0].incorrectCount == 0)
+        #expect(rows[0].primaryScoreName == "eval.mmlu.accuracy")
+        #expect(rows[0].primaryScoreValue == 0.5)
+        #expect(rows[0].extractionSuccessCount == 0)
+        #expect(rows[0].validationSuccessCount == 0)
         #expect(rows[0].durationSeconds == 0)
         #expect(samples.map(\.sampleID) == ["sample-1", "sample-2"])
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
-        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
-        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n")
-        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n")
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n")
+        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n")
         #expect(emptyBundle.evaluationCompareSummaryCSV() == "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds\n")
-        #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted,base_raw_response,target_raw_response,base_correct,target_correct,outcome,regression,base_time_s,target_time_s,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label\n")
+        #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,input_text,target,base_extracted_result,target_extracted_result,base_raw_response,target_raw_response,base_typed_score,target_typed_score,outcome,regression_kind,base_time_s,target_time_s,base_extraction_status,target_extraction_status,base_validation_status,target_validation_status,base_failure_reason,target_failure_reason,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label\n")
     }
 
     @Test("canonical evaluation summary rows are sorted deterministically")
@@ -246,9 +248,9 @@ struct BenchmarkExportBundleTests {
         #expect(rows.map(\.jobID) == ["eval-a", "eval-b"])
         #expect(rows[0].createdAtUnixMS == 1712400000000)
         #expect(rows[1].createdAtUnixMS == 1712400000000)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
-        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
-        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,eval.gsm8k.exact_match,0.5,5,3,0.05,inconclusive,-0.04,0.16,-0.02,0.14,9.75,1712400000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(csv.contains("eval-a,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,typed_score_mean,0.75,8,8,8,0,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(csv.contains("eval-b,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,gsm8k,gsm8k.dev.v1,8,typed_score_mean,0.5,8,8,8,0,0.05,inconclusive,-0.04,0.16,-0.02,0.14,9.75,1712400000000"))
     }
 
     @Test("canonical evaluation summary rows sort by timestamp before job id")
@@ -450,10 +452,12 @@ private let benchmarkExportBundleJSON = """
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_size": 8,
-      "score_name": "eval.mmlu.accuracy",
-      "score_value": 0.75,
-      "correct_count": 6,
-      "incorrect_count": 2,
+      "primary_score_name": "typed_score_mean",
+      "primary_score_value": 0.75,
+      "extraction_success_count": 8,
+      "validation_success_count": 8,
+      "scored_sample_count": 8,
+      "failure_count": 0,
       "effect_threshold": 0.1,
       "verdict": "improvement",
       "bootstrap_lower_bound": 0.12,
@@ -466,19 +470,22 @@ private let benchmarkExportBundleJSON = """
   ],
   "evaluation_samples": [
     {
-      "schema_version": "melix.evaluation_sample.v1",
+      "schema_version": "melix.evaluation_sample.v2",
       "job_id": "eval-1",
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_id": "sample-1",
-      "task_kind": "text-generation",
-      "question": "2+2?",
-      "expected": "4",
-      "predicted": "4",
+      "system": "",
+      "input_text": "2+2?",
+      "target": "4",
       "raw_response": "4",
-      "correct": true,
+      "extracted_result": "4",
+      "typed_score": 1.0,
       "time_s": 0.01,
-      "parse_status": "parsed",
+      "extraction_status": "extracted",
+      "validation_status": "validated",
+      "failure_reason": "",
+      "task_kind": "text-generation",
       "input_modalities": ["text"],
       "media_references": [],
       "code_language": "python",
@@ -496,7 +503,7 @@ private let benchmarkExportBundleJSON = """
   ],
   "evaluation_compare_jobs": [
     {
-      "schema_version": "melix.evaluation_compare_job.v1",
+      "schema_version": "melix.evaluation_compare_job.v2",
       "job_id": "eval-compare-1",
       "base_model_id": "melix-dev-text",
       "target_model_ids": ["melix-dev-text-lora-a"],
@@ -518,7 +525,7 @@ private let benchmarkExportBundleJSON = """
   ],
   "evaluation_compare_summary_rows": [
     {
-      "schema_version": "melix.evaluation_compare_summary.v1",
+      "schema_version": "melix.evaluation_compare_summary.v2",
       "job_id": "eval-compare-1",
       "base_model_id": "melix-dev-text",
       "target_model_id": "melix-dev-text-lora-a",
@@ -543,24 +550,30 @@ private let benchmarkExportBundleJSON = """
   ],
   "evaluation_compare_samples": [
     {
-      "schema_version": "melix.evaluation_compare_sample.v1",
+      "schema_version": "melix.evaluation_compare_sample.v2",
       "job_id": "eval-compare-1",
       "suite_id": "mbpp",
       "dataset_id": "mbpp.dev.v1",
       "sample_id": "sample-1",
       "target_model_id": "melix-dev-text-lora-a",
-      "question": "Write solve(n) that returns n",
-      "expected": "solve",
-      "base_predicted": "def solve(n):\\n    return 0",
-      "target_predicted": "def solve(n):\\n    return n",
+      "input_text": "Write solve(n) that returns n",
+      "target": "solve",
+      "base_extracted_result": "def solve(n):\\n    return 0",
+      "target_extracted_result": "def solve(n):\\n    return n",
       "base_raw_response": "def solve(n):\\n    return 0",
       "target_raw_response": "def solve(n):\\n    return n",
-      "base_correct": false,
-      "target_correct": true,
+      "base_typed_score": 0.0,
+      "target_typed_score": 1.0,
       "outcome": "win",
-      "regression": false,
+      "regression_kind": "",
       "base_time_s": 0.11,
       "target_time_s": 0.09,
+      "base_extraction_status": "extracted",
+      "target_extraction_status": "extracted",
+      "base_validation_status": "validated",
+      "target_validation_status": "validated",
+      "base_failure_reason": "",
+      "target_failure_reason": "",
       "base_parse_status": "parsed_code_fallback",
       "target_parse_status": "parsed_code_fallback",
       "code_language": "python",
@@ -674,32 +687,38 @@ private let evaluationExportBundleFallbackJSON = """
   ],
   "evaluation_samples": [
     {
-      "schema_version": "melix.evaluation_sample.v1",
+      "schema_version": "melix.evaluation_sample.v2",
       "job_id": "eval-a",
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_id": "sample-2",
-      "question": "2+2?",
-      "expected": "4",
-      "predicted": "4",
+      "system": "",
+      "input_text": "2+2?",
+      "target": "4",
       "raw_response": "4",
-      "correct": true,
+      "extracted_result": "4",
+      "typed_score": 1.0,
       "time_s": 0.02,
-      "parse_status": "parsed"
+      "extraction_status": "extracted",
+      "validation_status": "validated",
+      "failure_reason": ""
     },
     {
-      "schema_version": "melix.evaluation_sample.v1",
+      "schema_version": "melix.evaluation_sample.v2",
       "job_id": "eval-a",
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_id": "sample-1",
-      "question": "3+3?",
-      "expected": "6",
-      "predicted": "6",
+      "system": "",
+      "input_text": "3+3?",
+      "target": "6",
       "raw_response": "6",
-      "correct": true,
+      "extracted_result": "6",
+      "typed_score": 1.0,
       "time_s": 0.01,
-      "parse_status": "parsed"
+      "extraction_status": "extracted",
+      "validation_status": "validated",
+      "failure_reason": ""
     }
   ]
 }
@@ -756,10 +775,12 @@ private let canonicalEvaluationSummaryRowsJSON = """
       "suite_id": "gsm8k",
       "dataset_id": "gsm8k.dev.v1",
       "sample_size": 8,
-      "score_name": "eval.gsm8k.exact_match",
-      "score_value": 0.5,
-      "correct_count": 5,
-      "incorrect_count": 3,
+      "primary_score_name": "typed_score_mean",
+      "primary_score_value": 0.5,
+      "extraction_success_count": 8,
+      "validation_success_count": 8,
+      "scored_sample_count": 8,
+      "failure_count": 0,
       "effect_threshold": 0.05,
       "verdict": "inconclusive",
       "bootstrap_lower_bound": -0.04,
@@ -777,10 +798,12 @@ private let canonicalEvaluationSummaryRowsJSON = """
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_size": 8,
-      "score_name": "eval.mmlu.accuracy",
-      "score_value": 0.75,
-      "correct_count": 6,
-      "incorrect_count": 2,
+      "primary_score_name": "typed_score_mean",
+      "primary_score_value": 0.75,
+      "extraction_success_count": 8,
+      "validation_success_count": 8,
+      "scored_sample_count": 8,
+      "failure_count": 0,
       "effect_threshold": 0.1,
       "verdict": "improvement",
       "bootstrap_lower_bound": 0.12,
@@ -806,10 +829,12 @@ private let canonicalEvaluationSummaryTimestampJSON = """
       "suite_id": "gsm8k",
       "dataset_id": "gsm8k.dev.v1",
       "sample_size": 8,
-      "score_name": "eval.gsm8k.exact_match",
-      "score_value": 0.5,
-      "correct_count": 5,
-      "incorrect_count": 3,
+      "primary_score_name": "typed_score_mean",
+      "primary_score_value": 0.5,
+      "extraction_success_count": 8,
+      "validation_success_count": 8,
+      "scored_sample_count": 8,
+      "failure_count": 0,
       "effect_threshold": 0.05,
       "verdict": "inconclusive",
       "bootstrap_lower_bound": -0.04,
@@ -827,10 +852,12 @@ private let canonicalEvaluationSummaryTimestampJSON = """
       "suite_id": "mmlu",
       "dataset_id": "mmlu.dev.v1",
       "sample_size": 8,
-      "score_name": "eval.mmlu.accuracy",
-      "score_value": 0.75,
-      "correct_count": 6,
-      "incorrect_count": 2,
+      "primary_score_name": "typed_score_mean",
+      "primary_score_value": 0.75,
+      "extraction_success_count": 8,
+      "validation_success_count": 8,
+      "scored_sample_count": 8,
+      "failure_count": 0,
       "effect_threshold": 0.1,
       "verdict": "improvement",
       "bootstrap_lower_bound": 0.12,

@@ -1,10 +1,17 @@
 {
-  "schema_version": "melix.evaluation_dataset_package.v1",
+  "schema_version": "melix.evaluation_dataset_package.v2",
   "dataset_id": "imagenette.dev.v1",
   "suite_id": "imagenette",
   "task_kind": "image-text-to-text",
   "input_modalities": ["text", "image"],
   "version": "2026-04-07",
   "sample_count": 10,
-  "split": "validation"
+  "split": "validation",
+  "profile_type": "final_result",
+  "result_kind": "text",
+  "extraction_mode": "heuristic_final",
+  "scoring_mode": "normalized_exact_match",
+  "threshold": 1.0,
+  "output_schema": {},
+  "ignored_paths": []
 }

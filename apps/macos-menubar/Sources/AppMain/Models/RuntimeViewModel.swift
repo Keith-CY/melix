@@ -712,6 +712,30 @@ public enum RuntimeEvaluationMode: String, CaseIterable, Identifiable, Sendable 
     }
 }
 
+public enum RuntimeEvaluationDatasetSourceKind: String, CaseIterable, Identifiable, Sendable {
+    case builtinPackage = "builtin_package"
+    case localCSV = "local_csv"
+    case localJSONL = "local_jsonl"
+    case huggingFaceDataset = "hf_dataset"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .builtinPackage:
+            return "Built-in Package"
+        case .localCSV:
+            return "Local CSV"
+        case .localJSONL:
+            return "Local JSONL"
+        case .huggingFaceDataset:
+            return "Hugging Face Dataset"
+        }
+    }
+}
+
 public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
     public let id: String
     public let adapterName: String
@@ -971,12 +995,12 @@ public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendabl
 public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Sendable {
     public let id: String
     public let sampleID: String
-    public let question: String
-    public let expected: String
-    public let predicted: String
+    public let inputText: String
+    public let target: String
+    public let extractedResult: String
     public let rawResponse: String
-    public let correctText: String
-    public let parseStatus: String
+    public let typedScoreText: String
+    public let statusText: String
     public let timeText: String
     public let categoryLabel: String
     public let subjectLabel: String
@@ -984,24 +1008,24 @@ public struct RuntimeEvaluationSamplePreviewState: Identifiable, Equatable, Send
     public init(
         id: String,
         sampleID: String,
-        question: String,
-        expected: String,
-        predicted: String,
+        inputText: String,
+        target: String,
+        extractedResult: String,
         rawResponse: String,
-        correctText: String,
-        parseStatus: String,
+        typedScoreText: String,
+        statusText: String,
         timeText: String,
         categoryLabel: String = "",
         subjectLabel: String = ""
     ) {
         self.id = id
         self.sampleID = RichOutputSanitizer.sanitized(sampleID)
-        self.question = RichOutputSanitizer.sanitized(question)
-        self.expected = RichOutputSanitizer.sanitized(expected)
-        self.predicted = RichOutputSanitizer.sanitized(predicted)
+        self.inputText = RichOutputSanitizer.sanitized(inputText)
+        self.target = RichOutputSanitizer.sanitized(target)
+        self.extractedResult = RichOutputSanitizer.sanitized(extractedResult)
         self.rawResponse = RichOutputSanitizer.sanitized(rawResponse)
-        self.correctText = RichOutputSanitizer.sanitized(correctText)
-        self.parseStatus = RichOutputSanitizer.sanitized(parseStatus)
+        self.typedScoreText = RichOutputSanitizer.sanitized(typedScoreText)
+        self.statusText = RichOutputSanitizer.sanitized(statusText)
         self.timeText = RichOutputSanitizer.sanitized(timeText)
         self.categoryLabel = RichOutputSanitizer.sanitized(categoryLabel)
         self.subjectLabel = RichOutputSanitizer.sanitized(subjectLabel)
@@ -1256,6 +1280,21 @@ public final class RuntimeViewModel {
     public var evaluationScoringMode = "multiple_choice_accuracy"
     public var evaluationCodeExecPolicy = "sandboxed"
     public var evaluationHFRepoID = ""
+    public var evaluationDatasetSourceKind: RuntimeEvaluationDatasetSourceKind = .builtinPackage
+    public var evaluationSourcePath = ""
+    public var evaluationHFDatasetPath = ""
+    public var evaluationHFDatasetName = ""
+    public var evaluationHFDatasetRevision = "main"
+    public var evaluationHFDatasetSplit = "train"
+    public var evaluationFieldSystemPath = ""
+    public var evaluationFieldInputTextPath = ""
+    public var evaluationFieldTargetPath = ""
+    public var evaluationFieldSampleIDPath = ""
+    public var evaluationResultKind = "text"
+    public var evaluationExtractionMode = "heuristic_final"
+    public var evaluationThreshold = "1.0"
+    public var evaluationOutputSchemaJSON = ""
+    public var evaluationIgnoredPaths = ""
     public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
     public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
@@ -4776,6 +4815,7 @@ public final class RuntimeViewModel {
     public func runEvaluation() async {
         let modelID = resolvedEvaluationModelID()
         let repoID = evaluationHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
         switch selectedEvaluationTargetMode {
         case .catalogModel:
             guard !modelID.isEmpty else {
@@ -4805,8 +4845,20 @@ public final class RuntimeViewModel {
             return
         }
 
+        if usesCustomSource, selectedEvaluationMode == .compare {
+            recordLocalError("Evaluation Compare does not yet support custom dataset sources.")
+            notifyStateChanged()
+            return
+        }
+
+        if let sourceValidationError = validateEvaluationSourceConfiguration() {
+            recordLocalError(sourceValidationError)
+            notifyStateChanged()
+            return
+        }
+
         let startedAt = Date()
-        if let cliWorkflowRunner {
+        if usesCustomSource == false, let cliWorkflowRunner {
             do {
                 let payloads = try await cliWorkflowRunner.decodeJSON(
                     [MelixCLIEvaluationRunPayload].self,
@@ -4839,7 +4891,7 @@ public final class RuntimeViewModel {
             return
         }
         do {
-            if let operatorCommandRunner {
+            if usesCustomSource == false, let operatorCommandRunner {
                 if selectedEvaluationMode == .compare {
                     _ = try await operatorCommandRunner.runEvaluationCompare(
                         EvalCompareOptions(
@@ -4864,15 +4916,12 @@ public final class RuntimeViewModel {
                 }
             } else {
                 for suiteID in suites {
-                    let datasetID = Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
                     _ = try await client.runEvaluation(
-                        ControlPlaneEvaluationRequest(
+                        makeEvaluationRequest(
+                            suiteID: suiteID,
                             modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
                             hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
-                            suiteID: suiteID,
-                            datasetID: datasetID,
-                            sampleSize: evaluationSampleSize(for: suiteID),
-                            parameters: evaluationParameters(compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil)
+                            compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil
                         )
                     )
                 }
@@ -6122,6 +6171,102 @@ public final class RuntimeViewModel {
             parameters["compare_target_model_ids"] = compareTargetModelIDs.joined(separator: ",")
         }
         return parameters
+    }
+
+    private func validateEvaluationSourceConfiguration() -> String? {
+        switch evaluationDatasetSourceKind {
+        case .builtinPackage:
+            return nil
+        case .localCSV, .localJSONL:
+            if evaluationSourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Enter a local source path before running Evaluation."
+            }
+        case .huggingFaceDataset:
+            if evaluationHFDatasetPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Enter a Hugging Face dataset path before running Evaluation."
+            }
+        }
+
+        if evaluationFieldInputTextPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Evaluation input text mapping is required for custom dataset sources."
+        }
+        if evaluationFieldTargetPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Evaluation target mapping is required for custom dataset sources."
+        }
+        if Double(evaluationThreshold.trimmingCharacters(in: .whitespacesAndNewlines)) == nil {
+            return "Evaluation threshold must be numeric."
+        }
+        return nil
+    }
+
+    private func makeEvaluationRequest(
+        suiteID: String,
+        modelID: String,
+        hfRepoID: String,
+        compareTargetModelIDs: [String]?
+    ) -> ControlPlaneEvaluationRequest {
+        let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
+        return ControlPlaneEvaluationRequest(
+            modelID: modelID,
+            hfRepoID: hfRepoID,
+            suiteID: suiteID,
+            datasetID: usesCustomSource ? "" : evaluationDatasetID(for: suiteID),
+            sampleSize: evaluationSampleSize(for: suiteID),
+            source: evaluationRequestSource(),
+            fieldMapping: .init(
+                systemPath: evaluationFieldSystemPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                inputTextPath: evaluationFieldInputTextPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                targetPath: evaluationFieldTargetPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                sampleIDPath: evaluationFieldSampleIDPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            profile: .init(
+                profileType: "final_result",
+                resultKind: evaluationResultKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "text"
+                    : evaluationResultKind.trimmingCharacters(in: .whitespacesAndNewlines),
+                extractionMode: evaluationExtractionMode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "heuristic_final"
+                    : evaluationExtractionMode.trimmingCharacters(in: .whitespacesAndNewlines),
+                scoringMode: normalizedEvaluationScoringMode(),
+                threshold: Double(evaluationThreshold.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1.0,
+                outputSchemaJSON: evaluationOutputSchemaJSON.trimmingCharacters(in: .whitespacesAndNewlines),
+                ignoredPaths: normalizedEvaluationIgnoredPaths()
+            ),
+            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs)
+        )
+    }
+
+    private func evaluationRequestSource() -> ControlPlaneEvaluationRequest.Source {
+        switch evaluationDatasetSourceKind {
+        case .builtinPackage:
+            return .builtinPackage
+        case .localCSV:
+            return .localCSV(path: evaluationSourcePath.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .localJSONL:
+            return .localJSONL(path: evaluationSourcePath.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .huggingFaceDataset:
+            return .huggingFaceDataset(
+                datasetPath: evaluationHFDatasetPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                datasetName: evaluationHFDatasetName.trimmingCharacters(in: .whitespacesAndNewlines),
+                datasetRevision: evaluationHFDatasetRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "main"
+                    : evaluationHFDatasetRevision.trimmingCharacters(in: .whitespacesAndNewlines),
+                split: evaluationHFDatasetSplit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "train"
+                    : evaluationHFDatasetSplit.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+    }
+
+    private func evaluationDatasetID(for suiteID: String) -> String {
+        Self.evaluationSuiteOptions.first(where: { $0.id == suiteID })?.datasetID ?? "\(suiteID).dev.v1"
+    }
+
+    private func normalizedEvaluationIgnoredPaths() -> [String] {
+        evaluationIgnoredPaths
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
     }
 
     private func normalizedBenchGenerationLengths() -> [UInt32] {
@@ -8358,12 +8503,12 @@ public final class RuntimeViewModel {
         from row: ControlPlaneEvaluationSummaryCSVRow
     ) -> RuntimeEvaluationMetricCardState {
         RuntimeEvaluationMetricCardState(
-            id: "\(row.jobID):\(row.suiteID):\(row.scoreName)",
+            id: "\(row.jobID):\(row.suiteID):\(row.primaryScoreName)",
             suiteTitle: evaluationSuiteTitle(for: row.suiteID),
-            metricName: row.scoreName,
-            metricLabel: evaluationScoreLabel(row.scoreName),
-            value: row.scoreValue,
-            valueText: String(format: "%.2f", row.scoreValue),
+            metricName: row.primaryScoreName,
+            metricLabel: evaluationScoreLabel(row.primaryScoreName),
+            value: row.primaryScoreValue,
+            valueText: String(format: "%.2f", row.primaryScoreValue),
             unit: "score",
             verdictText: row.verdict,
             thresholdText: decimalMetricText(row.effectThreshold),
@@ -8378,12 +8523,14 @@ public final class RuntimeViewModel {
         RuntimeEvaluationSamplePreviewState(
             id: "\(row.jobID):\(row.sampleID)",
             sampleID: row.sampleID,
-            question: row.question,
-            expected: row.expected,
-            predicted: row.predicted,
+            inputText: row.inputText,
+            target: row.target,
+            extractedResult: row.extractedResult,
             rawResponse: row.rawResponse,
-            correctText: row.correct ? "Correct" : "Incorrect",
-            parseStatus: row.parseStatus,
+            typedScoreText: String(format: "%.2f", row.typedScore),
+            statusText: [row.extractionStatus, row.validationStatus]
+                .filter { $0.isEmpty == false }
+                .joined(separator: " • "),
             timeText: String(format: "%.2fs", row.timeS),
             categoryLabel: row.categoryLabel,
             subjectLabel: row.subjectLabel

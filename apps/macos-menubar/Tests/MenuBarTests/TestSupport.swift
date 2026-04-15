@@ -1841,14 +1841,21 @@ func makeBenchmarkExportBundleJSON() -> String {
       ],
       "evaluation_results": [
         {
-          "schema_version": "melix.evaluation_result.v1",
+          "schema_version": "melix.evaluation_result.v2",
           "job_id": "eval-newer",
           "suite_id": "mmlu",
           "dataset_id": "mmlu.dev.v1",
           "sample_size": 8,
+          "primary_score_name": "typed_score_mean",
+          "primary_score_value": 0.75,
+          "extraction_success_count": 8,
+          "validation_success_count": 8,
+          "scored_sample_count": 8,
+          "failure_count": 0,
+          "duration_seconds": 12.5,
           "metrics": [
-            {"name": "eval.mmlu.multiple_choice_accuracy", "value": 0.75, "unit": "ratio"},
-            {"name": "eval.mmlu.correct_count", "value": 6, "unit": "count"}
+            {"name": "eval.mmlu.typed_score_mean", "value": 0.75, "unit": "ratio"},
+            {"name": "eval.mmlu.threshold_pass_rate", "value": 0.75, "unit": "ratio"}
           ],
           "report_path": "/tmp/melix/evaluation/runs/eval-newer/evaluation-report.md"
         }
@@ -1878,34 +1885,40 @@ func makeBenchmarkExportBundleJSON() -> String {
       ],
       "evaluation_samples": [
         {
-          "schema_version": "melix.evaluation_sample.v1",
+          "schema_version": "melix.evaluation_sample.v2",
           "job_id": "eval-newer",
           "suite_id": "mmlu",
           "dataset_id": "mmlu.dev.v1",
           "sample_id": "mmlu-0001",
-          "question": "What is 2 + 2?",
-          "expected": "4",
-          "predicted": "4",
+          "system": "",
+          "input_text": "What is 2 + 2?",
+          "target": "4",
           "raw_response": "4",
-          "correct": true,
+          "extracted_result": "4",
+          "typed_score": 1.0,
           "time_s": 0.42,
-          "parse_status": "parsed",
+          "extraction_status": "extracted",
+          "validation_status": "validated",
+          "failure_reason": "",
           "category_label": "math",
           "subject_label": "arithmetic"
         },
         {
-          "schema_version": "melix.evaluation_sample.v1",
+          "schema_version": "melix.evaluation_sample.v2",
           "job_id": "eval-newer",
           "suite_id": "mmlu",
           "dataset_id": "mmlu.dev.v1",
           "sample_id": "mmlu-0002",
-          "question": "Capital of France?",
-          "expected": "Paris",
-          "predicted": "Lyon",
+          "system": "",
+          "input_text": "Capital of France?",
+          "target": "Paris",
           "raw_response": "Lyon",
-          "correct": false,
+          "extracted_result": "Lyon",
+          "typed_score": 0.0,
           "time_s": 0.51,
-          "parse_status": "parsed",
+          "extraction_status": "extracted",
+          "validation_status": "validated",
+          "failure_reason": "",
           "category_label": "geography",
           "subject_label": "europe"
         }

@@ -1231,6 +1231,30 @@ public actor ControlPlaneService {
         workerRequest.parameters = command.parameters
         workerRequest.taskKind = taskKind
         workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)
+        switch command.source.kind {
+        case .none:
+            break
+        case .localCsv(let localCSV):
+            workerRequest.source.localCsv.path = localCSV.path
+        case .localJsonl(let localJSONL):
+            workerRequest.source.localJsonl.path = localJSONL.path
+        case .hfDataset(let hfDataset):
+            workerRequest.source.hfDataset.datasetPath = hfDataset.datasetPath
+            workerRequest.source.hfDataset.datasetName = hfDataset.datasetName
+            workerRequest.source.hfDataset.datasetRevision = hfDataset.datasetRevision
+            workerRequest.source.hfDataset.split = hfDataset.split
+        }
+        workerRequest.fieldMapping.systemPath = command.fieldMapping.systemPath
+        workerRequest.fieldMapping.inputTextPath = command.fieldMapping.inputTextPath
+        workerRequest.fieldMapping.targetPath = command.fieldMapping.targetPath
+        workerRequest.fieldMapping.sampleIDPath = command.fieldMapping.sampleIDPath
+        workerRequest.profile.profileType = command.profile.profileType
+        workerRequest.profile.resultKind = command.profile.resultKind
+        workerRequest.profile.extractionMode = command.profile.extractionMode
+        workerRequest.profile.scoringMode = command.profile.scoringMode
+        workerRequest.profile.threshold = command.profile.threshold
+        workerRequest.profile.outputSchemaJson = command.profile.outputSchemaJson
+        workerRequest.profile.ignoredPaths = command.profile.ignoredPaths
 
         do {
             let workerResponse = try await workerClient.runEvaluation(request: workerRequest)
