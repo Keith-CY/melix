@@ -17,11 +17,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: rhysd/actionlint@v1.7.12
 
       - name: Diff check
-        run: git diff --check
+        run: git diff --check HEAD^1 HEAD
 
   proto-drift:
     runs-on: macos-15
@@ -35,9 +37,6 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v5
-
-      - name: Install protobuf generators
-        run: brew install protobuf swift-protobuf
 
       - name: Bootstrap
         run: make bootstrap

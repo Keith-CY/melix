@@ -8,8 +8,9 @@ This guide is the shortest path from a fresh checkout to a working local Melix d
 - `swift`
 - `python3`
 - `uv`
-- `protoc`
-- `protoc-gen-swift` for Swift protobuf generation
+
+`make proto` builds and uses the pinned protobuf generators from the repository's locked Python and
+Swift dependencies, so no separate `protoc` or `protoc-gen-swift` installation is required.
 
 ## Bootstrap The Repository
 

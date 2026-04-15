@@ -62,12 +62,23 @@ def _normalized_tokens(body_text: str) -> list[str]:
     cleaned = []
     for raw_line in body_text.splitlines():
         line = raw_line.strip()
-        if not line or line in {"```", "```text"}:
+        if not line or line.startswith("```"):
             continue
         if line.startswith("- "):
             line = line[2:].strip()
         cleaned.append(line)
     return cleaned
+
+
+def _is_placeholder_token(token: str) -> bool:
+    lowered = token.strip().lower()
+    for marker in PLACEHOLDER_MARKERS:
+        if lowered == marker:
+            return True
+        if lowered.startswith(marker) and len(lowered) > len(marker):
+            if not lowered[len(marker)].isalnum():
+                return True
+    return False
 
 
 def validate_body_text(body_text: str) -> list[str]:
@@ -83,7 +94,7 @@ def validate_body_text(body_text: str) -> list[str]:
             errors.append(f"Section '{section_name}' is missing meaningful content.")
             continue
         lowered = " ".join(tokens).lower()
-        if any(token == marker for token in (item.lower() for item in tokens) for marker in PLACEHOLDER_MARKERS):
+        if any(_is_placeholder_token(token) for token in tokens):
             errors.append(f"Section '{section_name}' must not be placeholder text.")
             continue
         if section_name == "Coverage and Metrics" and lowered == "n/a":

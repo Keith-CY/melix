@@ -27,7 +27,7 @@ on:
       - "services/mlx-worker-python/**"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: package-self-contained-app-${{ github.ref }}
@@ -36,6 +36,8 @@ concurrency:
 jobs:
   package-app:
     runs-on: macos-15
+    outputs:
+      artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
 
     steps:
       - uses: actions/checkout@v4
@@ -92,9 +94,22 @@ jobs:
           path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
           if-no-files-found: error
 
+  attach-release-artifact:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package-app
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packaged app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.package-app.outputs.artifact_name }}
+          path: ${{ runner.temp }}
+
       - name: Attach app to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
+          files: ${{ runner.temp }}/${{ needs.package-app.outputs.artifact_name }}.zip
           generate_release_notes: true

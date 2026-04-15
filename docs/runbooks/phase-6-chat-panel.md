@@ -14,7 +14,8 @@ Use this runbook when you need to:
 - macOS on Apple Silicon
 - `make bootstrap` has completed successfully
 - `make proto` has completed successfully
-- `uv`, `swift`, `protoc`, and `protoc-gen-swift` are available
+- `uv` and `swift` are available; `make proto` builds the pinned protobuf generators from the
+  repository's locked dependencies
 - the Phase 6 stack can already serve `/v1/models`
 
 ## Diagnosis

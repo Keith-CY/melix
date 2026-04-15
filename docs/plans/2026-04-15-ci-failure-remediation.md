@@ -8,6 +8,7 @@ This plan remediates the failing GitHub Actions checks currently blocking PR val
 The slice is intentionally narrow:
 
 - restore `ci-pr` workflow reliability
+- harden the PR-only validation and packaging workflows after self-review findings
 - restore macOS packaging compatibility with the current GitHub runner image and Xcode toolchain
 - keep fixes limited to the failing workflow, Python sandbox execution path, and Swift request and
   branding code that the workflows exercise
@@ -22,6 +23,12 @@ This slice does not add:
 
 - `actionlint-and-diffcheck` references `rhysd/actionlint@v1`, which is not a resolvable GitHub
   Action version.
+- `actionlint-and-diffcheck` currently runs `git diff --check` against a clean checkout, which does
+  not validate the proposed PR patch and misses whitespace or conflict-marker defects introduced by
+  the reviewed change.
+- `proto-drift` installs `protobuf` and `swift-protobuf` directly from Homebrew on every run, so
+  the protocol generators can drift independently of the repository's locked Python and Swift
+  dependency graph.
 - `python-tests` execute the sandboxed evaluator via the framework wrapper interpreter on GitHub
   macOS runners, which fails under `sandbox-exec` before the evaluation payload is emitted.
 - `integration-tests` run before the required Swift products are built, so the suite fails on
@@ -34,16 +41,25 @@ This slice does not add:
   property is not isolated to the main actor.
 - `swift-tests` expose a timing-sensitive request coordinator test that assumes disconnect-grace
   expiry has already completed after a fixed sleep.
+- `validate_pr_evidence.py` currently accepts empty fenced code blocks and loose placeholder text
+  such as `TODO: fill later`, which weakens the mandatory PR evidence gate.
+- `package-self-contained-app` grants `contents: write` for the full workflow even though only the
+  tag-release attachment path needs repository write access.
 
 ## Planned Changes
 
 ### Workflow fixes
 
 - Pin `actionlint` to a resolvable published version.
+- Make the diff check validate the checked-out merge patch rather than the empty worktree state.
 - Update the integration workflow path so Swift artifacts are built before `make integration-test`.
 - Increase the integration workflow timeout so the prerequisite build and full Python suite can both
   complete on GitHub macOS runners.
 - Provision Python, `uv`, and the locked worker environment before running `make swift-test`.
+- Move protocol generation to repository-pinned toolchains so `proto-drift` is deterministic across
+  runs.
+- Reduce packaging workflow permissions to `contents: read` by default and isolate release-asset
+  publication in a tag-only write-scoped job.
 
 ### Python sandbox execution
 
@@ -51,6 +67,8 @@ This slice does not add:
   framework wrapper binary under sandboxing.
 - Add regression coverage for the executable-selection behavior so the runner-specific path stays
   stable.
+- Tighten PR evidence parsing so empty fenced blocks and placeholder-prefixed bullets fail
+  validation.
 
 ### Swift compatibility and determinism
 
@@ -71,6 +89,11 @@ Measurement points for this remediation:
 - Swift worker bridge fixture execution: `uv`-backed bridge commands remain dispatchable inside the
   Swift test job.
 - Disconnect-grace test determinism: terminal failure metrics are observed before assertions run.
+- PR evidence gate strength: required sections reject empty code fences and placeholder-prefixed
+  items while still accepting justified `N/A:` coverage statements.
+- Protocol generation determinism: the same repository-locked protobuf toolchain is used in CI and
+  local regeneration paths.
+- Packaging workflow permissions: pull request execution paths stay read-only.
 
 Success targets:
 
@@ -86,8 +109,12 @@ Targeted verification:
 
 ```bash
 uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_code_eval_runner.py -q
+uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_validate_pr_evidence.py -q
 xcrun swift test --package-path services/control-plane-swift --filter "HTTPGatewayTests.RequestCoordinatorTests/disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure()"
 xcrun swift test --package-path apps/macos-menubar
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python python -m grpc_tools.protoc --version
+HOME="$PWD/.swift-home/protocol" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex/protocol" xcrun swift build --package-path packages/protocol/swift --product protoc-gen-swift --disable-automatic-resolution
+HOME="$PWD/.swift-home/protocol" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex/protocol" xcrun swift build --package-path packages/protocol/swift --product protoc-gen-grpc-swift-2 --disable-automatic-resolution
 ```
 
 Broader regression checks:
