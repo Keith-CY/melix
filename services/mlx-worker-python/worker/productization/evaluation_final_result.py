@@ -136,18 +136,19 @@ def materialize_local_evaluation_dataset(
     request: EvaluationMaterializationRequest,
     cache_root: Path,
 ) -> MaterializedEvaluationDataset:
-    rows = _read_local_rows(request.source_kind, request.source_path)
+    resolved_source_path = request.source_path.expanduser().resolve()
+    rows = _read_local_rows(request.source_kind, resolved_source_path)
     return _materialize_evaluation_rows(
         rows=rows,
         profile=request.profile,
         field_mapping=request.field_mapping,
-        dataset_id=request.dataset_id or f"{request.source_path.stem}.dev.v1",
-        suite_id=request.suite_id or request.source_path.stem,
+        dataset_id=request.dataset_id or f"{resolved_source_path.stem}.dev.v1",
+        suite_id=request.suite_id or resolved_source_path.stem,
         cache_root=cache_root,
-        source_metadata={
-            "source_kind": request.source_kind,
-            "source_path": str(request.source_path.resolve()),
-        },
+        source_metadata=_local_source_metadata(
+            source_kind=request.source_kind,
+            source_path=resolved_source_path,
+        ),
     )
 
 
@@ -343,6 +344,17 @@ def _joined_path(prefix: str, key: str) -> str:
     if not prefix:
         return key
     return f"{prefix}.{key}"
+
+
+def _local_source_metadata(*, source_kind: str, source_path: Path) -> dict[str, Any]:
+    resolved = Path(source_path).expanduser().resolve()
+    source_bytes = resolved.read_bytes()
+    return {
+        "source_kind": source_kind,
+        "source_path": str(resolved),
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "source_size_bytes": len(source_bytes),
+    }
 
 
 def _read_local_rows(source_kind: str, source_path: Path) -> list[dict[str, Any]]:

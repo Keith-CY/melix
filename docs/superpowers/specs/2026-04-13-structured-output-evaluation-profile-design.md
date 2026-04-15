@@ -45,6 +45,8 @@ That means the current Melix boundary is:
 - external corpora such as Hugging Face datasets are reusable source datasets rather than direct
   runtime contracts
 - request-driven materialization attaches profile metadata during package creation
+- omitted request thresholds normalize to `1.0` during package creation so proto3 scalar defaults do
+  not persist as accidental zero-pass thresholds
 - current fixtures may still carry legacy content, but runtime evidence is normalized to
   `final_result`
 
@@ -93,6 +95,8 @@ Melix separates dataset origin from runtime execution:
 - source datasets may come from Hugging Face, local annotation sets, or repository fixtures
 - execution must always consume a Melix evaluation dataset package
 - Hugging Face remains reusable as a source, but not as the direct runtime contract
+- local-source materialization cache identity must include a source-content fingerprint so reusing
+  the same path with different bytes produces a new package
 
 This keeps the runtime boundary deterministic and lets Melix evolve one package format without
 importing the variability of external schemas into the worker core.

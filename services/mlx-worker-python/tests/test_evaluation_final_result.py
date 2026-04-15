@@ -184,3 +184,68 @@ def test_materialize_local_evaluation_dataset_builds_final_result_package_from_c
     assert sample["system"] == "Return the final answer only."
     assert sample["input"]["text"] == "Capital of France?"
     assert sample["target"] == "Paris"
+
+
+def test_materialize_local_evaluation_dataset_invalidates_cache_when_local_source_changes(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.csv"
+    with source_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["sys", "question", "gold"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "sys": "Return the final answer only.",
+                "question": "Capital of France?",
+                "gold": "Paris",
+            }
+        )
+
+    request = EvaluationMaterializationRequest(
+        source_kind="csv",
+        source_path=source_path,
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="text",
+            extraction_mode="heuristic_final",
+            scoring_mode="normalized_exact_match",
+            threshold=1.0,
+        ),
+        field_mapping=EvaluationFieldMapping(
+            system_path="sys",
+            input_text_path="question",
+            target_path="gold",
+        ),
+        dataset_id="capital.dev.v1",
+        suite_id="capital",
+    )
+
+    first = materialize_local_evaluation_dataset(
+        request=request,
+        cache_root=tmp_path / "cache",
+    )
+
+    with source_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["sys", "question", "gold"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "sys": "Return the final answer only.",
+                "question": "Capital of Italy?",
+                "gold": "Rome",
+            }
+        )
+
+    second = materialize_local_evaluation_dataset(
+        request=request,
+        cache_root=tmp_path / "cache",
+    )
+
+    sample = json.loads((second.package_path / "samples.jsonl").read_text(encoding="utf-8").strip())
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False
+    assert second.cache_key != first.cache_key
+    assert second.package_path != first.package_path
+    assert sample["input"]["text"] == "Capital of Italy?"
+    assert sample["target"] == "Rome"

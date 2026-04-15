@@ -495,13 +495,14 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             if not isinstance(parsed, dict):
                 raise ValueError("evaluation profile output_schema_json must decode to a JSON object.")
             output_schema = parsed
+        threshold = float(request.profile.threshold or 1.0)
 
         return EvaluationProfileDefinition(
             profile_type=request.profile.profile_type.strip() or "final_result",
             result_kind=request.profile.result_kind.strip() or "text",
             extraction_mode=request.profile.extraction_mode.strip() or "heuristic_final",
             scoring_mode=request.profile.scoring_mode.strip() or request.scoring_mode.strip() or "normalized_exact_match",
-            threshold=float(request.profile.threshold),
+            threshold=threshold,
             output_schema=output_schema,
             ignored_paths=tuple(
                 value.strip()

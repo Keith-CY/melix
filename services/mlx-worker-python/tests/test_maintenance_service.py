@@ -3188,6 +3188,49 @@ def test_run_evaluation_materializes_hf_source_from_request(tmp_path: Path) -> N
     assert (materialized_root / "samples.jsonl").exists() is True
 
 
+def test_run_evaluation_defaults_structured_threshold_to_one_when_request_omits_it(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path)
+    source_path = tmp_path / "capital.csv"
+    with source_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["system_prompt", "question", "gold_answer", "sample_key"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "system_prompt": "Return only the final answer.",
+                "question": "Capital of France?",
+                "gold_answer": "Paris",
+                "sample_key": "capital-1",
+            }
+        )
+
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle="melix-dev-text::1",
+        suite_id="capital",
+        dataset_id="capital.dev.v1",
+        sample_size=1,
+        parameters={"judge": "deterministic"},
+    )
+    request.source.local_csv.path = str(source_path)
+    request.field_mapping.system_path = "system_prompt"
+    request.field_mapping.input_text_path = "question"
+    request.field_mapping.target_path = "gold_answer"
+    request.field_mapping.sample_id_path = "sample_key"
+    request.profile.profile_type = "final_result"
+    request.profile.result_kind = "text"
+    request.profile.extraction_mode = "strict_full_response"
+    request.profile.scoring_mode = "normalized_exact_match"
+
+    response = service.RunEvaluation(request, context=None)
+
+    materialized_root = Path(response.job.parameters["evaluation_materialized_dataset_root"])
+    manifest = json.loads((materialized_root / "manifest.json").read_text(encoding="utf-8"))
+
+    assert response.ok is True
+    assert manifest["threshold"] == 1.0
+
+
 def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -> None:
     service = build_service(tmp_path)
 
