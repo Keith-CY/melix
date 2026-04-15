@@ -6,16 +6,20 @@ enum MelixBranding {
     static let workspaceLogoResourceName = "melix-logo-workspace"
     static let trayTemplateResourceName = "melix-status-template"
     static let appIconFileName = "MelixAppIcon.icns"
+    @MainActor
     private static let cachedTrayTemplateIcon = makeTrimmedTrayTemplateIcon()
 
+    @MainActor
     static func workspaceLogo() -> NSImage {
         loadImage(named: workspaceLogoResourceName)
     }
 
+    @MainActor
     static func trayTemplateIcon() -> NSImage {
         (cachedTrayTemplateIcon.copy() as? NSImage) ?? cachedTrayTemplateIcon
     }
 
+    @MainActor
     private static func loadImage(named resourceName: String) -> NSImage {
         guard
             let resourceURL = Bundle.module.url(forResource: resourceName, withExtension: "png"),
@@ -27,6 +31,7 @@ enum MelixBranding {
         return image
     }
 
+    @MainActor
     private static func makeTrimmedTrayTemplateIcon() -> NSImage {
         let image = loadImage(named: trayTemplateResourceName)
         let trimmed = trimTransparentPadding(from: image)
@@ -34,6 +39,7 @@ enum MelixBranding {
         return trimmed
     }
 
+    @MainActor
     private static func trimTransparentPadding(from image: NSImage) -> NSImage {
         guard let bounds = alphaBounds(for: image) else {
             return image
@@ -46,6 +52,7 @@ enum MelixBranding {
         return trimmed
     }
 
+    @MainActor
     private static func alphaBounds(for image: NSImage) -> NSRect? {
         guard
             let tiffRepresentation = image.tiffRepresentation,
@@ -82,4 +89,16 @@ enum MelixBranding {
             height: maxY - minY + 1
         )
     }
+
+#if DEBUG
+    @MainActor
+    static func _testTrimTransparentPadding(from image: NSImage) -> NSImage {
+        trimTransparentPadding(from: image)
+    }
+
+    @MainActor
+    static func _testAlphaBounds(for image: NSImage) -> NSRect? {
+        alphaBounds(for: image)
+    }
+#endif
 }

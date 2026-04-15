@@ -302,10 +302,11 @@ def _sandbox_profile(*, temp_root: Path) -> str:
 
 
 def _sandbox_executable_paths() -> tuple[Path, ...]:
-    resolved = _sandbox_python_executable()
-    paths = [resolved]
-    launcher_path = resolved.parent.parent / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
-    if launcher_path.exists():
+    resolved = _resolved_python_executable()
+    preferred = _sandbox_python_executable()
+    paths = [preferred, resolved]
+    launcher_path = _python_framework_launcher_path(resolved)
+    if launcher_path is not None:
         paths.append(launcher_path)
     deduped: list[Path] = []
     seen: set[Path] = set()
@@ -318,12 +319,27 @@ def _sandbox_executable_paths() -> tuple[Path, ...]:
 
 
 def _sandbox_python_executable() -> Path:
+    resolved = _resolved_python_executable()
+    launcher_path = _python_framework_launcher_path(resolved)
+    return launcher_path or resolved
+
+
+def _resolved_python_executable() -> Path:
     return Path(sys.executable).resolve()
+
+
+def _python_framework_launcher_path(resolved_executable: Path) -> Path | None:
+    launcher_path = (
+        resolved_executable.parent.parent / "Resources" / "Python.app" / "Contents" / "MacOS" / "Python"
+    )
+    if launcher_path.exists():
+        return launcher_path.resolve()
+    return None
 
 
 def _sandbox_runtime_read_paths() -> tuple[Path, ...]:
     roots: list[Path] = [
-        _sandbox_python_executable().parent.parent,
+        _resolved_python_executable().parent.parent,
         Path(sys.prefix).resolve(),
         Path(sys.exec_prefix).resolve(),
         Path(sys.base_prefix).resolve(),

@@ -67,7 +67,7 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E := \
 CONTROL_PLANE_TEST_FILTER_OPENAI := OpenAIHandlerTests
 CONTROL_PLANE_TEST_FILTER_HTTP_REST := RichOutputSanitizerTests|PersistentAuthSessionStoreTests|ProtocolCompatibilityMatrixTests|ConnectionLifecyclePolicyTests|SSEStreamWriterTests
 
-.PHONY: bootstrap proto proto-check swift-test py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+.PHONY: bootstrap proto proto-check swift-build-integration-prereqs swift-test py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -87,6 +87,13 @@ proto:
 
 proto-check: proto
 	git diff --exit-code -- packages/protocol/descriptors packages/protocol/python packages/protocol/swift
+
+swift-build-integration-prereqs:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(TEXT_WORKER_SWIFT_HOME)" "$(CONTROL_PLANE_SWIFT_HOME)"; \
+	mkdir -p "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
+	HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift build --package-path services/mlx-text-worker-swift --product melix-text-worker-swift --disable-automatic-resolution; \
+	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift build --package-path services/control-plane-swift --product melix-control-plane --disable-automatic-resolution'
 
 swift-test:
 	/bin/zsh -lc 'set -e; \

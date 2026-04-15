@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: rhysd/actionlint@v1
+      - uses: rhysd/actionlint@v1.7.12
 
       - name: Diff check
         run: git diff --check
@@ -89,6 +89,9 @@ jobs:
 
       - name: Bootstrap
         run: make bootstrap
+
+      - name: Build Swift integration prerequisites
+        run: make swift-build-integration-prereqs
 
       - name: Integration tests
         run: make integration-test
