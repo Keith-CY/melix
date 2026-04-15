@@ -65,7 +65,7 @@ infra/release/phase8-release-gate-policy.json
 Update the policy in the same change as any intentional benchmark or release-threshold adjustment.
 
 The checked-in policy now includes an `evaluation` section for deterministic suite metrics such as
-`eval.mmlu.accuracy`. Treat benchmark and evaluation regressions as first-class release inputs.
+`eval.mmlu.typed_score_mean`. Treat benchmark and evaluation regressions as first-class release inputs.
 
 The checked-in policy also includes an `evaluation_compare` section for paired compare suites such
 as `mmlu`. Each suite policy owns:

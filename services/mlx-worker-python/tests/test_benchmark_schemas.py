@@ -333,9 +333,9 @@ def test_build_evaluation_job_and_result_remain_distinct_from_serving_shape() ->
         suite_id="mmlu",
         dataset_id="mmlu-dev",
         sample_size=64,
-        metrics={"eval.mmlu.accuracy": 0.72, "eval.mmlu.loss": 0.18},
+        metrics={"eval.mmlu.threshold_pass_rate": 0.72, "eval.mmlu.typed_score_mean": 0.18},
         report_path="/tmp/melix-eval/mmlu.json",
-        units={"eval.mmlu.accuracy": "ratio", "eval.mmlu.loss": "loss"},
+        units={"eval.mmlu.threshold_pass_rate": "ratio", "eval.mmlu.typed_score_mean": "ratio"},
     )
 
     job_payload = job.to_dict()
@@ -350,6 +350,6 @@ def test_build_evaluation_job_and_result_remain_distinct_from_serving_shape() ->
     assert job_payload["output_dir"] == "/tmp/melix-eval/runs/eval-7"
     assert result_payload["schema_version"] == "melix.evaluation_result.v2"
     assert result_payload["metrics"] == [
-        {"name": "eval.mmlu.accuracy", "unit": "ratio", "value": 0.72},
-        {"name": "eval.mmlu.loss", "unit": "loss", "value": 0.18},
+        {"name": "eval.mmlu.threshold_pass_rate", "unit": "ratio", "value": 0.72},
+        {"name": "eval.mmlu.typed_score_mean", "unit": "ratio", "value": 0.18},
     ]

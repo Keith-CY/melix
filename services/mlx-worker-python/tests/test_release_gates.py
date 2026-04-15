@@ -1557,8 +1557,8 @@ def test_default_policy_includes_audio_section() -> None:
 
 def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
-    assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
-    assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "eval.mmlu.typed_score_mean" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.typed_score_mean"]["min"] == 0.5
     assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
@@ -1572,7 +1572,7 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert "audio" in policy
     assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
-    assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert policy["evaluation"]["eval.mmlu.typed_score_mean"]["min"] == 0.5
     assert "evaluation_compare" in policy
     assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
     assert "m9" in policy
@@ -1584,7 +1584,7 @@ def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
     evidence = collect_evaluation_evidence(tmp_path / "jobs")
 
     assert "metrics" in evidence
-    assert evidence["metrics"]["eval.mmlu.accuracy"] == 1.0
+    assert evidence["metrics"]["eval.mmlu.typed_score_mean"] == 1.0
     assert evidence["job"]["suite_id"] == "mmlu"
     assert evidence["result"]["suite_id"] == "mmlu"
 
@@ -1795,7 +1795,7 @@ def test_evaluate_evaluation_compare_evidence_checks_each_target_summary() -> No
     )
 
 
-def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
+def test_evaluate_release_gate_fails_on_low_eval_primary_score() -> None:
     policy = load_release_gate_policy()
     report = {
         "install": {
@@ -1866,7 +1866,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.3,
+                "eval.mmlu.typed_score_mean": 0.3,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),
@@ -1876,7 +1876,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
 
     failures = evaluate_release_gate(report, policy)
 
-    assert "eval.mmlu.accuracy=0.30 fell below minimum 0.50" in failures
+    assert "eval.mmlu.typed_score_mean=0.30 fell below minimum 0.50" in failures
 
 
 def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
@@ -1950,7 +1950,7 @@ def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.75,
+                "eval.mmlu.typed_score_mean": 0.75,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(verdict="regression"),
@@ -1963,7 +1963,7 @@ def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
     assert "evaluation_compare.mmlu verdict=regression did not satisfy required verdict improvement" in failures
 
 
-def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
+def test_evaluate_release_gate_passes_with_sufficient_eval_primary_score() -> None:
     policy = load_release_gate_policy()
     report = {
         "install": {
@@ -2012,7 +2012,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.75,
+                "eval.mmlu.typed_score_mean": 0.75,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),

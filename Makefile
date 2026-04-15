@@ -67,7 +67,7 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E := \
 CONTROL_PLANE_TEST_FILTER_OPENAI := OpenAIHandlerTests
 CONTROL_PLANE_TEST_FILTER_HTTP_REST := RichOutputSanitizerTests|PersistentAuthSessionStoreTests|ProtocolCompatibilityMatrixTests|ConnectionLifecyclePolicyTests|SSEStreamWriterTests
 
-.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+.PHONY: bootstrap proto proto-check swift-test py-test integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
@@ -84,6 +84,9 @@ bootstrap:
 
 proto:
 	./scripts/proto_gen.sh
+
+proto-check: proto
+	git diff --exit-code -- packages/protocol/descriptors packages/protocol/python packages/protocol/swift
 
 swift-test:
 	/bin/zsh -lc 'set -e; \
@@ -107,6 +110,11 @@ py-test:
 integration-test:
 	mkdir -p "$(UV_CACHE_DIR)"
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration -q
+
+package-smoke:
+	mkdir -p "$(UV_CACHE_DIR)"
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_build_metadata.py services/mlx-worker-python/tests/test_packaging_targets.py services/mlx-worker-python/tests/test_macos_app_bundle.py services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_packaging_target_smoke.py --json
 
 swift-coverage:
 	/bin/zsh -lc 'set -e; \

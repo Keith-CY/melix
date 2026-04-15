@@ -18,6 +18,7 @@ private let phase8MatrixStructuredOutputMode = "plain_text"
 private let phase8MatrixConcurrencyLevel: UInt32 = 1
 private let phase8MatrixRequests: UInt32 = 4
 private let phase8EvaluationSampleSize: UInt32 = 4
+private let phase8EvaluationScoringMode = "multiple_choice_accuracy"
 
 public enum Phase8WindowUIAcceptanceError: Error, LocalizedError {
     case missingCLIEvidenceBundle(String)
@@ -702,6 +703,9 @@ public final class Phase8WindowUIAcceptanceRunner {
                     suites: config.evaluationSuites,
                     datasetID: config.evaluationDataset,
                     sampleSize: phase8EvaluationSampleSize,
+                    parameters: [
+                        "scoring_mode": phase8EvaluationScoringMode,
+                    ],
                     json: true
                 )
             )

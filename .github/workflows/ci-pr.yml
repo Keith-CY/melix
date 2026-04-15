@@ -1,0 +1,94 @@
+name: ci-pr
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint-and-diffcheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: rhysd/actionlint@v1
+
+      - name: Diff check
+        run: git diff --check
+
+  proto-drift:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install protobuf generators
+        run: brew install protobuf swift-protobuf
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Check generated protocol outputs
+        run: make proto-check
+
+  swift-tests:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift tests
+        run: make swift-test
+
+  python-tests:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Python tests
+        run: make py-test
+
+  integration-tests:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Integration tests
+        run: make integration-test

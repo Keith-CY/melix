@@ -2,6 +2,15 @@ name: package-self-contained-app
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/package-self-contained-app.yml"
+      - "apps/macos-menubar/**"
+      - "packages/protocol/**"
+      - "scripts/package_macos_menubar_app.py"
+      - "services/control-plane-swift/**"
+      - "services/mlx-text-worker-swift/**"
+      - "services/mlx-worker-python/**"
   push:
     branches:
       - main
@@ -16,6 +25,13 @@ on:
       - "services/control-plane-swift/**"
       - "services/mlx-text-worker-swift/**"
       - "services/mlx-worker-python/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-self-contained-app-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   package-app:
@@ -39,11 +55,8 @@ jobs:
       - name: Build menu bar app executable
         run: swift build --package-path apps/macos-menubar --disable-automatic-resolution
 
-      - name: Verify packaging helpers
-        run: |
-          PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
-          UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
-          uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_macos_app_bundle.py services/mlx-worker-python/tests/test_build_metadata.py -q
+      - name: Packaging smoke checks
+        run: make package-smoke
 
       - name: Compute build metadata
         id: compute-build-metadata
@@ -78,3 +91,10 @@ jobs:
           name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
           path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
           if-no-files-found: error
+
+      - name: Attach app to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
+          generate_release_notes: true

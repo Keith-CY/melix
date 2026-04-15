@@ -191,7 +191,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     },
     "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
     "evaluation": {
-        "eval.mmlu.accuracy": {"min": 0.5},
+        "eval.mmlu.typed_score_mean": {"min": 0.5},
     },
     "evaluation_compare": {
         "mmlu": {
