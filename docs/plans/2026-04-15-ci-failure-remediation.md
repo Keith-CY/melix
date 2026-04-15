@@ -26,6 +26,8 @@ This slice does not add:
   macOS runners, which fails under `sandbox-exec` before the evaluation payload is emitted.
 - `integration-tests` run before the required Swift products are built, so the suite fails on
   missing `melix-control-plane` and `melix-text-worker-swift` executables.
+- `swift-tests` invoke Python bridge fixture processes through `uv run`, but the workflow does not
+  provision Python or `uv`, so worker-client bridge tests fail even when the Swift code is valid.
 - `package-app` fails under Xcode 16.4 concurrency checks because a cached `NSImage` static
   property is not isolated to the main actor.
 - `swift-tests` expose a timing-sensitive request coordinator test that assumes disconnect-grace
@@ -37,6 +39,7 @@ This slice does not add:
 
 - Pin `actionlint` to a resolvable published version.
 - Update the integration workflow path so Swift artifacts are built before `make integration-test`.
+- Provision Python, `uv`, and the locked worker environment before running `make swift-test`.
 
 ### Python sandbox execution
 
@@ -59,6 +62,8 @@ Measurement points for this remediation:
 - Python sandbox regression: evaluator completes and emits its payload under the selected
   interpreter path.
 - Integration workflow preparation: required Swift binaries exist before integration tests launch.
+- Swift worker bridge fixture execution: `uv`-backed bridge commands remain dispatchable inside the
+  Swift test job.
 - Disconnect-grace test determinism: terminal failure metrics are observed before assertions run.
 
 Success targets:
@@ -99,6 +104,7 @@ This remediation is complete when:
 
 - the workflow definitions no longer contain the invalid `actionlint` reference
 - integration CI provisions the Swift binaries it depends on before running the Python suite
+- swift test CI provisions the Python bridge runtime dependencies before worker-client tests launch
 - sandboxed Python code evaluation succeeds on runner-compatible interpreter paths
 - the menu bar app package builds under the current Xcode concurrency checks
 - the request coordinator disconnect-grace test no longer depends on a fixed sleep race
