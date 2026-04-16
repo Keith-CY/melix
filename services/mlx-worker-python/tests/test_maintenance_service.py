@@ -38,6 +38,7 @@ from worker.model_ops.upload_receipt_pipeline import (
     PublishResult,
     SourceArtifactDescriptor,
     UploadReceiptPipeline,
+    _resolve_hf_cli_command,
 )
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
@@ -1093,6 +1094,51 @@ def test_hugging_face_publish_backend_adds_private_token_and_commit_message(
     ]
     assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/abc123"
     assert result.published_files == ["adapter.safetensors", "config.json"]
+
+
+def test_hugging_face_publish_backend_falls_back_to_legacy_cli_when_hf_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_which(command: str) -> str | None:
+        if command == "hf":
+            return None
+        if command == "huggingface-cli":
+            return "/usr/local/bin/huggingface-cli"
+        return None
+
+    def fake_subprocess_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\nhttps://huggingface.co/melix/demo-adapter/commit/abc123\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", fake_which)
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+
+    HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+    )
+
+    assert seen["command"][0] == "huggingface-cli"
+
+
+def test_resolve_hf_cli_command_defaults_to_hf_when_no_binary_is_discovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", lambda command: None)
+
+    assert _resolve_hf_cli_command() == "hf"
 
 
 def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(tmp_path: Path) -> None:

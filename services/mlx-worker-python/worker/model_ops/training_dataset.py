@@ -1181,7 +1181,7 @@ def _deterministic_validation_split(
     validation_count = max(1, min(len(samples) - 1, validation_count))
     ranked = sorted(
         (
-            _canonical_sample_key(sample),
+            _canonical_sample_digest(sample),
             index,
         )
         for index, sample in enumerate(samples)
@@ -1193,15 +1193,15 @@ def _deterministic_validation_split(
 
 
 def _build_quality_report(samples: list[dict[str, Any]]) -> dict[str, Any]:
-    seen: set[str] = set()
+    seen: set[bytes] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
     for index, sample in enumerate(samples):
-        canonical = _canonical_sample_key(sample)
-        if canonical in seen:
+        sample_digest = _canonical_sample_digest(sample)
+        if sample_digest in seen:
             duplicate_indices.append(index)
         else:
-            seen.add(canonical)
+            seen.add(sample_digest)
         reasons = _dirty_sample_reasons(sample)
         if reasons:
             dirty_samples.append({"index": index, "reasons": reasons})
@@ -1246,14 +1246,14 @@ def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int,
         messages = sample.get("messages", [])
         if not isinstance(messages, list) or not messages:
             return 0, 0
-        prompt_segments = [
-            f"{message.get('role', '')}: {message.get('content', '')}"
+        prompt_token_count = sum(
+            _whitespace_token_count(f"{message.get('role', '')}: {message.get('content', '')}")
             for message in messages[:-1]
             if isinstance(message, dict)
-        ]
+        )
         last_message = messages[-1] if isinstance(messages[-1], dict) else {}
         completion_text = str(last_message.get("content", ""))
-        return _whitespace_token_count("\n".join(prompt_segments)), _whitespace_token_count(completion_text)
+        return prompt_token_count, _whitespace_token_count(completion_text)
 
     if format_name == "prompt_completion":
         return (
@@ -1282,9 +1282,9 @@ def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
         if isinstance(messages, list) and len(messages) >= 2:
             previous = messages[-2] if isinstance(messages[-2], dict) else {}
             last = messages[-1] if isinstance(messages[-1], dict) else {}
-            if str(previous.get("content", "")).strip() and str(previous.get("content", "")).strip() == str(
-                last.get("content", "")
-            ).strip():
+            prev_content = str(previous.get("content", "")).strip()
+            last_content = str(last.get("content", "")).strip()
+            if prev_content and prev_content == last_content:
                 reasons.append("echo_response")
 
     unique_reasons: list[str] = []
@@ -1314,6 +1314,10 @@ def _contains_problematic_control_characters(text: str) -> bool:
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:
     return json.dumps(sample, sort_keys=True, ensure_ascii=False)
+
+
+def _canonical_sample_digest(sample: dict[str, Any]) -> bytes:
+    return hashlib.sha256(_canonical_sample_key(sample).encode("utf-8")).digest()
 
 
 def _whitespace_token_count(text: str) -> int:

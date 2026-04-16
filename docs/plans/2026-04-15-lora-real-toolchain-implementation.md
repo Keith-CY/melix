@@ -594,3 +594,43 @@ changed-line coverage, and the real small-model CLI E2E before publish.
 - Changed-scope Swift coverage: measurable and above gate at `95.66% (1191/1245)`
 - Repository Python coverage: measurable and above gate at `95%`
 - Real workload evidence: measurable and refreshed with a passing real small-model E2E run
+
+## Review Remediation On 2026-04-16
+
+This follow-up slice addresses PR review feedback in the Python worker without changing the product
+contract for the LoRA workflow.
+
+### Implemented Remediation
+
+- reduce dataset split and duplicate-detection memory pressure by ranking and de-duplicating on
+  canonical sample SHA-256 digests instead of full canonical JSON strings
+- remove redundant prompt-token intermediate joins and repeated message `strip()` calls in dataset
+  inspection helpers
+- prefer reported loss metrics when recommending the best experiment run; missing or non-finite
+  loss values no longer outrank measured runs
+- keep `hf` as the primary Hugging Face CLI entrypoint, but add a compatibility fallback to
+  `huggingface-cli` when only the legacy binary is installed
+
+### Verification Results
+
+- Focused regression tests:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_lora_experiment_store.py -q`
+  - Result: `120 passed`
+- Python repository coverage:
+  - `make py-coverage`
+  - Result: `777 passed`
+  - Coverage report total: `95%`
+- Python changed-line coverage for review-remediated files:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage json -o /tmp/lora-review-python-coverage.json`
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/lora-review-python-coverage.json services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/productization/lora_experiment_store.py`
+  - Result: `100.00% (39/39)`
+
+### Metrics Report
+
+- `dataset.validation_split_digest_key`: measurable through deterministic split coverage for the
+  remediated dataset builder path
+- `dataset.duplicate_digest_key`: measurable through duplicate-detection coverage for the
+  remediated dataset inspection path
+- `experiment.best_loss_selection`: measurable through explicit best-run regression coverage
+- `publish.cli_resolution`: measurable through explicit `hf` and `huggingface-cli` resolution
+  coverage

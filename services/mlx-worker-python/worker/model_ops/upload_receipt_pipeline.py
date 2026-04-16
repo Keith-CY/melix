@@ -63,7 +63,7 @@ class HuggingFacePublishBackend:
     ) -> PublishResult:
         resolved_source_path = source_path.expanduser().resolve()
         command = [
-            "hf",
+            _resolve_hf_cli_command(),
             "upload",
             target_repo,
             str(resolved_source_path),
@@ -118,6 +118,13 @@ class HuggingFacePublishBackend:
             remote_ref=remote_ref,
             published_files=published_files,
         )
+
+
+def _resolve_hf_cli_command() -> str:
+    for candidate in ("hf", "huggingface-cli"):
+        if shutil.which(candidate):
+            return candidate
+    return "hf"
 
 
 class UploadReceiptPipeline:

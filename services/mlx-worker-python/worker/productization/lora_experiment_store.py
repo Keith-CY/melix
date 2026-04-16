@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -87,10 +88,11 @@ class LoraExperimentStore:
             best_run = min(
                 group_runs,
                 key=lambda item: (
-                    float(item.get("loss_best", 0.0) or item.get("loss_final", 0.0) or 0.0),
+                    _best_loss_value(item) if _best_loss_value(item) is not None else float("inf"),
                     -int(item.get("updated_at_unix_ms", 0)),
                 ),
             )
+            best_loss = _best_loss_value(best_run)
             groups.append(
                 {
                     "group_id": group_id,
@@ -108,7 +110,7 @@ class LoraExperimentStore:
                     "latest_checkpoint_count": int(latest_run.get("checkpoint_count", 0)),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
                     "best_run_id": str(best_run.get("run_id", "")),
-                    "best_loss": float(best_run.get("loss_best", 0.0) or best_run.get("loss_final", 0.0) or 0.0),
+                    "best_loss": best_loss if best_loss is not None else 0.0,
                     "recommended_manifest_path": str(best_run.get("manifest_path", "")),
                     "updated_at_unix_ms": int(latest_run.get("updated_at_unix_ms", 0)),
                 }
@@ -156,8 +158,8 @@ class LoraExperimentStore:
             "peak_memory_gb": float(
                 manifest.get("peak_memory_gb", manifest.get("training.peak_memory_gb", 0.0))
             ),
-            "loss_final": float(manifest.get("loss_final", manifest.get("training.loss_final", 0.0))),
-            "loss_best": float(manifest.get("loss_best", manifest.get("training.loss_best", 0.0))),
+            "loss_final": _manifest_optional_float(manifest, "loss_final", "training.loss_final"),
+            "loss_best": _manifest_optional_float(manifest, "loss_best", "training.loss_best"),
             "manifest_path": str(manifest_path),
             "output_dir": str(manifest_path.parent),
             "created_at_unix_ms": created_at_unix_ms,
@@ -174,3 +176,30 @@ class LoraExperimentStore:
 
     def _index_path(self, jobs_root: Path) -> Path:
         return jobs_root / "train_lora" / self.index_record_name
+
+
+def _manifest_optional_float(manifest: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key in manifest:
+            return _optional_finite_float(manifest.get(key))
+    return None
+
+
+def _best_loss_value(item: dict[str, Any]) -> float | None:
+    for key in ("loss_best", "loss_final"):
+        value = _optional_finite_float(item.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _optional_finite_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
