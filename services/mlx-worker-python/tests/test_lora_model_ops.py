@@ -23,6 +23,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.training_dataset import (
     HFDatasetReference,
@@ -207,6 +208,26 @@ def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceServ
         adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
     )
     return service
+
+
+def _configure_lora_family(
+    source_model: common_pb2.ModelSpec,
+    *,
+    model_path: str,
+    family_id: str,
+    family_kind: str,
+    support_tier: str,
+    training_ready: bool = True,
+    default_target_preset: str,
+) -> None:
+    source_model.model_path = model_path
+    source_model.ext["text_family_id"] = family_id
+    source_model.ext["detected_family_id"] = family_id
+    source_model.ext["melix.lora.family_id"] = family_id
+    source_model.ext["melix.lora.family_kind"] = family_kind
+    source_model.ext["melix.lora.support_tier"] = support_tier
+    source_model.ext["melix.lora.training_ready"] = "true" if training_ready else "false"
+    source_model.ext["melix.lora.default_target_preset"] = default_target_preset
 
 
 class FakeHFDatasetFetcher:
@@ -517,6 +538,377 @@ def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -
     )
 
     assert events[-1].failed.error.code == "unsupported_training_mode"
+
+
+def test_train_lora_resolves_qwen_attention_preset_and_catalog_support_metadata(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        family_id="qwen",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-qwen-attention-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "@attention",
+                    "num_layers": "2",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert source_model.ext["melix.lora.family_id"] == "qwen"
+    assert source_model.ext["melix.lora.family_kind"] == "dense"
+    assert source_model.ext["melix.lora.support_tier"] == "stable"
+    assert source_model.ext["melix.lora.default_target_preset"] == "attention_mlp"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert runner.last_train_request.config.backend_target_modules == [
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+    ]
+    assert payload["target_modules"] == [
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.1.self_attn.v_proj",
+        "model.layers.0.self_attn.o_proj",
+        "model.layers.1.self_attn.o_proj",
+    ]
+
+
+def test_train_lora_resolves_gemma_and_kimi_family_presets(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+
+    _configure_lora_family(
+        source_model,
+        model_path="google/gemma-3-4b-it",
+        family_id="gemma",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+    gemma_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "gemma-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-gemma-mlp-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "gated_mlp",
+                },
+            ),
+            context=None,
+        )
+    )
+    gemma_payload = json.loads(next(event.manifest for event in gemma_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "gemma"
+    assert runner.last_train_request.config.target_modules == ["gate_proj", "up_proj", "down_proj"]
+    assert gemma_payload["target_modules"] == [
+        "model.layers.0.mlp.gate_proj",
+        "model.layers.1.mlp.gate_proj",
+        "model.layers.0.mlp.up_proj",
+        "model.layers.1.mlp.up_proj",
+        "model.layers.0.mlp.down_proj",
+        "model.layers.1.mlp.down_proj",
+    ]
+
+    _configure_lora_family(
+        source_model,
+        model_path="moonshotai/Kimi-K2-Instruct-0905",
+        family_id="kimi",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+    kimi_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "kimi-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-kimi-qkv-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "qkv",
+                },
+            ),
+            context=None,
+        )
+    )
+    kimi_payload = json.loads(next(event.manifest for event in kimi_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "kimi"
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj"]
+    assert kimi_payload["target_modules"] == [
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.1.self_attn.v_proj",
+    ]
+
+
+def test_train_lora_separates_moe_hooks_from_dense_defaults(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Mixtral-8x7B-Instruct-4bit",
+        family_id="mixtral",
+        family_kind="moe",
+        support_tier="experimental",
+        default_target_preset="attention",
+    )
+    mixtral_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "mixtral-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-mixtral-attention-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    mixtral_payload = json.loads(next(event.manifest for event in mixtral_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "mixtral"
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert all("block_sparse_moe" not in item for item in mixtral_payload["target_modules"])
+
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+        family_id="qwen3moe",
+        family_kind="moe",
+        support_tier="experimental",
+        training_ready=False,
+        default_target_preset="attention",
+    )
+    unsupported_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "qwen3moe-train"),
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-qwen3moe-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert unsupported_events[-1].failed.error.code == "unsupported_model_family"
+    assert unsupported_events[-1].failed.error.details["family_id"] == "qwen3moe"
+    assert unsupported_events[-1].failed.error.details["family_kind"] == "moe"
+    assert unsupported_events[-1].failed.error.details["support_tier"] == "experimental"
+    assert unsupported_events[-1].failed.error.details["training_ready"] == "false"
+
+
+def test_training_config_validates_direct_error_paths() -> None:
+    non_text_model = common_pb2.ModelSpec(model_id="embed", model_kind="embedding")
+    with pytest.raises(Exception) as non_text_error:
+        training_config_module.normalize_training_config(
+            source_model=non_text_model,
+            ext={},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert non_text_error.value.code == "unsupported_model_family"
+
+    text_model = common_pb2.ModelSpec(
+        model_id="plain-text",
+        model_path="models/plain-llama",
+        model_kind="text",
+        revision="dev",
+        max_context=2048,
+        ext={"text_family_id": "llama"},
+    )
+    with pytest.raises(Exception) as bad_mode_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"training_mode": "dora"},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert bad_mode_error.value.code == "unsupported_training_mode"
+
+    with pytest.raises(Exception) as preset_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"preset_id": "unknown-preset"},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert preset_error.value.code == "invalid_training_preset"
+
+    with pytest.raises(Exception) as response_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"response_only": "true"},
+            dataset_format="prompt_completion",
+            response_only_supported=False,
+            sample_count=1,
+        )
+    assert response_error.value.code == "invalid_dataset_package"
+
+
+def test_training_config_helper_resolution_paths_and_limits() -> None:
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="explicit", model_kind="text", ext={"melix.lora.family_id": "qwen"})
+    ) == "qwen"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="detected", model_kind="text", ext={"detected_family_id": "gemma"})
+    ) == "gemma"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/deepseek-v3")
+    ) == "deepseek-mla"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/mistral-small-4")
+    ) == "mistral4"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/nemotron-h")
+    ) == "nemotron-h"
+
+    hooks = training_config_module._resolve_family_hooks(
+        common_pb2.ModelSpec(
+            model_id="mixtral",
+            model_kind="text",
+            ext={"melix.lora.family_kind": "moe", "melix.lora.support_tier": "experimental"},
+        ),
+        family_id="mixtral",
+    )
+    assert hooks["family_kind"] == "moe"
+    assert hooks["support_tier"] == "experimental"
+    assert hooks["default_target_preset"] == "attention"
+
+    qwen_targets = training_config_module._resolve_target_modules(
+        "@attention,q_proj,attention",
+        profile=training_config_module._FAMILY_PROFILES["qwen"],
+    )
+    assert qwen_targets == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert training_config_module._resolve_target_modules(
+        "",
+        profile=training_config_module._FAMILY_PROFILES["mixtral"],
+    ) == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert training_config_module._backend_target_modules(["standalone.module"]) == ["standalone.module"]
+
+    bounded = training_config_module.normalize_training_config(
+        source_model=common_pb2.ModelSpec(
+            model_id="bounded",
+            model_path="models/qwen",
+            model_kind="text",
+            revision="dev",
+            max_context=4096,
+            quant_profile_id="q4",
+            ext={
+                "text_family_id": "qwen",
+                "text_layer_count": "4",
+                "melix.lora.family_id": "qwen",
+                "melix.lora.family_kind": "dense",
+                "melix.lora.support_tier": "stable",
+                "melix.lora.training_ready": "true",
+                "melix.lora.default_target_preset": "attention_mlp",
+            },
+        ),
+        ext={
+            "training_mode": "qlora",
+            "batch_size": "4",
+            "epochs": "3",
+            "max_steps": "2",
+            "preset_id": "balanced_adapter",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+        validation_sample_count=1,
+    )
+    assert bounded.iters == 2
+    assert bounded.steps_per_eval == 2
+
+    with pytest.raises(Exception) as int_error:
+        training_config_module._int_value("0", default=1, minimum=1, field_name="rank")
+    assert int_error.value.code == "invalid_argument"
+
+    with pytest.raises(Exception) as float_error:
+        training_config_module._float_value("-0.5", default=0.0, minimum=0.0, field_name="dropout")
+    assert float_error.value.code == "invalid_argument"
 
 
 def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_path: Path) -> None:

@@ -224,10 +224,48 @@ def _text_capability_metadata(
     )
     return {
         **resolved.capability_metadata(),
+        **_text_lora_support_metadata(resolved.family_id, moe_enabled=resolved.moe_enabled),
         "detected_architecture": detected.architecture,
         "detected_family_id": detected.family_id,
         "detected_identity_source": detected.source,
         "identity_override": "true" if identity_override else "false",
+    }
+
+
+def _text_lora_support_metadata(family_id: str, *, moe_enabled: bool) -> dict[str, str]:
+    stable_dense_families = {"llama", "qwen", "gemma", "kimi"}
+    if family_id in stable_dense_families:
+        return {
+            "melix.lora.family_id": family_id,
+            "melix.lora.family_kind": "dense",
+            "melix.lora.support_tier": "stable",
+            "melix.lora.training_ready": "true",
+            "melix.lora.default_target_preset": "attention_mlp",
+        }
+    if family_id == "mixtral":
+        return {
+            "melix.lora.family_id": family_id,
+            "melix.lora.family_kind": "moe",
+            "melix.lora.support_tier": "experimental",
+            "melix.lora.training_ready": "true",
+            "melix.lora.default_target_preset": "attention",
+        }
+    return {
+        "melix.lora.family_id": family_id,
+        "melix.lora.family_kind": "moe" if moe_enabled else "advanced_text",
+        "melix.lora.support_tier": "experimental",
+        "melix.lora.training_ready": "false",
+        "melix.lora.default_target_preset": "attention",
+    }
+
+
+def _embedding_lora_support_metadata(family_id: str) -> dict[str, str]:
+    return {
+        "melix.lora.family_id": family_id,
+        "melix.lora.family_kind": "embedding",
+        "melix.lora.support_tier": "blocked",
+        "melix.lora.training_ready": "false",
+        "melix.lora.default_target_preset": "unsupported",
     }
 
 
@@ -904,6 +942,7 @@ class WorkerModelCatalog:
             max_context=8192,
             ext={
                 **_embedding_capability_metadata(family_id),
+                **_embedding_lora_support_metadata(family_id),
                 "embedding_backend_id": backend_id,
                 "embedding_family_id": family_id,
                 "embedding_pooling_mode": pooling_mode,
