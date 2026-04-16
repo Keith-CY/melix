@@ -1312,6 +1312,47 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses lora publish for adapter and merged exports")
+    func parsesLoraPublishCommands() throws {
+        let adapterCommand = try MelixCLIParser.parse([
+            "lora",
+            "publish",
+            "--model-id", "melix-dev-text",
+            "--target-repo", "melix/adapters/demo",
+            "--adapter-path", "/tmp/melix/train_lora.adapter.json",
+        ])
+        let mergedCommand = try MelixCLIParser.parse([
+            "lora",
+            "publish",
+            "--model-id", "melix-dev-text",
+            "--target-repo", "melix/models/demo-merged",
+            "--manifest-path", "/tmp/melix/activate_adapter/manifest.json",
+            "--json",
+        ])
+
+        guard case .loraPublish(let adapterOptions) = adapterCommand else {
+            Issue.record("Expected adapter loraPublish command")
+            return
+        }
+        guard case .loraPublish(let mergedOptions) = mergedCommand else {
+            Issue.record("Expected merged loraPublish command")
+            return
+        }
+
+        #expect(adapterOptions.modelID == "melix-dev-text")
+        #expect(adapterOptions.targetRepo == "melix/adapters/demo")
+        #expect(adapterOptions.exportKind == "adapter_export")
+        #expect(adapterOptions.artifactPath == "/tmp/melix/train_lora.adapter.json")
+        #expect(adapterOptions.artifactManifestPath == "/tmp/melix/train_lora.adapter.json")
+        #expect(adapterOptions.json == false)
+
+        #expect(mergedOptions.targetRepo == "melix/models/demo-merged")
+        #expect(mergedOptions.exportKind == "merged_export")
+        #expect(mergedOptions.artifactPath == "/tmp/melix/activate_adapter/manifest.json")
+        #expect(mergedOptions.artifactManifestPath == "/tmp/melix/activate_adapter/manifest.json")
+        #expect(mergedOptions.json)
+    }
+
     @Test("surfaces usage and missing required parser errors")
     func surfacesUsageAndMissingRequiredErrors() throws {
         try assertError(for: [], equals: .usage(MelixCLIParser.usageText))
@@ -1392,6 +1433,18 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["lora", "remove-derived", "--model-id", "melix-dev-text"],
             equals: .missingRequired("Either --derived-model-id or --manifest-path is required for melix lora remove-derived.")
+        )
+        try assertError(
+            for: ["lora", "publish", "--target-repo", "melix/adapters/demo", "--adapter-path", "/tmp/melix/train_lora.adapter.json"],
+            equals: .missingRequired("--model-id is required for melix lora publish.")
+        )
+        try assertError(
+            for: ["lora", "publish", "--model-id", "melix-dev-text", "--adapter-path", "/tmp/melix/train_lora.adapter.json"],
+            equals: .missingRequired("--target-repo is required for melix lora publish.")
+        )
+        try assertError(
+            for: ["lora", "publish", "--model-id", "melix-dev-text", "--target-repo", "melix/adapters/demo"],
+            equals: .missingRequired("Exactly one of --adapter-path, --merged-model-path, or --manifest-path is required for melix lora publish.")
         )
         try assertError(
             for: ["bench", "run"],

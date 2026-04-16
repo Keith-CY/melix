@@ -581,6 +581,7 @@ class WorkerModelCatalog:
             if model is not None:
                 self._seed_models[model.model_id] = model
         self._models = dict(self._seed_models)
+        self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
@@ -591,6 +592,21 @@ class WorkerModelCatalog:
 
     def all_models(self) -> list[common_pb2.ModelSpec]:
         return [self._models[model_id] for model_id in sorted(self._models)]
+
+    def register_model(self, model: common_pb2.ModelSpec) -> common_pb2.ModelSpec:
+        registered = common_pb2.ModelSpec()
+        registered.CopyFrom(model)
+        self._overlay_models[registered.model_id] = registered
+        self._models[registered.model_id] = registered
+        return registered
+
+    def remove_model(self, model_id: str) -> bool:
+        removed = self._overlay_models.pop(model_id, None)
+        self._models.pop(model_id, None)
+        if removed is None:
+            return False
+        self._rebuild_runtime_models()
+        return True
 
     def registry_snapshot(
         self,
@@ -604,10 +620,16 @@ class WorkerModelCatalog:
         snapshot = self._registry_snapshot_cache[roots_key]
         self._active_registry_roots = roots_key
         self._last_registry_snapshot = snapshot
-        self._models = dict(self._seed_models)
-        for model in snapshot.models:
-            self._models.setdefault(model.model_id, model)
+        self._rebuild_runtime_models(snapshot=snapshot)
         return snapshot
+
+    def _rebuild_runtime_models(self, snapshot: RegistrySnapshot | None = None) -> None:
+        active_snapshot = snapshot or self._last_registry_snapshot
+        self._models = dict(self._seed_models)
+        for model in active_snapshot.models:
+            self._models.setdefault(model.model_id, model)
+        for model_id, model in self._overlay_models.items():
+            self._models[model_id] = model
 
     def registry_snapshot_payload(
         self,

@@ -1174,6 +1174,7 @@ def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(t
             missing_descriptor,
             receipt_dir=tmp_path / "receipt",
             target_repo="melix/demo-model",
+            export_artifact_kind="model_export",
         )
     assert missing_artifact.value.code == "invalid_artifact"
 
@@ -1204,6 +1205,7 @@ def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(t
             descriptor,
             receipt_dir=tmp_path / "receipt",
             target_repo="melix/demo-adapter",
+            export_artifact_kind="adapter_export",
         )
     assert invalid_adapter.value.code == "invalid_artifact"
 
@@ -1683,7 +1685,7 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
                 generate_manifest=True,
                 ext={
                     "operation": "upload",
-                    "artifact_kind": "adapter",
+                    "artifact_kind": "adapter_export",
                     "artifact_path": adapter_manifest_path,
                     "adapter_name": "melix-dev-adapter",
                     "target_repo": "melix/adapters/melix-dev-adapter",
@@ -1700,8 +1702,12 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
     assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
     assert payload["status"] == "published"
     assert payload["upload_backend"] == "huggingface_hub"
+    assert payload["export_artifact_kind"] == "adapter_export"
+    assert payload["distribution_contract"] == "adapter_only"
     assert payload["published_repo"] == "melix/adapters/melix-dev-adapter"
     assert payload["published_url"] == "https://huggingface.co/melix/adapters/melix-dev-adapter"
+    assert payload["parent_lineage"]["source_artifact_kind"] == "adapter"
+    assert payload["parent_lineage"]["source_job_id"].startswith("model-ops-")
     assert sorted(payload["published_files"]) == sorted(
         [
             "adapter/adapters.safetensors",
@@ -1709,13 +1715,86 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
             "train_lora.adapter.json",
         ]
     )
-    assert publish_backend.calls[-1]["artifact_kind"] == "adapter"
+    assert publish_backend.calls[-1]["artifact_kind"] == "adapter_export"
     staged_source = publish_backend.calls[-1]["source_path"]
     assert isinstance(staged_source, Path)
     staged_manifest = json.loads((staged_source / "train_lora.adapter.json").read_text(encoding="utf-8"))
     assert staged_manifest["weights_path"] == "adapter/adapters.safetensors"
     assert staged_manifest["adapter_config_path"] == "adapter/adapter_config.json"
     assert staged_manifest["published_repo"] == "melix/adapters/melix-dev-adapter"
+
+
+def test_upload_job_publishes_fused_derived_model_as_merged_export(tmp_path: Path) -> None:
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, publish_backend=publish_backend)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "melix-dev-fused",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_manifest_path = activate_events[-1].completed.output_path
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-merged"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "merged_export",
+                    "artifact_path": activation_manifest_path,
+                    "artifact_manifest_path": activation_manifest_path,
+                    "target_repo": "melix/models/melix-dev-fused",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+    published_source = publish_backend.calls[-1]["source_path"]
+
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_model"
+    assert payload["activation_mode"] == "fused_derived_model"
+    assert payload["derived_model_id"].startswith("melix-dev-text-lora-")
+    assert payload["parent_lineage"]["activation_mode"] == "fused_derived_model"
+    assert payload["parent_lineage"]["derived_model_id"] == payload["derived_model_id"]
+    assert publish_backend.calls[-1]["artifact_kind"] == "merged_export"
+    assert isinstance(published_source, Path)
+    assert published_source.name == payload["derived_model_id"]
+    assert sorted(payload["published_files"]) == ["manifest.json"]
 
 
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
@@ -2056,7 +2135,14 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
         published_upload.job_id,
         json.dumps(
             {
-                "target_repo": "melix/adapters/adapter-a",
+                "published_repo": "melix/adapters/adapter-a",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "parent_lineage": {
+                    "local_artifact_path": "/tmp/train-a/train_lora.adapter.json",
+                    "source_artifact_kind": "adapter",
+                    "source_job_id": published_train.job_id,
+                },
                 "ext": {
                     "artifact_kind": "adapter",
                     "adapter_name": "adapter-a",
@@ -2087,6 +2173,9 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
 
     assert adapters["adapter-a"]["published_repo"] == "melix/adapters/adapter-a"
     assert adapters["adapter-a"]["publish_job_id"] == published_upload.job_id
+    assert adapters["adapter-a"]["publish_backend"] == "huggingface_hub"
+    assert adapters["adapter-a"]["publish_artifact_kind"] == "adapter_export"
+    assert adapters["adapter-a"]["publish_parent_lineage"]["source_job_id"] == published_train.job_id
     assert adapters["adapter-a"]["status"] == "published"
     assert adapters["adapter-a"]["checkpoint_count"] == 2
     assert adapters["adapter-a"]["resume_ready"] is True
@@ -2097,6 +2186,69 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
     assert adapters["adapter-b"]["status"] == "completed"
     assert adapters["adapter-b"]["checkpoint_count"] == 0
     assert adapters["adapter-b"]["resume_ready"] is False
+
+
+def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-merged", "adapter_set_hash": "adapter-hash-a"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    activation_manifest_path = "/runtime/activate/melix-dev-fused/manifest.json"
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-merged",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_weights_path": "/runtime/train/adapters.safetensors",
+                "adapter_set_hash": "adapter-hash-a",
+                "derived_model_id": "melix-dev-fused",
+                "derived_model_path": "/runtime/activate/melix-dev-fused",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, activation_manifest_path)
+
+    publish_job = registry.start("upload", "melix-dev-text", "/runtime/upload")
+    registry.attach_manifest(
+        publish_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-fused",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-fused",
+                    "local_manifest_path": activation_manifest_path,
+                    "source_job_id": activation_job.job_id,
+                    "source_adapter_job_id": train_job.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-fused",
+                },
+            }
+        ),
+    )
+    registry.complete(publish_job.job_id, "/runtime/upload/upload.receipt.json")
+
+    derived_model = registry.snapshot()["derived_models"][0]
+
+    assert derived_model["published_repo"] == "melix/models/melix-dev-fused"
+    assert derived_model["publish_job_id"] == publish_job.job_id
+    assert derived_model["publish_backend"] == "huggingface_hub"
+    assert derived_model["publish_artifact_kind"] == "merged_export"
+    assert derived_model["published_state"] == "published"
+    assert derived_model["publish_parent_lineage"]["source_job_id"] == activation_job.job_id
+    assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
 
 
 def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_linkage() -> None:

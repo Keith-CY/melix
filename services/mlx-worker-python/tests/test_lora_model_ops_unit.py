@@ -13,7 +13,9 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.lora_training_pipeline import _int_ext
+from worker.model_ops.mlx_lm_runner import MLXLMRunner
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
 
 
@@ -62,6 +64,59 @@ def _text_model(*, model_path: str = "models/plain-llama", quant_profile_id: str
         model.ext["text_family_id"] = family_id
     model.ext["text_layer_count"] = "2"
     return model
+
+
+class _UnexpectedActivationRunner(MLXLMRunner):
+    def activate(self, request):  # noqa: ANN001
+        raise AssertionError("adapter_backed_runtime should not invoke fused activation")
+
+
+
+def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_contract(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "weights_path": str(weights_dir / "adapters.safetensors"),
+                "adapter_name": "unit-adapter",
+                "adapter_set_hash": "adapter-hash-1234",
+                "job_id": "model-ops-0001",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_model = _text_model(model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit", quant_profile_id="q4")
+    source_model.parser_mode = "structured"
+    source_model.reasoning_mode = "separate"
+    source_model.tokenizer_hash = "tok-hash-a"
+    source_model.ext["text_family_id"] = "qwen"
+
+    result = AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+        job_id="model-ops-0002",
+        request_ext={
+            "artifact_path": str(manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+            "derived_model_alias": "Runtime Alias",
+        },
+        source_model=source_model,
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["activation_mode"] == "adapter_backed_runtime"
+    assert result.manifest["adapter_manifest_path"] == str(manifest_path)
+    assert result.manifest["adapter_weights_path"] == str(weights_dir / "adapters.safetensors")
+    assert result.manifest["source_model_kind"] == "text"
+    assert result.manifest["source_model_parser_mode"] == "structured"
+    assert result.manifest["source_model_reasoning_mode"] == "separate"
+    assert result.manifest["source_model_quant_profile_id"] == "q4"
+    assert result.manifest["source_model_tokenizer_hash"] == "tok-hash-a"
+    assert result.manifest["source_model_ext"]["text_family_id"] == "qwen"
+
 
 
 def test_normalize_training_config_rejects_non_text_models() -> None:
