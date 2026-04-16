@@ -676,6 +676,34 @@ public enum RuntimeLoraTrainingMode: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
+public enum RuntimeLoraTrainingPreset: String, CaseIterable, Identifiable, Sendable {
+    case custom = ""
+    case debugFast = "debug_fast"
+    case balancedAdapter = "balanced_adapter"
+    case qualityAdapter = "quality_adapter"
+
+    public var id: String {
+        rawValue
+    }
+
+    public var title: String {
+        switch self {
+        case .custom:
+            return "Custom"
+        case .debugFast:
+            return "Debug Fast"
+        case .balancedAdapter:
+            return "Balanced Adapter"
+        case .qualityAdapter:
+            return "Quality Adapter"
+        }
+    }
+
+    public var isNamedPreset: Bool {
+        self != .custom
+    }
+}
+
 public enum RuntimeLoraActivationMode: String, CaseIterable, Identifiable, Sendable {
     case fusedDerivedModel = "fused_derived_model"
     case adapterBackedRuntime = "adapter_backed_runtime"
@@ -752,9 +780,21 @@ public struct RuntimeAdapterPackageState: Identifiable, Equatable, Sendable {
     public let publishedRepo: String
     public let responseOnlyEnabled: Bool
     public let gradientCheckpointingEnabled: Bool
+    public let checkpointCount: Int
+    public let resumeReady: Bool
+    public let tokensPerSecond: Double
+    public let peakMemoryGB: Double
     public let trainingDurationText: String
     public let activationDurationText: String
     public let publishDurationText: String
+
+    public var experimentSummaryText: String {
+        runtimeExperimentSummaryText(checkpointCount: checkpointCount, resumeReady: resumeReady)
+    }
+
+    public var performanceSummaryText: String {
+        runtimeTrainingPerformanceText(tokensPerSecond: tokensPerSecond, peakMemoryGB: peakMemoryGB)
+    }
 }
 
 public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendable {
@@ -767,6 +807,48 @@ public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendabl
     public let stageText: String
     public let outputPath: String
     public let targetRepo: String
+    public let checkpointCount: Int
+    public let resumeReady: Bool
+    public let tokensPerSecond: Double
+    public let peakMemoryGB: Double
+
+    public var experimentSummaryText: String {
+        runtimeExperimentSummaryText(checkpointCount: checkpointCount, resumeReady: resumeReady)
+    }
+
+    public var performanceSummaryText: String {
+        runtimeTrainingPerformanceText(tokensPerSecond: tokensPerSecond, peakMemoryGB: peakMemoryGB)
+    }
+}
+
+public struct RuntimeLoraExperimentGroupState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let groupID: String
+    public let title: String
+    public let adapterName: String
+    public let sourceModel: String
+    public let runCount: Int
+    public let latestPresetTitle: String
+    public let latestTokensPerSecond: Double
+    public let latestPeakMemoryGB: Double
+    public let latestCheckpointCount: Int
+    public let latestResumeReady: Bool
+    public let bestLoss: Double
+    public let recommendedManifestPath: String
+
+    public var experimentSummaryText: String {
+        runtimeExperimentSummaryText(
+            checkpointCount: latestCheckpointCount,
+            resumeReady: latestResumeReady
+        )
+    }
+
+    public var performanceSummaryText: String {
+        runtimeTrainingPerformanceText(
+            tokensPerSecond: latestTokensPerSecond,
+            peakMemoryGB: latestPeakMemoryGB
+        )
+    }
 }
 
 public struct RuntimeRegistryRootState: Identifiable, Equatable, Sendable {
@@ -1200,6 +1282,7 @@ public final class RuntimeViewModel {
     public private(set) var lastEvaluationExport: RuntimeEvaluationExportState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
+    public private(set) var loraExperimentGroups: [RuntimeLoraExperimentGroupState] = []
     public private(set) var registryRoots: [RuntimeRegistryRootState] = []
     public private(set) var registryConfiguredRootPaths: [String] = []
     public private(set) var registryHasConfiguredRootOverride = false
@@ -1300,6 +1383,7 @@ public final class RuntimeViewModel {
     public var selectedEvaluationHistoryJobID = ""
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
     public var loraTrainingMode: RuntimeLoraTrainingMode = .lora
+    public var selectedLoraTrainingPreset: RuntimeLoraTrainingPreset = .custom
     public var loraActivationMode: RuntimeLoraActivationMode = .fusedDerivedModel
     public var loraDatasetURI = "datasets/melix-dev"
     public var loraHFDatasetPath = ""
@@ -1313,6 +1397,7 @@ public final class RuntimeViewModel {
     public var loraTextFeature = "text"
     public var loraAdapterName = "melix-dev-adapter"
     public var loraTargetRepo = "melix/adapters/melix-dev-adapter"
+    public var loraExperimentGroupID = ""
     public var loraRank = "8"
     public var loraAlpha = "16"
     public var loraDropout = "0.0"
@@ -4845,12 +4930,6 @@ public final class RuntimeViewModel {
             return
         }
 
-        if usesCustomSource, selectedEvaluationMode == .compare {
-            recordLocalError("Evaluation Compare does not yet support custom dataset sources.")
-            notifyStateChanged()
-            return
-        }
-
         if let sourceValidationError = validateEvaluationSourceConfiguration() {
             recordLocalError(sourceValidationError)
             notifyStateChanged()
@@ -5155,6 +5234,7 @@ public final class RuntimeViewModel {
         let adapters = (payload["adapters"] as? [[String: Any]]) ?? []
         let jobs = (payload["jobs"] as? [[String: Any]]) ?? []
         let downloads = (payload["downloads"] as? [[String: Any]]) ?? []
+        let experimentGroups = (payload["experiment_groups"] as? [[String: Any]]) ?? []
         adapterPackages = adapters.map(Self.makeAdapterPackageState)
         downloadQueue = downloads
             .compactMap(Self.makeDownloadQueueEntryState)
@@ -5167,6 +5247,7 @@ public final class RuntimeViewModel {
         trainingHistory = jobs
             .filter { Self.stringValue("operation", from: $0) == "train_lora" }
             .map(Self.makeTrainingHistoryEntryState)
+        loraExperimentGroups = experimentGroups.compactMap(Self.makeLoraExperimentGroupState)
         if let registryPayload = payload["model_registry"] as? [String: Any] {
             let roots = (registryPayload["roots"] as? [[String: Any]] ?? [])
                 .compactMap(Self.makeRegistryRootState)
@@ -7499,12 +7580,51 @@ public final class RuntimeViewModel {
         }
     }
 
+    public func applyLoraTrainingPreset(_ preset: RuntimeLoraTrainingPreset) {
+        selectedLoraTrainingPreset = preset
+        switch preset {
+        case .custom:
+            return
+        case .debugFast:
+            loraRank = "8"
+            loraAlpha = "16"
+            loraDropout = "0.0"
+            loraBatchSize = "1"
+            loraEpochs = "1"
+            loraLearningRate = "0.0001"
+            loraMaxSeqLength = "1024"
+            loraGradientCheckpointing = false
+        case .balancedAdapter:
+            loraRank = "16"
+            loraAlpha = "32"
+            loraDropout = "0.05"
+            loraBatchSize = "2"
+            loraEpochs = "2"
+            loraLearningRate = "0.0001"
+            loraMaxSeqLength = "2048"
+            loraGradientCheckpointing = true
+        case .qualityAdapter:
+            loraRank = "32"
+            loraAlpha = "64"
+            loraDropout = "0.05"
+            loraBatchSize = "1"
+            loraEpochs = "4"
+            loraLearningRate = "0.00005"
+            loraMaxSeqLength = "2048"
+            loraGradientCheckpointing = true
+        }
+    }
+
     private func loraTrainingExt() -> [String: String] {
         var ext: [String: String] = [
             "adapter_name": Self.normalizedOptionalString(loraAdapterName) ?? "melix-dev-adapter",
             "dataset_source_kind": loraDatasetSourceKind.rawValue,
             "training_mode": loraTrainingMode.rawValue,
         ]
+
+        if selectedLoraTrainingPreset.isNamedPreset {
+            ext["preset_id"] = selectedLoraTrainingPreset.rawValue
+        }
 
         if loraDatasetSourceKind == .localPackage {
             ext["dataset_uri"] = Self.normalizedOptionalString(loraDatasetURI) ?? "datasets/melix-dev"
@@ -7521,6 +7641,7 @@ public final class RuntimeViewModel {
         }
 
         Self.assignOptional(loraTargetRepo, for: "target_repo", into: &ext)
+        Self.assignOptional(loraExperimentGroupID, for: "experiment_group_id", into: &ext)
         Self.assignOptional(loraRank, for: "rank", into: &ext)
         Self.assignOptional(loraAlpha, for: "alpha", into: &ext)
         Self.assignOptional(loraDropout, for: "dropout", into: &ext)
@@ -8209,6 +8330,10 @@ public final class RuntimeViewModel {
             publishedRepo: stringValue("published_repo", from: payload),
             responseOnlyEnabled: boolValue("response_only", from: payload),
             gradientCheckpointingEnabled: boolValue("gradient_checkpointing", from: payload),
+            checkpointCount: intValue("checkpoint_count", fallbackKey: "experiment.checkpoint_count", from: payload),
+            resumeReady: boolValue("resume_ready", fallbackKey: "experiment.resume_ready", from: payload),
+            tokensPerSecond: doubleValue("tokens_per_second", fallbackKey: "training.tokens_per_second", from: payload),
+            peakMemoryGB: doubleValue("peak_memory_gb", fallbackKey: "training.peak_memory_gb", from: payload),
             trainingDurationText: formatDuration(milliseconds: doubleValue("training_duration_ms", from: payload)),
             activationDurationText: formatDuration(milliseconds: doubleValue("activation_duration_ms", from: payload)),
             publishDurationText: formatDuration(milliseconds: doubleValue("adapter_publish_ms", from: payload))
@@ -8216,16 +8341,43 @@ public final class RuntimeViewModel {
     }
 
     private static func makeTrainingHistoryEntryState(from payload: [String: Any]) -> RuntimeTrainingHistoryEntryState {
-        RuntimeTrainingHistoryEntryState(
+        let manifest = payload["manifest"] as? [String: Any] ?? [:]
+        return RuntimeTrainingHistoryEntryState(
             id: stringValue("job_id", from: payload),
             jobID: stringValue("job_id", from: payload),
             modelID: stringValue("source_model", from: payload),
-            adapterName: stringValue("adapter_name", from: payload["manifest"] as? [String: Any] ?? [:]),
-            datasetURI: stringValue("dataset_uri", from: payload["manifest"] as? [String: Any] ?? [:]),
+            adapterName: stringValue("adapter_name", from: manifest),
+            datasetURI: stringValue("dataset_uri", from: manifest),
             statusText: humanizeStatus(stringValue("status", from: payload)),
             stageText: "\(stringValue("stage", from: payload)) • \(String(format: "%.0f%%", doubleValue("pct", from: payload) * 100))",
             outputPath: stringValue("output_path", from: payload),
-            targetRepo: stringValue("target_repo", from: payload["manifest"] as? [String: Any] ?? [:])
+            targetRepo: stringValue("target_repo", from: manifest),
+            checkpointCount: intValue("checkpoint_count", fallbackKey: "experiment.checkpoint_count", from: manifest),
+            resumeReady: boolValue("resume_ready", fallbackKey: "experiment.resume_ready", from: manifest),
+            tokensPerSecond: doubleValue("tokens_per_second", fallbackKey: "training.tokens_per_second", from: manifest),
+            peakMemoryGB: doubleValue("peak_memory_gb", fallbackKey: "training.peak_memory_gb", from: manifest)
+        )
+    }
+
+    private static func makeLoraExperimentGroupState(from payload: [String: Any]) -> RuntimeLoraExperimentGroupState? {
+        let groupID = stringValue("group_id", from: payload)
+        guard groupID.isEmpty == false else {
+            return nil
+        }
+        return RuntimeLoraExperimentGroupState(
+            id: groupID,
+            groupID: groupID,
+            title: stringValue("title", from: payload),
+            adapterName: stringValue("adapter_name", from: payload),
+            sourceModel: stringValue("source_model", from: payload),
+            runCount: intValue("run_count", from: payload),
+            latestPresetTitle: stringValue("latest_preset_title", from: payload),
+            latestTokensPerSecond: doubleValue("latest_tokens_per_second", from: payload),
+            latestPeakMemoryGB: doubleValue("latest_peak_memory_gb", from: payload),
+            latestCheckpointCount: intValue("latest_checkpoint_count", from: payload),
+            latestResumeReady: boolValue("latest_resume_ready", from: payload),
+            bestLoss: doubleValue("best_loss", from: payload),
+            recommendedManifestPath: stringValue("recommended_manifest_path", from: payload)
         )
     }
 
@@ -8618,6 +8770,13 @@ public final class RuntimeViewModel {
         return 0
     }
 
+    private static func intValue(_ key: String, fallbackKey: String, from payload: [String: Any]) -> Int {
+        if payload[key] != nil {
+            return intValue(key, from: payload)
+        }
+        return intValue(fallbackKey, from: payload)
+    }
+
     private static func int64Value(_ key: String, from payload: [String: Any]) -> Int64 {
         if let value = payload[key] as? Int64 {
             return value
@@ -8641,7 +8800,17 @@ public final class RuntimeViewModel {
         if let number = payload[key] as? NSNumber {
             return number.doubleValue
         }
+        if let value = payload[key] as? String {
+            return Double(value) ?? 0
+        }
         return 0
+    }
+
+    private static func doubleValue(_ key: String, fallbackKey: String, from payload: [String: Any]) -> Double {
+        if payload[key] != nil {
+            return doubleValue(key, from: payload)
+        }
+        return doubleValue(fallbackKey, from: payload)
     }
 
     private static func boolValue(_ key: String, from payload: [String: Any]) -> Bool {
@@ -8655,6 +8824,13 @@ public final class RuntimeViewModel {
             return ["1", "true", "yes", "on"].contains(value.lowercased())
         }
         return false
+    }
+
+    private static func boolValue(_ key: String, fallbackKey: String, from payload: [String: Any]) -> Bool {
+        if payload[key] != nil {
+            return boolValue(key, from: payload)
+        }
+        return boolValue(fallbackKey, from: payload)
     }
 
     private static func encodedRegistryRoots(_ roots: [String]) -> String? {
@@ -9124,6 +9300,17 @@ public final class RuntimeViewModel {
             return model.imageSupportsEdit
         }
     }
+}
+
+private func runtimeExperimentSummaryText(checkpointCount: Int, resumeReady: Bool) -> String {
+    let checkpointSummary = checkpointCount == 1 ? "1 checkpoint" : "\(checkpointCount) checkpoints"
+    return "\(checkpointSummary) • \(resumeReady ? "resume ready" : "resume unavailable")"
+}
+
+private func runtimeTrainingPerformanceText(tokensPerSecond: Double, peakMemoryGB: Double) -> String {
+    let throughputSummary = tokensPerSecond > 0 ? String(format: "%.1f tok/s", tokensPerSecond) : "n/a tok/s"
+    let peakMemorySummary = peakMemoryGB > 0 ? String(format: "%.2f GB peak", peakMemoryGB) : "n/a peak"
+    return "\(throughputSummary) • \(peakMemorySummary)"
 }
 
 func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModelRow {

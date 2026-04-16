@@ -43,6 +43,53 @@ public struct LoraTrainOptions: Equatable, Sendable {
     }
 }
 
+public struct LoraDatasetInspectOptions: Equatable, Sendable {
+    public let modelID: String
+    public let datasetSourceKind: String
+    public let datasetURI: String
+    public let parameters: [String: String]
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        datasetSourceKind: String = "local_path",
+        datasetURI: String,
+        parameters: [String: String] = [:],
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.datasetSourceKind = datasetSourceKind
+        self.datasetURI = datasetURI
+        self.parameters = parameters
+        self.json = json
+    }
+}
+
+public struct LoraDatasetBuildOptions: Equatable, Sendable {
+    public let modelID: String
+    public let datasetSourceKind: String
+    public let datasetURI: String
+    public let outputDir: String
+    public let parameters: [String: String]
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        datasetSourceKind: String = "local_path",
+        datasetURI: String,
+        outputDir: String = "",
+        parameters: [String: String] = [:],
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.datasetSourceKind = datasetSourceKind
+        self.datasetURI = datasetURI
+        self.outputDir = outputDir
+        self.parameters = parameters
+        self.json = json
+    }
+}
+
 public struct LoraActivateOptions: Equatable, Sendable {
     public let modelID: String
     public let adapterPath: String
@@ -216,6 +263,9 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let suites: [String]
     public let datasetID: String
     public let sampleSize: UInt32
+    public let source: ControlPlaneEvaluationRequest.Source
+    public let fieldMapping: ControlPlaneEvaluationRequest.FieldMapping
+    public let profile: ControlPlaneEvaluationRequest.Profile
     public let parameters: [String: String]
     public let json: Bool
 
@@ -225,6 +275,9 @@ public struct EvalRunOptions: Equatable, Sendable {
         suites: [String] = [],
         datasetID: String = "",
         sampleSize: UInt32 = 0,
+        source: ControlPlaneEvaluationRequest.Source = .builtinPackage,
+        fieldMapping: ControlPlaneEvaluationRequest.FieldMapping = .init(),
+        profile: ControlPlaneEvaluationRequest.Profile = .init(),
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
@@ -233,6 +286,9 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
+        self.source = source
+        self.fieldMapping = fieldMapping
+        self.profile = profile
         self.parameters = parameters
         self.json = json
     }
@@ -245,6 +301,9 @@ public struct EvalCompareOptions: Equatable, Sendable {
     public let suites: [String]
     public let datasetID: String
     public let sampleSize: UInt32
+    public let source: ControlPlaneEvaluationRequest.Source
+    public let fieldMapping: ControlPlaneEvaluationRequest.FieldMapping
+    public let profile: ControlPlaneEvaluationRequest.Profile
     public let parameters: [String: String]
     public let json: Bool
 
@@ -255,6 +314,9 @@ public struct EvalCompareOptions: Equatable, Sendable {
         suites: [String] = [],
         datasetID: String = "",
         sampleSize: UInt32 = 0,
+        source: ControlPlaneEvaluationRequest.Source = .builtinPackage,
+        fieldMapping: ControlPlaneEvaluationRequest.FieldMapping = .init(),
+        profile: ControlPlaneEvaluationRequest.Profile = .init(),
         parameters: [String: String] = [:],
         json: Bool = false
     ) {
@@ -264,6 +326,9 @@ public struct EvalCompareOptions: Equatable, Sendable {
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
+        self.source = source
+        self.fieldMapping = fieldMapping
+        self.profile = profile
         self.parameters = parameters
         self.json = json
     }
@@ -759,6 +824,8 @@ public enum MelixCLICommand: Equatable, Sendable {
     case chatRun(ChatRunOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
+    case loraDatasetInspect(LoraDatasetInspectOptions)
+    case loraDatasetBuild(LoraDatasetBuildOptions)
     case loraActivate(LoraActivateOptions)
     case loraRemoveDerived(LoraRemoveDerivedOptions)
     case benchRun(BenchRunOptions)
@@ -865,7 +932,9 @@ public enum MelixCLIParser {
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix chat run --model-id MODEL_ID --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
+      melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
@@ -875,8 +944,8 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--scoring-mode MODE] [--code-exec-policy MODE] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -1280,6 +1349,7 @@ public enum MelixCLIParser {
                 "--num-layers",
                 "--batch-size",
                 "--epochs",
+                "--max-steps",
                 "--learning-rate",
                 "--max-seq-length",
                 "--sample-limit",
@@ -1297,6 +1367,12 @@ public enum MelixCLIParser {
                 if let value = values.single[option] {
                     parameters[normalizedParameterKey(option)] = value
                 }
+            }
+            if let presetID = values.single["--preset"] {
+                parameters["preset_id"] = presetID
+            }
+            if let experimentGroupID = values.single["--experiment-group"] {
+                parameters["experiment_group_id"] = experimentGroupID
             }
             let trainingMode = values.single["--training-mode"] ?? ""
             if !trainingMode.isEmpty, ["lora", "qlora"].contains(trainingMode) == false {
@@ -1317,6 +1393,8 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "dataset":
+            return try parseLoraDataset(Array(arguments.dropFirst()))
         case "activate":
             let values = try cursor.parse()
             guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
@@ -1358,6 +1436,72 @@ public enum MelixCLIParser {
                     modelID: modelID,
                     derivedModelID: derivedModelID,
                     manifestPath: manifestPath,
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseLoraDataset(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model-id is required for melix lora dataset \(action).")
+        }
+        let datasetURI = values.single["--dataset-uri"] ?? ""
+        let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
+        guard !datasetURI.isEmpty || !hfDatasetPath.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "Either --dataset-uri or --hf-dataset-path is required for melix lora dataset \(action)."
+            )
+        }
+
+        let datasetSourceKind = hfDatasetPath.isEmpty ? "local_path" : "hf_dataset"
+        var parameters: [String: String] = [:]
+        for option in [
+            "--hf-dataset-path",
+            "--hf-dataset-name",
+            "--hf-dataset-revision",
+            "--hf-train-split",
+            "--hf-valid-split",
+            "--text-feature",
+            "--prompt-feature",
+            "--completion-feature",
+            "--chat-feature",
+            "--template",
+            "--dataset-id",
+            "--validation-ratio",
+            "--sample-limit",
+            "--preview-count",
+        ] {
+            if let value = values.single[option] {
+                parameters[normalizedParameterKey(option)] = value
+            }
+        }
+
+        switch action {
+        case "inspect":
+            return .loraDatasetInspect(
+                LoraDatasetInspectOptions(
+                    modelID: modelID,
+                    datasetSourceKind: datasetSourceKind,
+                    datasetURI: datasetURI,
+                    parameters: parameters,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "build":
+            return .loraDatasetBuild(
+                LoraDatasetBuildOptions(
+                    modelID: modelID,
+                    datasetSourceKind: datasetSourceKind,
+                    datasetURI: datasetURI,
+                    outputDir: values.single["--output-dir"] ?? "",
+                    parameters: parameters,
                     json: values.flags.contains("--json")
                 )
             )
@@ -1561,7 +1705,7 @@ public enum MelixCLIParser {
         switch action {
         case "run":
             let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
-                multiValueOptions: ["--suite", "--target-model-id"]
+                multiValueOptions: ["--suite", "--target-model-id", "--ignored-path"]
             )
             let modelID = values.single["--model-id"] ?? ""
             let hfRepoID = values.single["--repo-id"] ?? ""
@@ -1569,25 +1713,10 @@ public enum MelixCLIParser {
             guard explicitTargetCount == 1 else {
                 throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
             }
-            var parameters: [String: String] = [:]
-            if let batchFactor = values.single["--batch-factor"] {
-                parameters["batch_factor"] = batchFactor
-            }
-            if let datasetRoot = values.single["--dataset-root"] {
-                parameters["dataset_root"] = datasetRoot
-            }
-            if let seed = values.single["--seed"] {
-                parameters["seed"] = seed
-            }
-            if let fewShot = values.single["--few-shot"] {
-                parameters["few_shot"] = fewShot
-            }
-            if let scoringMode = values.single["--scoring-mode"] {
-                parameters["scoring_mode"] = scoringMode
-            }
-            if let codeExecPolicy = values.single["--code-exec-policy"] {
-                parameters["code_exec_policy"] = codeExecPolicy
-            }
+            let sourceConfiguration = try parseEvaluationSourceConfiguration(
+                values,
+                command: "melix eval run"
+            )
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
             return .evalRun(
                 EvalRunOptions(
@@ -1596,7 +1725,10 @@ public enum MelixCLIParser {
                     suites: values.multi["--suite"] ?? [],
                     datasetID: values.single["--dataset-id"] ?? "",
                     sampleSize: sampleSize,
-                    parameters: parameters,
+                    source: sourceConfiguration.source,
+                    fieldMapping: sourceConfiguration.fieldMapping,
+                    profile: sourceConfiguration.profile,
+                    parameters: parseEvalParameters(values),
                     json: values.flags.contains("--json")
                 )
             )
@@ -1647,7 +1779,7 @@ public enum MelixCLIParser {
         }
 
         let values = try ArgumentCursor(arguments: arguments).parse(
-            multiValueOptions: ["--suite", "--target-model-id"]
+            multiValueOptions: ["--suite", "--target-model-id", "--ignored-path"]
         )
         let modelID = values.single["--model-id"] ?? ""
         let hfRepoID = values.single["--repo-id"] ?? ""
@@ -1659,6 +1791,10 @@ public enum MelixCLIParser {
         guard targetModelIDs.isEmpty == false else {
             throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
         }
+        let sourceConfiguration = try parseEvaluationSourceConfiguration(
+            values,
+            command: "melix eval compare"
+        )
         return .evalCompare(
             EvalCompareOptions(
                 modelID: modelID,
@@ -1667,6 +1803,9 @@ public enum MelixCLIParser {
                 suites: values.multi["--suite"] ?? [],
                 datasetID: values.single["--dataset-id"] ?? "",
                 sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
+                source: sourceConfiguration.source,
+                fieldMapping: sourceConfiguration.fieldMapping,
+                profile: sourceConfiguration.profile,
                 parameters: parseEvalParameters(values),
                 json: values.flags.contains("--json")
             )
@@ -1709,6 +1848,71 @@ public enum MelixCLIParser {
         return parameters
     }
 
+    private static func parseEvaluationSourceConfiguration(
+        _ values: ParsedArguments,
+        command: String
+    ) throws -> (
+        source: ControlPlaneEvaluationRequest.Source,
+        fieldMapping: ControlPlaneEvaluationRequest.FieldMapping,
+        profile: ControlPlaneEvaluationRequest.Profile
+    ) {
+        let localCSVPath = values.single["--source-csv"] ?? ""
+        let localJSONLPath = values.single["--source-jsonl"] ?? ""
+        let hfDatasetPath = values.single["--hf-dataset-path"] ?? ""
+        let customSourceCount = [localCSVPath, localJSONLPath, hfDatasetPath].filter { $0.isEmpty == false }.count
+        guard customSourceCount <= 1 else {
+            throw MelixCLIError.usage(
+                "At most one of --source-csv, --source-jsonl, or --hf-dataset-path may be provided for \(command)."
+            )
+        }
+
+        let fieldMapping = ControlPlaneEvaluationRequest.FieldMapping(
+            systemPath: values.single["--field-system-path"] ?? "",
+            inputTextPath: values.single["--field-input-text-path"] ?? "",
+            targetPath: values.single["--field-target-path"] ?? "",
+            sampleIDPath: values.single["--field-sample-id-path"] ?? ""
+        )
+        let profile = ControlPlaneEvaluationRequest.Profile(
+            profileType: values.single["--profile-type"] ?? "final_result",
+            resultKind: values.single["--result-kind"] ?? "text",
+            extractionMode: values.single["--extraction-mode"] ?? "heuristic_final",
+            scoringMode: values.single["--scoring-mode"] ?? "normalized_exact_match",
+            threshold: try parseDoubleValue(values.single["--threshold"], option: "--threshold", defaultValue: 1.0) ?? 1.0,
+            outputSchemaJSON: values.single["--output-schema-json"] ?? "",
+            ignoredPaths: values.multi["--ignored-path"] ?? []
+        )
+
+        let source: ControlPlaneEvaluationRequest.Source
+        if localCSVPath.isEmpty == false {
+            source = .localCSV(path: localCSVPath)
+        } else if localJSONLPath.isEmpty == false {
+            source = .localJSONL(path: localJSONLPath)
+        } else if hfDatasetPath.isEmpty == false {
+            source = .huggingFaceDataset(
+                datasetPath: hfDatasetPath,
+                datasetName: values.single["--hf-dataset-name"] ?? "",
+                datasetRevision: values.single["--hf-dataset-revision"] ?? "main",
+                split: values.single["--hf-dataset-split"] ?? "train"
+            )
+        } else {
+            source = .builtinPackage
+        }
+
+        if source.kind != .builtinPackage {
+            if values.single["--dataset-root"]?.isEmpty == false {
+                throw MelixCLIError.usage("--dataset-root is only supported for builtin evaluation datasets.")
+            }
+            guard fieldMapping.inputTextPath.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--field-input-text-path is required when using a custom evaluation dataset source.")
+            }
+            guard fieldMapping.targetPath.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--field-target-path is required when using a custom evaluation dataset source.")
+            }
+        }
+
+        return (source, fieldMapping, profile)
+    }
+
     private static func normalizedParameterKey(_ option: String) -> String {
         option
             .replacingOccurrences(of: "--", with: "")
@@ -1725,6 +1929,20 @@ public enum MelixCLIParser {
         }
         guard let parsed = UInt32(value) else {
             throw MelixCLIError.usage("Invalid value for \(option). Expected an unsigned integer.")
+        }
+        return parsed
+    }
+
+    private static func parseDoubleValue(
+        _ value: String?,
+        option: String,
+        defaultValue: Double? = nil
+    ) throws -> Double? {
+        guard let value else {
+            return defaultValue
+        }
+        guard let parsed = Double(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected a numeric value.")
         }
         return parsed
     }
@@ -2159,6 +2377,9 @@ public actor MelixCLIRunner {
                 suites: options.suites,
                 datasetID: options.datasetID,
                 sampleSize: options.sampleSize,
+                source: options.source,
+                fieldMapping: options.fieldMapping,
+                profile: options.profile,
                 parameters: parameters,
                 json: options.json
             )
@@ -2536,6 +2757,33 @@ public actor MelixCLIRunner {
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
+        case .loraDatasetInspect(let options):
+            var ext = options.parameters
+            ext["dataset_source_kind"] = options.datasetSourceKind
+            ext["inspect_only"] = "true"
+            if !options.datasetURI.isEmpty {
+                ext["dataset_uri"] = options.datasetURI
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "build_training_dataset",
+                outputDir: "",
+                ext: ext
+            )
+            return options.json ? result.manifestJson : renderTrainingDatasetManifest(result.manifestJson)
+        case .loraDatasetBuild(let options):
+            var ext = options.parameters
+            ext["dataset_source_kind"] = options.datasetSourceKind
+            if !options.datasetURI.isEmpty {
+                ext["dataset_uri"] = options.datasetURI
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "build_training_dataset",
+                outputDir: options.outputDir,
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath
         case .loraActivate(let options):
             var ext = ["artifact_path": options.adapterPath]
             if !options.derivedModelAlias.isEmpty {
@@ -2762,6 +3010,8 @@ public actor MelixCLIRunner {
             appendOption("--adapter-name", value: ext["adapter_name"], into: &arguments)
             appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
             appendOption("--training-mode", value: ext["training_mode"], into: &arguments)
+            appendOption("--preset", value: ext["preset_id"], into: &arguments)
+            appendOption("--experiment-group", value: ext["experiment_group_id"], into: &arguments)
             appendOption("--hf-dataset-name", value: ext["hf_dataset_name"], into: &arguments)
             appendOption("--hf-dataset-revision", value: ext["hf_dataset_revision"], into: &arguments)
             appendOption("--hf-train-split", value: ext["hf_train_split"], into: &arguments)
@@ -2777,6 +3027,7 @@ public actor MelixCLIRunner {
             appendOption("--num-layers", value: ext["num_layers"], into: &arguments)
             appendOption("--batch-size", value: ext["batch_size"], into: &arguments)
             appendOption("--epochs", value: ext["epochs"], into: &arguments)
+            appendOption("--max-steps", value: ext["max_steps"], into: &arguments)
             appendOption("--learning-rate", value: ext["learning_rate"], into: &arguments)
             appendOption("--max-seq-length", value: ext["max_seq_length"], into: &arguments)
             appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
@@ -2784,6 +3035,33 @@ public actor MelixCLIRunner {
             appendBooleanFlag("--response-only", value: ext["response_only"], into: &arguments)
             appendBooleanFlag("--mask-prompt", value: ext["mask_prompt"], into: &arguments)
             appendBooleanFlag("--gradient-checkpointing", value: ext["gradient_checkpointing"], into: &arguments)
+            arguments.append("--json")
+            return arguments
+        case "build_training_dataset":
+            let inspectOnly = (ext["inspect_only"] ?? "").lowercased()
+            var arguments = ["lora", "dataset", inspectOnly == "true" ? "inspect" : "build", "--model-id", modelID]
+            let datasetSourceKind = ext["dataset_source_kind"] ?? "local_path"
+            if datasetSourceKind == "hf_dataset" {
+                appendOption("--hf-dataset-path", value: ext["hf_dataset_path"], into: &arguments)
+            } else {
+                appendOption("--dataset-uri", value: ext["dataset_uri"], into: &arguments)
+            }
+            if inspectOnly != "true" {
+                appendOption("--output-dir", value: outputDir, into: &arguments)
+            }
+            appendOption("--hf-dataset-name", value: ext["hf_dataset_name"], into: &arguments)
+            appendOption("--hf-dataset-revision", value: ext["hf_dataset_revision"], into: &arguments)
+            appendOption("--hf-train-split", value: ext["hf_train_split"], into: &arguments)
+            appendOption("--hf-valid-split", value: ext["hf_valid_split"], into: &arguments)
+            appendOption("--text-feature", value: ext["text_feature"], into: &arguments)
+            appendOption("--prompt-feature", value: ext["prompt_feature"], into: &arguments)
+            appendOption("--completion-feature", value: ext["completion_feature"], into: &arguments)
+            appendOption("--chat-feature", value: ext["chat_feature"], into: &arguments)
+            appendOption("--template", value: ext["template"], into: &arguments)
+            appendOption("--dataset-id", value: ext["dataset_id"], into: &arguments)
+            appendOption("--validation-ratio", value: ext["validation_ratio"], into: &arguments)
+            appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
+            appendOption("--preview-count", value: ext["preview_count"], into: &arguments)
             arguments.append("--json")
             return arguments
         case "activate_adapter":
@@ -2859,13 +3137,51 @@ public actor MelixCLIRunner {
         if options.sampleSize > 0 {
             arguments.append(contentsOf: ["--sample-size", String(options.sampleSize)])
         }
+        appendEvaluationSourceArguments(
+            source: options.source,
+            fieldMapping: options.fieldMapping,
+            profile: options.profile,
+            into: &arguments
+        )
         appendOption("--batch-factor", value: options.parameters["batch_factor"], into: &arguments)
+        appendOption("--dataset-root", value: options.parameters["dataset_root"], into: &arguments)
         appendOption("--seed", value: options.parameters["seed"], into: &arguments)
         appendOption("--few-shot", value: options.parameters["few_shot"], into: &arguments)
         appendOption("--scoring-mode", value: options.parameters["scoring_mode"], into: &arguments)
         appendOption("--code-exec-policy", value: options.parameters["code_exec_policy"], into: &arguments)
         arguments.append("--json")
         return arguments
+    }
+
+    private static func appendEvaluationSourceArguments(
+        source: ControlPlaneEvaluationRequest.Source,
+        fieldMapping: ControlPlaneEvaluationRequest.FieldMapping,
+        profile: ControlPlaneEvaluationRequest.Profile,
+        into arguments: inout [String]
+    ) {
+        switch source.kind {
+        case .builtinPackage:
+            break
+        case .localCSV:
+            appendOption("--source-csv", value: source.path, into: &arguments)
+        case .localJSONL:
+            appendOption("--source-jsonl", value: source.path, into: &arguments)
+        case .huggingFaceDataset:
+            appendOption("--hf-dataset-path", value: source.datasetPath, into: &arguments)
+            appendOption("--hf-dataset-name", value: source.datasetName, into: &arguments)
+            appendOption("--hf-dataset-revision", value: source.datasetRevision, into: &arguments)
+            appendOption("--hf-dataset-split", value: source.split, into: &arguments)
+        }
+        appendOption("--field-system-path", value: fieldMapping.systemPath, into: &arguments)
+        appendOption("--field-input-text-path", value: fieldMapping.inputTextPath, into: &arguments)
+        appendOption("--field-target-path", value: fieldMapping.targetPath, into: &arguments)
+        appendOption("--field-sample-id-path", value: fieldMapping.sampleIDPath, into: &arguments)
+        appendOption("--profile-type", value: profile.profileType, into: &arguments)
+        appendOption("--result-kind", value: profile.resultKind, into: &arguments)
+        appendOption("--extraction-mode", value: profile.extractionMode, into: &arguments)
+        appendOption("--threshold", value: String(profile.threshold), into: &arguments)
+        appendOption("--output-schema-json", value: profile.outputSchemaJSON, into: &arguments)
+        appendMultiOption("--ignored-path", values: profile.ignoredPaths, into: &arguments)
     }
 
     private static func appendOption(
@@ -2877,6 +3193,16 @@ public actor MelixCLIRunner {
             return
         }
         arguments.append(contentsOf: [option, value])
+    }
+
+    private static func appendMultiOption(
+        _ option: String,
+        values: [String],
+        into arguments: inout [String]
+    ) {
+        for value in values where value.isEmpty == false {
+            arguments.append(contentsOf: [option, value])
+        }
     }
 
     private static func appendBooleanFlag(
@@ -3432,21 +3758,66 @@ public actor MelixCLIRunner {
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {
         guard
             let data = manifestJSON.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let adapters = payload["adapters"] as? [[String: Any]]
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return manifestJSON
         }
-        if adapters.isEmpty {
+
+        let adapters = payload["adapters"] as? [[String: Any]] ?? []
+        let experimentGroups = payload["experiment_groups"] as? [[String: Any]] ?? []
+        if adapters.isEmpty && experimentGroups.isEmpty {
             return "No adapters found.\n"
         }
-        let lines = adapters.map { adapter in
-            let name = (adapter["adapter_name"] as? String) ?? "adapter"
-            let status = (adapter["status"] as? String) ?? "unknown"
-            let sourceModel = (adapter["source_model"] as? String) ?? ""
-            return "\(name)\t\(status)\t\(sourceModel)"
+
+        var sections: [String] = []
+        if adapters.isEmpty == false {
+            let adapterLines = adapters.map { adapter in
+                let name = (adapter["adapter_name"] as? String) ?? "adapter"
+                let status = (adapter["status"] as? String) ?? "unknown"
+                let sourceModel = (adapter["source_model"] as? String) ?? ""
+                return "\(name)\t\(status)\t\(sourceModel)"
+            }
+            sections.append((["adapter\tstatus\tsource_model"] + adapterLines).joined(separator: "\n"))
         }
-        return (["adapter\tstatus\tsource_model"] + lines).joined(separator: "\n") + "\n"
+
+        if experimentGroups.isEmpty == false {
+            let groupLines = experimentGroups.map { group in
+                let groupID = (group["group_id"] as? String) ?? ""
+                let runCount = (group["run_count"] as? Int) ?? 0
+                let presetTitle = (group["latest_preset_title"] as? String) ?? ""
+                let bestLoss = (group["best_loss"] as? Double) ?? 0.0
+                let recommendedManifestPath = (group["recommended_manifest_path"] as? String) ?? ""
+                return "\(groupID)\t\(runCount)\t\(presetTitle)\t\(String(format: "%.3f", bestLoss))\t\(recommendedManifestPath)"
+            }
+            sections.append(
+                (["experiment_group\truns\tpreset\tbest_loss\trecommended_manifest"] + groupLines)
+                    .joined(separator: "\n")
+            )
+        }
+
+        return sections.joined(separator: "\n\n") + "\n"
+    }
+
+    private func renderTrainingDatasetManifest(_ manifestJSON: String) -> String {
+        guard
+            let data = manifestJSON.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return manifestJSON
+        }
+
+        let quality = payload["quality"] as? [String: Any] ?? [:]
+        let tokenStats = payload["token_stats"] as? [String: Any] ?? [:]
+        let lines = [
+            "dataset_id=\((payload["dataset_id"] as? String) ?? "")",
+            "format=\((payload["format"] as? String) ?? "")",
+            "sample_count=\((payload["sample_count"] as? Int) ?? 0)",
+            "validation_sample_count=\((payload["validation_sample_count"] as? Int) ?? 0)",
+            "duplicate_count=\((quality["duplicate_count"] as? Int) ?? 0)",
+            "dirty_count=\((quality["dirty_count"] as? Int) ?? 0)",
+            "prompt_tokens_p95=\((tokenStats["prompt_tokens_p95"] as? Int) ?? 0)",
+        ]
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private func makeManagedModelReceipt(
@@ -3500,12 +3871,18 @@ public actor MelixCLIRunner {
     ) async throws -> [ControlPlaneEvaluationResult] {
         var collected: [ControlPlaneEvaluationResult] = []
         for suiteID in suites {
+            let usesCustomSource = options.source.kind != .builtinPackage
             let request = ControlPlaneEvaluationRequest(
                 modelID: options.modelID,
                 hfRepoID: options.hfRepoID,
                 suiteID: suiteID,
-                datasetID: options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID,
+                datasetID: usesCustomSource
+                    ? options.datasetID
+                    : (options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID),
                 sampleSize: options.sampleSize,
+                source: options.source,
+                fieldMapping: options.fieldMapping,
+                profile: options.profile,
                 parameters: options.parameters
             )
             collected.append(try await client.runEvaluation(request))

@@ -465,6 +465,8 @@ struct MelixCLIParserTests {
             "--dataset-uri", "/tmp/data/alpaca.jsonl",
             "--adapter-name", "demo-adapter",
             "--target-repo", "melix/demo-adapter",
+            "--preset", "balanced_adapter",
+            "--experiment-group", "nightly-qwen35",
             "--rank", "8",
             "--alpha", "16",
             "--dropout", "0.05",
@@ -472,6 +474,7 @@ struct MelixCLIParserTests {
             "--num-layers", "12",
             "--batch-size", "2",
             "--epochs", "3",
+            "--max-steps", "5",
             "--learning-rate", "0.0001",
             "--max-seq-length", "4096",
             "--response-only",
@@ -489,6 +492,8 @@ struct MelixCLIParserTests {
         #expect(options.datasetURI == "/tmp/data/alpaca.jsonl")
         #expect(options.adapterName == "demo-adapter")
         #expect(options.targetRepo == "melix/demo-adapter")
+        #expect(options.parameters["preset_id"] == "balanced_adapter")
+        #expect(options.parameters["experiment_group_id"] == "nightly-qwen35")
         #expect(options.parameters["rank"] == "8")
         #expect(options.parameters["alpha"] == "16")
         #expect(options.parameters["dropout"] == "0.05")
@@ -496,6 +501,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["num_layers"] == "12")
         #expect(options.parameters["batch_size"] == "2")
         #expect(options.parameters["epochs"] == "3")
+        #expect(options.parameters["max_steps"] == "5")
         #expect(options.parameters["learning_rate"] == "0.0001")
         #expect(options.parameters["max_seq_length"] == "4096")
         #expect(options.parameters["response_only"] == "true")
@@ -546,6 +552,67 @@ struct MelixCLIParserTests {
         #expect(options.parameters["mask_prompt"] == "true")
         #expect(options.parameters["derived_model_alias"] == "melix-dev-text-ultrachat")
         #expect(options.trainingMode == "qlora")
+    }
+
+    @Test("parses lora dataset inspect with local source conversion and preview controls")
+    func parsesLoraDatasetInspectCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora",
+            "dataset",
+            "inspect",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/data/alpaca.jsonl",
+            "--template", "alpaca",
+            "--validation-ratio", "0.2",
+            "--preview-count", "4",
+            "--json",
+        ])
+
+        guard case .loraDatasetInspect(let options) = command else {
+            Issue.record("Expected loraDatasetInspect command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.datasetSourceKind == "local_path")
+        #expect(options.datasetURI == "/tmp/data/alpaca.jsonl")
+        #expect(options.parameters["template"] == "alpaca")
+        #expect(options.parameters["validation_ratio"] == "0.2")
+        #expect(options.parameters["preview_count"] == "4")
+        #expect(options.json)
+    }
+
+    @Test("parses lora dataset build with a Hugging Face source and explicit output directory")
+    func parsesLoraDatasetBuildCommandForHFDataset() throws {
+        let command = try MelixCLIParser.parse([
+            "lora",
+            "dataset",
+            "build",
+            "--model-id", "melix-dev-text",
+            "--hf-dataset-path", "HuggingFaceH4/ultrachat_200k",
+            "--hf-dataset-name", "default",
+            "--hf-train-split", "train_sft",
+            "--hf-valid-split", "test_sft",
+            "--template", "chat_messages",
+            "--dataset-id", "melix-ultrachat-built",
+            "--output-dir", "/tmp/melix-built-dataset",
+        ])
+
+        guard case .loraDatasetBuild(let options) = command else {
+            Issue.record("Expected loraDatasetBuild command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.datasetSourceKind == "hf_dataset")
+        #expect(options.datasetURI.isEmpty)
+        #expect(options.outputDir == "/tmp/melix-built-dataset")
+        #expect(options.parameters["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(options.parameters["hf_dataset_name"] == "default")
+        #expect(options.parameters["hf_train_split"] == "train_sft")
+        #expect(options.parameters["hf_valid_split"] == "test_sft")
+        #expect(options.parameters["template"] == "chat_messages")
+        #expect(options.parameters["dataset_id"] == "melix-ultrachat-built")
     }
 
     @Test("parses bench run with an explicit model target suites and tuning parameters")
@@ -1008,6 +1075,48 @@ struct MelixCLIParserTests {
         #expect(options.parameters["code_exec_policy"] == "sandboxed")
     }
 
+    @Test("parses eval run with custom Hugging Face dataset source mapping and profile controls")
+    func parsesEvalRunWithCustomHFDatasetSource() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "run",
+            "--repo-id", "unsloth/gemma-4-E4B-it-MLX-8bit",
+            "--suite", "dolly",
+            "--hf-dataset-path", "databricks/databricks-dolly-15k",
+            "--hf-dataset-revision", "main",
+            "--hf-dataset-split", "train",
+            "--field-input-text-path", "instruction",
+            "--field-target-path", "response",
+            "--field-sample-id-path", "sample_id",
+            "--profile-type", "final_result",
+            "--result-kind", "text",
+            "--extraction-mode", "heuristic_final",
+            "--scoring-mode", "normalized_exact_match",
+            "--threshold", "1.0",
+            "--ignored-path", "metadata.trace_id",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected evalRun command")
+            return
+        }
+
+        #expect(options.hfRepoID == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(options.source.kind == .huggingFaceDataset)
+        #expect(options.source.datasetPath == "databricks/databricks-dolly-15k")
+        #expect(options.source.datasetRevision == "main")
+        #expect(options.source.split == "train")
+        #expect(options.fieldMapping.inputTextPath == "instruction")
+        #expect(options.fieldMapping.targetPath == "response")
+        #expect(options.fieldMapping.sampleIDPath == "sample_id")
+        #expect(options.profile.profileType == "final_result")
+        #expect(options.profile.resultKind == "text")
+        #expect(options.profile.extractionMode == "heuristic_final")
+        #expect(options.profile.scoringMode == "normalized_exact_match")
+        #expect(options.profile.threshold == 1.0)
+        #expect(options.profile.ignoredPaths == ["metadata.trace_id"])
+    }
+
     @Test("parses eval compare with target model ids and comparison controls")
     func parsesEvalCompareCommand() throws {
         let command = try MelixCLIParser.parse([
@@ -1045,6 +1154,46 @@ struct MelixCLIParserTests {
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["scoring_mode"] == "multiple_choice_accuracy")
         #expect(options.parameters["code_exec_policy"] == "sandboxed")
+        #expect(options.json)
+    }
+
+    @Test("parses eval compare with custom JSONL source mapping and profile controls")
+    func parsesEvalCompareWithCustomJSONLSource() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-model-id", "melix-dev-text-lora",
+            "--suite", "mmlu",
+            "--source-jsonl", "/tmp/eval/mmlu.jsonl",
+            "--field-input-text-path", "prompt",
+            "--field-target-path", "expected",
+            "--field-sample-id-path", "sample_id",
+            "--result-kind", "text",
+            "--extraction-mode", "heuristic_final",
+            "--scoring-mode", "normalized_exact_match",
+            "--threshold", "0.8",
+            "--ignored-path", "metadata.trace_id",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.targetModelIDs == ["melix-dev-text-lora"])
+        #expect(options.source.kind == .localJSONL)
+        #expect(options.source.path == "/tmp/eval/mmlu.jsonl")
+        #expect(options.fieldMapping.inputTextPath == "prompt")
+        #expect(options.fieldMapping.targetPath == "expected")
+        #expect(options.fieldMapping.sampleIDPath == "sample_id")
+        #expect(options.profile.resultKind == "text")
+        #expect(options.profile.extractionMode == "heuristic_final")
+        #expect(options.profile.scoringMode == "normalized_exact_match")
+        #expect(options.profile.threshold == 0.8)
+        #expect(options.profile.ignoredPaths == ["metadata.trace_id"])
         #expect(options.json)
     }
 
@@ -1193,6 +1342,18 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["lora", "train", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl"],
             equals: .missingRequired("--adapter-name is required for melix lora train.")
+        )
+        try assertError(
+            for: ["lora", "dataset", "inspect", "--dataset-uri", "/tmp/data.jsonl"],
+            equals: .missingRequired("--model-id is required for melix lora dataset inspect.")
+        )
+        try assertError(
+            for: ["lora", "dataset", "build", "--model-id", "melix-dev-text"],
+            equals: .missingRequired("Either --dataset-uri or --hf-dataset-path is required for melix lora dataset build.")
+        )
+        try assertError(
+            for: ["lora", "dataset", "oops", "--model-id", "melix-dev-text", "--dataset-uri", "/tmp/data.jsonl"],
+            equals: .usage(MelixCLIParser.usageText)
         )
         try assertError(
             for: [

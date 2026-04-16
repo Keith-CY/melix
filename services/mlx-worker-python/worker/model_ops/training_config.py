@@ -27,6 +27,7 @@ class LoRATrainingConfig:
     batch_size: int
     epochs: int
     iters: int
+    max_steps: int
     response_only: bool
     gradient_checkpointing: bool
     mask_prompt: bool
@@ -37,6 +38,8 @@ class LoRATrainingConfig:
     validation_strategy: str
     validation_split: str
     validation_sample_count: int
+    preset_id: str
+    preset_title: str
     desired_derived_model_alias: str
     adapter_name: str
     target_repo: str
@@ -44,6 +47,69 @@ class LoRATrainingConfig:
 
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
+        "default_total_layers": 2,
+        "default_target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.mlp.gate_proj",
+            "up_proj": "model.layers.{layer}.mlp.up_proj",
+            "down_proj": "model.layers.{layer}.mlp.down_proj",
+        },
+    },
+    "qwen": {
+        "default_total_layers": 2,
+        "default_target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.mlp.gate_proj",
+            "up_proj": "model.layers.{layer}.mlp.up_proj",
+            "down_proj": "model.layers.{layer}.mlp.down_proj",
+        },
+    },
+    "gemma": {
+        "default_total_layers": 2,
+        "default_target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.mlp.gate_proj",
+            "up_proj": "model.layers.{layer}.mlp.up_proj",
+            "down_proj": "model.layers.{layer}.mlp.down_proj",
+        },
+    },
+    "kimi": {
         "default_total_layers": 2,
         "default_target_modules": [
             "q_proj",
@@ -87,6 +153,42 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     },
 }
 
+_TRAINING_PRESETS: dict[str, dict[str, object]] = {
+    "debug_fast": {
+        "title": "Debug Fast",
+        "rank": 8,
+        "alpha": 16.0,
+        "dropout": 0.0,
+        "batch_size": 1,
+        "epochs": 1,
+        "learning_rate": 1e-4,
+        "max_seq_length": 1024,
+        "gradient_checkpointing": False,
+    },
+    "balanced_adapter": {
+        "title": "Balanced Adapter",
+        "rank": 16,
+        "alpha": 32.0,
+        "dropout": 0.05,
+        "batch_size": 2,
+        "epochs": 2,
+        "learning_rate": 1e-4,
+        "max_seq_length": 2048,
+        "gradient_checkpointing": True,
+    },
+    "quality_adapter": {
+        "title": "Quality Adapter",
+        "rank": 32,
+        "alpha": 64.0,
+        "dropout": 0.05,
+        "batch_size": 1,
+        "epochs": 4,
+        "learning_rate": 5e-5,
+        "max_seq_length": 2048,
+        "gradient_checkpointing": True,
+    },
+}
+
 
 def normalize_training_config(
     *,
@@ -116,6 +218,8 @@ def normalize_training_config(
             message="training_mode=qlora requires a quantized base model.",
         )
     quantization_mode = "quantized_base" if training_mode == "qlora" else "none"
+    preset_id = ext.get("preset_id", "").strip()
+    preset = _resolve_training_preset(preset_id)
 
     family_id = _resolve_family_id(source_model)
     profile = _FAMILY_PROFILES.get(family_id)
@@ -179,20 +283,46 @@ def normalize_training_config(
             details={"format": dataset_format},
         )
 
-    gradient_checkpointing = _bool_value(ext.get("gradient_checkpointing", ""), default=False)
+    gradient_checkpointing = _bool_value(
+        ext.get("gradient_checkpointing", ""),
+        default=bool(preset.get("gradient_checkpointing", False)),
+    )
     mask_prompt = _bool_value(ext.get("mask_prompt", ""), default=response_only)
     batch_size = min(
         max(
             1,
-            _int_value(ext.get("batch_size", ""), default=min(4, max(sample_count, 1)), minimum=1, field_name="batch_size"),
+            _int_value(
+                ext.get("batch_size", ""),
+                default=int(preset.get("batch_size", min(4, max(sample_count, 1)))),
+                minimum=1,
+                field_name="batch_size",
+            ),
         ),
         max(sample_count, 1),
     )
-    epochs = _int_value(ext.get("epochs", ""), default=1, minimum=1, field_name="epochs")
+    epochs = _int_value(
+        ext.get("epochs", ""),
+        default=int(preset.get("epochs", 1)),
+        minimum=1,
+        field_name="epochs",
+    )
     iters = max(1, math.ceil(sample_count * epochs / batch_size))
+    max_steps_raw = ext.get("max_steps", "").strip()
+    max_steps = (
+        _int_value(
+            max_steps_raw,
+            default=0,
+            minimum=1,
+            field_name="max_steps",
+        )
+        if max_steps_raw
+        else 0
+    )
+    if max_steps > 0:
+        iters = min(iters, max_steps)
     max_seq_length = _int_value(
         ext.get("max_seq_length", ""),
-        default=min(int(source_model.max_context or 2048), 2048),
+        default=min(int(source_model.max_context or 2048), int(preset.get("max_seq_length", 2048))),
         minimum=1,
         field_name="max_seq_length",
     )
@@ -206,19 +336,25 @@ def normalize_training_config(
         training_mode=training_mode,
         quantization_mode=quantization_mode,
         family_id=family_id,
-        rank=_int_value(ext.get("rank", ""), default=8, minimum=1, field_name="rank"),
-        alpha=_float_value(ext.get("alpha", ""), default=20.0, minimum=0.0, field_name="alpha"),
-        dropout=_float_value(ext.get("dropout", ""), default=0.0, minimum=0.0, field_name="dropout"),
+        rank=_int_value(ext.get("rank", ""), default=int(preset.get("rank", 8)), minimum=1, field_name="rank"),
+        alpha=_float_value(ext.get("alpha", ""), default=float(preset.get("alpha", 20.0)), minimum=0.0, field_name="alpha"),
+        dropout=_float_value(ext.get("dropout", ""), default=float(preset.get("dropout", 0.0)), minimum=0.0, field_name="dropout"),
         target_modules=configured_targets,
         expanded_target_modules=expanded_target_modules,
         backend_target_modules=backend_target_modules,
         selected_layer_indices=selected_layer_indices,
         total_layer_count=total_layer_count,
         num_layers=num_layers,
-        learning_rate=_float_value(ext.get("learning_rate", ""), default=1e-5, minimum=0.0, field_name="learning_rate"),
+        learning_rate=_float_value(
+            ext.get("learning_rate", ""),
+            default=float(preset.get("learning_rate", 1e-5)),
+            minimum=0.0,
+            field_name="learning_rate",
+        ),
         batch_size=batch_size,
         epochs=epochs,
         iters=iters,
+        max_steps=max_steps,
         response_only=response_only,
         gradient_checkpointing=gradient_checkpointing,
         mask_prompt=mask_prompt,
@@ -229,10 +365,24 @@ def normalize_training_config(
         validation_strategy=validation_strategy,
         validation_split=validation_split,
         validation_sample_count=validation_sample_count,
+        preset_id=preset_id,
+        preset_title=str(preset.get("title", "")),
         desired_derived_model_alias=ext.get("derived_model_alias", "").strip(),
         adapter_name=ext.get("adapter_name", "melix-adapter").strip() or "melix-adapter",
         target_repo=ext.get("target_repo", "").strip(),
     )
+
+
+def _resolve_training_preset(preset_id: str) -> dict[str, object]:
+    if not preset_id:
+        return {}
+    preset = _TRAINING_PRESETS.get(preset_id)
+    if preset is None:
+        raise ModelOperationError(
+            code="invalid_training_preset",
+            message=f"Unknown training preset: {preset_id}",
+        )
+    return preset
 
 
 def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
@@ -240,11 +390,22 @@ def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
     if explicit:
         return explicit
 
-    model_path = source_model.model_path.lower()
-    model_id = source_model.model_id.lower()
-    if "mixtral" in model_path or "mixtral" in model_id:
+    searchable = " ".join(
+        [
+            source_model.model_path.lower(),
+            source_model.model_id.lower(),
+            source_model.revision.lower(),
+        ]
+    )
+    if "mixtral" in searchable:
         return "mixtral"
-    if any(token in model_path for token in ("mistral", "llama", "qwen", "text")):
+    if "qwen" in searchable:
+        return "qwen"
+    if "gemma" in searchable:
+        return "gemma"
+    if "kimi" in searchable or "moonshot" in searchable:
+        return "kimi"
+    if any(token in searchable for token in ("mistral", "llama", "text")):
         return "llama"
     return "llama"
 

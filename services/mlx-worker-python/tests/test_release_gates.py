@@ -160,6 +160,57 @@ def _passing_evaluation_compare_evidence(verdict: str = "improvement") -> dict[s
     }
 
 
+def _passing_real_workload_evidence() -> dict[str, object]:
+    return {
+        "summary": {
+            "pass_count": 3.0,
+            "failure_count": 0.0,
+            "family_count": 3.0,
+        },
+        "families": {
+            "qwen": {
+                "family_id": "qwen",
+                "model_id": "melix-dev-qwen-local",
+                "scenario_id": "support-triage",
+                "dataset_id": "melix.release.real_workload.qwen.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 24.0,
+                    "latency_ms": 842.0,
+                    "throughput_tps": 31.4,
+                    "peak_memory_gb": 8.6,
+                },
+            },
+            "gemma": {
+                "family_id": "gemma",
+                "model_id": "melix-dev-gemma-local",
+                "scenario_id": "product-qa",
+                "dataset_id": "melix.release.real_workload.gemma.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 18.0,
+                    "latency_ms": 918.0,
+                    "throughput_tps": 28.7,
+                    "peak_memory_gb": 10.4,
+                },
+            },
+            "kimi": {
+                "family_id": "kimi",
+                "model_id": "melix-dev-kimi-local",
+                "scenario_id": "long-context-rewrite",
+                "dataset_id": "melix.release.real_workload.kimi.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 20.0,
+                    "latency_ms": 887.0,
+                    "throughput_tps": 29.9,
+                    "peak_memory_gb": 9.8,
+                },
+            },
+        },
+    }
+
+
 def _write_persisted_evaluation_compare_evidence(
     jobs_root: Path,
     *,
@@ -553,6 +604,99 @@ def test_collect_training_evidence_returns_required_metrics(tmp_path: Path) -> N
     assert evidence["adapter_publish_ms"] == 118.0
 
 
+def test_load_release_gate_policy_includes_real_workload_family_rules() -> None:
+    policy = load_release_gate_policy()
+
+    assert policy["real_workload"]["summary"]["pass_count"]["min"] == 3.0
+    assert policy["real_workload"]["summary"]["failure_count"]["max"] == 0.0
+    assert set(policy["real_workload"]["families"].keys()) == {"qwen", "gemma", "kimi"}
+
+
+def test_collect_real_workload_evidence_reports_qwen_gemma_and_kimi_families(
+    tmp_path: Path,
+) -> None:
+    evidence = release_gates_module.collect_real_workload_evidence(tmp_path / "jobs")
+
+    assert evidence["summary"]["pass_count"] == 3.0
+    assert evidence["summary"]["failure_count"] == 0.0
+    assert evidence["summary"]["family_count"] == 3.0
+    assert set(evidence["families"].keys()) == {"qwen", "gemma", "kimi"}
+    assert evidence["families"]["qwen"]["metrics"]["throughput_tps"] >= 20.0
+    assert evidence["families"]["gemma"]["metrics"]["latency_ms"] <= 1500.0
+    assert evidence["families"]["kimi"]["metrics"]["sample_count"] >= 16.0
+
+
+def test_collect_real_workload_evidence_handles_policy_fallback_and_unknown_families(
+    tmp_path: Path,
+) -> None:
+    fallback = release_gates_module.collect_real_workload_evidence(
+        tmp_path / "jobs",
+        policy={"families": {}},
+    )
+    unknown_family = release_gates_module.collect_real_workload_evidence(
+        tmp_path / "jobs",
+        policy={"families": {"unknown": {"passed": {"min": 1.0}}}},
+    )
+
+    assert fallback["summary"]["family_count"] == 3.0
+    assert set(fallback["families"].keys()) == {"qwen", "gemma", "kimi"}
+    assert unknown_family["summary"]["family_count"] == 0.0
+    assert unknown_family["families"] == {}
+
+
+def test_evaluate_real_workload_evidence_reports_missing_family_metrics_and_summary_issues() -> None:
+    policy = {
+        "summary": {"pass_count": {"min": 1.0}},
+        "families": {
+            "skip": "invalid",
+            "qwen": {"passed": {"min": 1.0}},
+            "gemma": {"passed": {"min": 1.0}},
+        },
+    }
+
+    missing_metrics = release_gates_module.evaluate_real_workload_evidence(
+        {
+            "summary": {"pass_count": 1.0, "failure_count": 0.0, "family_count": 1.0},
+            "families": {"qwen": {"family_id": "qwen"}},
+        },
+        policy,
+    )
+    assert "real_workload.families.qwen.metrics is missing" in missing_metrics
+    assert "real_workload.families.gemma is missing" in missing_metrics
+
+    missing_summary = release_gates_module.evaluate_real_workload_evidence(
+        {
+            "summary": {"pass_count": 1.0},
+            "families": {
+                "qwen": {
+                    "metrics": {"passed": 1.0},
+                }
+            },
+        },
+        {"summary": {}, "families": {"qwen": {"passed": {"min": 1.0}}}},
+    )
+    assert "real_workload.summary.failure_count is missing" in missing_summary
+    assert "real_workload.summary.family_count is missing" in missing_summary
+
+    malformed_summary = release_gates_module.evaluate_real_workload_evidence(
+        {
+            "summary": {
+                "pass_count": "one",
+                "failure_count": 0.0,
+                "family_count": 5.0,
+            },
+            "families": {
+                "qwen": {
+                    "metrics": {"passed": 1.0},
+                }
+            },
+        },
+        {"summary": {}, "families": {"qwen": {"passed": {"min": 1.0}}}},
+    )
+    assert "real_workload.summary.pass_count must be numeric" in malformed_summary
+    assert any("did not match computed" in failure for failure in malformed_summary)
+
+
 def test_collect_m9_collectors_delegate_to_expected_smoke_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -779,6 +923,7 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
                 "full.audio_runtime_pack_recovery_success_rate": 0.0,
             },
         },
+        "real_workload": _passing_real_workload_evidence(),
         "m9": _passing_m9_evidence(),
     }
 
@@ -803,6 +948,89 @@ def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_evidence() 
     assert "slim.audio_first_use_blocked_runtime_pack_count=0.00 fell below minimum 1.00" in failures
     assert "full.audio_runtime_pack_install_ms=1.00 exceeded maximum 0.00" in failures
     assert "quantization evidence is missing" in failures
+
+
+def test_evaluate_release_gate_fails_closed_for_missing_real_workload_evidence() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1420.0,
+            "adapter_publish_ms": 118.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 10.0,
+                "slim.audio_model_download_ms": 15.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 15.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "quantization": {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                pid: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670.0,
+                    "manifest_bytes": 1747.0,
+                    "calibration_sample_count": 32.0,
+                    "smoke_test_passed": 1.0,
+                }
+                for pid in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {
+                "eval.mmlu.accuracy": 0.75,
+            },
+        },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
+        "m9": _passing_m9_evidence(),
+    }
+
+    failures = evaluate_release_gate(report, policy)
+
+    assert "real_workload evidence is missing" in failures
 
 
 def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
@@ -1217,6 +1445,7 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
                     }
                 },
             },
+            "real_workload": _passing_real_workload_evidence(),
             "m9": _passing_m9_evidence(),
         },
         load_release_gate_policy(),
@@ -1623,6 +1852,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),
+        "real_workload": _passing_real_workload_evidence(),
         "m9": _passing_m9_evidence(),
     }
 
@@ -1706,6 +1936,7 @@ def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(verdict="regression"),
+        "real_workload": _passing_real_workload_evidence(),
         "m9": _passing_m9_evidence(),
     }
 
@@ -1767,6 +1998,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),
+        "real_workload": _passing_real_workload_evidence(),
         "m9": _passing_m9_evidence(),
     }
 

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
+import types
 
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.lora_training_pipeline import _int_ext
@@ -134,6 +137,97 @@ def test_training_config_helpers_cover_family_and_validation_branches() -> None:
     assert mixtral.desired_derived_model_alias == "alias-a"
     assert fallback.family_id == "llama"
     assert training_config_module._backend_target_modules(["custom.module"]) == ["custom.module"]
+
+
+def test_training_config_applies_named_presets_and_allows_explicit_overrides() -> None:
+    balanced = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit", quant_profile_id="q4"),
+        ext={"preset_id": "balanced_adapter", "training_mode": "qlora", "rank": "24"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=4,
+    )
+
+    assert balanced.preset_id == "balanced_adapter"
+    assert balanced.preset_title == "Balanced Adapter"
+    assert balanced.rank == 24
+    assert balanced.alpha == 32.0
+    assert balanced.dropout == 0.05
+    assert balanced.gradient_checkpointing is True
+    assert balanced.batch_size == 2
+    assert balanced.epochs == 2
+    assert balanced.learning_rate == 1e-4
+
+    with pytest.raises(ModelOperationError) as unknown_preset:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={"preset_id": "mystery"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert unknown_preset.value.code == "invalid_training_preset"
+
+
+def test_training_config_caps_computed_iters_with_max_steps() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit", quant_profile_id="q4"),
+        ext={
+            "training_mode": "qlora",
+            "batch_size": "1",
+            "epochs": "4",
+            "max_steps": "2",
+            "hf_valid_split": "validation",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=6,
+        validation_sample_count=1,
+    )
+
+    assert config.iters == 2
+    assert config.steps_per_report == 2
+    assert config.steps_per_eval == 2
+    assert config.steps_per_save == 2
+
+
+def test_training_config_resolves_qwen_gemma_and_kimi_families() -> None:
+    qwen = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path="mlx-community/Qwen3.5-0.8B-Instruct-4bit",
+            quant_profile_id="q4",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    gemma = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path="unsloth/gemma-3-4b-it"),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    kimi = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path="mlx-community/kimi-k2-instruct-4bit",
+            quant_profile_id="q4",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert qwen.family_id == "qwen"
+    assert gemma.family_id == "gemma"
+    assert kimi.family_id == "kimi"
+    assert qwen.quantization_mode == "quantized_base"
+    assert kimi.quantization_mode == "quantized_base"
+    assert any(module.endswith(".self_attn.q_proj") for module in qwen.expanded_target_modules)
+    assert any(module.endswith(".mlp.gate_proj") for module in gemma.expanded_target_modules)
+    assert any(module.endswith(".mlp.down_proj") for module in kimi.expanded_target_modules)
 
 
 def test_training_config_scalar_helpers_reject_invalid_values() -> None:
@@ -401,3 +495,115 @@ def test_misc_lora_helpers_cover_int_ext_and_cached_valid_split(tmp_path: Path) 
     assert restored.valid_split == "validation"
     assert _int_ext({"sample_limit": "7"}, "sample_limit") == 7
     assert _int_ext({}, "sample_limit") == 0
+
+
+def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mlx_pkg = types.ModuleType("mlx")
+    fake_mlx_pkg.__path__ = []
+    fake_mlx_core = types.ModuleType("mlx.core")
+    reset_calls: list[str] = []
+
+    class FakeMetal:
+        @staticmethod
+        def reset_peak_memory() -> None:
+            reset_calls.append("reset")
+
+        @staticmethod
+        def get_peak_memory() -> float:
+            return float(3 * 1024**3)
+
+    fake_mlx_core.metal = FakeMetal()
+    fake_mlx_pkg.core = fake_mlx_core
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx_pkg)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
+
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_mlx_lm.__path__ = []
+    fake_lora = types.ModuleType("mlx_lm.lora")
+    fake_callbacks = types.ModuleType("mlx_lm.tuner.callbacks")
+    fake_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    fake_utils = types.ModuleType("mlx_lm.utils")
+
+    class FakeTrainingCallback:
+        pass
+
+    def fake_load(model_source: str, *, lazy: bool = False):
+        assert model_source == str(tmp_path / "base-model")
+        assert lazy is False
+        return object(), object()
+
+    def fake_load_local_dataset(dataset_dir: Path, tokenizer, args):
+        _ = tokenizer
+        assert dataset_dir == tmp_path / "normalized"
+        assert args.adapter_path == str(tmp_path / "adapter-output")
+        return ["train"], ["valid"], None
+
+    def fake_train_model(args, model, train_set, valid_set, training_callback) -> None:
+        _ = model
+        assert train_set == ["train"]
+        assert valid_set == ["valid"]
+        training_callback.on_train_loss_report(
+            {
+                "train_loss": 0.8,
+                "learning_rate": 1e-4,
+                "trained_tokens": 120,
+            }
+        )
+        training_callback.on_val_loss_report({"val_loss": 0.2})
+        checkpoint_root = Path(args.adapter_path)
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+        (checkpoint_root / "checkpoint-1").mkdir(parents=True, exist_ok=True)
+        (checkpoint_root / "checkpoint-1" / "weights.safetensors").write_text("a", encoding="utf-8")
+        (checkpoint_root / "checkpoint-2.safetensors").write_text("b", encoding="utf-8")
+
+    fake_lora.train_model = fake_train_model
+    fake_callbacks.TrainingCallback = FakeTrainingCallback
+    fake_datasets.load_local_dataset = fake_load_local_dataset
+    fake_utils.load = fake_load
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", fake_lora)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.callbacks", fake_callbacks)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", fake_datasets)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    perf_counter_values = iter([10.0, 12.0])
+    monkeypatch.setattr(
+        mlx_lm_runner_module.time,
+        "perf_counter",
+        lambda: next(perf_counter_values),
+    )
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=4,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-real",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train_native(request)
+
+    assert reset_calls == ["reset"]
+    assert result.metrics.loss_final == pytest.approx(0.2)
+    assert result.metrics.loss_best == pytest.approx(0.2)
+    assert result.metrics.learning_rate_final == pytest.approx(1e-4)
+    assert result.metrics.checkpoint_count == 2
+    assert result.metrics.resume_ready is True
+    assert result.metrics.tokens_per_second == pytest.approx(60.0)
+    assert result.metrics.peak_memory_gb == pytest.approx(3.0)

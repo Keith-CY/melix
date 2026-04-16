@@ -81,6 +81,18 @@ class ResolvedTrainingDatasetPackage:
     hf_reference: HFDatasetReference | None
 
 
+@dataclass(frozen=True)
+class BuiltTrainingDatasetArtifact:
+    package_path: Path
+    manifest_path: Path
+    output_path: Path
+    manifest_payload: dict[str, Any]
+    sample_count: int
+    validation_sample_count: int
+    format: str
+    inspect_only: bool
+
+
 def load_training_dataset_package(
     dataset_uri: str,
     *,
@@ -290,6 +302,147 @@ def resolve_training_dataset_package(
         cache_key=materialized.cache_key,
         cache_hit=materialized.cache_hit,
         hf_reference=materialized.reference,
+    )
+
+
+def build_training_dataset_artifact(
+    request_ext: dict[str, str],
+    *,
+    jobs_root: Path,
+    output_dir: Path,
+    source_model_id: str = "",
+    hf_dataset_fetcher: HFDatasetFetcher | None = None,
+    progress: Callable[[str, float], None] | None = None,
+) -> BuiltTrainingDatasetArtifact:
+    inspect_only = _truthy(request_ext.get("inspect_only", ""))
+    preview_count = _int_ext_value(
+        request_ext.get("preview_count", ""),
+        default=3,
+        minimum=1,
+        field_name="preview_count",
+    )
+    validation_ratio = _float_ext_value(
+        request_ext.get("validation_ratio", ""),
+        default=0.0,
+        minimum=0.0,
+        maximum=0.99,
+        field_name="validation_ratio",
+    )
+    sample_limit = _int_ext_value(
+        request_ext.get("sample_limit", ""),
+        default=0,
+        minimum=0,
+        field_name="sample_limit",
+    )
+
+    if progress is not None:
+        progress("resolve_source", 0.15)
+
+    source = _resolve_dataset_build_source(
+        request_ext,
+        jobs_root=jobs_root,
+        hf_dataset_fetcher=hf_dataset_fetcher,
+        sample_limit=sample_limit,
+    )
+
+    train_samples = list(source["samples"])
+    validation_samples = list(source["validation_samples"])
+    combined_source_samples = train_samples + validation_samples
+    if not combined_source_samples:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Dataset builder did not resolve any usable training samples.",
+        )
+
+    if progress is not None:
+        progress("inspect_samples", 0.45)
+
+    validation_strategy = "source_validation" if validation_samples else "none"
+    if validation_ratio > 0 and not validation_samples:
+        train_samples, validation_samples = _deterministic_validation_split(
+            train_samples,
+            validation_ratio,
+        )
+        validation_strategy = "deterministic_ratio"
+
+    quality = _build_quality_report(combined_source_samples)
+    token_stats = _build_token_stats(combined_source_samples, source["format"])
+
+    manifest_payload: dict[str, Any] = {
+        "dataset_id": source["dataset_id"],
+        "format": source["format"],
+        "sample_count": len(train_samples),
+        "validation_sample_count": len(validation_samples),
+        "version": source["version"],
+        "source_model": source_model_id,
+        "source_kind": source["source_kind"],
+        "dataset_uri": source["source_uri"],
+        "source_manifest_path": source["source_manifest_path"],
+        "source_samples_path": source["source_samples_path"],
+        "response_only_supported": source["response_only_supported"],
+        "conversion_template": source["conversion_template"],
+        "validation_strategy": validation_strategy,
+        "validation_ratio": validation_ratio,
+        "preview_count": preview_count,
+        "preview_samples": train_samples[:preview_count],
+        "validation_preview_samples": validation_samples[:preview_count],
+        "quality": quality,
+        "token_stats": token_stats,
+        "build_ready": True,
+        "operation": "build_training_dataset",
+        "inspect_only": inspect_only,
+    }
+    if source["hf_metadata"]:
+        manifest_payload.update(source["hf_metadata"])
+
+    package_path = output_dir.expanduser().resolve()
+    package_path.mkdir(parents=True, exist_ok=True)
+
+    if inspect_only:
+        if progress is not None:
+            progress("write_inspection_manifest", 0.9)
+        manifest_payload["schema_version"] = "melix.training_dataset_inspection.v1"
+        manifest_path = package_path / "training_dataset.inspect.json"
+        manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+        _cleanup_dataset_package_files(package_path)
+        return BuiltTrainingDatasetArtifact(
+            package_path=package_path,
+            manifest_path=manifest_path,
+            output_path=manifest_path,
+            manifest_payload=manifest_payload,
+            sample_count=len(train_samples),
+            validation_sample_count=len(validation_samples),
+            format=source["format"],
+            inspect_only=True,
+        )
+
+    if progress is not None:
+        progress("write_dataset_package", 0.9)
+    manifest_payload["schema_version"] = "melix.training_dataset_package.v1"
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+    samples_path.write_text(
+        "\n".join(json.dumps(sample) for sample in train_samples) + "\n",
+        encoding="utf-8",
+    )
+    valid_path = package_path / "valid.jsonl"
+    if validation_samples:
+        valid_path.write_text(
+            "\n".join(json.dumps(sample) for sample in validation_samples) + "\n",
+            encoding="utf-8",
+        )
+    elif valid_path.exists():
+        valid_path.unlink()
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+    return BuiltTrainingDatasetArtifact(
+        package_path=package_path,
+        manifest_path=manifest_path,
+        output_path=package_path,
+        manifest_payload=manifest_payload,
+        sample_count=len(train_samples),
+        validation_sample_count=len(validation_samples),
+        format=source["format"],
+        inspect_only=False,
     )
 
 
@@ -769,3 +922,475 @@ def _truncate_text(value: str, max_characters_per_sample: int) -> str:
     if max_characters_per_sample > 0:
         return value[:max_characters_per_sample]
     return value
+
+
+def _resolve_dataset_build_source(
+    request_ext: dict[str, str],
+    *,
+    jobs_root: Path,
+    hf_dataset_fetcher: HFDatasetFetcher | None,
+    sample_limit: int,
+) -> dict[str, Any]:
+    explicit_source_kind = request_ext.get("dataset_source_kind", "").strip()
+    if explicit_source_kind:
+        source_kind = explicit_source_kind
+    elif request_ext.get("hf_dataset_path", "").strip():
+        source_kind = "hf_dataset"
+    else:
+        source_kind = "local_path"
+
+    if source_kind == "hf_dataset":
+        resolved = resolve_training_dataset_package(
+            {**request_ext, "dataset_source_kind": "hf_dataset"},
+            jobs_root=jobs_root,
+            hf_dataset_fetcher=hf_dataset_fetcher,
+            sample_limit=sample_limit,
+        )
+        template = request_ext.get("template", "").strip() or "source_schema"
+        return {
+            "dataset_id": request_ext.get("dataset_id", "").strip() or resolved.package.dataset_id,
+            "format": resolved.package.format,
+            "version": resolved.package.version,
+            "source_kind": "hf_dataset",
+            "source_uri": resolved.dataset_uri,
+            "source_manifest_path": str(resolved.package.manifest_path),
+            "source_samples_path": str(resolved.package.samples_path),
+            "samples": list(resolved.package.normalized_samples),
+            "validation_samples": list(resolved.package.normalized_validation_samples),
+            "response_only_supported": resolved.package.response_only_supported,
+            "conversion_template": template,
+            "hf_metadata": {
+                "hf_dataset_path": resolved.hf_reference.dataset_path if resolved.hf_reference else "",
+                "hf_dataset_name": resolved.hf_reference.dataset_name if resolved.hf_reference else "",
+                "hf_dataset_revision": resolved.hf_reference.dataset_revision if resolved.hf_reference else "",
+                "hf_train_split": resolved.hf_reference.train_split if resolved.hf_reference else "",
+                "hf_valid_split": resolved.hf_reference.valid_split if resolved.hf_reference else "",
+            },
+        }
+
+    dataset_uri = request_ext.get("dataset_uri", "").strip()
+    if not dataset_uri:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Dataset builder requires dataset_uri or hf_dataset_path.",
+        )
+
+    source_path = Path(dataset_uri).expanduser().resolve()
+    if source_path.is_dir():
+        package = load_training_dataset_package(
+            str(source_path),
+            sample_limit=sample_limit,
+        )
+        template = request_ext.get("template", "").strip() or "existing_package"
+        return {
+            "dataset_id": request_ext.get("dataset_id", "").strip() or package.dataset_id,
+            "format": package.format,
+            "version": package.version,
+            "source_kind": "local_package",
+            "source_uri": str(source_path),
+            "source_manifest_path": str(package.manifest_path),
+            "source_samples_path": str(package.samples_path),
+            "samples": list(package.normalized_samples),
+            "validation_samples": list(package.normalized_validation_samples),
+            "response_only_supported": package.response_only_supported,
+            "conversion_template": template,
+            "hf_metadata": {},
+        }
+
+    if source_path.is_file() is False:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Local dataset source path was not found.",
+            details={"dataset_uri": dataset_uri},
+        )
+
+    rows = _read_local_jsonl_rows(source_path, sample_limit=sample_limit)
+    resolved_template = _resolve_local_conversion_template(
+        request_ext.get("template", "").strip() or "auto",
+        rows[0],
+    )
+    format_name, converted_rows = _convert_local_rows(
+        rows,
+        resolved_template,
+    )
+    normalized_samples = [
+        _normalize_sample(sample, format_name=format_name, max_characters_per_sample=0)
+        for sample in converted_rows
+    ]
+    dataset_id = request_ext.get("dataset_id", "").strip() or source_path.stem
+    return {
+        "dataset_id": dataset_id,
+        "format": format_name,
+        "version": "1",
+        "source_kind": "local_path",
+        "source_uri": str(source_path),
+        "source_manifest_path": "",
+        "source_samples_path": str(source_path),
+        "samples": normalized_samples,
+        "validation_samples": [],
+        "response_only_supported": format_name in {"chat_messages", "prompt_completion"},
+        "conversion_template": resolved_template,
+        "hf_metadata": {},
+    }
+
+
+def _read_local_jsonl_rows(path: Path, *, sample_limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ModelOperationError(
+                    code="invalid_dataset_source",
+                    message="Local dataset source contains invalid JSONL rows.",
+                    details={"line": str(line_number)},
+                ) from exc
+            if not isinstance(payload, dict):
+                raise ModelOperationError(
+                    code="invalid_dataset_source",
+                    message="Local dataset rows must be JSON objects.",
+                    details={"line": str(line_number)},
+                )
+            rows.append(payload)
+            if sample_limit > 0 and len(rows) >= sample_limit:
+                break
+    if not rows:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Local dataset source did not contain any usable rows.",
+            details={"dataset_uri": str(path)},
+        )
+    return rows
+
+
+def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]) -> str:
+    if template and template != "auto":
+        if template in {
+            "chat_messages",
+            "prompt_completion",
+            "text_completion",
+            "alpaca",
+            "sharegpt",
+        }:
+            return template
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"Unsupported dataset conversion template: {template}",
+        )
+
+    if isinstance(sample_row.get("messages"), list):
+        return "chat_messages"
+    if "prompt" in sample_row and "completion" in sample_row:
+        return "prompt_completion"
+    if "text" in sample_row:
+        return "text_completion"
+    if "instruction" in sample_row and ("output" in sample_row or "response" in sample_row):
+        return "alpaca"
+    if isinstance(sample_row.get("conversations"), list) or isinstance(sample_row.get("conversation"), list):
+        return "sharegpt"
+    raise ModelOperationError(
+        code="invalid_dataset_source",
+        message="Unable to infer a supported dataset conversion template from the local source row schema.",
+    )
+
+
+def _convert_local_rows(
+    rows: list[dict[str, Any]],
+    template: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    if template == "chat_messages":
+        return "chat_messages", [{"messages": row.get("messages")} for row in rows]
+    if template == "prompt_completion":
+        return "prompt_completion", [
+            {
+                "prompt": row.get("prompt"),
+                "completion": row.get("completion"),
+            }
+            for row in rows
+        ]
+    if template == "text_completion":
+        return "text_completion", [{"text": row.get("text")} for row in rows]
+    if template == "alpaca":
+        converted: list[dict[str, Any]] = []
+        for row in rows:
+            instruction = str(row.get("instruction", "")).strip()
+            input_text = str(row.get("input", "")).strip()
+            completion = str(row.get("output", row.get("response", ""))).strip()
+            prompt = instruction
+            if input_text:
+                prompt = f"{instruction}\n\nInput:\n{input_text}"
+            converted.append({"prompt": prompt, "completion": completion})
+        return "prompt_completion", converted
+    if template == "sharegpt":
+        converted = []
+        role_map = {
+            "system": "system",
+            "human": "user",
+            "user": "user",
+            "gpt": "assistant",
+            "assistant": "assistant",
+            "tool": "tool",
+        }
+        for row in rows:
+            raw_conversations = row.get("conversations", row.get("conversation"))
+            if not isinstance(raw_conversations, list):
+                raise ModelOperationError(
+                    code="invalid_dataset_source",
+                    message="sharegpt conversion requires a conversations array.",
+                )
+            messages: list[dict[str, str]] = []
+            for turn_index, turn in enumerate(raw_conversations):
+                if not isinstance(turn, dict):
+                    raise ModelOperationError(
+                        code="invalid_dataset_source",
+                        message="sharegpt conversations must contain JSON object turns.",
+                        details={"message_index": str(turn_index)},
+                    )
+                raw_role = str(turn.get("from", turn.get("role", ""))).strip().lower()
+                role = role_map.get(raw_role, "")
+                if not role:
+                    raise ModelOperationError(
+                        code="invalid_dataset_source",
+                        message="sharegpt conversion encountered an unsupported role.",
+                        details={"role": raw_role or "unknown"},
+                    )
+                messages.append({"role": role, "content": turn.get("value", turn.get("content", ""))})
+            converted.append({"messages": messages})
+        return "chat_messages", converted
+    raise ModelOperationError(
+        code="invalid_dataset_source",
+        message=f"Unsupported dataset conversion template: {template}",
+    )
+
+
+def _deterministic_validation_split(
+    samples: list[dict[str, Any]],
+    validation_ratio: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if len(samples) < 2:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Automatic validation split requires at least two samples.",
+        )
+
+    validation_count = int(round(len(samples) * validation_ratio))
+    validation_count = max(1, min(len(samples) - 1, validation_count))
+    ranked = sorted(
+        (
+            _canonical_sample_key(sample),
+            index,
+        )
+        for index, sample in enumerate(samples)
+    )
+    validation_indices = {index for _, index in ranked[:validation_count]}
+    train_samples = [sample for index, sample in enumerate(samples) if index not in validation_indices]
+    validation_samples = [sample for index, sample in enumerate(samples) if index in validation_indices]
+    return train_samples, validation_samples
+
+
+def _build_quality_report(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    seen: set[str] = set()
+    duplicate_indices: list[int] = []
+    dirty_samples: list[dict[str, Any]] = []
+    for index, sample in enumerate(samples):
+        canonical = _canonical_sample_key(sample)
+        if canonical in seen:
+            duplicate_indices.append(index)
+        else:
+            seen.add(canonical)
+        reasons = _dirty_sample_reasons(sample)
+        if reasons:
+            dirty_samples.append({"index": index, "reasons": reasons})
+    return {
+        "duplicate_count": len(duplicate_indices),
+        "duplicate_sample_indices": duplicate_indices[:10],
+        "dirty_count": len(dirty_samples),
+        "dirty_samples": dirty_samples[:10],
+    }
+
+
+def _build_token_stats(samples: list[dict[str, Any]], format_name: str) -> dict[str, Any]:
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    for sample in samples:
+        prompt_count, completion_count = _sample_token_counts(sample, format_name)
+        prompt_tokens.append(prompt_count)
+        completion_tokens.append(completion_count)
+        total_tokens.append(prompt_count + completion_count)
+
+    return {
+        "estimator": "whitespace_v1",
+        "sample_count": len(samples),
+        "prompt_tokens_mean": _mean_value(prompt_tokens),
+        "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
+        "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
+        "prompt_tokens_max": max(prompt_tokens, default=0),
+        "completion_tokens_mean": _mean_value(completion_tokens),
+        "completion_tokens_p50": _percentile_value(completion_tokens, 0.50),
+        "completion_tokens_p95": _percentile_value(completion_tokens, 0.95),
+        "completion_tokens_max": max(completion_tokens, default=0),
+        "total_tokens_mean": _mean_value(total_tokens),
+        "total_tokens_p50": _percentile_value(total_tokens, 0.50),
+        "total_tokens_p95": _percentile_value(total_tokens, 0.95),
+        "total_tokens_max": max(total_tokens, default=0),
+    }
+
+
+def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:
+    if format_name == "chat_messages":
+        messages = sample.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            return 0, 0
+        prompt_segments = [
+            f"{message.get('role', '')}: {message.get('content', '')}"
+            for message in messages[:-1]
+            if isinstance(message, dict)
+        ]
+        last_message = messages[-1] if isinstance(messages[-1], dict) else {}
+        completion_text = str(last_message.get("content", ""))
+        return _whitespace_token_count("\n".join(prompt_segments)), _whitespace_token_count(completion_text)
+
+    if format_name == "prompt_completion":
+        return (
+            _whitespace_token_count(str(sample.get("prompt", ""))),
+            _whitespace_token_count(str(sample.get("completion", ""))),
+        )
+
+    return 0, _whitespace_token_count(str(sample.get("text", "")))
+
+
+def _dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    for text in _sample_text_segments(sample):
+        if _contains_problematic_control_characters(text):
+            reasons.append("control_characters")
+            break
+
+    if "prompt" in sample and "completion" in sample:
+        prompt = str(sample.get("prompt", "")).strip()
+        completion = str(sample.get("completion", "")).strip()
+        if prompt and completion and prompt == completion:
+            reasons.append("duplicate_prompt_completion")
+
+    if "messages" in sample:
+        messages = sample.get("messages")
+        if isinstance(messages, list) and len(messages) >= 2:
+            previous = messages[-2] if isinstance(messages[-2], dict) else {}
+            last = messages[-1] if isinstance(messages[-1], dict) else {}
+            if str(previous.get("content", "")).strip() and str(previous.get("content", "")).strip() == str(
+                last.get("content", "")
+            ).strip():
+                reasons.append("echo_response")
+
+    unique_reasons: list[str] = []
+    for reason in reasons:
+        if reason not in unique_reasons:
+            unique_reasons.append(reason)
+    return unique_reasons
+
+
+def _sample_text_segments(sample: dict[str, Any]) -> list[str]:
+    if "messages" in sample:
+        messages = sample.get("messages", [])
+        if isinstance(messages, list):
+            return [
+                str(message.get("content", ""))
+                for message in messages
+                if isinstance(message, dict)
+            ]
+    if "prompt" in sample or "completion" in sample:
+        return [str(sample.get("prompt", "")), str(sample.get("completion", ""))]
+    return [str(sample.get("text", ""))]
+
+
+def _contains_problematic_control_characters(text: str) -> bool:
+    return any(ord(character) < 32 and character not in {"\n", "\r", "\t"} for character in text)
+
+
+def _canonical_sample_key(sample: dict[str, Any]) -> str:
+    return json.dumps(sample, sort_keys=True, ensure_ascii=False)
+
+
+def _whitespace_token_count(text: str) -> int:
+    return len(text.split())
+
+
+def _mean_value(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    return round(sum(values) / len(values), 3)
+
+
+def _percentile_value(values: list[int], pct: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = int((len(ordered) - 1) * pct)
+    return ordered[index]
+
+
+def _truthy(raw_value: str) -> bool:
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_ext_value(
+    raw_value: str,
+    *,
+    default: int,
+    minimum: int,
+    field_name: str,
+) -> int:
+    value = raw_value.strip()
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"{field_name} must be an integer.",
+        ) from exc
+    if parsed < minimum:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"{field_name} must be >= {minimum}.",
+        )
+    return parsed
+
+
+def _float_ext_value(
+    raw_value: str,
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+    field_name: str,
+) -> float:
+    value = raw_value.strip()
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"{field_name} must be a number.",
+        ) from exc
+    if parsed < minimum or parsed > maximum:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message=f"{field_name} must be between {minimum} and {maximum}.",
+        )
+    return parsed
+
+
+def _cleanup_dataset_package_files(package_path: Path) -> None:
+    for candidate in ("manifest.json", "samples.jsonl", "valid.jsonl"):
+        target = package_path / candidate
+        if target.exists():
+            target.unlink()

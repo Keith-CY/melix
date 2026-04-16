@@ -22,6 +22,10 @@ class TrainingMetrics:
     loss_final: float
     loss_best: float
     learning_rate_final: float
+    checkpoint_count: int = 0
+    resume_ready: bool = False
+    tokens_per_second: float = 0.0
+    peak_memory_gb: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,7 @@ class MLXLMRunner:
         collector = MetricsCollector()
         started_at = time.perf_counter()
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
+        _reset_mlx_peak_memory_probe()
 
         model, tokenizer = load(str(request.model_path), lazy=False)
         args = _mlx_lora_namespace(request)
@@ -139,6 +144,10 @@ class MLXLMRunner:
         duration_ms = (time.perf_counter() - started_at) * 1000.0
         losses = collector.losses or [0.0]
         learning_rates = collector.learning_rates or [request.config.learning_rate]
+        tokens_per_second = 0.0
+        if duration_ms > 0.0 and collector.tokens_seen > 0:
+            tokens_per_second = collector.tokens_seen / (duration_ms / 1000.0)
+        checkpoint_count = _count_training_checkpoints(request.adapter_output_dir)
         return TrainingResult(
             weights_path=request.adapter_output_dir / "adapters.safetensors",
             adapter_config_path=request.adapter_output_dir / "adapter_config.json",
@@ -149,6 +158,10 @@ class MLXLMRunner:
                 loss_final=losses[-1],
                 loss_best=min(losses),
                 learning_rate_final=learning_rates[-1],
+                checkpoint_count=checkpoint_count,
+                resume_ready=checkpoint_count > 0,
+                tokens_per_second=tokens_per_second,
+                peak_memory_gb=_mlx_peak_memory_gb(),
             ),
             execution_backend="native",
         )
@@ -334,6 +347,47 @@ def _deserialize_training_result(payload: dict) -> TrainingResult:
         metrics=TrainingMetrics(**payload["metrics"]),
         execution_backend=str(payload["execution_backend"]),
     )
+
+
+def _reset_mlx_peak_memory_probe() -> None:
+    try:
+        import mlx.core as mx
+    except ModuleNotFoundError:
+        return
+    try:
+        if hasattr(mx, "metal") and hasattr(mx.metal, "reset_peak_memory"):
+            mx.metal.reset_peak_memory()
+    except Exception:
+        return
+
+
+def _mlx_peak_memory_gb() -> float:
+    try:
+        import mlx.core as mx
+    except ModuleNotFoundError:
+        return 0.0
+    try:
+        if hasattr(mx, "metal") and hasattr(mx.metal, "get_peak_memory"):
+            peak_memory_bytes = float(mx.metal.get_peak_memory() or 0.0)
+            if peak_memory_bytes > 0.0:
+                return peak_memory_bytes / float(1024**3)
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+def _count_training_checkpoints(adapter_output_dir: Path) -> int:
+    checkpoint_ids: set[str] = set()
+    root_weights_path = adapter_output_dir / "adapters.safetensors"
+    for weights_path in adapter_output_dir.rglob("*.safetensors"):
+        if weights_path == root_weights_path:
+            continue
+        relative_path = weights_path.relative_to(adapter_output_dir)
+        if len(relative_path.parts) > 1:
+            checkpoint_ids.add(relative_path.parts[0])
+            continue
+        checkpoint_ids.add(weights_path.stem)
+    return len(checkpoint_ids)
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:

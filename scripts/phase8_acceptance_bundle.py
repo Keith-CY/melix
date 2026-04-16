@@ -21,6 +21,8 @@ _TRAINING_FIXTURE_DATASET_ID = "melix-dev-dataset.v1"
 _ADAPTER_NAME = "phase8-acceptance"
 _DERIVED_ALIAS = "phase8-acceptance-derived"
 _BUNDLE_SCHEMA_VERSION = "melix.phase8.acceptance_bundle.v1"
+_REAL_SMALL_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+_REAL_SMALL_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
 _BENCH_CONTEXT_LENGTH = "1024"
 _BENCH_GENERATION_LENGTH = "64"
 _BENCH_BATCH_SIZE = "1"
@@ -31,6 +33,49 @@ _MATRIX_STRUCTURED_OUTPUT_MODE = "plain_text"
 _MATRIX_CONCURRENCY = "1"
 _MATRIX_REQUESTS = "4"
 _EVALUATION_SAMPLE_SIZE = "4"
+_EXPERIMENT_INDEX_NAME = "lora-experiments.index.json"
+_HF_TOKEN_KEYS = ("hf_token", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN")
+_EVALUATION_SCORING_MODES = {
+    "mmlu": "multiple_choice_accuracy",
+    "arc_challenge": "multiple_choice_accuracy",
+    "hellaswag": "multiple_choice_accuracy",
+    "winogrande": "multiple_choice_accuracy",
+    "truthfulqa_mc": "multiple_choice_accuracy",
+    "gsm8k": "exact_match",
+    "imagenette": "exact_match",
+    "humaneval": "pass_at_1",
+    "mbpp": "pass_at_1",
+}
+
+_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "deterministic_import": {
+        "acceptance_tier": "cli_regression",
+        "runtime_backend_mode": "mixed_default",
+        "activation_mode": "",
+        "training_preset_id": "",
+        "training_max_steps": 0,
+        "experiment_group_id": "",
+        "publish_mode": "disabled",
+    },
+    "live_hub": {
+        "acceptance_tier": "cli_regression",
+        "runtime_backend_mode": "mixed_default",
+        "activation_mode": "",
+        "training_preset_id": "",
+        "training_max_steps": 0,
+        "experiment_group_id": "",
+        "publish_mode": "disabled",
+    },
+    "real_small_model": {
+        "acceptance_tier": "cli_real_small_model",
+        "runtime_backend_mode": "python_auto",
+        "activation_mode": "adapter_backed_runtime",
+        "training_preset_id": "debug_fast",
+        "training_max_steps": 2,
+        "experiment_group_id": "phase8-real-small-model",
+        "publish_mode": "disabled",
+    },
+}
 
 
 class AcceptanceBundleError(RuntimeError):
@@ -65,6 +110,17 @@ class AcceptanceBundleConfig:
     live: bool
     timestamp: str
     json_output: bool
+    execution_profile: str = "deterministic_import"
+    acceptance_tier: str = "cli_regression"
+    runtime_backend_mode: str = "mixed_default"
+    activation_mode: str = ""
+    training_preset_id: str = ""
+    training_max_steps: int = 0
+    experiment_group_id: str = ""
+    publish_mode: str = "disabled"
+    publish_target_repo: str = ""
+    source_resolution_mode: str = ""
+    materialize_warnings: tuple[str, ...] = ()
 
 
 class JSONCommandExecuting(Protocol):
@@ -175,6 +231,14 @@ def run_acceptance_bundle(
             ),
             context="melix model import",
         )
+    if config.materialize_warnings:
+        materialize_receipt = dict(materialize_receipt)
+        existing_warnings = materialize_receipt.get("warnings", [])
+        warnings: list[str] = []
+        if isinstance(existing_warnings, list):
+            warnings.extend(str(item) for item in existing_warnings if str(item).strip())
+        warnings.extend(config.materialize_warnings)
+        materialize_receipt["warnings"] = warnings
     timings["phase8.cli.managed_materialize_ms"] = _elapsed_ms(materialize_started_at)
 
     model_id = _require_string(materialize_receipt, "model_id", context="managed model receipt")
@@ -184,11 +248,11 @@ def run_acceptance_bundle(
     _write_json(cli_receipts_root / "01-materialize.json", materialize_receipt)
 
     rebind_started_at = time.perf_counter()
-    registry_snapshot = _expect_mapping(
+    registry_rescan_receipt = _expect_mapping(
         executor.run_json(["model", "roots", "rescan", "--json"]),
         context="melix model roots rescan",
     )
-    _write_json(cli_receipts_root / "02-registry-rescan.json", registry_snapshot)
+    _write_json(cli_receipts_root / "02-registry-rescan.json", registry_rescan_receipt)
 
     server_update = _expect_mapping(
         executor.run_json(
@@ -241,20 +305,25 @@ def run_acceptance_bundle(
     _write_json(cli_receipts_root / "05-base-chat.json", base_chat_receipt)
 
     lora_train_started_at = time.perf_counter()
+    train_args = [
+        "lora",
+        "train",
+        "--model-id",
+        model_id,
+        "--dataset-uri",
+        config.training_fixture,
+        "--adapter-name",
+        _ADAPTER_NAME,
+    ]
+    if config.training_preset_id:
+        train_args.extend(["--preset", config.training_preset_id])
+    if config.experiment_group_id:
+        train_args.extend(["--experiment-group", config.experiment_group_id])
+    if config.training_max_steps > 0:
+        train_args.extend(["--max-steps", str(config.training_max_steps)])
+    train_args.append("--json")
     lora_train_receipt = _expect_mapping(
-        executor.run_json(
-            [
-                "lora",
-                "train",
-                "--model-id",
-                model_id,
-                "--dataset-uri",
-                config.training_fixture,
-                "--adapter-name",
-                _ADAPTER_NAME,
-                "--json",
-            ]
-        ),
+        executor.run_json(train_args),
         context="melix lora train",
     )
     timings["phase8.cli.lora_train_ms"] = _elapsed_ms(lora_train_started_at)
@@ -263,20 +332,21 @@ def run_acceptance_bundle(
     adapter_manifest_path = _adapter_manifest_path(lora_train_receipt)
 
     lora_activate_started_at = time.perf_counter()
+    activate_args = [
+        "lora",
+        "activate",
+        "--model-id",
+        model_id,
+        "--adapter-path",
+        str(adapter_manifest_path),
+        "--alias",
+        _DERIVED_ALIAS,
+    ]
+    if config.activation_mode:
+        activate_args.extend(["--activation-mode", config.activation_mode])
+    activate_args.append("--json")
     lora_activate_receipt = _expect_mapping(
-        executor.run_json(
-            [
-                "lora",
-                "activate",
-                "--model-id",
-                model_id,
-                "--adapter-path",
-                str(adapter_manifest_path),
-                "--alias",
-                _DERIVED_ALIAS,
-                "--json",
-            ]
-        ),
+        executor.run_json(activate_args),
         context="melix lora activate",
     )
     timings["phase8.cli.lora_activate_ms"] = _elapsed_ms(lora_activate_started_at)
@@ -284,6 +354,21 @@ def run_acceptance_bundle(
 
     derived_model_id = _require_string(lora_activate_receipt, "derived_model_id", context="lora activation receipt")
     derived_model_alias = str(lora_activate_receipt.get("derived_model_alias", _DERIVED_ALIAS)).strip() or _DERIVED_ALIAS
+    lora_registry_snapshot = {"adapters": [], "experiment_groups": []}
+    if _should_capture_lora_registry(config):
+        lora_registry_snapshot = _expect_mapping(
+            executor.run_json(
+                [
+                    "lora",
+                    "list",
+                    "--model-id",
+                    model_id,
+                    "--json",
+                ]
+            ),
+            context="melix lora list",
+        )
+        _write_json(cli_receipts_root / "08-lora-list.json", lora_registry_snapshot)
 
     derived_chat_started_at = time.perf_counter()
     derived_chat_receipt = _expect_mapping(
@@ -305,7 +390,7 @@ def run_acceptance_bundle(
         timings["phase8.cli.base_chat_roundtrip_ms"] + timings["phase8.cli.derived_chat_roundtrip_ms"],
         2,
     )
-    _write_json(cli_receipts_root / "08-derived-chat.json", derived_chat_receipt)
+    _write_json(cli_receipts_root / "09-derived-chat.json", derived_chat_receipt)
 
     bench_started_at = time.perf_counter()
     bench_run_receipt = _expect_mapping(
@@ -330,7 +415,7 @@ def run_acceptance_bundle(
         context="melix bench run",
     )
     timings["phase8.cli.bench_run_ms"] = _elapsed_ms(bench_started_at)
-    _write_json(cli_receipts_root / "09-bench-run.json", bench_run_receipt)
+    _write_json(cli_receipts_root / "10-bench-run.json", bench_run_receipt)
     bench_report_path = _require_string(bench_run_receipt, "report_path", context="bench run receipt")
     bench_job_id = _job_id_from_report_path(bench_report_path)
 
@@ -366,11 +451,12 @@ def run_acceptance_bundle(
         context="melix bench matrix run",
     )
     timings["phase8.cli.bench_matrix_run_ms"] = _elapsed_ms(matrix_started_at)
-    _write_json(cli_receipts_root / "10-bench-matrix-run.json", matrix_run_receipt)
+    _write_json(cli_receipts_root / "11-bench-matrix-run.json", matrix_run_receipt)
     matrix_job = _expect_mapping(matrix_run_receipt.get("job"), context="bench matrix job payload")
     bench_matrix_job_id = _require_string(matrix_job, "job_id", context="bench matrix job payload")
 
     evaluation_started_at = time.perf_counter()
+    evaluation_scoring_mode = _evaluation_scoring_mode(config.evaluation_suites)
     evaluation_runs = _expect_list(
         executor.run_json(
             [
@@ -383,13 +469,15 @@ def run_acceptance_bundle(
                 config.evaluation_dataset,
                 "--sample-size",
                 _EVALUATION_SAMPLE_SIZE,
+                "--scoring-mode",
+                evaluation_scoring_mode,
                 "--json",
             ]
         ),
         context="melix eval run",
     )
     timings["phase8.cli.evaluation_run_ms"] = _elapsed_ms(evaluation_started_at)
-    _write_json(cli_receipts_root / "11-eval-run.json", evaluation_runs)
+    _write_json(cli_receipts_root / "12-eval-run.json", evaluation_runs)
     if not evaluation_runs:
         raise AcceptanceBundleError("melix eval run did not return any evaluation payloads.")
     evaluation_job = _expect_mapping(evaluation_runs[0].get("job"), context="evaluation job payload")
@@ -409,7 +497,7 @@ def run_acceptance_bundle(
         ),
         context="melix bench export-csv",
     )
-    _write_json(cli_receipts_root / "12-bench-export.json", bench_export_receipt)
+    _write_json(cli_receipts_root / "13-bench-export.json", bench_export_receipt)
 
     matrix_export_receipt = _expect_mapping(
         executor.run_json(
@@ -426,7 +514,7 @@ def run_acceptance_bundle(
         ),
         context="melix bench matrix export-summary-csv",
     )
-    _write_json(cli_receipts_root / "13-bench-matrix-export.json", matrix_export_receipt)
+    _write_json(cli_receipts_root / "14-bench-matrix-export.json", matrix_export_receipt)
 
     evaluation_summary_export = _expect_mapping(
         executor.run_json(
@@ -442,7 +530,7 @@ def run_acceptance_bundle(
         ),
         context="melix eval export-summary-csv",
     )
-    _write_json(cli_receipts_root / "14-eval-summary-export.json", evaluation_summary_export)
+    _write_json(cli_receipts_root / "15-eval-summary-export.json", evaluation_summary_export)
 
     evaluation_samples_export = _expect_mapping(
         executor.run_json(
@@ -458,7 +546,7 @@ def run_acceptance_bundle(
         ),
         context="melix eval export-samples-jsonl",
     )
-    _write_json(cli_receipts_root / "15-eval-samples-export.json", evaluation_samples_export)
+    _write_json(cli_receipts_root / "16-eval-samples-export.json", evaluation_samples_export)
 
     bench_csv = _require_existing_export(bench_export_receipt, "output_path", context="bench export receipt")
     matrix_summary_csv = _require_existing_export(
@@ -476,17 +564,38 @@ def run_acceptance_bundle(
         "output_path",
         context="evaluation samples export receipt",
     )
+    experiment_index_path = _experiment_index_path(config)
+    experiment_index_payload = _read_json_mapping(experiment_index_path)
+    publish_result = _maybe_publish_adapter(
+        config=config,
+        executor=executor,
+        model_id=model_id,
+        adapter_manifest_path=adapter_manifest_path,
+        cli_receipts_root=cli_receipts_root,
+    )
 
     bundle: dict[str, Any] = {
         "schema_version": _BUNDLE_SCHEMA_VERSION,
         "timestamp": config.timestamp,
         "bundle_root": str(bundle_root),
+        "execution_profile": config.execution_profile,
+        "acceptance_tier": config.acceptance_tier,
         "model": {
             "model_id": model_id,
             "managed_model_path": managed_model_path,
             "source_kind": source_kind,
             "source_locator": source_locator,
+            "source_resolution_mode": config.source_resolution_mode or _default_source_resolution_mode(config),
             "warnings": materialize_receipt.get("warnings", []),
+        },
+        "runtime": {
+            "backend_mode": config.runtime_backend_mode,
+            "activation_mode": config.activation_mode or "fused_derived_model",
+        },
+        "training": {
+            "preset_id": config.training_preset_id,
+            "max_steps": config.training_max_steps,
+            "experiment_group_id": config.experiment_group_id,
         },
         "derived_model": {
             "model_id": derived_model_id,
@@ -514,21 +623,29 @@ def run_acceptance_bundle(
             "bench_matrix_job_id": bench_matrix_job_id,
             "evaluation_job_id": evaluation_job_id,
         },
+        "registry": lora_registry_snapshot,
+        "experiment": {
+            "index_path": str(experiment_index_path),
+            "index_exists": experiment_index_path.is_file(),
+            "index": experiment_index_payload,
+        },
         "exports": {
             "bench_csv": str(bench_csv),
             "matrix_summary_csv": str(matrix_summary_csv),
             "evaluation_summary_csv": str(evaluation_summary_csv),
             "evaluation_samples_jsonl": str(evaluation_samples_jsonl),
         },
+        "publish": publish_result,
         "chats": {
             "base": base_chat_receipt,
             "derived": derived_chat_receipt,
         },
         "cli": {
             "materialize": materialize_receipt,
-            "registry_rescan": registry_snapshot,
+            "registry_rescan": registry_rescan_receipt,
             "lora_train": lora_train_receipt,
             "lora_activate": lora_activate_receipt,
+            "lora_list": lora_registry_snapshot,
             "bench_run": bench_run_receipt,
             "bench_matrix_run": matrix_run_receipt,
             "evaluation_runs": evaluation_runs,
@@ -536,6 +653,7 @@ def run_acceptance_bundle(
             "bench_matrix_export": matrix_export_receipt,
             "evaluation_summary_export": evaluation_summary_export,
             "evaluation_samples_export": evaluation_samples_export,
+            "publish": publish_result.get("receipt", {}),
         },
         "metrics": timings,
     }
@@ -551,7 +669,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Phase 8 CLI acceptance bundle flow.")
     parser.add_argument("--repo-root", default="", help="Override the repository root path.")
     parser.add_argument("--melix-home", default="", help="Override MELIX_HOME for bundle output.")
-    parser.add_argument("--model-id", required=True, help="Managed or Hub model identifier to validate.")
+    parser.add_argument("--model-id", default="", help="Managed or Hub model identifier to validate.")
+    parser.add_argument(
+        "--execution-profile",
+        choices=sorted(_PROFILE_DEFAULTS.keys()),
+        default="",
+        help="Apply a named acceptance profile.",
+    )
     parser.add_argument("--live", action="store_true", help="Use melix model hub download instead of local import.")
     parser.add_argument("--local-model-path", default="", help="Local model directory for deterministic acceptance runs.")
     parser.add_argument(
@@ -568,6 +692,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="server-session-1",
         help="Server session to rebind and start during acceptance.",
     )
+    parser.add_argument("--activation-mode", default="", help="Override melix lora activate mode.")
+    parser.add_argument("--training-preset", default="", help="Override melix lora train preset.")
+    parser.add_argument("--max-steps", type=int, default=0, help="Clamp LoRA training iterations.")
+    parser.add_argument("--experiment-group", default="", help="Override the training experiment group.")
+    parser.add_argument(
+        "--publish-mode",
+        choices=["disabled", "auto", "required"],
+        default="",
+        help="Control adapter publish behavior for the acceptance run.",
+    )
+    parser.add_argument("--publish-target-repo", default="", help="Target repository for adapter publish.")
     parser.add_argument("--timestamp", default="", help="Fixed UTC timestamp label for reproducible evidence paths.")
     parser.add_argument("--json", action="store_true", help="Emit JSON with bundle metadata.")
     return parser
@@ -588,20 +723,41 @@ def parse_args(argv: list[str] | None = None) -> AcceptanceBundleConfig:
     if not args.evaluation_suite:
         raise AcceptanceBundleError("At least one --evaluation-suite is required.")
     timestamp = args.timestamp or datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
+    execution_profile = args.execution_profile or ("live_hub" if args.live else "deterministic_import")
+    profile = _PROFILE_DEFAULTS.get(execution_profile)
+    if profile is None:
+        raise AcceptanceBundleError(f"Unknown execution profile: {execution_profile}")
+    model_id, live, local_model_path, source_resolution_mode, materialize_warnings = _resolve_model_source(
+        execution_profile=execution_profile,
+        model_id=str(args.model_id or "").strip(),
+        local_model_path=str(args.local_model_path or "").strip(),
+        live=bool(args.live),
+    )
     return AcceptanceBundleConfig(
         repo_root=repo_root,
         melix_home=melix_home,
-        model_id=args.model_id,
+        model_id=model_id,
         training_fixture=args.training_fixture,
         bench_suites=list(args.bench_suite),
         matrix_suites=list(args.matrix_suite),
         evaluation_suites=list(args.evaluation_suite),
         evaluation_dataset=args.evaluation_dataset,
         server_session_id=args.server_session_id,
-        local_model_path=args.local_model_path,
-        live=bool(args.live),
+        local_model_path=local_model_path,
+        live=live,
         timestamp=timestamp,
         json_output=bool(args.json),
+        execution_profile=execution_profile,
+        acceptance_tier=str(profile["acceptance_tier"]),
+        runtime_backend_mode=str(profile["runtime_backend_mode"]),
+        activation_mode=args.activation_mode or str(profile["activation_mode"]),
+        training_preset_id=args.training_preset or str(profile["training_preset_id"]),
+        training_max_steps=int(args.max_steps or int(profile["training_max_steps"])),
+        experiment_group_id=args.experiment_group or str(profile["experiment_group_id"]),
+        publish_mode=args.publish_mode or str(profile["publish_mode"]),
+        publish_target_repo=args.publish_target_repo,
+        source_resolution_mode=source_resolution_mode,
+        materialize_warnings=materialize_warnings,
     )
 
 
@@ -647,6 +803,145 @@ def _adapter_manifest_path(lora_train_receipt: dict[str, Any]) -> Path:
 
 def _default_repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _resolve_model_source(
+    *,
+    execution_profile: str,
+    model_id: str,
+    local_model_path: str,
+    live: bool,
+) -> tuple[str, bool, str, str, tuple[str, ...]]:
+    if execution_profile != "real_small_model":
+        if not model_id:
+            raise AcceptanceBundleError("--model-id is required.")
+        if live:
+            return model_id, True, "", "explicit_live_hub", ()
+        if local_model_path:
+            return model_id, False, local_model_path, "explicit_local_path", ()
+        return model_id, False, "", "", ()
+
+    resolved_model_id = model_id or _REAL_SMALL_MODEL_ID
+    if live:
+        return resolved_model_id, True, "", "explicit_live_hub", ()
+    if local_model_path:
+        return resolved_model_id, False, local_model_path, "explicit_local_path", ()
+
+    configured_path = os.environ.get(_REAL_SMALL_MODEL_PATH_ENV, "").strip()
+    if not configured_path:
+        return resolved_model_id, True, "", "hub_fallback", ()
+
+    resolved_path = Path(configured_path).expanduser().resolve()
+    if resolved_path.is_dir():
+        return resolved_model_id, False, str(resolved_path), "env_local_path", ()
+
+    warning = (
+        f"Ignored {_REAL_SMALL_MODEL_PATH_ENV} because it does not point to an existing directory: {resolved_path}"
+    )
+    return resolved_model_id, True, "", "env_invalid_hub_fallback", (warning,)
+
+
+def _default_source_resolution_mode(config: AcceptanceBundleConfig) -> str:
+    if config.live:
+        return "explicit_live_hub"
+    if config.local_model_path.strip():
+        return "explicit_local_path"
+    return ""
+
+
+def _should_capture_lora_registry(config: AcceptanceBundleConfig) -> bool:
+    return bool(
+        config.execution_profile == "real_small_model"
+        or config.experiment_group_id
+        or config.publish_mode != "disabled"
+    )
+
+
+def _experiment_index_path(config: AcceptanceBundleConfig) -> Path:
+    jobs_root_env = os.environ.get("MELIX_MODEL_OPS_JOBS_ROOT", "").strip()
+    jobs_root = (
+        Path(jobs_root_env).expanduser().resolve()
+        if jobs_root_env
+        else (config.repo_root / ".runtime" / "model-ops").resolve()
+    )
+    return jobs_root / "train_lora" / _EXPERIMENT_INDEX_NAME
+
+
+def _read_json_mapping(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _evaluation_scoring_mode(suites: list[str]) -> str:
+    if not suites:
+        return "normalized_exact_match"
+    return _EVALUATION_SCORING_MODES.get(suites[0], "normalized_exact_match")
+
+
+def _maybe_publish_adapter(
+    *,
+    config: AcceptanceBundleConfig,
+    executor: JSONCommandExecuting,
+    model_id: str,
+    adapter_manifest_path: Path,
+    cli_receipts_root: Path,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "mode": config.publish_mode,
+        "status": "disabled",
+        "skip_reason": "publish_disabled",
+        "target_repo": config.publish_target_repo,
+    }
+    if config.publish_mode == "disabled":
+        return result
+    if not config.publish_target_repo.strip():
+        if config.publish_mode == "required":
+            raise AcceptanceBundleError("publish target repo is required when publish mode is required.")
+        result["status"] = "skipped"
+        result["skip_reason"] = "publish_target_repo_missing"
+        return result
+    if _has_publish_token() is False:
+        if config.publish_mode == "required":
+            raise AcceptanceBundleError("Hugging Face token is required when publish mode is required.")
+        result["status"] = "skipped"
+        result["skip_reason"] = "missing_hf_token"
+        return result
+
+    publish_receipt = _expect_mapping(
+        executor.run_json(
+            [
+                "upload",
+                "--model-id",
+                model_id,
+                "--artifact-path",
+                str(adapter_manifest_path),
+                "--artifact-kind",
+                "adapter",
+                "--target-repo",
+                config.publish_target_repo,
+                "--json",
+            ]
+        ),
+        context="melix upload",
+    )
+    _write_json(cli_receipts_root / "17-publish.json", publish_receipt)
+    return {
+        "mode": config.publish_mode,
+        "status": str(publish_receipt.get("status", "published")),
+        "skip_reason": "",
+        "target_repo": config.publish_target_repo,
+        "receipt": publish_receipt,
+    }
+
+
+def _has_publish_token() -> bool:
+    for key in _HF_TOKEN_KEYS:
+        if os.environ.get(key, "").strip():
+            return True
+    return False
 
 
 def _elapsed_ms(started_at: float) -> float:

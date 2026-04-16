@@ -217,6 +217,72 @@
       "required_verdict": "improvement"
     }
   },
+  "real_workload": {
+    "summary": {
+      "pass_count": {
+        "min": 3.0
+      },
+      "failure_count": {
+        "max": 0.0
+      },
+      "family_count": {
+        "min": 3.0
+      }
+    },
+    "families": {
+      "qwen": {
+        "passed": {
+          "min": 1.0
+        },
+        "sample_count": {
+          "min": 16.0
+        },
+        "latency_ms": {
+          "max": 1500.0
+        },
+        "throughput_tps": {
+          "min": 20.0
+        },
+        "peak_memory_gb": {
+          "max": 12.0
+        }
+      },
+      "gemma": {
+        "passed": {
+          "min": 1.0
+        },
+        "sample_count": {
+          "min": 16.0
+        },
+        "latency_ms": {
+          "max": 1500.0
+        },
+        "throughput_tps": {
+          "min": 20.0
+        },
+        "peak_memory_gb": {
+          "max": 12.0
+        }
+      },
+      "kimi": {
+        "passed": {
+          "min": 1.0
+        },
+        "sample_count": {
+          "min": 16.0
+        },
+        "latency_ms": {
+          "max": 1500.0
+        },
+        "throughput_tps": {
+          "min": 20.0
+        },
+        "peak_memory_gb": {
+          "max": 12.0
+        }
+      }
+    }
+  },
   "m9": {
     "agent_export": {
       "integration.export_generation_ms": {

@@ -927,7 +927,7 @@ struct MelixCLIRunnerTests {
             makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
         ]))
         await client.setModelOperationResult(makeModelOperationResult(
-            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"ready","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit"}]}"#
+            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"ready","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit"}],"experiment_groups":[{"group_id":"nightly-qwen35","run_count":2,"latest_preset_title":"Balanced Adapter","best_loss":0.33,"recommended_manifest_path":"/tmp/melix/train_lora/job-2/train_lora.adapter.json"}]}"#
         ))
 
         let output = try await MelixCLIRunner(client: client).run(.loraList(.init()))
@@ -937,6 +937,8 @@ struct MelixCLIRunnerTests {
         #expect(call.operation == "registry_snapshot")
         #expect(output.contains("adapter\tstatus\tsource_model"))
         #expect(output.contains("demo-adapter\tready\tmlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
+        #expect(output.contains("experiment_group\truns\tpreset\tbest_loss\trecommended_manifest"))
+        #expect(output.contains("nightly-qwen35\t2\tBalanced Adapter\t0.330\t/tmp/melix/train_lora/job-2/train_lora.adapter.json"))
     }
 
     @Test("lora list returns json when requested and honors an explicit preferred model id")
@@ -989,6 +991,8 @@ struct MelixCLIRunnerTests {
                     adapterName: "demo-adapter",
                     targetRepo: "melix/demo-adapter",
                     parameters: [
+                        "preset_id": "balanced_adapter",
+                        "experiment_group_id": "nightly-qwen35",
                         "rank": "8",
                         "epochs": "3",
                     ]
@@ -1004,6 +1008,8 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["dataset_uri"] == "/tmp/datasets/alpaca.jsonl")
         #expect(call.ext["adapter_name"] == "demo-adapter")
         #expect(call.ext["target_repo"] == "melix/demo-adapter")
+        #expect(call.ext["preset_id"] == "balanced_adapter")
+        #expect(call.ext["experiment_group_id"] == "nightly-qwen35")
         #expect(call.ext["rank"] == "8")
         #expect(call.ext["epochs"] == "3")
     }
@@ -1080,6 +1086,102 @@ struct MelixCLIRunnerTests {
 
         #expect(call.ext["target_repo"] == nil)
         #expect(output == #"{"job_id":"job-1","status":"completed"}"#)
+    }
+
+    @Test("lora dataset inspect forwards local source options and renders a dataset summary")
+    func loraDatasetInspectForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/inspect/training_dataset.inspect.json",
+            manifestJSON: #"""
+            {
+              "schema_version": "melix.training_dataset_inspection.v1",
+              "dataset_id": "melix-alpaca-demo",
+              "format": "prompt_completion",
+              "sample_count": 2,
+              "validation_sample_count": 1,
+              "quality": {
+                "duplicate_count": 1,
+                "dirty_count": 1
+              },
+              "token_stats": {
+                "prompt_tokens_p95": 8
+              }
+            }
+            """#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraDatasetInspect(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "local_path",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    parameters: [
+                        "template": "alpaca",
+                        "validation_ratio": "0.2",
+                        "preview_count": "4",
+                    ]
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.operation == "build_training_dataset")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.ext["inspect_only"] == "true")
+        #expect(call.ext["dataset_source_kind"] == "local_path")
+        #expect(call.ext["dataset_uri"] == "/tmp/datasets/alpaca.jsonl")
+        #expect(call.ext["template"] == "alpaca")
+        #expect(call.ext["validation_ratio"] == "0.2")
+        #expect(call.ext["preview_count"] == "4")
+        #expect(output.contains("dataset_id=melix-alpaca-demo"))
+        #expect(output.contains("format=prompt_completion"))
+        #expect(output.contains("sample_count=2"))
+        #expect(output.contains("duplicate_count=1"))
+        #expect(output.contains("prompt_tokens_p95=8"))
+    }
+
+    @Test("lora dataset build forwards Hugging Face source metadata and returns the built package path")
+    func loraDatasetBuildForwardsExpectedOperationPayload() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/built-dataset",
+            manifestJSON: #"{"dataset_id":"melix-ultrachat-built","sample_count":8}"#
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraDatasetBuild(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "hf_dataset",
+                    datasetURI: "",
+                    outputDir: "/tmp/melix/built-dataset",
+                    parameters: [
+                        "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+                        "hf_dataset_name": "default",
+                        "hf_train_split": "train_sft",
+                        "hf_valid_split": "test_sft",
+                        "template": "chat_messages",
+                        "dataset_id": "melix-ultrachat-built",
+                    ]
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(output == "/tmp/melix/built-dataset")
+        #expect(call.operation == "build_training_dataset")
+        #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(call.outputDir == "/tmp/melix/built-dataset")
+        #expect(call.ext["inspect_only"] == nil)
+        #expect(call.ext["dataset_source_kind"] == "hf_dataset")
+        #expect(call.ext["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(call.ext["hf_dataset_name"] == "default")
+        #expect(call.ext["hf_train_split"] == "train_sft")
+        #expect(call.ext["hf_valid_split"] == "test_sft")
+        #expect(call.ext["template"] == "chat_messages")
+        #expect(call.ext["dataset_id"] == "melix-ultrachat-built")
     }
 
     @Test("lora activate forwards adapter path and derived alias")
@@ -1197,6 +1299,9 @@ struct MelixCLIRunnerTests {
                 "dataset_source_kind": "hf_dataset",
                 "adapter_name": "demo-adapter",
                 "training_mode": "qlora",
+                "preset_id": "debug_fast",
+                "experiment_group_id": "phase8-real-small-model",
+                "max_steps": "2",
                 "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
                 "hf_train_split": "train_sft",
                 "chat_feature": "messages",
@@ -1230,6 +1335,12 @@ struct MelixCLIRunnerTests {
         #expect(commands[0].contains("train"))
         #expect(commands[0].contains("--training-mode"))
         #expect(commands[0].contains("qlora"))
+        #expect(commands[0].contains("--preset"))
+        #expect(commands[0].contains("debug_fast"))
+        #expect(commands[0].contains("--experiment-group"))
+        #expect(commands[0].contains("phase8-real-small-model"))
+        #expect(commands[0].contains("--max-steps"))
+        #expect(commands[0].contains("2"))
         #expect(commands[0].contains("--hf-dataset-path"))
         #expect(commands[0].contains("HuggingFaceH4/ultrachat_200k"))
         #expect(commands[1].contains("activate"))
@@ -1554,8 +1665,23 @@ struct MelixCLIRunnerTests {
                 targetModelIDs: ["melix-qwen35-acceptance"],
                 suites: ["mmlu"],
                 sampleSize: 6,
+                source: .localJSONL(path: "/tmp/eval/mmlu.jsonl"),
+                fieldMapping: .init(
+                    inputTextPath: "prompt",
+                    targetPath: "expected",
+                    sampleIDPath: "sample_id"
+                ),
+                profile: .init(
+                    profileType: "final_result",
+                    resultKind: "text",
+                    extractionMode: "heuristic_final",
+                    scoringMode: "multiple_choice_accuracy",
+                    threshold: 0.8,
+                    ignoredPaths: ["metadata.trace_id"]
+                ),
                 parameters: [
-                    "batch_factor": "2",
+                        "batch_factor": "2",
+                    "dataset_root": "/tmp/mmlu-split-01",
                     "few_shot": "1",
                     "seed": "9",
                     "scoring_mode": "multiple_choice_accuracy",
@@ -1572,7 +1698,18 @@ struct MelixCLIRunnerTests {
         #expect(command.contains("mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
         #expect(command.contains("--target-model-id"))
         #expect(command.contains("melix-qwen35-acceptance"))
+        #expect(command.contains("--source-jsonl"))
+        #expect(command.contains("/tmp/eval/mmlu.jsonl"))
+        #expect(command.contains("--field-input-text-path"))
+        #expect(command.contains("prompt"))
+        #expect(command.contains("--field-target-path"))
+        #expect(command.contains("expected"))
+        #expect(command.contains("--threshold"))
+        #expect(command.contains("0.8"))
+        #expect(command.contains("--ignored-path"))
+        #expect(command.contains("metadata.trace_id"))
         #expect(command.contains("--batch-factor"))
+        #expect(command.contains("--dataset-root"))
         #expect(command.contains("--few-shot"))
         #expect(command.contains("--seed"))
         #expect(command.contains("--scoring-mode"))
@@ -2207,6 +2344,65 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("eval-1\tmmlu\tmmlu.dev.v1\tcompleted\teval.mmlu.accuracy=0.75ratio"))
     }
 
+    @Test("eval run forwards custom Hugging Face dataset source mapping and profile controls")
+    func evalRunForwardsCustomHFDatasetSourceMappingAndProfileControls() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-hf-custom-1",
+                suiteID: "dolly",
+                datasetID: "databricks-dolly-15k.dev.v1",
+                metricName: "eval.dolly.exact_match",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalRun(
+                .init(
+                    hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                    suites: ["dolly"],
+                    source: .huggingFaceDataset(
+                        datasetPath: "databricks/databricks-dolly-15k",
+                        datasetRevision: "main",
+                        split: "train"
+                    ),
+                    fieldMapping: .init(
+                        inputTextPath: "instruction",
+                        targetPath: "response",
+                        sampleIDPath: "sample_id"
+                    ),
+                    profile: .init(
+                        profileType: "final_result",
+                        resultKind: "text",
+                        extractionMode: "heuristic_final",
+                        scoringMode: "normalized_exact_match",
+                        threshold: 1.0,
+                        ignoredPaths: ["metadata.trace_id"]
+                    ),
+                    parameters: [
+                        "scoring_mode": "normalized_exact_match",
+                    ]
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+
+        #expect(request.datasetID.isEmpty)
+        #expect(request.source.kind == .huggingFaceDataset)
+        #expect(request.source.datasetPath == "databricks/databricks-dolly-15k")
+        #expect(request.source.datasetRevision == "main")
+        #expect(request.source.split == "train")
+        #expect(request.fieldMapping.inputTextPath == "instruction")
+        #expect(request.fieldMapping.targetPath == "response")
+        #expect(request.fieldMapping.sampleIDPath == "sample_id")
+        #expect(request.profile.resultKind == "text")
+        #expect(request.profile.extractionMode == "heuristic_final")
+        #expect(request.profile.scoringMode == "normalized_exact_match")
+        #expect(request.profile.threshold == 1.0)
+        #expect(request.profile.ignoredPaths == ["metadata.trace_id"])
+    }
+
     @Test("eval compare preloads base and target models and forwards comparison parameters")
     func evalComparePreloadsBaseAndTargetsAndReturnsJSON() async throws {
         let client = StubControlPlaneXPCClient()
@@ -2261,6 +2457,64 @@ struct MelixCLIRunnerTests {
         #expect(requests[0].parameters["code_exec_policy"] == "sandboxed")
         #expect(firstJob["job_id"] as? String == "eval-compare-1")
         #expect(firstJob["suite_id"] as? String == "mmlu")
+    }
+
+    @Test("eval compare forwards custom JSONL source mapping and profile controls")
+    func evalCompareForwardsCustomJSONLSourceMappingAndProfileControls() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-compare-custom-1",
+                suiteID: "mmlu",
+                datasetID: "mmlu-jsonl.dev.v1",
+                metricName: "eval.compare.win_rate",
+                metricValue: 0.5
+            ),
+        ])
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .evalCompare(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetModelIDs: ["melix-dev-text-lora"],
+                    suites: ["mmlu"],
+                    source: .localJSONL(path: "/tmp/eval/mmlu.jsonl"),
+                    fieldMapping: .init(
+                        inputTextPath: "prompt",
+                        targetPath: "expected",
+                        sampleIDPath: "sample_id"
+                    ),
+                    profile: .init(
+                        profileType: "final_result",
+                        resultKind: "text",
+                        extractionMode: "heuristic_final",
+                        scoringMode: "normalized_exact_match",
+                        threshold: 0.8,
+                        ignoredPaths: ["metadata.trace_id"]
+                    ),
+                    parameters: [
+                        "scoring_mode": "normalized_exact_match",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+
+        #expect(await client.loadedModelIDs == ["melix-dev-text", "melix-dev-text-lora"])
+        #expect(request.datasetID.isEmpty)
+        #expect(request.parameters["compare_mode"] == "base_vs_targets")
+        #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+        #expect(request.source.kind == .localJSONL)
+        #expect(request.source.path == "/tmp/eval/mmlu.jsonl")
+        #expect(request.fieldMapping.inputTextPath == "prompt")
+        #expect(request.fieldMapping.targetPath == "expected")
+        #expect(request.fieldMapping.sampleIDPath == "sample_id")
+        #expect(request.profile.resultKind == "text")
+        #expect(request.profile.extractionMode == "heuristic_final")
+        #expect(request.profile.scoringMode == "normalized_exact_match")
+        #expect(request.profile.threshold == 0.8)
+        #expect(request.profile.ignoredPaths == ["metadata.trace_id"])
     }
 
     @Test("eval compare rejects requests without target models before dispatch")

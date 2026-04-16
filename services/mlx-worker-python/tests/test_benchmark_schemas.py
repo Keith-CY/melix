@@ -341,14 +341,14 @@ def test_build_evaluation_job_and_result_remain_distinct_from_serving_shape() ->
     job_payload = job.to_dict()
     result_payload = result.to_dict()
 
-    assert job_payload["schema_version"] == "melix.evaluation_job.v1"
+    assert job_payload["schema_version"] == "melix.evaluation_job.v2"
     assert job_payload["task_kind"] == "text-generation"
     assert job_payload["source_repo"] == "HuggingFaceH4/ultrachat_200k"
     assert job_payload["suite_id"] == "mmlu"
     assert job_payload["dataset_id"] == "mmlu-dev"
     assert job_payload["sample_size"] == 64
     assert job_payload["output_dir"] == "/tmp/melix-eval/runs/eval-7"
-    assert result_payload["schema_version"] == "melix.evaluation_result.v1"
+    assert result_payload["schema_version"] == "melix.evaluation_result.v2"
     assert result_payload["metrics"] == [
         {"name": "eval.mmlu.accuracy", "unit": "ratio", "value": 0.72},
         {"name": "eval.mmlu.loss", "unit": "loss", "value": 0.18},

@@ -291,6 +291,12 @@ enum RegistrySnapshotSync {
                 metadata["melix.adapter_manifest_path"] = normalizedAdapterManifestPath
             }
         }
+        if let adapterWeightsPath = payload["adapter_weights_path"] as? String {
+            let normalizedAdapterWeightsPath = adapterWeightsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedAdapterWeightsPath.isEmpty {
+                metadata["melix.adapter_weights_path"] = normalizedAdapterWeightsPath
+            }
+        }
         if let adapterSetHash = payload["adapter_set_hash"] as? String {
             let normalizedAdapterSetHash = adapterSetHash.trimmingCharacters(in: .whitespacesAndNewlines)
             if !normalizedAdapterSetHash.isEmpty {

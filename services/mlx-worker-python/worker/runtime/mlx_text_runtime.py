@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 import importlib.util
+import json
+from pathlib import Path
 from typing import Any
 
 from worker.runtime.text_family_adapters import resolve_text_family_config
@@ -28,6 +30,42 @@ class RuntimeToolCallEvent:
     call_id: str
     tool_name: str
     arguments_json_fragment: str
+
+
+def _normalized_ext_value(model_spec, key: str) -> str:
+    return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
+
+
+def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
+    activation_mode = _normalized_ext_value(model_spec, "melix.activation_mode")
+    if activation_mode != "adapter_backed_runtime":
+        return {}
+
+    adapter_manifest_path = _normalized_ext_value(model_spec, "melix.adapter_manifest_path")
+    adapter_weights_path = _normalized_ext_value(model_spec, "melix.adapter_weights_path")
+    if not adapter_weights_path and adapter_manifest_path:
+        manifest_path = Path(adapter_manifest_path).expanduser()
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            adapter_weights_path = str(payload.get("weights_path", "") or "").strip()
+
+    if not adapter_weights_path:
+        raise RuntimeError(
+            "Adapter-backed runtime model is missing adapter_weights_path metadata."
+        )
+
+    adapter_dir = Path(adapter_weights_path).expanduser().resolve().parent
+    return {
+        "activation_mode": activation_mode,
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_weights_path": adapter_weights_path,
+        "adapter_dir": str(adapter_dir),
+        "derived_from_model_id": _normalized_ext_value(model_spec, "melix.derived_from_model_id"),
+        "adapter_set_hash": _normalized_ext_value(model_spec, "melix.adapter_set_hash"),
+    }
 
 
 class AutoMLXBackend:
@@ -81,7 +119,11 @@ class AutoMLXBackend:
         if not self._available:
             raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
         self._ensure_runtime()
-        loaded = self._load_fn(model_spec.model_path, lazy=False)
+        adapter_metadata = _resolve_adapter_backed_metadata(model_spec)
+        load_kwargs: dict[str, Any] = {"lazy": False}
+        if adapter_metadata:
+            load_kwargs["adapter_path"] = adapter_metadata["adapter_dir"]
+        loaded = self._load_fn(model_spec.model_path, **load_kwargs)
         model, tokenizer = loaded[:2]
         family_config = resolve_text_family_config(
             dict(model_spec.ext),
@@ -93,6 +135,7 @@ class AutoMLXBackend:
             "model_path": model_spec.model_path,
             "model": model,
             "tokenizer": tokenizer,
+            **adapter_metadata,
             **family_config.runtime_metadata(),
         }
 

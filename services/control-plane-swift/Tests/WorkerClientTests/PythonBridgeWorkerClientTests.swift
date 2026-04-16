@@ -1045,6 +1045,7 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.derived_from_model_id"] = "melix-dev-text"
         summary.settings.ext["melix.activation_mode"] = "adapter_backed_runtime"
         summary.settings.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+        summary.settings.ext["melix.adapter_weights_path"] = "/tmp/melix-train/weights/adapters.safetensors"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -1052,6 +1053,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "models/dev-text")
         #expect(spec.ext["melix.activation_mode"] == "adapter_backed_runtime")
         #expect(spec.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
+        #expect(spec.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 

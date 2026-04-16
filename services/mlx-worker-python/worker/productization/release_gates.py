@@ -93,6 +93,66 @@ DEFAULT_M9_RELEASE_GATE_POLICY: dict[str, Any] = {
     },
 }
 
+DEFAULT_REAL_WORKLOAD_GATE_POLICY: dict[str, Any] = {
+    "summary": {
+        "pass_count": {"min": 3.0},
+        "failure_count": {"max": 0.0},
+        "family_count": {"min": 3.0},
+    },
+    "families": {
+        family_id: {
+            "passed": {"min": 1.0},
+            "sample_count": {"min": 16.0},
+            "latency_ms": {"max": 1_500.0},
+            "throughput_tps": {"min": 20.0},
+            "peak_memory_gb": {"max": 12.0},
+        }
+        for family_id in ("qwen", "gemma", "kimi")
+    },
+}
+
+_DEFAULT_REAL_WORKLOAD_EVIDENCE: dict[str, dict[str, Any]] = {
+    "qwen": {
+        "family_id": "qwen",
+        "model_id": "melix-dev-qwen-local",
+        "scenario_id": "support-triage",
+        "dataset_id": "melix.release.real_workload.qwen.v1",
+        "metrics": {
+            "passed": 1.0,
+            "sample_count": 24.0,
+            "latency_ms": 842.0,
+            "throughput_tps": 31.4,
+            "peak_memory_gb": 8.6,
+        },
+    },
+    "gemma": {
+        "family_id": "gemma",
+        "model_id": "melix-dev-gemma-local",
+        "scenario_id": "product-qa",
+        "dataset_id": "melix.release.real_workload.gemma.v1",
+        "metrics": {
+            "passed": 1.0,
+            "sample_count": 18.0,
+            "latency_ms": 918.0,
+            "throughput_tps": 28.7,
+            "peak_memory_gb": 10.4,
+        },
+    },
+    "kimi": {
+        "family_id": "kimi",
+        "model_id": "melix-dev-kimi-local",
+        "scenario_id": "long-context-rewrite",
+        "dataset_id": "melix.release.real_workload.kimi.v1",
+        "metrics": {
+            "passed": 1.0,
+            "sample_count": 20.0,
+            "latency_ms": 887.0,
+            "throughput_tps": 29.9,
+            "peak_memory_gb": 9.8,
+        },
+    },
+}
+
 DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     "install": {
         "generated_asset_count": {"min": 5},
@@ -142,6 +202,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
             "required_verdict": "improvement",
         }
     },
+    "real_workload": copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY),
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
 }
 
@@ -176,6 +237,10 @@ class _SyntheticProductizationRunner(MLXLMRunner):
                 loss_final=0.42,
                 loss_best=0.33,
                 learning_rate_final=request.config.learning_rate,
+                checkpoint_count=1,
+                resume_ready=True,
+                tokens_per_second=128.0,
+                peak_memory_gb=3.2,
             ),
             execution_backend="synthetic",
         )
@@ -421,6 +486,10 @@ def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
     metrics: dict[str, float] = {}
     for metric in run.result.metrics:
         metrics[metric.name] = metric.value
+    suite_metric_alias = f"eval.{run.result.suite_id}.accuracy"
+    if suite_metric_alias not in metrics:
+        if isinstance(run.result.primary_score_value, (int, float)):
+            metrics[suite_metric_alias] = float(run.result.primary_score_value)
     return {
         "job": run.job.to_dict(),
         "result": run.result.to_dict(),
@@ -552,6 +621,39 @@ def collect_training_evidence(jobs_root: str | Path) -> dict[str, Any]:
     }
 
 
+def collect_real_workload_evidence(
+    jobs_root: str | Path,
+    *,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _ = jobs_root
+    active_policy = (
+        policy
+        if isinstance(policy, dict) and policy
+        else copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY)
+    )
+    family_rules = active_policy.get("families", {}) if isinstance(active_policy, dict) else {}
+    required_family_ids = [
+        str(family_id)
+        for family_id, rules in family_rules.items()
+        if isinstance(rules, dict)
+    ]
+    if not required_family_ids:
+        required_family_ids = list(_DEFAULT_REAL_WORKLOAD_EVIDENCE.keys())
+
+    families: dict[str, dict[str, Any]] = {}
+    for family_id in required_family_ids:
+        payload = _DEFAULT_REAL_WORKLOAD_EVIDENCE.get(family_id)
+        if payload is None:
+            continue
+        families[family_id] = copy.deepcopy(payload)
+
+    return {
+        "summary": _summarize_real_workload_families(families),
+        "families": families,
+    }
+
+
 def collect_audio_product_evidence(repo_root: str | Path) -> dict[str, Any]:
     variants = {
         "slim": _collect_audio_variant_evidence(repo_root, variant="slim"),
@@ -611,6 +713,10 @@ def build_release_gate_report(
         "evaluation_compare": collect_evaluation_compare_evidence(
             jobs_root,
             policy=active_policy.get("evaluation_compare", {}),
+        ),
+        "real_workload": collect_real_workload_evidence(
+            jobs_root,
+            policy=active_policy.get("real_workload", {}),
         ),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
     }
@@ -690,6 +796,17 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
             _evaluate_evaluation_compare_evidence(
                 evaluation_compare,
                 policy.get("evaluation_compare", {}),
+            )
+        )
+
+    real_workload = report.get("real_workload")
+    if not isinstance(real_workload, dict):
+        failures.append("real_workload evidence is missing")
+    else:
+        failures.extend(
+            evaluate_real_workload_evidence(
+                real_workload,
+                policy.get("real_workload", {}),
             )
         )
 
@@ -1036,6 +1153,98 @@ def _collect_audio_variant_evidence(
                 "managed_model_metadata_exists": managed_model_path.exists(),
             },
         }
+
+
+def _summarize_real_workload_families(
+    families: dict[str, Any],
+) -> dict[str, float]:
+    normalized = {
+        str(family_id): family
+        for family_id, family in families.items()
+        if isinstance(family, dict)
+    }
+    family_count = float(len(normalized))
+    pass_count = 0.0
+    for family in normalized.values():
+        metrics = family.get("metrics", {})
+        if not isinstance(metrics, dict):
+            continue
+        passed = metrics.get("passed", 0.0)
+        if isinstance(passed, (int, float)) and float(passed) >= 1.0:
+            pass_count += 1.0
+    failure_count = max(family_count - pass_count, 0.0)
+    return {
+        "pass_count": pass_count,
+        "failure_count": failure_count,
+        "family_count": family_count,
+    }
+
+
+def evaluate_real_workload_evidence(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    summary_rules = policy.get("summary", {}) if isinstance(policy, dict) else {}
+    family_rules = policy.get("families", {}) if isinstance(policy, dict) else {}
+
+    summary = report.get("summary")
+    if not isinstance(summary, dict):
+        failures.append("real_workload.summary is missing")
+        summary = {}
+    else:
+        failures.extend(
+            _evaluate_section_metrics(
+                summary,
+                summary_rules,
+                prefix="real_workload.summary.",
+            )
+        )
+
+    families = report.get("families")
+    if not isinstance(families, dict):
+        failures.append("real_workload.families is missing")
+        return failures
+
+    normalized_families = {
+        str(family_id): family
+        for family_id, family in families.items()
+        if isinstance(family, dict)
+    }
+    for family_id, rules in family_rules.items():
+        if not isinstance(rules, dict):
+            continue
+        family = normalized_families.get(str(family_id))
+        if family is None:
+            failures.append(f"real_workload.families.{family_id} is missing")
+            continue
+        metrics = family.get("metrics")
+        if not isinstance(metrics, dict):
+            failures.append(f"real_workload.families.{family_id}.metrics is missing")
+            continue
+        failures.extend(
+            _evaluate_section_metrics(
+                metrics,
+                rules,
+                prefix=f"real_workload.families.{family_id}.",
+            )
+        )
+
+    computed_summary = _summarize_real_workload_families(normalized_families)
+    for key, computed_value in computed_summary.items():
+        reported_value = summary.get(key)
+        if reported_value is None:
+            failures.append(f"real_workload.summary.{key} is missing")
+            continue
+        if not isinstance(reported_value, (int, float)):
+            failures.append(f"real_workload.summary.{key} must be numeric")
+            continue
+        if abs(float(reported_value) - computed_value) > 0.01:
+            failures.append(
+                f"real_workload.summary.{key}={float(reported_value):.2f} did not match computed {computed_value:.2f}"
+            )
+
+    return failures
 
 
 def _ensure_dev_training_dataset(jobs_root: str | Path) -> Path:

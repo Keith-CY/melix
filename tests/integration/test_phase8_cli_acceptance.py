@@ -7,11 +7,17 @@ import signal
 import subprocess
 from functools import lru_cache
 from pathlib import Path
+import pytest
 import sys
 import uuid
 
 from tests.integration.helpers import LiveMelixStack
 from tests.integration.helpers import wait_for_worker_handshake
+
+
+_REAL_SMALL_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+_REAL_SMALL_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
+_REAL_SMALL_MODEL_E2E_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_E2E"
 
 
 @lru_cache(maxsize=1)
@@ -103,6 +109,24 @@ def write_local_model_fixture(model_root: Path) -> None:
     (model_root / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
     (model_root / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
     (model_root / "model.safetensors").write_bytes(b"weights")
+
+
+def require_real_small_model_e2e_opt_in() -> None:
+    if os.environ.get(_REAL_SMALL_MODEL_E2E_ENV, "").strip() != "1":
+        pytest.skip(
+            f"Set {_REAL_SMALL_MODEL_E2E_ENV}=1 to run the real small-model LoRA acceptance test."
+        )
+
+
+def resolve_real_small_model_path() -> Path | None:
+    configured_path = os.environ.get(_REAL_SMALL_MODEL_PATH_ENV, "").strip()
+    if not configured_path:
+        return None
+
+    resolved_path = Path(configured_path).expanduser().resolve()
+    if not resolved_path.is_dir():
+        return None
+    return resolved_path
 
 
 @contextlib.contextmanager
@@ -520,6 +544,138 @@ def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_pa
         assert any(
             derived_model["model_id"] == bundle["derived_model"]["model_id"]
             and derived_model["derived_model_alias"] == bundle["derived_model"]["alias"]
+            for derived_model in snapshot["derived_models"]
+        )
+    finally:
+        stack.stop()
+
+
+def test_phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chain(
+    tmp_path: Path,
+) -> None:
+    require_real_small_model_e2e_opt_in()
+    repo_root = Path(__file__).resolve().parents[2]
+    source_dir = resolve_real_small_model_path()
+    configured_path = os.environ.get(_REAL_SMALL_MODEL_PATH_ENV, "").strip()
+    melix_home = tmp_path / "melix-home"
+    managed_root = tmp_path / "managed-models"
+    jobs_root = tmp_path / ".runtime" / "model-ops"
+
+    stack = LiveMelixStack(
+        repo_root,
+        python_backend_mode="auto",
+        start_swift_text_worker=False,
+        environment_overrides={
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_MODEL_OPS_JOBS_ROOT": str(jobs_root),
+        },
+    )
+    stack.start()
+    try:
+        env = {
+            "MELIX_HOME": str(melix_home),
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_MODEL_OPS_JOBS_ROOT": str(jobs_root),
+            "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
+            "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
+            "MELIX_CLI": str(build_cli_binary(repo_root)),
+        }
+
+        created_state = run_cli_json(
+            repo_root,
+            [
+                "server",
+                "session",
+                "create",
+                "--title",
+                "Real Small Model Session",
+                "--model-id",
+                _REAL_SMALL_MODEL_ID,
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+
+        bundle_args = [
+            "--execution-profile",
+            "real_small_model",
+            "--training-fixture",
+            "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--server-session-id",
+            "server-session-1",
+            "--timestamp",
+            "2026-04-16T000000Z",
+            "--json",
+        ]
+        if source_dir is not None:
+            bundle_args.extend(["--local-model-path", str(source_dir)])
+
+        payload = run_python_script_json(
+            repo_root,
+            "scripts/phase8_acceptance_bundle.py",
+            bundle_args,
+            env_overrides=env,
+        )
+
+        bundle = payload["bundle"]
+        bundle_path = Path(payload["bundle_path"])
+        assert bundle_path.is_file()
+        assert bundle["execution_profile"] == "real_small_model"
+        assert bundle["acceptance_tier"] == "cli_real_small_model"
+        assert bundle["model"]["model_id"] == _REAL_SMALL_MODEL_ID
+        assert bundle["runtime"]["backend_mode"] == "python_auto"
+        assert bundle["runtime"]["activation_mode"] == "adapter_backed_runtime"
+        assert bundle["training"]["preset_id"] == "debug_fast"
+        assert bundle["training"]["max_steps"] == 2
+        assert bundle["training"]["experiment_group_id"] == "phase8-real-small-model"
+        assert bundle["registry"]["experiment_groups"]
+        assert bundle["experiment"]["index_exists"] is True
+        assert Path(bundle["experiment"]["index_path"]).is_file()
+        assert bundle["jobs"]["lora_train_job_id"]
+        assert Path(bundle["exports"]["bench_csv"]).is_file()
+        assert Path(bundle["exports"]["matrix_summary_csv"]).is_file()
+        assert Path(bundle["exports"]["evaluation_summary_csv"]).is_file()
+        assert Path(bundle["exports"]["evaluation_samples_jsonl"]).is_file()
+        assert bundle["chats"]["base"]["request_id"]
+        assert bundle["chats"]["derived"]["request_id"]
+        assert bundle["publish"]["mode"] == "disabled"
+        assert bundle["publish"]["status"] == "disabled"
+        assert bundle["publish"]["skip_reason"] == "publish_disabled"
+        if source_dir is not None:
+            assert bundle["model"]["source_kind"] == "local_path"
+            assert bundle["model"]["source_resolution_mode"] == "explicit_local_path"
+        elif configured_path:
+            assert bundle["model"]["source_kind"] == "hub_repo"
+            assert bundle["model"]["source_resolution_mode"] == "env_invalid_hub_fallback"
+            assert bundle["model"]["warnings"]
+            assert any(_REAL_SMALL_MODEL_PATH_ENV in warning for warning in bundle["model"]["warnings"])
+        else:
+            assert bundle["model"]["source_kind"] == "hub_repo"
+            assert bundle["model"]["source_resolution_mode"] == "hub_fallback"
+
+        snapshot = run_cli_json(
+            repo_root,
+            [
+                "model",
+                "roots",
+                "rescan",
+                "--json",
+            ],
+            env_overrides=env,
+        )
+        assert any(
+            derived_model["model_id"] == bundle["derived_model"]["model_id"]
+            and derived_model["activation_mode"] == "adapter_backed_runtime"
             for derived_model in snapshot["derived_models"]
         )
     finally:

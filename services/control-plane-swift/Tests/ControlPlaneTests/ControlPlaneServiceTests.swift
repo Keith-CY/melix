@@ -1545,6 +1545,7 @@ struct ControlPlaneServiceTests {
                     "adapter_set_hash": "acbb330795d89f65",
                     "activation_mode": "adapter_backed_runtime",
                     "adapter_manifest_path": "/tmp/melix-adapters/train_lora.adapter.json",
+                    "adapter_weights_path": "/tmp/melix-adapters/weights/adapters.safetensors",
                     "remove_supported": true,
                     "status": "activated",
                 ],
@@ -1598,6 +1599,7 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_set_hash"] == "acbb330795d89f65")
         #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
         #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-adapters/train_lora.adapter.json")
+        #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-adapters/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_from_model_revision"] == "registry")
         #expect(derived.settings.ext["melix.remove_supported"] == "true")
     }
@@ -3223,7 +3225,7 @@ struct ControlPlaneServiceTests {
     @Test("execute registers adapter-backed derived models into the catalog with compatibility routing")
     func executeRegistersAdapterBackedDerivedModelsIntoTheCatalogWithCompatibilityRouting() async throws {
         let manifestJSON = """
-        {"schema_version":"melix.derived_text_model.v1","activation_mode":"adapter_backed_runtime","source_model":"melix-dev-text","source_model_revision":"dev","adapter_name":"melix-dev-adapter","adapter_set_hash":"adapter-beta","derived_model_id":"melix-dev-text-lora-adapter-runtime","derived_model_path":"models/dev-text","adapter_manifest_path":"/tmp/melix-train/train_lora.adapter.json","derived_model_alias":"Runtime Alias"}
+        {"schema_version":"melix.derived_text_model.v1","activation_mode":"adapter_backed_runtime","source_model":"melix-dev-text","source_model_revision":"dev","adapter_name":"melix-dev-adapter","adapter_set_hash":"adapter-beta","derived_model_id":"melix-dev-text-lora-adapter-runtime","derived_model_path":"models/dev-text","adapter_manifest_path":"/tmp/melix-train/train_lora.adapter.json","adapter_weights_path":"/tmp/melix-train/weights/adapters.safetensors","derived_model_alias":"Runtime Alias"}
         """
 
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -3277,6 +3279,7 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.model_path"] == "models/dev-text")
         #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
         #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
+        #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }

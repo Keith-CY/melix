@@ -67,12 +67,13 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_E := \
 CONTROL_PLANE_TEST_FILTER_OPENAI := OpenAIHandlerTests
 CONTROL_PLANE_TEST_FILTER_HTTP_REST := RichOutputSanitizerTests|PersistentAuthSessionStoreTests|ProtocolCompatibilityMatrixTests|ConnectionLifecyclePolicyTests|SSEStreamWriterTests
 
-.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
+.PHONY: bootstrap proto swift-test py-test integration-test swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
 
 PHASE1_METRICS_ARGS ?=
 PHASE2_METRICS_ARGS ?=
 PHASE17_METRICS_ARGS ?=
 PHASE8_ACCEPTANCE_ARGS ?=
+PHASE8_REAL_E2E_ARGS ?=
 PHASE8_INSTALL_SMOKE_ARGS ?=
 PHASE8_RELEASE_GATE_ARGS ?=
 PHASE8_METRICS_ARGS ?=
@@ -148,6 +149,10 @@ phase7-metrics:
 phase8-acceptance:
 	mkdir -p "$(UV_CACHE_DIR)"
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_acceptance_bundle.py $(PHASE8_ACCEPTANCE_ARGS)
+
+phase8-real-e2e:
+	mkdir -p "$(UV_CACHE_DIR)"
+	MELIX_PHASE8_REAL_SMALL_MODEL_E2E=1 PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_phase8_cli_acceptance.py -q -k phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chain $(PHASE8_REAL_E2E_ARGS)
 
 phase8-install-smoke:
 	mkdir -p "$(UV_CACHE_DIR)"

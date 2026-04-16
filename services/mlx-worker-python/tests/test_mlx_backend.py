@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from threading import Event
+from pathlib import Path
 import types
 import sys
 
@@ -213,6 +215,91 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].prompt_tokens == 12
     assert chunks[-1].completion_tokens == 2
     assert chunks[-1].generation_tps == 123.0
+
+
+def test_auto_backend_loads_adapter_backed_runtime_with_adapter_path() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    model_spec.model_id = "melix-dev-text-lora-runtime"
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+    model_spec.ext["melix.adapter_weights_path"] = "/tmp/melix-train/weights/adapters.safetensors"
+    model_spec.ext["melix.derived_from_adapter"] = "true"
+    model_spec.ext["melix.derived_from_model_id"] = "melix-dev-text"
+
+    loaded_model = backend.load_model(model_spec)
+
+    assert seen["load"] == (
+        "mlx-community/test-model",
+        {
+            "lazy": False,
+            "adapter_path": str(Path("/tmp/melix-train/weights").resolve()),
+        },
+    )
+    assert loaded_model["activation_mode"] == "adapter_backed_runtime"
+    assert loaded_model["adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json"
+    assert loaded_model["adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors"
+    assert loaded_model["derived_from_model_id"] == "melix-dev-text"
+
+
+def test_auto_backend_resolves_adapter_weights_from_manifest_when_ext_omits_them(tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    weights_path = tmp_path / "artifacts" / "adapters.safetensors"
+    weights_path.parent.mkdir(parents=True, exist_ok=True)
+    weights_path.write_text("adapter", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps({"weights_path": str(weights_path)}) + "\n",
+        encoding="utf-8",
+    )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = str(manifest_path)
+
+    loaded_model = backend.load_model(model_spec)
+
+    assert seen["load"] == (
+        "mlx-community/test-model",
+        {
+            "lazy": False,
+            "adapter_path": str(weights_path.parent.resolve()),
+        },
+    )
+    assert loaded_model["adapter_weights_path"] == str(weights_path)
+
+
+def test_auto_backend_rejects_adapter_backed_runtime_without_weights_metadata() -> None:
+    backend = AutoMLXBackend(
+        load_fn=lambda *args, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+
+    with pytest.raises(RuntimeError, match="adapter_weights_path"):
+        backend.load_model(model_spec)
 
 
 def test_auto_backend_lazy_import_wires_runtime_modules(monkeypatch) -> None:
