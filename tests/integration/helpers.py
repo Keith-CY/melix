@@ -605,6 +605,34 @@ def read_metrics_export(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def wait_for_metric_value(
+    path: Path,
+    key: str,
+    *,
+    minimum: float,
+    timeout_seconds: float = 10.0,
+    poll_interval_seconds: float = 0.1,
+) -> dict[str, object]:
+    deadline = time.time() + timeout_seconds
+    last_seen = 0.0
+
+    while time.time() < deadline:
+        if path.exists():
+            payload = read_metrics_export(path)
+            values = payload.get("values", {})
+            if isinstance(values, dict):
+                candidate = values.get(key, last_seen)
+                if isinstance(candidate, (int, float)):
+                    last_seen = float(candidate)
+                    if last_seen >= minimum:
+                        return payload
+        time.sleep(poll_interval_seconds)
+
+    raise AssertionError(
+        f"Metric {key} never reached {minimum} at {path}; last value was {last_seen}."
+    )
+
+
 def _format_process_failure(message: str, stdout_path: Path | None, stderr_path: Path | None) -> str:
     stdout = stdout_path.read_text(encoding="utf-8") if isinstance(stdout_path, Path) and stdout_path.exists() else ""
     stderr = stderr_path.read_text(encoding="utf-8") if isinstance(stderr_path, Path) and stderr_path.exists() else ""
