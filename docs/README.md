@@ -61,6 +61,7 @@ plans:
 - [`plans/2026-03-30-full-capability-roadmap-execution-index.md`](plans/2026-03-30-full-capability-roadmap-execution-index.md)
 - [`plans/2026-03-30-full-capability-roadmap.md`](plans/2026-03-30-full-capability-roadmap.md)
 - [`plans/2026-04-12-readme-and-docs-realignment.md`](plans/2026-04-12-readme-and-docs-realignment.md)
+- [`plans/2026-04-16-lora-capability-modules-and-commit-plan.md`](plans/2026-04-16-lora-capability-modules-and-commit-plan.md)
 
 ## Engineering Standards
 
