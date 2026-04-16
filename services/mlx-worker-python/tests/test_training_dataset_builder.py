@@ -1,0 +1,365 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from worker.model_ops import training_dataset as training_dataset_module
+from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.training_dataset import (
+    build_training_dataset_artifact,
+    load_training_dataset_package,
+)
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "alpaca.jsonl",
+        [
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Repeat the token.",
+                "input": "",
+                "output": "token\u0000token",
+            },
+        ],
+    )
+
+    result = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "alpaca",
+            "dataset_id": "melix-alpaca-demo",
+            "validation_ratio": "0.34",
+            "preview_count": "2",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "built-dataset",
+        source_model_id="melix-dev-text",
+    )
+
+    payload = result.manifest_payload
+    package = load_training_dataset_package(str(result.package_path))
+
+    assert result.output_path == result.package_path
+    assert payload["schema_version"] == "melix.training_dataset_package.v1"
+    assert payload["dataset_id"] == "melix-alpaca-demo"
+    assert payload["format"] == "prompt_completion"
+    assert payload["sample_count"] == 2
+    assert payload["validation_sample_count"] == 1
+    assert payload["validation_strategy"] == "deterministic_ratio"
+    assert payload["conversion_template"] == "alpaca"
+    assert payload["source_kind"] == "local_path"
+    assert len(payload["preview_samples"]) == 2
+    assert payload["quality"]["duplicate_count"] == 1
+    assert payload["quality"]["dirty_count"] == 1
+    assert payload["token_stats"]["estimator"] == "whitespace_v1"
+    assert payload["token_stats"]["prompt_tokens_p95"] >= 3
+    assert package.dataset_id == "melix-alpaca-demo"
+    assert package.format == "prompt_completion"
+    assert package.validation_sample_count == 1
+
+
+def test_build_training_dataset_artifact_inspects_sharegpt_rows_without_writing_a_package(
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "sharegpt.jsonl",
+        [
+            {
+                "conversations": [
+                    {"from": "system", "value": "You are helpful."},
+                    {"from": "human", "value": "Say hi."},
+                    {"from": "gpt", "value": "Hi there."},
+                ]
+            },
+            {
+                "conversations": [
+                    {"from": "human", "value": "Say bye."},
+                    {"from": "gpt", "value": "Bye."},
+                ]
+            },
+        ],
+    )
+
+    result = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "auto",
+            "preview_count": "1",
+            "inspect_only": "true",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "dataset-inspect",
+        source_model_id="melix-dev-text",
+    )
+
+    payload = result.manifest_payload
+
+    assert result.output_path == result.manifest_path
+    assert payload["schema_version"] == "melix.training_dataset_inspection.v1"
+    assert payload["format"] == "chat_messages"
+    assert payload["conversion_template"] == "sharegpt"
+    assert payload["sample_count"] == 2
+    assert payload["validation_sample_count"] == 0
+    assert payload["preview_samples"][0]["messages"][0]["role"] == "system"
+    assert payload["preview_samples"][0]["messages"][-1]["role"] == "assistant"
+    assert payload["build_ready"] is True
+    assert (result.package_path / "samples.jsonl").exists() is False
+
+
+def test_build_training_dataset_artifact_materializes_hf_source_and_clears_stale_validation_file(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "hf-dataset"
+    stale_valid = output_dir / "valid.jsonl"
+    stale_valid.parent.mkdir(parents=True, exist_ok=True)
+    stale_valid.write_text("stale\n", encoding="utf-8")
+
+    def fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        if endpoint == "splits":
+            return {
+                "splits": [
+                    {
+                        "dataset": "HuggingFaceH4/ultrachat_200k",
+                        "config": "default",
+                        "split": "train_sft",
+                    }
+                ]
+            }
+        if endpoint == "rows":
+            offset = params.get("offset", "0")
+            if offset != "0":
+                return {"rows": []}
+            return {
+                "rows": [
+                    {
+                        "row": {
+                            "messages": [
+                                {"role": "user", "content": "Say hi."},
+                                {"role": "assistant", "content": "Hi."},
+                            ]
+                        }
+                    },
+                    {
+                        "row": {
+                            "messages": [
+                                {"role": "user", "content": "Say bye."},
+                                {"role": "assistant", "content": "Bye."},
+                            ]
+                        }
+                    },
+                ]
+            }
+        raise AssertionError(f"unexpected hf fetch: {endpoint} {params}")
+
+    result = build_training_dataset_artifact(
+        {
+            "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+            "template": "source_schema",
+            "dataset_id": "melix-hf-demo",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=output_dir,
+        source_model_id="melix-dev-text",
+        hf_dataset_fetcher=fetcher,
+    )
+
+    payload = result.manifest_payload
+    assert payload["source_kind"] == "hf_dataset"
+    assert payload["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k"
+    assert payload["hf_dataset_name"] == "default"
+    assert payload["hf_train_split"] == "train"
+    assert payload["source_manifest_path"].endswith("manifest.json")
+    assert payload["source_samples_path"].endswith("samples.jsonl")
+    assert payload["sample_count"] == 2
+    assert stale_valid.exists() is False
+
+
+def test_build_training_dataset_artifact_loads_existing_package_and_helper_branches(
+    tmp_path: Path,
+) -> None:
+    source_package = tmp_path / "existing-package"
+    _write_jsonl(
+        source_package / "samples.jsonl",
+        [
+            {"text": "alpha beta"},
+            {"text": "gamma delta"},
+        ],
+    )
+    (source_package / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "existing-package",
+                "format": "text_completion",
+                "sample_count": 2,
+                "version": "3",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    built = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(source_package),
+            "template": "existing_package",
+            "preview_count": "1",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "rebuilt-package",
+        source_model_id="melix-dev-text",
+    )
+
+    assert built.manifest_payload["source_kind"] == "local_package"
+    assert built.manifest_payload["conversion_template"] == "existing_package"
+    assert built.manifest_payload["preview_samples"] == [{"text": "alpha beta"}]
+
+    with pytest.raises(ModelOperationError) as missing_uri:
+        training_dataset_module._resolve_dataset_build_source(
+            {},
+            jobs_root=tmp_path / "jobs",
+            hf_dataset_fetcher=None,
+            sample_limit=0,
+        )
+    assert missing_uri.value.code == "invalid_dataset_source"
+
+    missing_path = tmp_path / "does-not-exist.jsonl"
+    with pytest.raises(ModelOperationError) as missing_path_exc:
+        training_dataset_module._resolve_dataset_build_source(
+            {"dataset_uri": str(missing_path)},
+            jobs_root=tmp_path / "jobs",
+            hf_dataset_fetcher=None,
+            sample_limit=0,
+        )
+    assert missing_path_exc.value.code == "invalid_dataset_source"
+
+    invalid_jsonl = tmp_path / "invalid.jsonl"
+    invalid_jsonl.write_text("{not-json}\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError) as invalid_json_exc:
+        training_dataset_module._read_local_jsonl_rows(invalid_jsonl, sample_limit=0)
+    assert invalid_json_exc.value.code == "invalid_dataset_source"
+
+    scalar_jsonl = tmp_path / "scalar.jsonl"
+    scalar_jsonl.write_text('"hello"\n', encoding="utf-8")
+    with pytest.raises(ModelOperationError) as non_object_exc:
+        training_dataset_module._read_local_jsonl_rows(scalar_jsonl, sample_limit=0)
+    assert non_object_exc.value.code == "invalid_dataset_source"
+
+    empty_jsonl = tmp_path / "empty.jsonl"
+    empty_jsonl.write_text("\n\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError) as empty_exc:
+        training_dataset_module._read_local_jsonl_rows(empty_jsonl, sample_limit=0)
+    assert empty_exc.value.code == "invalid_dataset_source"
+
+    assert training_dataset_module._resolve_local_conversion_template(
+        "auto",
+        {"instruction": "Do it", "output": "Done"},
+    ) == "alpaca"
+    assert training_dataset_module._resolve_local_conversion_template(
+        "auto",
+        {"conversation": []},
+    ) == "sharegpt"
+    with pytest.raises(ModelOperationError) as invalid_template:
+        training_dataset_module._resolve_local_conversion_template("mystery", {"text": "hello"})
+    assert invalid_template.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as no_template:
+        training_dataset_module._resolve_local_conversion_template("auto", {"image": "unsupported"})
+    assert no_template.value.code == "invalid_dataset_source"
+
+    assert training_dataset_module._convert_local_rows(
+        [{"text": "hello world"}],
+        "text_completion",
+    ) == ("text_completion", [{"text": "hello world"}])
+    with pytest.raises(ModelOperationError) as bad_sharegpt_shape:
+        training_dataset_module._convert_local_rows(
+            [{"conversations": "bad"}],
+            "sharegpt",
+        )
+    assert bad_sharegpt_shape.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as bad_sharegpt_turn:
+        training_dataset_module._convert_local_rows(
+            [{"conversations": ["bad-turn"]}],
+            "sharegpt",
+        )
+    assert bad_sharegpt_turn.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as bad_sharegpt_role:
+        training_dataset_module._convert_local_rows(
+            [{"conversations": [{"from": "robot", "value": "??"}]}],
+            "sharegpt",
+        )
+    assert bad_sharegpt_role.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as unsupported_template:
+        training_dataset_module._convert_local_rows([{"text": "hello"}], "mystery")
+    assert unsupported_template.value.code == "invalid_dataset_source"
+
+    with pytest.raises(ModelOperationError) as split_exc:
+        training_dataset_module._deterministic_validation_split([{"text": "solo"}], 0.5)
+    assert split_exc.value.code == "invalid_dataset_source"
+
+    assert training_dataset_module._sample_token_counts({}, "chat_messages") == (0, 0)
+    assert training_dataset_module._sample_token_counts(
+        {"text": "hello world"},
+        "text_completion",
+    ) == (0, 2)
+    assert training_dataset_module._mean_value([]) == 0.0
+    assert training_dataset_module._percentile_value([], 0.95) == 0
+
+    with pytest.raises(ModelOperationError) as int_parse_exc:
+        training_dataset_module._int_ext_value(
+            "bad",
+            default=0,
+            minimum=0,
+            field_name="sample_limit",
+        )
+    assert int_parse_exc.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as int_range_exc:
+        training_dataset_module._int_ext_value(
+            "-1",
+            default=0,
+            minimum=0,
+            field_name="sample_limit",
+        )
+    assert int_range_exc.value.code == "invalid_dataset_source"
+
+    with pytest.raises(ModelOperationError) as float_parse_exc:
+        training_dataset_module._float_ext_value(
+            "bad",
+            default=0.0,
+            minimum=0.0,
+            maximum=1.0,
+            field_name="validation_ratio",
+        )
+    assert float_parse_exc.value.code == "invalid_dataset_source"
+    with pytest.raises(ModelOperationError) as float_range_exc:
+        training_dataset_module._float_ext_value(
+            "1.5",
+            default=0.0,
+            minimum=0.0,
+            maximum=1.0,
+            field_name="validation_ratio",
+        )
+    assert float_range_exc.value.code == "invalid_dataset_source"

@@ -107,6 +107,10 @@ class SuccessfulRunner(MLXLMRunner):
                 loss_final=0.42,
                 loss_best=0.33,
                 learning_rate_final=1e-4,
+                checkpoint_count=2,
+                resume_ready=True,
+                tokens_per_second=128.5,
+                peak_memory_gb=5.25,
             ),
             execution_backend="native",
         )
@@ -181,6 +185,10 @@ class NativeUnavailableRunner(SuccessfulRunner):
                 loss_final=0.42,
                 loss_best=0.33,
                 learning_rate_final=1e-4,
+                checkpoint_count=2,
+                resume_ready=True,
+                tokens_per_second=128.5,
+                peak_memory_gb=5.25,
             ),
             execution_backend="subprocess",
         )
@@ -276,6 +284,8 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
                     "dropout": "0.1",
                     "response_only": "true",
                     "gradient_checkpointing": "true",
+                    "preset_id": "balanced_adapter",
+                    "experiment_group_id": "nightly-qwen35",
                     "target_repo": "melix/adapters/melix-dev-adapter",
                 },
             ),
@@ -305,6 +315,17 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
     assert payload["gradient_checkpointing"] is True
     assert payload["training_duration_ms"] == 1234.0
     assert payload["loss_final"] == 0.42
+    assert payload["preset_id"] == "balanced_adapter"
+    assert payload["preset_title"] == "Balanced Adapter"
+    assert payload["experiment_group_id"] == "nightly-qwen35"
+    assert payload["checkpoint_count"] == 2
+    assert payload["resume_ready"] is True
+    assert payload["tokens_per_second"] == 128.5
+    assert payload["peak_memory_gb"] == 5.25
+    assert payload["experiment.checkpoint_count"] == 2
+    assert payload["experiment.resume_ready"] is True
+    assert payload["training.tokens_per_second"] == 128.5
+    assert payload["training.peak_memory_gb"] == 5.25
     assert payload["adapter_artifact_bytes"] > 0
     assert payload["adapter_set_hash"]
     assert payload["weights_path"].endswith("adapters.safetensors")
@@ -313,6 +334,13 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
     assert Path(payload["weights_path"]).is_file()
     assert Path(payload["adapter_config_path"]).is_file()
     assert Path(payload["normalized_dataset_manifest_path"]).is_file()
+    index_path = tmp_path / "model-ops" / "train_lora" / "lora-experiments.index.json"
+    index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+    assert index_payload["groups"][0]["group_id"] == "nightly-qwen35"
+    assert index_payload["groups"][0]["latest_preset_id"] == "balanced_adapter"
+    assert index_payload["groups"][0]["recommended_manifest_path"].endswith("train_lora.adapter.json")
+    assert index_payload["runs"][0]["preset_title"] == "Balanced Adapter"
+    assert index_payload["runs"][0]["group_id"] == "nightly-qwen35"
     assert payload["target_modules"] == [
         "model.layers.0.self_attn.q_proj",
         "model.layers.1.self_attn.q_proj",

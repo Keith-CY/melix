@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import time
 from typing import Any, Callable
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -15,6 +16,7 @@ from worker.model_ops.training_dataset import (
     resolve_training_dataset_package,
     write_normalized_dataset_snapshot,
 )
+from worker.productization.lora_experiment_store import LoraExperimentStore
 
 
 @dataclass(frozen=True)
@@ -28,9 +30,11 @@ class LoRATrainingPipeline:
         self,
         runner: MLXLMRunner | None = None,
         hf_dataset_fetcher: HFDatasetFetcher | None = None,
+        experiment_store: LoraExperimentStore | None = None,
     ) -> None:
         self._runner = runner or MLXLMRunner()
         self._hf_dataset_fetcher = hf_dataset_fetcher
+        self._experiment_store = experiment_store or LoraExperimentStore()
 
     def run(
         self,
@@ -98,6 +102,19 @@ class LoRATrainingPipeline:
         emit("write_adapter", 0.9)
         adapter_artifact_bytes = training_result.weights_path.stat().st_size
         adapter_set_hash = _content_hash(training_result.weights_path, training_result.adapter_config_path)
+        checkpoint_count = training_result.metrics.checkpoint_count
+        resume_ready = training_result.metrics.resume_ready
+        tokens_per_second = training_result.metrics.tokens_per_second
+        peak_memory_gb = training_result.metrics.peak_memory_gb
+        experiment_group_id = (
+            request_ext.get("experiment_group_id", "").strip()
+            or _default_experiment_group_id(source_model.model_id, config.adapter_name)
+        )
+        experiment_group_title = (
+            request_ext.get("experiment_group_title", "").strip()
+            or (experiment_group_id if request_ext.get("experiment_group_id", "").strip() else config.adapter_name)
+        )
+        persisted_at_unix_ms = int(time.time() * 1000)
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -106,9 +123,13 @@ class LoRATrainingPipeline:
             "operation": "train_lora",
             "artifact_kind": "adapter",
             "adapter_name": config.adapter_name,
+            "preset_id": config.preset_id,
+            "preset_title": config.preset_title,
             "source_model": source_model.model_id,
             "source_model_revision": source_model.revision,
             "source_model_path": source_model.model_path,
+            "experiment_group_id": experiment_group_id,
+            "experiment_group_title": experiment_group_title,
             "dataset_uri": dataset.dataset_uri,
             "dataset_source_kind": dataset.source_kind,
             "dataset_id": dataset.package.dataset_id,
@@ -130,10 +151,12 @@ class LoRATrainingPipeline:
             "rank": config.rank,
             "alpha": config.alpha,
             "dropout": config.dropout,
+            "max_steps": config.max_steps,
             "response_only": config.response_only,
             "gradient_checkpointing": config.gradient_checkpointing,
             "mask_prompt": config.mask_prompt,
             "max_seq_length": config.max_seq_length,
+            "training.max_steps": config.max_steps,
             "training_duration_ms": training_result.metrics.job_duration_ms,
             "training.job_duration_ms": training_result.metrics.job_duration_ms,
             "training.tokens_seen": training_result.metrics.tokens_seen,
@@ -141,8 +164,12 @@ class LoRATrainingPipeline:
             "training.loss_final": training_result.metrics.loss_final,
             "training.loss_best": training_result.metrics.loss_best,
             "training.learning_rate_final": training_result.metrics.learning_rate_final,
+            "training.tokens_per_second": tokens_per_second,
+            "training.peak_memory_gb": peak_memory_gb,
             "training.gradient_checkpointing_enabled": config.gradient_checkpointing,
             "training.response_only_enabled": config.response_only,
+            "experiment.checkpoint_count": checkpoint_count,
+            "experiment.resume_ready": resume_ready,
             "validation_strategy": config.validation_strategy,
             "validation_sample_count": config.validation_sample_count,
             "tokens_seen": training_result.metrics.tokens_seen,
@@ -150,8 +177,14 @@ class LoRATrainingPipeline:
             "loss_final": training_result.metrics.loss_final,
             "loss_best": training_result.metrics.loss_best,
             "learning_rate_final": training_result.metrics.learning_rate_final,
+            "checkpoint_count": checkpoint_count,
+            "resume_ready": resume_ready,
+            "tokens_per_second": tokens_per_second,
+            "peak_memory_gb": peak_memory_gb,
             "adapter_artifact_bytes": adapter_artifact_bytes,
             "target_repo": config.target_repo,
+            "created_at_unix_ms": persisted_at_unix_ms,
+            "updated_at_unix_ms": persisted_at_unix_ms,
         }
         if config.desired_derived_model_alias:
             manifest["desired_derived_model_alias"] = config.desired_derived_model_alias
@@ -172,6 +205,11 @@ class LoRATrainingPipeline:
         manifest_path = output_dir / "train_lora.adapter.json"
         manifest["artifact_path"] = str(manifest_path)
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        self._experiment_store.persist_training_run(
+            jobs_root=jobs_root,
+            manifest=manifest,
+            manifest_path=manifest_path,
+        )
         return LoRATrainingPipelineResult(manifest=manifest, manifest_path=manifest_path)
 
 
@@ -187,3 +225,9 @@ def _content_hash(*paths: Path) -> str:
     for path in paths:
         digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def _default_experiment_group_id(source_model_id: str, adapter_name: str) -> str:
+    normalized_source_model_id = source_model_id.strip() or "model"
+    normalized_adapter_name = adapter_name.strip() or "adapter"
+    return f"{normalized_source_model_id}:{normalized_adapter_name}"

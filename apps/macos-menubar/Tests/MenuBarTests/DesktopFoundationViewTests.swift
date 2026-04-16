@@ -2169,6 +2169,33 @@ struct DesktopFoundationViewTests {
         #expect(trainingJob.stageText == "write_manifest • 42%")
     }
 
+    @Test("tools workspace renders grouped lora experiment recommendations")
+    @MainActor
+    func toolsWorkspaceRendersGroupedLoraExperimentRecommendations() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeExperimentGroupRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        let group = try #require(viewModel.loraExperimentGroups.first)
+        let view = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(group.title == "nightly-qwen35")
+        #expect(group.runCount == 2)
+        #expect(group.latestPresetTitle == "Balanced Adapter")
+        #expect(group.experimentSummaryText == "2 checkpoints • resume ready")
+        #expect(group.performanceSummaryText == "128.5 tok/s • 5.25 GB peak")
+        #expect(group.recommendedManifestPath == "/tmp/melix-train-lora/train_lora.adapter.json")
+    }
+
     @Test("tools tab renders empty tooling state without a primary model")
     @MainActor
     func toolsTabRendersWithoutPrimaryModel() async throws {
@@ -4486,6 +4513,91 @@ private func makePendingRegistrySnapshotManifest() -> String {
         }
       ],
       "derived_models": []
+    }
+    """#
+}
+
+private func makeExperimentGroupRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [
+        {
+          "job_id": "model-ops-0001",
+          "operation": "train_lora",
+          "source_model": "melix-dev-text",
+          "status": "completed",
+          "stage": "write_artifact",
+          "pct": 1.0,
+          "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+          "manifest": {
+            "adapter_name": "melix-dev-adapter",
+            "dataset_uri": "datasets/melix-dev",
+            "target_repo": "melix/adapters/melix-dev-adapter",
+            "preset_id": "balanced_adapter",
+            "preset_title": "Balanced Adapter",
+            "checkpoint_count": 2,
+            "resume_ready": true,
+            "tokens_per_second": 128.5,
+            "peak_memory_gb": 5.25
+          }
+        }
+      ],
+      "adapters": [
+        {
+          "adapter_id": "melix-dev-adapter@model-ops-0001",
+          "job_id": "model-ops-0001",
+          "adapter_name": "melix-dev-adapter",
+          "source_model": "melix-dev-text",
+          "dataset_uri": "datasets/melix-dev",
+          "output_path": "/tmp/melix-train-lora/train_lora.adapter.json",
+          "activation_status": "activated",
+          "derived_model_id": "melix-dev-text-lora-adapter",
+          "derived_model_path": "/tmp/melix-derived/model",
+          "exportable_state": "ready",
+          "published_state": "published",
+          "target_repo": "melix/adapters/melix-dev-adapter",
+          "published_repo": "melix/adapters/melix-dev-adapter",
+          "status": "published",
+          "response_only": true,
+          "gradient_checkpointing": false,
+          "preset_id": "balanced_adapter",
+          "preset_title": "Balanced Adapter",
+          "checkpoint_count": 2,
+          "resume_ready": true,
+          "tokens_per_second": 128.5,
+          "peak_memory_gb": 5.25,
+          "training_duration_ms": 1420.0,
+          "activation_duration_ms": 321.0,
+          "adapter_publish_ms": 118.0
+        }
+      ],
+      "experiment_groups": [
+        {
+          "group_id": "nightly-qwen35",
+          "title": "nightly-qwen35",
+          "adapter_name": "melix-dev-adapter",
+          "source_model": "melix-dev-text",
+          "run_count": 2,
+          "latest_preset_title": "Balanced Adapter",
+          "latest_tokens_per_second": 128.5,
+          "latest_peak_memory_gb": 5.25,
+          "latest_checkpoint_count": 2,
+          "latest_resume_ready": true,
+          "best_loss": 0.33,
+          "recommended_manifest_path": "/tmp/melix-train-lora/train_lora.adapter.json"
+        }
+      ],
+      "derived_models": [
+        {
+          "model_id": "melix-dev-text-lora-adapter",
+          "model_path": "/tmp/melix-derived/model",
+          "adapter_set_hash": "adapter-alpha",
+          "source_model": "melix-dev-text",
+          "activation_mode": "adapter_backed_runtime",
+          "status": "activated"
+        }
+      ]
     }
     """#
 }

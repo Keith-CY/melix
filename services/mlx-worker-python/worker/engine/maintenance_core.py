@@ -29,6 +29,7 @@ from worker.model_ops.local_import_pipeline import LocalImportPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
 from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import protected_scope_for_request
+from worker.model_ops.training_dataset import build_training_dataset_artifact
 from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
@@ -71,6 +72,7 @@ class ImageBenchSample:
 class ModelOperationManifestResult:
     manifest: dict[str, Any]
     manifest_path: Path
+    output_path: Path | None = None
 
 
 def _split_capability_values(raw_value: str) -> list[str]:
@@ -166,6 +168,7 @@ class MaintenanceCore:
         local_import_pipeline: LocalImportPipeline | None = None,
         lora_training_pipeline: LoRATrainingPipeline | None = None,
         adapter_activation_pipeline: AdapterActivationPipeline | None = None,
+        upload_receipt_pipeline: UploadReceiptPipeline | None = None,
         benchmark_suite_catalog: BenchmarkSuiteCatalog | None = None,
     ) -> None:
         self._registry = registry
@@ -178,7 +181,7 @@ class MaintenanceCore:
         self._local_import_pipeline = local_import_pipeline or LocalImportPipeline()
         self._lora_training_pipeline = lora_training_pipeline or LoRATrainingPipeline()
         self._adapter_activation_pipeline = adapter_activation_pipeline or AdapterActivationPipeline()
-        self._upload_receipt_pipeline = UploadReceiptPipeline()
+        self._upload_receipt_pipeline = upload_receipt_pipeline or UploadReceiptPipeline()
         self._operation_locks = ModelOpsConflictRegistry()
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
@@ -274,6 +277,7 @@ class MaintenanceCore:
             "download",
             "local_import",
             "upload",
+            "build_training_dataset",
             "train_lora",
             "activate_adapter",
             "remove_derived_model",
@@ -494,7 +498,7 @@ class MaintenanceCore:
             if operation == "upload":
                 stage_sequence = [
                     ("resolve_artifact", 0.25),
-                    ("record_receipt", 0.8),
+                    ("publish_remote", 0.8),
                 ]
                 for stage, pct in stage_sequence:
                     self._job_registry.progress(job.job_id, stage, pct)
@@ -554,7 +558,12 @@ class MaintenanceCore:
                 )
                 return
 
-            if operation in {"train_lora", "activate_adapter", "remove_derived_model"}:
+            if operation in {
+                "build_training_dataset",
+                "train_lora",
+                "activate_adapter",
+                "remove_derived_model",
+            }:
                 try:
                     pipeline_result, progress_events = self._run_specialized_model_operation(
                         operation=operation,
@@ -577,6 +586,7 @@ class MaintenanceCore:
                     return
                 except Exception as exc:
                     error_code = {
+                        "build_training_dataset": "dataset_build_failure",
                         "train_lora": "backend_training_failure",
                         "activate_adapter": "activation_failure",
                         "remove_derived_model": "removal_failure",
@@ -599,15 +609,21 @@ class MaintenanceCore:
                     )
 
                 manifest_json = json.dumps(pipeline_result.manifest, sort_keys=True)
+                completed_output_path = getattr(pipeline_result, "output_path", None) or pipeline_result.manifest_path
                 self._job_registry.attach_manifest(job.job_id, manifest_json)
                 if request.generate_manifest:
                     yield maintenance_pb2.ConvertModelEvent(
                         manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
                     )
 
-                self._job_registry.complete(job.job_id, str(pipeline_result.manifest_path))
+                self._job_registry.complete(
+                    job.job_id,
+                    str(completed_output_path),
+                )
                 yield maintenance_pb2.ConvertModelEvent(
-                    completed=maintenance_pb2.ConvertCompleted(output_path=str(pipeline_result.manifest_path))
+                    completed=maintenance_pb2.ConvertCompleted(
+                        output_path=str(completed_output_path)
+                    )
                 )
                 return
 
@@ -1618,6 +1634,36 @@ class MaintenanceCore:
                 progress=record_progress,
             )
             return result, progress_events
+
+        if operation == "build_training_dataset":
+            source_model = self._registry.model_catalog.get(request.source_model)
+            if source_model is None:
+                raise ModelOperationError(
+                    code="unsupported_model_family",
+                    message="Unknown source model for model operation.",
+                    details={"source_model": request.source_model},
+                )
+
+            progress_events: list[tuple[str, float]] = []
+
+            def record_progress(stage: str, pct: float) -> None:
+                progress_events.append((stage, pct))
+
+            artifact = build_training_dataset_artifact(
+                dict(request.ext),
+                jobs_root=self._jobs_root,
+                output_dir=output_dir,
+                source_model_id=source_model.model_id,
+                progress=record_progress,
+            )
+            return (
+                ModelOperationManifestResult(
+                    manifest=artifact.manifest_payload,
+                    manifest_path=artifact.manifest_path,
+                    output_path=artifact.output_path,
+                ),
+                progress_events,
+            )
 
         source_model = self._registry.model_catalog.get(request.source_model)
         if source_model is None:

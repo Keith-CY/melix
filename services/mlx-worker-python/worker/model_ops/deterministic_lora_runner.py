@@ -47,6 +47,10 @@ class DeterministicLoRARunner(MLXLMRunner):
                 loss_final=0.42,
                 loss_best=0.33,
                 learning_rate_final=1e-4,
+                checkpoint_count=1,
+                resume_ready=True,
+                tokens_per_second=96.0,
+                peak_memory_gb=2.5,
             ),
             execution_backend="native",
         )

@@ -1131,6 +1131,31 @@ struct DesktopTrainingToolSectionView: View {
                         .pickerStyle(.segmented)
                     }
 
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Preset")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Picker("Preset", selection: trainingPresetBinding()) {
+                                ForEach(RuntimeLoraTrainingPreset.allCases) { preset in
+                                    Text(preset.title).tag(preset)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Experiment Group")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            TextField("Optional group id", text: stringBinding(\.loraExperimentGroupID))
+                                .textFieldStyle(.roundedBorder)
+                            Text("Leave blank to derive from base model and adapter name.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     if viewModel.loraDatasetSourceKind == .localPackage {
                         TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
                             .textFieldStyle(.roundedBorder)
@@ -1263,6 +1288,9 @@ struct DesktopTrainingToolSectionView: View {
                             Text("Saved artifact: \(adapter.outputPath)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text("\(adapter.experimentSummaryText) • \(adapter.performanceSummaryText)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             if !adapter.derivedModelID.isEmpty {
                                 Text("Derived model: \(adapter.derivedModelID)")
                                     .font(.caption)
@@ -1293,6 +1321,12 @@ struct DesktopTrainingToolSectionView: View {
                                 Text("\(adapter.statusText) • \(adapter.datasetURI)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                Text(adapter.experimentSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(adapter.performanceSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -1310,10 +1344,59 @@ struct DesktopTrainingToolSectionView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(entry.adapterName)
                                     .font(.headline)
+                                Text("\(entry.statusText) • \(entry.datasetURI)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 Text(entry.stageText)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                Text(entry.experimentSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(entry.performanceSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Experiment Groups") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if viewModel.loraExperimentGroups.isEmpty {
+                        Text("No grouped LoRA runs yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.loraExperimentGroups) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(group.title.isEmpty ? group.groupID : group.title)
+                                            .font(.headline)
+                                        Text("\(group.runCount) runs • \(group.latestPresetTitle)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Use Group") {
+                                        viewModel.loraExperimentGroupID = group.groupID
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                                Text(group.experimentSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(group.performanceSummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("Best loss \(String(format: "%.3f", group.bestLoss)) • \(group.recommendedManifestPath)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
@@ -1347,6 +1430,13 @@ struct DesktopTrainingToolSectionView: View {
         Binding(
             get: { viewModel.loraTrainingMode },
             set: { viewModel.loraTrainingMode = $0 }
+        )
+    }
+
+    private func trainingPresetBinding() -> Binding<RuntimeLoraTrainingPreset> {
+        Binding(
+            get: { viewModel.selectedLoraTrainingPreset },
+            set: { viewModel.applyLoraTrainingPreset($0) }
         )
     }
 

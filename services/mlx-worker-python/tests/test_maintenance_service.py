@@ -33,6 +33,13 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.model_ops.upload_receipt_pipeline import (
+    HuggingFacePublishBackend,
+    PublishResult,
+    SourceArtifactDescriptor,
+    UploadReceiptPipeline,
+    _resolve_hf_cli_command,
+)
 from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
@@ -79,6 +86,10 @@ class DeterministicLoRARunner(MLXLMRunner):
                 loss_final=0.42,
                 loss_best=0.33,
                 learning_rate_final=1e-4,
+                checkpoint_count=1,
+                resume_ready=True,
+                tokens_per_second=96.0,
+                peak_memory_gb=2.5,
             ),
             execution_backend="native",
         )
@@ -389,6 +400,15 @@ def _write_training_dataset_package(tmp_path: Path, *, dataset_id: str = "melix-
     return dataset_dir
 
 
+def _write_raw_training_jsonl(tmp_path: Path, rows: list[dict[str, object]]) -> Path:
+    dataset_path = tmp_path / "raw-training.jsonl"
+    dataset_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    return dataset_path
+
+
 def _write_download_source_file(tmp_path: Path, *, size: int = 4096) -> tuple[Path, bytes]:
     source_path = tmp_path / "download-source.bin"
     payload = bytes(index % 251 for index in range(size))
@@ -420,17 +440,63 @@ def _write_registry_manifest(
     (variant_dir / "manifest.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+class FakePublishBackend:
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.calls: list[dict[str, object]] = []
+
+    def publish(
+        self,
+        *,
+        source_path: Path,
+        target_repo: str,
+        artifact_kind: str,
+        token: str = "",
+        private: bool = False,
+        commit_message: str = "",
+    ) -> PublishResult:
+        if self.failure is not None:
+            raise self.failure
+        self.calls.append(
+            {
+                "source_path": source_path,
+                "target_repo": target_repo,
+                "artifact_kind": artifact_kind,
+                "token": token,
+                "private": private,
+                "commit_message": commit_message,
+            }
+        )
+        if source_path.is_dir():
+            published_files = sorted(
+                str(path.relative_to(source_path))
+                for path in source_path.rglob("*")
+                if path.is_file()
+            )
+        else:
+            published_files = [source_path.name]
+        return PublishResult(
+            backend="huggingface_hub",
+            target_repo=target_repo,
+            target_url=f"https://huggingface.co/{target_repo}",
+            remote_ref=f"{target_repo}@main",
+            published_files=published_files,
+        )
+
+
 def build_service(
     tmp_path: Path,
     runner: MLXLMRunner | None = None,
     hub_catalog: FakeHubCatalog | None = None,
     registry: WorkerRegistry | None = None,
     benchmark_fetcher: FakeBenchmarkHFDatasetFetcher | None = None,
+    publish_backend: FakePublishBackend | None = None,
 ) -> WorkerMaintenanceService:
     registry = registry or WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
         model_catalog=WorkerModelCatalog(),
     )
+    publish_backend = publish_backend or FakePublishBackend()
     service = WorkerMaintenanceService(
         registry,
         jobs_root=tmp_path / "model-ops",
@@ -443,10 +509,12 @@ def build_service(
         hub_catalog=hub_catalog,
         lora_training_pipeline=LoRATrainingPipeline(runner=runner or DeterministicLoRARunner()),
         adapter_activation_pipeline=AdapterActivationPipeline(runner=runner or DeterministicLoRARunner()),
+        upload_receipt_pipeline=UploadReceiptPipeline(publisher=publish_backend),
         benchmark_suite_catalog=BenchmarkSuiteCatalog(
             hf_dataset_fetcher=benchmark_fetcher or FakeBenchmarkHFDatasetFetcher()
         ),
     )
+    service._fake_publish_backend = publish_backend
     return service
 
 
@@ -526,6 +594,8 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
 
 def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None:
     service = build_service(tmp_path)
+    artifact_path = tmp_path / "artifact"
+    artifact_path.write_text("melix-upload", encoding="utf-8")
 
     download_events = list(
         service.ConvertModel(
@@ -540,7 +610,7 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     upload_events = list(
         service.ConvertModel(
             maintenance_pb2.ConvertModelRequest(
-                source_model=str(tmp_path / "artifact"),
+                source_model=str(artifact_path),
                 output_dir=str(tmp_path / "upload"),
                 generate_manifest=True,
                 ext={"operation": "upload", "target_repo": "melix/upload-target"},
@@ -555,8 +625,11 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     upload_payload = json.loads(upload_manifest.manifest_json)
     assert upload_payload["schema_version"] == "melix.upload_receipt.v1"
     assert upload_payload["artifact_kind"] == "upload_receipt"
+    assert upload_payload["status"] == "published"
     assert upload_payload["target_repo"] == "melix/upload-target"
     assert upload_payload["source_artifact_kind"] == "model"
+    assert upload_payload["upload_backend"] == "huggingface_hub"
+    assert upload_payload["published_url"] == "https://huggingface.co/melix/upload-target"
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
@@ -974,6 +1047,171 @@ def test_upload_job_fails_for_invalid_artifact_manifest(tmp_path: Path) -> None:
     assert "not valid JSON" in events[-1].failed.error.message
 
 
+def test_hugging_face_publish_backend_adds_private_token_and_commit_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    (artifact_root / "config.json").write_text("{}", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\nhttps://huggingface.co/melix/demo-adapter/commit/abc123\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+
+    result = HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+        token="hf-token",
+        private=True,
+        commit_message="Publish adapter",
+    )
+
+    assert seen["command"] == [
+        "hf",
+        "upload",
+        "melix/demo-adapter",
+        str(artifact_root.resolve()),
+        ".",
+        "--repo-type",
+        "model",
+        "--quiet",
+        "--private",
+        "--commit-message",
+        "Publish adapter",
+        "--token",
+        "hf-token",
+    ]
+    assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/abc123"
+    assert result.published_files == ["adapter.safetensors", "config.json"]
+
+
+def test_hugging_face_publish_backend_falls_back_to_legacy_cli_when_hf_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_which(command: str) -> str | None:
+        if command == "hf":
+            return None
+        if command == "huggingface-cli":
+            return "/usr/local/bin/huggingface-cli"
+        return None
+
+    def fake_subprocess_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\nhttps://huggingface.co/melix/demo-adapter/commit/abc123\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", fake_which)
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+
+    HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+    )
+
+    assert seen["command"][0] == "huggingface-cli"
+
+
+def test_resolve_hf_cli_command_defaults_to_hf_when_no_binary_is_discovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", lambda command: None)
+
+    assert _resolve_hf_cli_command() == "hf"
+
+
+def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(tmp_path: Path) -> None:
+    pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
+
+    with pytest.raises(ModelOperationError) as missing_target_repo:
+        pipeline.run(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                ext={"operation": "upload"},
+            ),
+            job_id="upload-1",
+            output_dir=tmp_path / "upload",
+        )
+    assert missing_target_repo.value.code == "invalid_argument"
+
+    missing_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(tmp_path / "missing-artifact"),
+        artifact_kind="model",
+        schema_version="",
+        manifest_path="",
+        source_model="melix-dev-text",
+        manifest_payload=None,
+    )
+    with pytest.raises(ModelOperationError) as missing_artifact:
+        pipeline._prepare_publish_source(
+            missing_descriptor,
+            receipt_dir=tmp_path / "receipt",
+            target_repo="melix/demo-model",
+        )
+    assert missing_artifact.value.code == "invalid_artifact"
+
+    adapter_manifest = tmp_path / "train_lora.adapter.json"
+    adapter_manifest.write_text(
+        json.dumps(
+            {
+                "artifact_kind": "adapter",
+                "source_model": "melix-dev-text",
+                "weights_path": str(tmp_path / "missing-weights.safetensors"),
+                "adapter_config_path": str(tmp_path / "missing-adapter-config.json"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    descriptor = SourceArtifactDescriptor(
+        artifact_path=str(adapter_manifest),
+        artifact_kind="adapter",
+        schema_version="melix.lora_adapter_package.v1",
+        manifest_path=str(adapter_manifest),
+        source_model="melix-dev-text",
+        manifest_payload=json.loads(adapter_manifest.read_text(encoding="utf-8")),
+    )
+
+    with pytest.raises(ModelOperationError) as invalid_adapter:
+        pipeline._prepare_publish_source(
+            descriptor,
+            receipt_dir=tmp_path / "receipt",
+            target_repo="melix/demo-adapter",
+        )
+    assert invalid_adapter.value.code == "invalid_artifact"
+
+    monkeypatch_env = {"HUGGINGFACE_HUB_TOKEN": "env-token"}
+    for key, value in monkeypatch_env.items():
+        os.environ[key] = value
+    try:
+        assert UploadReceiptPipeline._resolve_hf_token({}) == "env-token"
+        assert UploadReceiptPipeline._resolve_hf_token({"HF_TOKEN": "ext-token"}) == "ext-token"
+    finally:
+        for key in monkeypatch_env:
+            os.environ.pop(key, None)
+
+
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
     registry.start_request("req-active", runtime_kind="text")
@@ -1211,6 +1449,135 @@ def test_convert_model_supports_train_lora_jobs(tmp_path: Path) -> None:
     assert payload["adapter_artifact_bytes"] > 0
 
 
+def test_convert_model_supports_build_training_dataset_jobs(tmp_path: Path) -> None:
+    dataset_path = _write_raw_training_jsonl(
+        tmp_path,
+        [
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Repeat the token.",
+                "input": "",
+                "output": "token\u0000token",
+            },
+        ],
+    )
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "dataset-build"),
+                generate_manifest=True,
+                ext={
+                    "operation": "build_training_dataset",
+                    "dataset_uri": str(dataset_path),
+                    "template": "alpaca",
+                    "dataset_id": "melix-built-dataset",
+                    "validation_ratio": "0.34",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest = next(event.manifest for event in events if event.HasField("manifest"))
+    payload = json.loads(manifest.manifest_json)
+
+    assert events[0].started.job_id == "model-ops-0001"
+    assert events[-1].completed.output_path == str(tmp_path / "dataset-build")
+    assert payload["schema_version"] == "melix.training_dataset_package.v1"
+    assert payload["dataset_id"] == "melix-built-dataset"
+    assert payload["format"] == "prompt_completion"
+    assert payload["sample_count"] == 2
+    assert payload["validation_sample_count"] == 1
+    assert payload["quality"]["duplicate_count"] == 1
+    assert payload["quality"]["dirty_count"] == 1
+    assert (tmp_path / "dataset-build" / "manifest.json").is_file()
+    assert (tmp_path / "dataset-build" / "samples.jsonl").is_file()
+    assert (tmp_path / "dataset-build" / "valid.jsonl").is_file()
+
+
+def test_build_training_dataset_job_requires_known_source_model(tmp_path: Path) -> None:
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-missing",
+                output_dir=str(tmp_path / "dataset-build"),
+                generate_manifest=True,
+                ext={
+                    "operation": "build_training_dataset",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "unsupported_model_family"
+    assert "Unknown source model" in events[-1].failed.error.message
+
+
+def test_convert_model_supports_inspect_only_dataset_jobs(tmp_path: Path) -> None:
+    dataset_path = _write_raw_training_jsonl(
+        tmp_path,
+        [
+            {
+                "conversations": [
+                    {"from": "human", "value": "Say hi."},
+                    {"from": "gpt", "value": "Hi there."},
+                ]
+            },
+            {
+                "conversations": [
+                    {"from": "human", "value": "Say bye."},
+                    {"from": "gpt", "value": "Bye."},
+                ]
+            },
+        ],
+    )
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "dataset-inspect"),
+                generate_manifest=True,
+                ext={
+                    "operation": "build_training_dataset",
+                    "dataset_uri": str(dataset_path),
+                    "inspect_only": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest = next(event.manifest for event in events if event.HasField("manifest"))
+    payload = json.loads(manifest.manifest_json)
+
+    assert events[-1].completed.output_path == str(
+        tmp_path / "dataset-inspect" / "training_dataset.inspect.json"
+    )
+    assert payload["schema_version"] == "melix.training_dataset_inspection.v1"
+    assert payload["format"] == "chat_messages"
+    assert payload["conversion_template"] == "sharegpt"
+    assert (tmp_path / "dataset-inspect" / "training_dataset.inspect.json").is_file()
+    assert (tmp_path / "dataset-inspect" / "samples.jsonl").exists() is False
+
+
 def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_path: Path) -> None:
     dataset_dir = _write_training_dataset_package(tmp_path)
     service = build_service(tmp_path, runner=DeterministicLoRARunner())
@@ -1277,6 +1644,72 @@ def test_registry_snapshot_returns_training_history_and_adapter_registry(tmp_pat
     assert payload["adapters"][0]["dataset_source_kind"] == "local_package"
     assert payload["adapters"][0]["dataset_id"] == "melix-dev"
     assert payload["adapters"][0]["normalized_dataset_manifest_path"].endswith("normalized_dataset/manifest.json")
+
+
+def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> None:
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, publish_backend=publish_backend)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_repo": "melix/adapters/melix-dev-adapter",
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-adapter"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "adapter_name": "melix-dev-adapter",
+                    "target_repo": "melix/adapters/melix-dev-adapter",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["status"] == "published"
+    assert payload["upload_backend"] == "huggingface_hub"
+    assert payload["published_repo"] == "melix/adapters/melix-dev-adapter"
+    assert payload["published_url"] == "https://huggingface.co/melix/adapters/melix-dev-adapter"
+    assert sorted(payload["published_files"]) == sorted(
+        [
+            "adapter/adapters.safetensors",
+            "adapter/adapter_config.json",
+            "train_lora.adapter.json",
+        ]
+    )
+    assert publish_backend.calls[-1]["artifact_kind"] == "adapter"
+    staged_source = publish_backend.calls[-1]["source_path"]
+    assert isinstance(staged_source, Path)
+    staged_manifest = json.loads((staged_source / "train_lora.adapter.json").read_text(encoding="utf-8"))
+    assert staged_manifest["weights_path"] == "adapter/adapters.safetensors"
+    assert staged_manifest["adapter_config_path"] == "adapter/adapter_config.json"
+    assert staged_manifest["published_repo"] == "melix/adapters/melix-dev-adapter"
 
 
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
@@ -1591,6 +2024,10 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
                 "target_repo": "melix/adapters/adapter-a",
                 "training_duration_ms": 1550.0,
                 "adapter_publish_ms": 125.0,
+                "checkpoint_count": 2,
+                "resume_ready": True,
+                "tokens_per_second": 128.5,
+                "peak_memory_gb": 5.25,
             }
         ),
     )
@@ -1631,6 +2068,10 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
                 "adapter_name": "adapter-b",
                 "dataset_uri": "datasets/b",
                 "training_duration_ms": 820.0,
+                "checkpoint_count": 0,
+                "resume_ready": False,
+                "tokens_per_second": 0.0,
+                "peak_memory_gb": 0.0,
             }
         ),
     )
@@ -1641,9 +2082,15 @@ def test_job_registry_snapshot_supports_name_only_publish_and_unpublished_adapte
     assert adapters["adapter-a"]["published_repo"] == "melix/adapters/adapter-a"
     assert adapters["adapter-a"]["publish_job_id"] == published_upload.job_id
     assert adapters["adapter-a"]["status"] == "published"
+    assert adapters["adapter-a"]["checkpoint_count"] == 2
+    assert adapters["adapter-a"]["resume_ready"] is True
+    assert adapters["adapter-a"]["tokens_per_second"] == 128.5
+    assert adapters["adapter-a"]["peak_memory_gb"] == 5.25
     assert adapters["adapter-b"]["published_repo"] == ""
     assert adapters["adapter-b"]["publish_job_id"] == ""
     assert adapters["adapter-b"]["status"] == "completed"
+    assert adapters["adapter-b"]["checkpoint_count"] == 0
+    assert adapters["adapter-b"]["resume_ready"] is False
 
 
 def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_linkage() -> None:
@@ -1680,6 +2127,7 @@ def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_lin
             {
                 "adapter_name": "adapter-hf",
                 "adapter_manifest_path": adapter_manifest_path,
+                "adapter_weights_path": "/runtime/train/adapter-bundle/adapters.safetensors",
                 "adapter_set_hash": "adapter-hash-a",
                 "derived_model_id": "melix-dev-text-lora-adapter",
                 "derived_model_path": "/runtime/activate/melix-dev-text-lora-adapter",
@@ -1707,7 +2155,63 @@ def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_lin
     assert adapter["derived_model_path"] == "/runtime/activate/melix-dev-text-lora-adapter"
     assert derived_model["model_id"] == "melix-dev-text-lora-adapter"
     assert derived_model["adapter_manifest_path"] == adapter_manifest_path
+    assert derived_model["adapter_weights_path"] == "/runtime/train/adapter-bundle/adapters.safetensors"
     assert derived_model["source_adapter_job_id"] == train_job.job_id
+
+
+def test_job_registry_snapshot_surfaces_grouped_lora_experiments_from_local_index(tmp_path: Path) -> None:
+    service = build_service(tmp_path, runner=DeterministicLoRARunner())
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "melix-dev-dataset",
+                "format": "chat_messages",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_dir / "samples.jsonl").write_text(
+        json.dumps({"messages": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    for adapter_name in ["grouped-adapter-a", "grouped-adapter-b"]:
+        list(
+            service.ConvertModel(
+                maintenance_pb2.ConvertModelRequest(
+                    source_model="melix-dev-text",
+                    output_dir=str(tmp_path / adapter_name),
+                    generate_manifest=True,
+                    ext={
+                        "operation": "train_lora",
+                        "dataset_uri": str(dataset_dir),
+                        "adapter_name": adapter_name,
+                        "preset_id": "balanced_adapter",
+                        "experiment_group_id": "nightly-qwen35",
+                    },
+                ),
+                context=None,
+            )
+        )
+
+    snapshot = service._core._job_registry.snapshot()
+    group = snapshot["experiment_groups"][0]
+
+    assert group["group_id"] == "nightly-qwen35"
+    assert group["run_count"] == 2
+    assert group["latest_preset_id"] == "balanced_adapter"
+    assert group["latest_preset_title"] == "Balanced Adapter"
+    assert group["best_run_id"].startswith("model-ops-")
+    assert group["recommended_manifest_path"].endswith("train_lora.adapter.json")
+    assert group["latest_tokens_per_second"] > 0.0
+    assert group["latest_peak_memory_gb"] >= 0.0
 
 
 def test_job_registry_restores_completed_lora_jobs_from_jobs_root(tmp_path: Path) -> None:
@@ -3186,6 +3690,85 @@ def test_run_evaluation_materializes_hf_source_from_request(tmp_path: Path) -> N
     materialized_root = Path(response.job.parameters["evaluation_materialized_dataset_root"])
     assert (materialized_root / "manifest.json").exists() is True
     assert (materialized_root / "samples.jsonl").exists() is True
+
+
+def test_run_evaluation_materializes_local_jsonl_source_for_compare_from_request(
+    tmp_path: Path,
+) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    base_loaded_model = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            model_path=str(tmp_path / "models" / "melix-dev-text"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    _ = registry.load_model(
+        common_pb2.ModelSpec(
+            model_id="melix-dev-text-lora",
+            model_path=str(tmp_path / "models" / "melix-dev-text-lora"),
+            model_kind="text",
+            revision="test",
+            tokenizer_hash="tok-test",
+            quant_profile_id="test",
+            parser_mode="text",
+            reasoning_mode="off",
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+    source_path = tmp_path / "capital.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "system_prompt": "Return only the final answer.",
+                "prompt": "Capital of France?",
+                "expected": "Paris",
+                "sample_id": "capital-1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    request = maintenance_pb2.RunEvaluationRequest(
+        model_handle=base_loaded_model.handle,
+        suite_id="capital",
+        dataset_id="capital.dev.v1",
+        sample_size=1,
+        parameters={
+            "judge": "deterministic",
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora",
+        },
+    )
+    request.source.local_jsonl.path = str(source_path)
+    request.field_mapping.system_path = "system_prompt"
+    request.field_mapping.input_text_path = "prompt"
+    request.field_mapping.target_path = "expected"
+    request.field_mapping.sample_id_path = "sample_id"
+    request.profile.profile_type = "final_result"
+    request.profile.result_kind = "text"
+    request.profile.extraction_mode = "heuristic_final"
+    request.profile.scoring_mode = "normalized_exact_match"
+    request.profile.threshold = 1.0
+
+    response = service.RunEvaluation(request, context=None)
+
+    assert response.ok is True
+    assert response.job.parameters["compare_mode"] == "base_vs_targets"
+    assert response.job.parameters["evaluation_source_kind"] == "jsonl"
+    materialized_root = Path(response.job.parameters["evaluation_materialized_dataset_root"])
+    assert (materialized_root / "manifest.json").exists() is True
+    assert (materialized_root / "samples.jsonl").exists() is True
+    assert len(response.results) == 1
 
 
 def test_run_evaluation_defaults_structured_threshold_to_one_when_request_omits_it(

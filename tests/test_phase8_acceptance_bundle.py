@@ -332,6 +332,8 @@ def test_run_acceptance_bundle_shells_out_in_expected_order(tmp_path: Path) -> N
             "mmlu.dev.v1",
             "--sample-size",
             "4",
+            "--scoring-mode",
+            "multiple_choice_accuracy",
             "--json",
         ],
         ["melix", "bench", "export-csv", "--job-id", "bench-1", "--output", str(bench_csv), "--json"],
@@ -588,6 +590,407 @@ def test_parse_args_uses_repo_root_melix_home_and_timestamp(
     assert config.melix_home == melix_home.resolve()
     assert config.timestamp == "2026-04-09T120000Z"
     assert config.json_output is True
+
+
+def test_parse_args_applies_real_small_model_profile_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MELIX_HOME", str(tmp_path / "melix-home"))
+    monkeypatch.delenv("MELIX_PHASE8_REAL_SMALL_MODEL_PATH", raising=False)
+
+    config = phase8_acceptance_bundle.parse_args(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--execution-profile",
+            "real_small_model",
+            "--training-fixture",
+            "fixture",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ]
+    )
+
+    assert config.execution_profile == "real_small_model"
+    assert config.model_id == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert config.acceptance_tier == "cli_real_small_model"
+    assert config.runtime_backend_mode == "python_auto"
+    assert config.activation_mode == "adapter_backed_runtime"
+    assert config.training_preset_id == "debug_fast"
+    assert config.training_max_steps == 2
+    assert config.experiment_group_id == "phase8-real-small-model"
+    assert config.live is True
+    assert config.local_model_path == ""
+    assert config.source_resolution_mode == "hub_fallback"
+    assert config.materialize_warnings == ()
+    assert config.publish_mode == "disabled"
+
+
+def test_parse_args_real_small_model_prefers_env_local_model_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture_model = tmp_path / "fixture-model"
+    fixture_model.mkdir(parents=True)
+    monkeypatch.setenv("MELIX_HOME", str(tmp_path / "melix-home"))
+    monkeypatch.setenv("MELIX_PHASE8_REAL_SMALL_MODEL_PATH", str(fixture_model))
+
+    config = phase8_acceptance_bundle.parse_args(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--execution-profile",
+            "real_small_model",
+            "--training-fixture",
+            "fixture",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ]
+    )
+
+    assert config.model_id == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert config.live is False
+    assert config.local_model_path == str(fixture_model.resolve())
+    assert config.source_resolution_mode == "env_local_path"
+    assert config.materialize_warnings == ()
+
+
+def test_parse_args_real_small_model_falls_back_to_hub_when_env_path_is_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    invalid_path = tmp_path / "missing-model"
+    monkeypatch.setenv("MELIX_HOME", str(tmp_path / "melix-home"))
+    monkeypatch.setenv("MELIX_PHASE8_REAL_SMALL_MODEL_PATH", str(invalid_path))
+
+    config = phase8_acceptance_bundle.parse_args(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--execution-profile",
+            "real_small_model",
+            "--training-fixture",
+            "fixture",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ]
+    )
+
+    assert config.model_id == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert config.live is True
+    assert config.local_model_path == ""
+    assert config.source_resolution_mode == "env_invalid_hub_fallback"
+    assert config.materialize_warnings == (
+        f"Ignored MELIX_PHASE8_REAL_SMALL_MODEL_PATH because it does not point to an existing directory: {invalid_path.resolve()}",
+    )
+
+
+def test_parse_args_real_small_model_explicit_live_overrides_env_local_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture_model = tmp_path / "fixture-model"
+    fixture_model.mkdir(parents=True)
+    monkeypatch.setenv("MELIX_HOME", str(tmp_path / "melix-home"))
+    monkeypatch.setenv("MELIX_PHASE8_REAL_SMALL_MODEL_PATH", str(fixture_model))
+
+    config = phase8_acceptance_bundle.parse_args(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--execution-profile",
+            "real_small_model",
+            "--live",
+            "--training-fixture",
+            "fixture",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ]
+    )
+
+    assert config.live is True
+    assert config.local_model_path == ""
+    assert config.source_resolution_mode == "explicit_live_hub"
+    assert config.materialize_warnings == ()
+
+
+def test_parse_args_real_small_model_explicit_local_path_overrides_env_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env_fixture_model = tmp_path / "env-model"
+    env_fixture_model.mkdir(parents=True)
+    explicit_fixture_model = tmp_path / "explicit-model"
+    explicit_fixture_model.mkdir(parents=True)
+    monkeypatch.setenv("MELIX_HOME", str(tmp_path / "melix-home"))
+    monkeypatch.setenv("MELIX_PHASE8_REAL_SMALL_MODEL_PATH", str(env_fixture_model))
+
+    config = phase8_acceptance_bundle.parse_args(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--execution-profile",
+            "real_small_model",
+            "--local-model-path",
+            str(explicit_fixture_model),
+            "--training-fixture",
+            "fixture",
+            "--bench-suite",
+            "smoke",
+            "--matrix-suite",
+            "smoke",
+            "--evaluation-suite",
+            "mmlu",
+            "--evaluation-dataset",
+            "mmlu.dev.v1",
+            "--json",
+        ]
+    )
+
+    assert config.live is False
+    assert config.local_model_path == str(explicit_fixture_model)
+    assert config.source_resolution_mode == "explicit_local_path"
+    assert config.materialize_warnings == ()
+
+
+def test_run_acceptance_bundle_real_small_model_hub_fallback_records_resolution_metadata_and_warnings(
+    tmp_path: Path,
+) -> None:
+    config = phase8_acceptance_bundle.AcceptanceBundleConfig(
+        repo_root=tmp_path,
+        melix_home=tmp_path / "melix-home",
+        model_id="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        training_fixture="services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+        bench_suites=["smoke"],
+        matrix_suites=["smoke"],
+        evaluation_suites=["mmlu"],
+        evaluation_dataset="mmlu.dev.v1",
+        server_session_id="server-session-1",
+        local_model_path="",
+        live=True,
+        timestamp="2026-04-09T120000Z",
+        json_output=True,
+        execution_profile="real_small_model",
+        acceptance_tier="cli_real_small_model",
+        runtime_backend_mode="python_auto",
+        activation_mode="adapter_backed_runtime",
+        training_preset_id="debug_fast",
+        training_max_steps=2,
+        experiment_group_id="phase8-real-small-model",
+        publish_mode="disabled",
+        publish_target_repo="",
+        source_resolution_mode="env_invalid_hub_fallback",
+        materialize_warnings=(
+            "Ignored MELIX_PHASE8_REAL_SMALL_MODEL_PATH because it does not point to an existing directory: /tmp/missing-model",
+        ),
+    )
+    executor = _FakeExecutor(
+        [
+            *_successful_acceptance_responses(tmp_path)[:7],
+            {"adapters": [], "experiment_groups": []},
+            *_successful_acceptance_responses(tmp_path)[7:],
+        ]
+    )
+
+    _, bundle = phase8_acceptance_bundle.run_acceptance_bundle(config, executor=executor)
+
+    assert executor.calls[0] == [
+        "melix",
+        "model",
+        "hub",
+        "download",
+        "--repo-id",
+        "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "--json",
+    ]
+    assert bundle["model"]["source_kind"] == "hub_repo"
+    assert bundle["model"]["source_resolution_mode"] == "env_invalid_hub_fallback"
+    assert bundle["model"]["warnings"] == [
+        "Ignored MELIX_PHASE8_REAL_SMALL_MODEL_PATH because it does not point to an existing directory: /tmp/missing-model"
+    ]
+
+
+def test_run_acceptance_bundle_real_small_model_records_real_runtime_metadata_and_explicit_publish_skip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / ".runtime" / "model-ops" / "train_lora" / "lora-experiments.index.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_experiment_index.v1",
+                "groups": [
+                    {
+                        "group_id": "phase8-real-small-model",
+                        "run_count": 1,
+                        "latest_preset_title": "Debug Fast",
+                        "recommended_manifest_path": str(
+                            tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+                        ),
+                    }
+                ],
+                "runs": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+
+    config = phase8_acceptance_bundle.AcceptanceBundleConfig(
+        repo_root=tmp_path,
+        melix_home=tmp_path / "melix-home",
+        model_id="melix-dev-qwen-local",
+        training_fixture="services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+        bench_suites=["smoke"],
+        matrix_suites=["smoke"],
+        evaluation_suites=["mmlu"],
+        evaluation_dataset="mmlu.dev.v1",
+        server_session_id="server-session-1",
+        local_model_path=str(tmp_path / "fixture-model"),
+        live=False,
+        timestamp="2026-04-09T120000Z",
+        json_output=True,
+        execution_profile="real_small_model",
+        acceptance_tier="cli_real_small_model",
+        runtime_backend_mode="python_auto",
+        activation_mode="adapter_backed_runtime",
+        training_preset_id="debug_fast",
+        training_max_steps=2,
+        experiment_group_id="phase8-real-small-model",
+        publish_mode="disabled",
+        publish_target_repo="",
+        source_resolution_mode="explicit_local_path",
+    )
+    executor = _FakeExecutor(
+        [
+            *_successful_acceptance_responses(
+                tmp_path,
+                source_kind="local_path",
+                source_locator=str(tmp_path / "fixture-model"),
+                model_id="melix-dev-qwen-local",
+            )[:7],
+            {
+                "adapters": [
+                    {
+                        "adapter_name": "phase8-acceptance",
+                        "status": "activated",
+                        "activation_status": "activated",
+                        "output_path": str(
+                            tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+                        ),
+                    }
+                ],
+                "experiment_groups": [
+                    {
+                        "group_id": "phase8-real-small-model",
+                        "run_count": 1,
+                        "latest_preset_title": "Debug Fast",
+                        "best_loss": 0.33,
+                        "recommended_manifest_path": str(
+                            tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+                        ),
+                    }
+                ],
+            },
+            *_successful_acceptance_responses(
+                tmp_path,
+                source_kind="local_path",
+                source_locator=str(tmp_path / "fixture-model"),
+                model_id="melix-dev-qwen-local",
+            )[7:],
+        ]
+    )
+
+    _, bundle = phase8_acceptance_bundle.run_acceptance_bundle(config, executor=executor)
+
+    assert bundle["execution_profile"] == "real_small_model"
+    assert bundle["acceptance_tier"] == "cli_real_small_model"
+    assert bundle["runtime"]["backend_mode"] == "python_auto"
+    assert bundle["runtime"]["activation_mode"] == "adapter_backed_runtime"
+    assert bundle["training"]["preset_id"] == "debug_fast"
+    assert bundle["training"]["max_steps"] == 2
+    assert bundle["training"]["experiment_group_id"] == "phase8-real-small-model"
+    assert bundle["experiment"]["index_path"] == str(index_path)
+    assert bundle["experiment"]["index_exists"] is True
+    assert bundle["registry"]["experiment_groups"][0]["group_id"] == "phase8-real-small-model"
+    assert bundle["model"]["source_resolution_mode"] == "explicit_local_path"
+    assert bundle["publish"]["mode"] == "disabled"
+    assert bundle["publish"]["status"] == "disabled"
+    assert bundle["publish"]["skip_reason"] == "publish_disabled"
+    assert not any(call[1:2] == ["upload"] for call in executor.calls)
+    assert executor.calls[5] == [
+        "melix",
+        "lora",
+        "train",
+        "--model-id",
+        "melix-dev-qwen-local",
+        "--dataset-uri",
+        "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+        "--adapter-name",
+        "phase8-acceptance",
+        "--preset",
+        "debug_fast",
+        "--experiment-group",
+        "phase8-real-small-model",
+        "--max-steps",
+        "2",
+        "--json",
+    ]
+    assert executor.calls[6] == [
+        "melix",
+        "lora",
+        "activate",
+        "--model-id",
+        "melix-dev-qwen-local",
+        "--adapter-path",
+        str(tmp_path / "model-ops" / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"),
+        "--alias",
+        "phase8-acceptance-derived",
+        "--activation-mode",
+        "adapter_backed_runtime",
+        "--json",
+    ]
+    assert executor.calls[7] == [
+        "melix",
+        "lora",
+        "list",
+        "--model-id",
+        "melix-dev-qwen-local",
+        "--json",
+    ]
 
 
 def test_main_prints_json_bundle_when_requested(

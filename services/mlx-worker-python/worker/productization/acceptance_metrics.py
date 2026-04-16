@@ -294,6 +294,8 @@ def build_phase8_metrics_report(
     )
     audio = dict(release_gate_report.get("audio", {}))
     audio_metrics = dict(audio.get("metrics", {}))
+    real_workload = dict(release_gate_report.get("real_workload", {}))
+    real_workload_summary = dict(real_workload.get("summary", {}))
     m9 = dict(release_gate_report.get("m9", {}))
     m9_summary = dict(m9.get("summary", {}))
     closure_audit_evidence = dict(closure_audit or {})
@@ -476,6 +478,18 @@ def build_phase8_metrics_report(
             float(cache_recovery_metrics.get("bench.recovery.partial_restore_ratio_pct", 0.0)),
             2,
         ),
+        "release_gate.real_workload.pass_count": round(
+            float(real_workload_summary.get("pass_count", 0.0)),
+            2,
+        ),
+        "release_gate.real_workload.failure_count": round(
+            float(real_workload_summary.get("failure_count", 0.0)),
+            2,
+        ),
+        "release_gate.real_workload.family_count": round(
+            float(real_workload_summary.get("family_count", 0.0)),
+            2,
+        ),
         "release_gate.m9_required_probe_count": round(
             float(m9_summary.get("required_probe_count", 0.0)),
             2,
@@ -515,6 +529,7 @@ def build_phase8_metrics_report(
         "runtime_core": runtime_core_evidence,
         "audio": audio,
         "operator": operator,
+        "real_workload": real_workload,
         "m9": m9,
         "closure_audit": closure_audit_evidence,
         "release_gate": release_gate_report,
@@ -557,6 +572,7 @@ def compute_release_smoke_pass_rate(report: dict[str, Any], policy: dict[str, An
         _recovery_sane(report.get("recovery", {}), policy),
         _audio_sane(report.get("audio", {}), policy),
         _runtime_core_sane(report.get("runtime_core", {}), policy),
+        _real_workload_sane(report.get("real_workload", {}), policy),
         _m9_sane(report.get("m9", {}), policy),
     ]
     passed = sum(1 for section in sections if section)
@@ -669,6 +685,15 @@ def _runtime_core_sane(runtime_core: dict[str, Any], policy: dict[str, Any]) -> 
     if not isinstance(runtime_core, dict):
         return False
     return not _evaluate_section_metrics(runtime_core, policy.get("runtime_core", {}))
+
+
+def _real_workload_sane(real_workload: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if not isinstance(real_workload, dict):
+        return False
+    from worker.productization.release_gates import evaluate_real_workload_evidence
+
+    failures = evaluate_real_workload_evidence(real_workload, policy.get("real_workload", {}))
+    return not failures
 
 
 def _m9_sane(m9: dict[str, Any], policy: dict[str, Any]) -> bool:

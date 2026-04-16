@@ -299,6 +299,51 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
         )
     }
 
+    @Test("unsupported lora dataset subprocess commands preserve their public command ids")
+    func unsupportedLoraDatasetCommandsPreservePublicCommandIDs() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            processExecutor: processExecutor
+        )
+
+        do {
+            _ = try await runner.run(
+                .loraDatasetInspect(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        datasetURI: "/tmp/data/alpaca.jsonl",
+                        parameters: ["template": "alpaca"],
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected loraDatasetInspect to remain unsupported for the subprocess runner.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error == .unsupportedCommand(commandID: "lora.dataset.inspect", surface: .subprocess))
+        }
+
+        do {
+            _ = try await runner.run(
+                .loraDatasetBuild(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        datasetSourceKind: "hf_dataset",
+                        datasetURI: "HuggingFaceH4/ultrachat_200k",
+                        outputDir: "/tmp/melix-built-dataset",
+                        parameters: ["hf_train_split": "train_sft"],
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected loraDatasetBuild to remain unsupported for the subprocess runner.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error == .unsupportedCommand(commandID: "lora.dataset.build", surface: .subprocess))
+        }
+
+        #expect(await processExecutor.recordedInvocations.isEmpty)
+    }
+
     @Test("non-zero subprocess exits are surfaced as typed process failures")
     func nonZeroSubprocessExitsAreSurfacedAsTypedProcessFailures() async throws {
         let processExecutor = RecordingCLIProcessExecutor()

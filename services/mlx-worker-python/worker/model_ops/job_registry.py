@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from worker.productization.lora_experiment_store import LoraExperimentStore
+
 
 @dataclass
 class ModelOpsJob:
@@ -28,6 +30,7 @@ class ModelOpsJobRegistry:
         self._next_id = 1
         self._jobs: dict[str, ModelOpsJob] = {}
         self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
+        self._lora_experiment_store = LoraExperimentStore()
         if self._jobs_root is not None:
             self._restore_from_jobs_root()
 
@@ -83,6 +86,7 @@ class ModelOpsJobRegistry:
             "adapters": self._adapter_registry(jobs),
             "derived_models": self._derived_model_registry(jobs),
             "downloads": self._download_registry(jobs),
+            "experiment_groups": self._experiment_groups(),
             }
         )
 
@@ -214,6 +218,7 @@ class ModelOpsJobRegistry:
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_mode": str(manifest.get("activation_mode", "")),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
             }
         return None
 
@@ -320,6 +325,7 @@ class ModelOpsJobRegistry:
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
                 "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
@@ -395,6 +401,30 @@ class ModelOpsJobRegistry:
                     "response_only": bool(manifest.get("response_only", False)),
                     "gradient_checkpointing": bool(manifest.get("gradient_checkpointing", False)),
                     "training_duration_ms": float(manifest.get("training_duration_ms", 0.0)),
+                    "checkpoint_count": int(
+                        manifest.get(
+                            "checkpoint_count",
+                            manifest.get("experiment.checkpoint_count", 0),
+                        )
+                    ),
+                    "resume_ready": bool(
+                        manifest.get(
+                            "resume_ready",
+                            manifest.get("experiment.resume_ready", False),
+                        )
+                    ),
+                    "tokens_per_second": float(
+                        manifest.get(
+                            "tokens_per_second",
+                            manifest.get("training.tokens_per_second", 0.0),
+                        )
+                    ),
+                    "peak_memory_gb": float(
+                        manifest.get(
+                            "peak_memory_gb",
+                            manifest.get("training.peak_memory_gb", 0.0),
+                        )
+                    ),
                     "adapter_publish_ms": float(manifest.get("adapter_publish_ms", 0.0)),
                 }
             )
@@ -423,6 +453,7 @@ class ModelOpsJobRegistry:
                     "model_path": str(manifest.get("derived_model_path", "")),
                     "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
                     "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
+                    "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
                     "adapter_name": str(manifest.get("adapter_name", "")),
                     "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                     "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
@@ -504,3 +535,10 @@ class ModelOpsJobRegistry:
                 }
             )
         return downloads
+
+    def _experiment_groups(self) -> list[dict[str, Any]]:
+        if self._jobs_root is None:
+            return []
+        index_payload = self._lora_experiment_store.load_index(self._jobs_root)
+        groups = index_payload.get("groups", [])
+        return groups if isinstance(groups, list) else []

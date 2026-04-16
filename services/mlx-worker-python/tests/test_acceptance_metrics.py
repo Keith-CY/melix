@@ -80,6 +80,57 @@ def _passing_m9_report() -> dict[str, object]:
     }
 
 
+def _passing_real_workload_report() -> dict[str, object]:
+    return {
+        "summary": {
+            "pass_count": 3.0,
+            "failure_count": 0.0,
+            "family_count": 3.0,
+        },
+        "families": {
+            "qwen": {
+                "family_id": "qwen",
+                "model_id": "melix-dev-qwen-local",
+                "scenario_id": "support-triage",
+                "dataset_id": "melix.release.real_workload.qwen.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 24.0,
+                    "latency_ms": 842.0,
+                    "throughput_tps": 31.4,
+                    "peak_memory_gb": 8.6,
+                },
+            },
+            "gemma": {
+                "family_id": "gemma",
+                "model_id": "melix-dev-gemma-local",
+                "scenario_id": "product-qa",
+                "dataset_id": "melix.release.real_workload.gemma.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 18.0,
+                    "latency_ms": 918.0,
+                    "throughput_tps": 28.7,
+                    "peak_memory_gb": 10.4,
+                },
+            },
+            "kimi": {
+                "family_id": "kimi",
+                "model_id": "melix-dev-kimi-local",
+                "scenario_id": "long-context-rewrite",
+                "dataset_id": "melix.release.real_workload.kimi.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 20.0,
+                    "latency_ms": 887.0,
+                    "throughput_tps": 29.9,
+                    "peak_memory_gb": 9.8,
+                },
+            },
+        },
+    }
+
+
 def test_collect_operator_action_evidence_reports_registry_counts(tmp_path: Path) -> None:
     evidence = collect_operator_action_evidence(tmp_path / "jobs")
 
@@ -545,13 +596,14 @@ def test_compute_release_smoke_pass_rate_uses_all_gate_sections() -> None:
             "prefill_memory_guard_rejection_count": 1.0,
             "prefill_memory_guard_success_rate": 100.0,
         },
+        "real_workload": _passing_real_workload_report(),
         "m9": _passing_m9_report(),
     }
 
     assert compute_release_smoke_pass_rate(report, policy) == 100.0
 
     report["recovery"]["restart_recovery_success_rate"] = 0.0
-    assert compute_release_smoke_pass_rate(report, policy) == 85.71
+    assert compute_release_smoke_pass_rate(report, policy) == 87.5
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
@@ -603,10 +655,72 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_runtime_core() -> None:
             },
         },
         "runtime_core": "invalid",
+        "real_workload": _passing_real_workload_report(),
         "m9": _passing_m9_report(),
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 85.71
+    assert compute_release_smoke_pass_rate(report, policy) == 87.5
+
+
+def test_compute_release_smoke_pass_rate_fails_non_dict_real_workload() -> None:
+    policy = load_release_gate_policy()
+    report = {
+        "install": {
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            }
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 24.45,
+                "bench.smoke.tokens_per_second": 47.08,
+                "bench.latency.p95_ms": 44.72,
+            },
+        },
+        "training": {
+            "training_duration_ms": 1410.0,
+            "adapter_publish_ms": 117.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 600.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 12.3,
+                "slim.audio_model_download_ms": 18.4,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 17.2,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "real_workload": "invalid",
+        "m9": _passing_m9_report(),
+    }
+
+    assert compute_release_smoke_pass_rate(report, policy) == 87.5
 
 
 def test_compute_release_smoke_pass_rate_fails_non_dict_m9() -> None:
@@ -663,10 +777,11 @@ def test_compute_release_smoke_pass_rate_fails_non_dict_m9() -> None:
             "prefill_memory_guard_rejection_count": 1.0,
             "prefill_memory_guard_success_rate": 100.0,
         },
+        "real_workload": _passing_real_workload_report(),
         "m9": "invalid",
     }
 
-    assert compute_release_smoke_pass_rate(report, policy) == 85.71
+    assert compute_release_smoke_pass_rate(report, policy) == 87.5
 
 
 def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
@@ -757,6 +872,7 @@ def test_build_phase8_metrics_report_includes_required_probe_names() -> None:
                 "prefill_memory_guard_rejection_count": 1.0,
                 "prefill_memory_guard_success_rate": 100.0,
             },
+            "real_workload": _passing_real_workload_report(),
             "m9": _passing_m9_report(),
             "passed": True,
             "failures": [],
@@ -1176,3 +1292,90 @@ def test_build_phase8_metrics_report_surfaces_m9_release_gate_counts() -> None:
     assert metrics["release_gate.m9_required_probe_count"] == 23.0
     assert metrics["release_gate.m9_missing_probe_count"] == 0.0
     assert metrics["release_gate.m9_failed_threshold_count"] == 0.0
+
+
+def test_build_phase8_metrics_report_surfaces_real_workload_release_gate_counts() -> None:
+    policy = load_release_gate_policy()
+
+    report = build_phase8_metrics_report(
+        cold_boot={"cold_boot_to_ready_ms": 700.0, "http_ready_ms": 700.0},
+        operator={
+            "operator_action_latency_ms": 1.0,
+            "registry_job_count": 2,
+            "registry_adapter_count": 1,
+        },
+        release_gate_report={
+            "install": {
+                "checks": {
+                    "manifest_exists": True,
+                    "environment_script_exists": True,
+                    "all_plists_exist": True,
+                }
+            },
+            "benchmarks": {
+                "report_exists": True,
+                "metrics": {
+                    "bench.smoke.ttft_ms": 24.45,
+                    "bench.smoke.tokens_per_second": 47.08,
+                    "bench.latency.p95_ms": 44.72,
+                },
+            },
+            "training": {
+                "training_duration_ms": 1420.0,
+                "adapter_publish_ms": 118.0,
+            },
+            "recovery": {
+                "restart_recovery_ms": 600.0,
+                "restart_recovery_success_rate": 100.0,
+            },
+            "audio": {
+                "checks": {
+                    "slim_requires_runtime_pack_download": True,
+                    "full_runtime_pack_preinstalled": True,
+                    "slim_runtime_pack_metadata_exists": True,
+                    "full_runtime_pack_metadata_exists": True,
+                    "slim_managed_model_metadata_exists": True,
+                    "full_managed_model_metadata_exists": True,
+                },
+                "metrics": {
+                    "slim.audio_runtime_pack_install_ms": 12.3,
+                    "slim.audio_model_download_ms": 18.4,
+                    "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                    "slim.audio_first_use_blocked_model_count": 1.0,
+                    "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                    "full.audio_runtime_pack_install_ms": 0.0,
+                    "full.audio_model_download_ms": 17.2,
+                    "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                    "full.audio_first_use_blocked_model_count": 1.0,
+                    "full.audio_runtime_pack_recovery_success_rate": 100.0,
+                },
+            },
+            "runtime_core": {
+                "multi_model_ready_count": 3.0,
+                "multi_model_request_success_rate": 100.0,
+                "prefill_memory_guard_rejection_count": 1.0,
+                "prefill_memory_guard_success_rate": 100.0,
+            },
+            "real_workload": _passing_real_workload_report(),
+            "m9": {
+                "summary": {
+                    "required_probe_count": 23.0,
+                    "missing_probe_count": 0.0,
+                    "failed_threshold_count": 0.0,
+                }
+            },
+            "passed": True,
+            "failures": [],
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        policy=policy,
+    )
+
+    metrics = report["metrics"]
+    assert metrics["release_gate.real_workload.pass_count"] == 3.0
+    assert metrics["release_gate.real_workload.failure_count"] == 0.0

@@ -3326,6 +3326,9 @@ public actor ControlPlaneService {
         if let adapterManifestPath = payload["adapter_manifest_path"] as? String, !adapterManifestPath.isEmpty {
             model.settings.ext["melix.adapter_manifest_path"] = adapterManifestPath
         }
+        if let adapterWeightsPath = payload["adapter_weights_path"] as? String, !adapterWeightsPath.isEmpty {
+            model.settings.ext["melix.adapter_weights_path"] = adapterWeightsPath
+        }
         if let derivedModelAlias = payload["derived_model_alias"] as? String, !derivedModelAlias.isEmpty {
             model.settings.ext["melix.derived_model_alias"] = derivedModelAlias
         }

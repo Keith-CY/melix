@@ -4174,7 +4174,19 @@ struct RuntimeViewModelTests {
         #expect(viewModel.adapterPackages.first?.derivedModelID == "melix-dev-text-lora-adapter")
         #expect(viewModel.adapterPackages.first?.responseOnlyEnabled == true)
         #expect(viewModel.adapterPackages.first?.publishedRepo == "melix/adapters/melix-dev-adapter")
+        #expect(viewModel.adapterPackages.first?.checkpointCount == 2)
+        #expect(viewModel.adapterPackages.first?.resumeReady == true)
+        #expect(viewModel.adapterPackages.first?.tokensPerSecond == 128.5)
+        #expect(viewModel.adapterPackages.first?.peakMemoryGB == 5.25)
         #expect(viewModel.trainingHistory.first?.datasetURI == "datasets/melix-dev")
+        #expect(viewModel.trainingHistory.first?.checkpointCount == 2)
+        #expect(viewModel.trainingHistory.first?.resumeReady == true)
+        #expect(viewModel.trainingHistory.first?.tokensPerSecond == 128.5)
+        #expect(viewModel.trainingHistory.first?.peakMemoryGB == 5.25)
+        #expect(viewModel.loraExperimentGroups.first?.title == "nightly-qwen35")
+        #expect(viewModel.loraExperimentGroups.first?.runCount == 2)
+        #expect(viewModel.loraExperimentGroups.first?.latestPresetTitle == "Balanced Adapter")
+        #expect(viewModel.loraExperimentGroups.first?.recommendedManifestPath == "/tmp/melix-train-lora/train_lora.adapter.json")
         #expect(await metrics.snapshot()["menu.model_info_ms"] != nil)
         #expect(await metrics.snapshot()["menu.ops_doctor_ms"] != nil)
         #expect(await metrics.snapshot()["menu.ops_bench_ms"] != nil)
@@ -5652,6 +5664,50 @@ struct RuntimeViewModelTests {
         #expect(request.profile.threshold == 1.0)
     }
 
+    @Test("evaluation compare supports custom JSONL dataset sources")
+    @MainActor
+    func evaluationCompareSupportsCustomJSONLDatasetSources() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/tmp/eval/mmlu.jsonl"
+        viewModel.evaluationFieldInputTextPath = "prompt"
+        viewModel.evaluationFieldTargetPath = "expected"
+        viewModel.evaluationFieldSampleIDPath = "sample_id"
+        viewModel.evaluationResultKind = "text"
+        viewModel.evaluationExtractionMode = "heuristic_final"
+        viewModel.evaluationScoringMode = "normalized_exact_match"
+        viewModel.evaluationThreshold = "1.0"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(viewModel.lastError == nil)
+        #expect(request.datasetID.isEmpty)
+        #expect(request.source.kind == .localJSONL)
+        #expect(request.source.path == "/tmp/eval/mmlu.jsonl")
+        #expect(request.fieldMapping.inputTextPath == "prompt")
+        #expect(request.fieldMapping.targetPath == "expected")
+        #expect(request.fieldMapping.sampleIDPath == "sample_id")
+        #expect(request.parameters["compare_mode"] == "base_vs_targets")
+        #expect(request.parameters["compare_target_model_ids"] == "melix-dev-text-lora")
+    }
+
     @Test("evaluation selection state and guard rails cover catalog and direct repo flows")
     @MainActor
     func evaluationSelectionStateAndGuardRailsCoverCatalogAndDirectRepoFlows() async throws {
@@ -5743,6 +5799,8 @@ struct RuntimeViewModelTests {
         viewModel.loraChatFeature = "messages"
         viewModel.loraAdapterName = "hf-demo-adapter"
         viewModel.loraTargetRepo = "melix/adapters/hf-demo-adapter"
+        viewModel.selectedLoraTrainingPreset = .balancedAdapter
+        viewModel.loraExperimentGroupID = "nightly-qwen35"
         viewModel.loraRank = "32"
         viewModel.loraAlpha = "64"
         viewModel.loraDropout = "0.1"
@@ -5774,6 +5832,8 @@ struct RuntimeViewModelTests {
         #expect(trainRequest.ext["chat_feature"] == "messages")
         #expect(trainRequest.ext["adapter_name"] == "hf-demo-adapter")
         #expect(trainRequest.ext["target_repo"] == "melix/adapters/hf-demo-adapter")
+        #expect(trainRequest.ext["preset_id"] == "balanced_adapter")
+        #expect(trainRequest.ext["experiment_group_id"] == "nightly-qwen35")
         #expect(trainRequest.ext["rank"] == "32")
         #expect(trainRequest.ext["alpha"] == "64")
         #expect(trainRequest.ext["dropout"] == "0.1")
@@ -6611,16 +6671,112 @@ struct RuntimeViewModelTests {
         #expect(adapter.gradientCheckpointingEnabled)
         #expect(adapter.trainingDurationText == "950ms")
         #expect(adapter.publishDurationText == "n/a")
+        #expect(adapter.checkpointCount == 1)
+        #expect(adapter.resumeReady)
+        #expect(adapter.tokensPerSecond == 64.0)
+        #expect(adapter.peakMemoryGB == 4.1)
         #expect(trainingJob.adapterName == "pending-adapter")
         #expect(trainingJob.datasetURI == "datasets/pending")
         #expect(trainingJob.statusText == "Unknown")
         #expect(trainingJob.stageText == "write_manifest • 42%")
+        #expect(trainingJob.checkpointCount == 1)
+        #expect(trainingJob.resumeReady)
+        #expect(trainingJob.tokensPerSecond == 64.0)
+        #expect(trainingJob.peakMemoryGB == 4.1)
+        #expect(viewModel.loraExperimentGroups.first?.latestPresetTitle == "Debug Fast")
+        #expect(viewModel.loraExperimentGroups.first?.runCount == 1)
 
         await viewModel.publishLatestAdapter()
 
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
         #expect(await metrics.snapshot()["menu.model_ops_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["menu.model_operation_ms"] != nil)
+    }
+
+    @Test("lora training presets apply the expected named defaults")
+    @MainActor
+    func loraTrainingPresetsApplyExpectedNamedDefaults() {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        viewModel.loraRank = "99"
+        viewModel.loraAlpha = "199"
+        viewModel.loraDropout = "0.9"
+        viewModel.loraBatchSize = "9"
+        viewModel.loraEpochs = "9"
+        viewModel.loraLearningRate = "0.9"
+        viewModel.loraMaxSeqLength = "999"
+        viewModel.loraGradientCheckpointing = true
+
+        viewModel.applyLoraTrainingPreset(.custom)
+        #expect(viewModel.selectedLoraTrainingPreset == .custom)
+        #expect(viewModel.loraRank == "99")
+        #expect(viewModel.loraAlpha == "199")
+        #expect(viewModel.loraDropout == "0.9")
+        #expect(viewModel.loraBatchSize == "9")
+        #expect(viewModel.loraEpochs == "9")
+        #expect(viewModel.loraLearningRate == "0.9")
+        #expect(viewModel.loraMaxSeqLength == "999")
+        #expect(viewModel.loraGradientCheckpointing)
+
+        viewModel.applyLoraTrainingPreset(.debugFast)
+        #expect(viewModel.selectedLoraTrainingPreset == .debugFast)
+        #expect(viewModel.loraRank == "8")
+        #expect(viewModel.loraAlpha == "16")
+        #expect(viewModel.loraDropout == "0.0")
+        #expect(viewModel.loraBatchSize == "1")
+        #expect(viewModel.loraEpochs == "1")
+        #expect(viewModel.loraLearningRate == "0.0001")
+        #expect(viewModel.loraMaxSeqLength == "1024")
+        #expect(viewModel.loraGradientCheckpointing == false)
+
+        viewModel.applyLoraTrainingPreset(.balancedAdapter)
+        #expect(viewModel.selectedLoraTrainingPreset == .balancedAdapter)
+        #expect(viewModel.loraRank == "16")
+        #expect(viewModel.loraAlpha == "32")
+        #expect(viewModel.loraDropout == "0.05")
+        #expect(viewModel.loraBatchSize == "2")
+        #expect(viewModel.loraEpochs == "2")
+        #expect(viewModel.loraLearningRate == "0.0001")
+        #expect(viewModel.loraMaxSeqLength == "2048")
+        #expect(viewModel.loraGradientCheckpointing)
+
+        viewModel.applyLoraTrainingPreset(.qualityAdapter)
+        #expect(viewModel.selectedLoraTrainingPreset == .qualityAdapter)
+        #expect(viewModel.loraRank == "32")
+        #expect(viewModel.loraAlpha == "64")
+        #expect(viewModel.loraDropout == "0.05")
+        #expect(viewModel.loraBatchSize == "1")
+        #expect(viewModel.loraEpochs == "4")
+        #expect(viewModel.loraLearningRate == "0.00005")
+        #expect(viewModel.loraMaxSeqLength == "2048")
+        #expect(viewModel.loraGradientCheckpointing)
+    }
+
+    @Test("model tooling snapshot skips invalid experiment groups and parses string-backed doubles")
+    @MainActor
+    func modelToolingSnapshotSkipsInvalidExperimentGroupsAndParsesStringBackedDoubles() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeStringBackedExperimentGroupRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.loraExperimentGroups.count == 1)
+        let group = try #require(viewModel.loraExperimentGroups.first)
+        #expect(group.groupID == "string-metrics")
+        #expect(group.bestLoss == 0.42)
+        #expect(group.latestTokensPerSecond == 128.5)
+        #expect(group.latestPeakMemoryGB == 5.25)
+        #expect(group.experimentSummaryText == "2 checkpoints • resume ready")
+        #expect(group.performanceSummaryText == "128.5 tok/s • 5.25 GB peak")
     }
 
     @Test("model settings support ttl and advanced acceleration labels")
@@ -8565,7 +8721,13 @@ private func makeRegistrySnapshotManifest(
           "manifest": {
             "adapter_name": "melix-dev-adapter",
             "dataset_uri": "datasets/melix-dev",
-            "target_repo": "\#(targetRepo)"
+            "target_repo": "\#(targetRepo)",
+            "preset_id": "balanced_adapter",
+            "preset_title": "Balanced Adapter",
+            "checkpoint_count": 2,
+            "resume_ready": true,
+            "tokens_per_second": 128.5,
+            "peak_memory_gb": 5.25
           }
         }
       ],
@@ -8587,9 +8749,34 @@ private func makeRegistrySnapshotManifest(
           "status": "\#(status ?? (publishedRepo.isEmpty ? (activationStatus == "activated" ? "activated" : "completed") : "published"))",
           "response_only": true,
           "gradient_checkpointing": false,
+          "preset_id": "balanced_adapter",
+          "preset_title": "Balanced Adapter",
+          "checkpoint_count": 2,
+          "resume_ready": true,
+          "tokens_per_second": 128.5,
+          "peak_memory_gb": 5.25,
           "training_duration_ms": 1420.0,
           "activation_duration_ms": \#(derivedModelID.isEmpty ? "0.0" : "321.0"),
           "adapter_publish_ms": 118.0
+        }
+      ],
+      "experiment_groups": [
+        {
+          "group_id": "nightly-qwen35",
+          "title": "nightly-qwen35",
+          "adapter_name": "melix-dev-adapter",
+          "source_model": "melix-dev-text",
+          "run_count": 2,
+          "latest_run_id": "model-ops-0001",
+          "latest_status": "completed",
+          "latest_dataset_uri": "datasets/melix-dev",
+          "latest_preset_id": "balanced_adapter",
+          "latest_preset_title": "Balanced Adapter",
+          "latest_tokens_per_second": 128.5,
+          "latest_peak_memory_gb": 5.25,
+          "best_run_id": "model-ops-0001",
+          "best_loss": 0.33,
+          "recommended_manifest_path": "/tmp/melix-train-lora/train_lora.adapter.json"
         }
       ],
       "derived_models": [
@@ -8632,7 +8819,13 @@ private func makePendingRegistrySnapshotManifest() -> String {
           "manifest": {
             "adapter_name": "pending-adapter",
             "dataset_uri": "datasets/pending",
-            "target_repo": ""
+            "target_repo": "",
+            "preset_id": "debug_fast",
+            "preset_title": "Debug Fast",
+            "checkpoint_count": 1,
+            "resume_ready": true,
+            "tokens_per_second": 64.0,
+            "peak_memory_gb": 4.1
           }
         }
       ],
@@ -8654,9 +8847,75 @@ private func makePendingRegistrySnapshotManifest() -> String {
           "status": "queued_for_publish",
           "response_only": true,
           "gradient_checkpointing": true,
+          "preset_id": "debug_fast",
+          "preset_title": "Debug Fast",
+          "checkpoint_count": 1,
+          "resume_ready": true,
+          "tokens_per_second": 64.0,
+          "peak_memory_gb": 4.1,
           "training_duration_ms": 950,
           "activation_duration_ms": 0,
           "adapter_publish_ms": 0
+        }
+      ],
+      "experiment_groups": [
+        {
+          "group_id": "pending-adapter",
+          "title": "pending-adapter",
+          "adapter_name": "pending-adapter",
+          "source_model": "melix-dev-text",
+          "run_count": 1,
+          "latest_run_id": "model-ops-0008",
+          "latest_status": "queued_for_publish",
+          "latest_dataset_uri": "datasets/pending",
+          "latest_preset_id": "debug_fast",
+          "latest_preset_title": "Debug Fast",
+          "latest_tokens_per_second": 64.0,
+          "latest_peak_memory_gb": 4.1,
+          "best_run_id": "model-ops-0008",
+          "best_loss": 0.42,
+          "recommended_manifest_path": "/tmp/melix-train-lora/pending.adapter.json"
+        }
+      ],
+      "derived_models": []
+    }
+    """#
+}
+
+private func makeStringBackedExperimentGroupRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "experiment_groups": [
+        {
+          "group_id": "",
+          "title": "invalid-group",
+          "adapter_name": "ignored",
+          "source_model": "melix-dev-text",
+          "run_count": 1,
+          "latest_preset_title": "Ignored",
+          "latest_tokens_per_second": "1.0",
+          "latest_peak_memory_gb": "1.0",
+          "latest_checkpoint_count": 1,
+          "latest_resume_ready": true,
+          "best_loss": "0.90",
+          "recommended_manifest_path": "/tmp/ignored.adapter.json"
+        },
+        {
+          "group_id": "string-metrics",
+          "title": "String Metrics",
+          "adapter_name": "melix-dev-adapter",
+          "source_model": "melix-dev-text",
+          "run_count": 2,
+          "latest_preset_title": "Balanced Adapter",
+          "latest_tokens_per_second": "128.5",
+          "latest_peak_memory_gb": "5.25",
+          "latest_checkpoint_count": 2,
+          "latest_resume_ready": true,
+          "best_loss": "0.42",
+          "recommended_manifest_path": "/tmp/melix-train-lora/train_lora.adapter.json"
         }
       ],
       "derived_models": []
