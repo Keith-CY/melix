@@ -78,7 +78,11 @@ class SuccessfulRunner(MLXLMRunner):
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        checkpoint_dir = request.adapter_output_dir / "checkpoint-2"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
         weights_path.write_bytes(b"melix-test-adapter")
+        latest_checkpoint_path.write_bytes(b"melix-test-checkpoint")
         adapter_config_path.write_text(
             json.dumps(
                 {
@@ -109,6 +113,8 @@ class SuccessfulRunner(MLXLMRunner):
                 learning_rate_final=1e-4,
                 checkpoint_count=2,
                 resume_ready=True,
+                latest_checkpoint_path=str(latest_checkpoint_path),
+                resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=128.5,
                 peak_memory_gb=5.25,
             ),
@@ -158,7 +164,11 @@ class NativeUnavailableRunner(SuccessfulRunner):
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        checkpoint_dir = request.adapter_output_dir / "checkpoint-2"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
         weights_path.write_bytes(b"melix-test-adapter")
+        latest_checkpoint_path.write_bytes(b"melix-test-checkpoint")
         adapter_config_path.write_text(
             json.dumps(
                 {
@@ -187,6 +197,8 @@ class NativeUnavailableRunner(SuccessfulRunner):
                 learning_rate_final=1e-4,
                 checkpoint_count=2,
                 resume_ready=True,
+                latest_checkpoint_path=str(latest_checkpoint_path),
+                resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=128.5,
                 peak_memory_gb=5.25,
             ),
@@ -319,10 +331,14 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
     assert payload["preset_title"] == "Balanced Adapter"
     assert payload["experiment_group_id"] == "nightly-qwen35"
     assert payload["checkpoint_count"] == 2
+    assert payload["latest_checkpoint_path"].endswith("checkpoint-2/adapters.safetensors")
+    assert payload["resume_source_path"] == ""
     assert payload["resume_ready"] is True
     assert payload["tokens_per_second"] == 128.5
     assert payload["peak_memory_gb"] == 5.25
     assert payload["experiment.checkpoint_count"] == 2
+    assert payload["experiment.latest_checkpoint_path"].endswith("checkpoint-2/adapters.safetensors")
+    assert payload["experiment.resume_source_path"] == ""
     assert payload["experiment.resume_ready"] is True
     assert payload["training.tokens_per_second"] == 128.5
     assert payload["training.peak_memory_gb"] == 5.25
@@ -347,6 +363,72 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
         "model.layers.0.mlp.gate_proj",
         "model.layers.1.mlp.gate_proj",
     ]
+
+
+def test_train_lora_records_resume_manifest_metadata_and_reuses_checkpoint_path(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-resume",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    first_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-initial"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-resume-source",
+                    "dataset_uri": str(dataset_dir),
+                    "experiment_group_id": "nightly-qwen35",
+                },
+            ),
+            context=None,
+        )
+    )
+    first_payload = json.loads(
+        next(event.manifest for event in first_events if event.HasField("manifest")).manifest_json
+    )
+
+    resume_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-resumed"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-resumed-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "experiment_group_id": "nightly-qwen35",
+                    "resume_manifest_path": first_payload["artifact_path"],
+                },
+            ),
+            context=None,
+        )
+    )
+    resume_payload = json.loads(
+        next(event.manifest for event in resume_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.resume_source_path is not None
+    assert str(runner.last_train_request.resume_source_path) == first_payload["latest_checkpoint_path"]
+    assert resume_payload["resume_source_path"] == first_payload["latest_checkpoint_path"]
+    assert resume_payload["resume_source_manifest_path"] == first_payload["artifact_path"]
+    assert resume_payload["resume_source_job_id"] == first_payload["job_id"]
+    assert resume_payload["experiment.resume_source_path"] == first_payload["latest_checkpoint_path"]
+
 
 
 def test_resolve_training_dataset_rejects_invalid_source_kind_and_missing_hf_path(tmp_path: Path) -> None:
@@ -1115,10 +1197,23 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert activation_payload["base_model_repo_id"] == "melix-dev-text"
     assert activation_payload["adapter_manifest_path"] == adapter_manifest_path
     assert activation_payload["adapter_weights_path"].endswith("adapters.safetensors")
+    assert activation_payload["source_model_kind"] == "text"
+    assert activation_payload["source_model_ext"]["text_family_id"] == "llama"
     assert activation_payload["derived_model_path"] == source_model.model_path
     assert activation_payload["remove_supported"] is True
     assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
+
+    registered_model = service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
+    assert registered_model is not None
+    assert registered_model.model_path == source_model.model_path
+    assert registered_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
+    assert registered_model.ext["melix.adapter_manifest_path"] == adapter_manifest_path
+    loaded = service._core._registry.load_model(
+        common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
+    )
+    assert loaded.spec.model_id == activation_payload["derived_model_id"]
+    assert loaded.spec.ext["melix.adapter_weights_path"] == activation_payload["adapter_weights_path"]
 
 
 def test_activate_adapter_rejects_unknown_activation_mode(tmp_path: Path) -> None:
@@ -1273,6 +1368,68 @@ def test_remove_derived_model_deletes_artifacts_and_prunes_registry_snapshot(tmp
     assert service._core._registry.list_loaded_models() == []
     assert snapshot_payload["derived_models"] == []
     assert snapshot_payload["adapters"][0]["activation_status"] == "removed"
+
+
+
+def test_adapter_backed_runtime_catalog_registration_restores_from_jobs_root(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "activation_mode": "adapter_backed_runtime",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    restored_service = _build_service(tmp_path, SuccessfulRunner())
+    restored_model = restored_service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
+
+    assert restored_model is not None
+    assert restored_model.model_path == activation_payload["derived_model_path"]
+    assert restored_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
+    loaded = restored_service._core._registry.load_model(
+        common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
+    )
+    assert loaded.spec.ext["melix.adapter_manifest_path"] == adapter_manifest_path
 
 
 def test_remove_derived_model_requires_a_known_target(tmp_path: Path) -> None:

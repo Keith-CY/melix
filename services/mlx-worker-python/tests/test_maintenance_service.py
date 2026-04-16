@@ -59,7 +59,11 @@ class DeterministicLoRARunner(MLXLMRunner):
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        checkpoint_dir = request.adapter_output_dir / "checkpoint-1"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
         weights_path.write_bytes(b"melix-test-adapter")
+        latest_checkpoint_path.write_bytes(b"melix-test-checkpoint")
         adapter_config_path.write_text(
             json.dumps(
                 {
@@ -88,6 +92,8 @@ class DeterministicLoRARunner(MLXLMRunner):
                 learning_rate_final=1e-4,
                 checkpoint_count=1,
                 resume_ready=True,
+                latest_checkpoint_path=str(latest_checkpoint_path),
+                resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=96.0,
                 peak_memory_gb=2.5,
             ),

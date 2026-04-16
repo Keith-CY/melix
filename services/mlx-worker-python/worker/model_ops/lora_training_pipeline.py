@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
 from worker.model_ops.training_config import normalize_training_config
 from worker.model_ops.training_dataset import (
@@ -84,6 +85,7 @@ class LoRATrainingPipeline:
 
         emit("apply_lora", 0.65)
         adapter_output_dir = output_dir / "adapter"
+        resume_context = _resolve_resume_context(request_ext)
 
         emit("train", 0.8)
         training_result = self._runner.train(
@@ -96,6 +98,7 @@ class LoRATrainingPipeline:
                 normalized_dataset_dir=normalized_snapshot.dataset_dir,
                 config=config,
                 dataset_format=dataset.package.format,
+                resume_source_path=resume_context["resume_source_path"],
             )
         )
 
@@ -104,6 +107,8 @@ class LoRATrainingPipeline:
         adapter_set_hash = _content_hash(training_result.weights_path, training_result.adapter_config_path)
         checkpoint_count = training_result.metrics.checkpoint_count
         resume_ready = training_result.metrics.resume_ready
+        latest_checkpoint_path = training_result.metrics.latest_checkpoint_path
+        resume_source_path = training_result.metrics.resume_source_path or str(resume_context["resume_source_path"] or "")
         tokens_per_second = training_result.metrics.tokens_per_second
         peak_memory_gb = training_result.metrics.peak_memory_gb
         experiment_group_id = (
@@ -169,6 +174,8 @@ class LoRATrainingPipeline:
             "training.gradient_checkpointing_enabled": config.gradient_checkpointing,
             "training.response_only_enabled": config.response_only,
             "experiment.checkpoint_count": checkpoint_count,
+            "experiment.latest_checkpoint_path": latest_checkpoint_path,
+            "experiment.resume_source_path": resume_source_path,
             "experiment.resume_ready": resume_ready,
             "validation_strategy": config.validation_strategy,
             "validation_sample_count": config.validation_sample_count,
@@ -178,6 +185,8 @@ class LoRATrainingPipeline:
             "loss_best": training_result.metrics.loss_best,
             "learning_rate_final": training_result.metrics.learning_rate_final,
             "checkpoint_count": checkpoint_count,
+            "latest_checkpoint_path": latest_checkpoint_path,
+            "resume_source_path": resume_source_path,
             "resume_ready": resume_ready,
             "tokens_per_second": tokens_per_second,
             "peak_memory_gb": peak_memory_gb,
@@ -186,6 +195,10 @@ class LoRATrainingPipeline:
             "created_at_unix_ms": persisted_at_unix_ms,
             "updated_at_unix_ms": persisted_at_unix_ms,
         }
+        if resume_context["resume_manifest_path"] is not None:
+            manifest["resume_source_manifest_path"] = str(resume_context["resume_manifest_path"])
+        if resume_context["resume_source_job_id"]:
+            manifest["resume_source_job_id"] = resume_context["resume_source_job_id"]
         if config.desired_derived_model_alias:
             manifest["desired_derived_model_alias"] = config.desired_derived_model_alias
         if dataset.hf_reference is not None:
@@ -225,6 +238,101 @@ def _content_hash(*paths: Path) -> str:
     for path in paths:
         digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def _resolve_resume_context(ext: dict[str, str]) -> dict[str, Any]:
+    raw_resume_path = next(
+        (
+            ext.get(key, "").strip()
+            for key in (
+                "resume_source_path",
+                "resume_from_path",
+                "resume_adapter_file",
+                "resume_manifest_path",
+            )
+            if ext.get(key, "").strip()
+        ),
+        "",
+    )
+    if not raw_resume_path:
+        return {
+            "resume_source_path": None,
+            "resume_manifest_path": None,
+            "resume_source_job_id": "",
+        }
+
+    candidate_path = Path(raw_resume_path).expanduser()
+    if not candidate_path.exists():
+        raise ModelOperationError(
+            code="invalid_resume_source",
+            message=f"Resume source does not exist: {candidate_path}",
+        )
+
+    if candidate_path.is_file() and candidate_path.suffix == ".json":
+        manifest = _load_manifest_payload(candidate_path)
+        resolved_resume_path = _resolve_resume_path_from_manifest(candidate_path, manifest)
+        return {
+            "resume_source_path": resolved_resume_path,
+            "resume_manifest_path": candidate_path.resolve(),
+            "resume_source_job_id": str(manifest.get("job_id", "")).strip(),
+        }
+
+    if candidate_path.is_dir():
+        candidate_path = _latest_checkpoint_from_directory(candidate_path)
+
+    return {
+        "resume_source_path": candidate_path.resolve(),
+        "resume_manifest_path": None,
+        "resume_source_job_id": "",
+    }
+
+
+def _load_manifest_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelOperationError(
+            code="invalid_resume_source",
+            message=f"Resume manifest is unreadable: {path}",
+        ) from exc
+    if isinstance(payload, dict) is False:
+        raise ModelOperationError(
+            code="invalid_resume_source",
+            message=f"Resume manifest must be a JSON object: {path}",
+        )
+    return payload
+
+
+def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> Path:
+    for key in ("latest_checkpoint_path", "weights_path"):
+        raw_value = str(manifest.get(key, "")).strip()
+        if raw_value:
+            return _validated_resume_path(Path(raw_value).expanduser(), source_label=str(path))
+    raise ModelOperationError(
+        code="invalid_resume_source",
+        message=f"Resume manifest does not expose a checkpoint or weights path: {path}",
+    )
+
+
+def _latest_checkpoint_from_directory(path: Path) -> Path:
+    checkpoint_candidates = sorted(path.rglob("*.safetensors"))
+    if not checkpoint_candidates:
+        raise ModelOperationError(
+            code="invalid_resume_source",
+            message=f"Resume directory does not contain adapter weights: {path}",
+        )
+    return checkpoint_candidates[-1].resolve()
+
+
+def _validated_resume_path(path: Path, *, source_label: str) -> Path:
+    if path.exists() is False:
+        raise ModelOperationError(
+            code="invalid_resume_source",
+            message=f"Resume source from {source_label} does not exist: {path}",
+        )
+    if path.is_dir():
+        return _latest_checkpoint_from_directory(path)
+    return path.resolve()
 
 
 def _default_experiment_group_id(source_model_id: str, adapter_name: str) -> str:

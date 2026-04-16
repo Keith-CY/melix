@@ -222,6 +222,29 @@ class ModelOpsJobRegistry:
             }
         return None
 
+    def active_derived_model_manifests(self) -> list[dict[str, Any]]:
+        with self._lock:
+            jobs = [
+                self._snapshot_job(job)
+                for job in sorted(self._jobs.values(), key=self._job_sort_key, reverse=True)
+            ]
+
+        removed_targets = self._removed_derived_targets(jobs)
+        removed_model_ids = removed_targets["model_ids"]
+        removed_activation_job_ids = removed_targets["activation_job_ids"]
+        manifests: list[dict[str, Any]] = []
+        for job in jobs:
+            if job["operation"] != "activate_adapter" or job["status"] != "completed":
+                continue
+            if job["job_id"] in removed_activation_job_ids:
+                continue
+            manifest = job.get("manifest") or {}
+            derived_model_id = str(manifest.get("derived_model_id", "")).strip()
+            if not derived_model_id or derived_model_id in removed_model_ids:
+                continue
+            manifests.append(dict(manifest))
+        return manifests
+
     def _max_numeric_job_id(self) -> int:
         max_job_id = 0
         for job_id in self._jobs:
@@ -303,7 +326,10 @@ class ModelOpsJobRegistry:
 
             publish = {
                 "job_id": job["job_id"],
-                "target_repo": str(manifest.get("target_repo", ext.get("target_repo", ""))),
+                "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ext.get("target_repo", "")))),
+                "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
+                "export_artifact_kind": str(manifest.get("export_artifact_kind", "")),
+                "parent_lineage": manifest.get("parent_lineage") if isinstance(manifest.get("parent_lineage"), dict) else {},
             }
             adapter_name = str(ext.get("adapter_name", manifest.get("adapter_name", "")))
             artifact_path = str(ext.get("artifact_path", manifest.get("artifact_path", "")))
@@ -382,11 +408,18 @@ class ModelOpsJobRegistry:
                     "hf_dataset_name": str(manifest.get("hf_dataset_name", "")),
                     "hf_dataset_revision": str(manifest.get("hf_dataset_revision", "")),
                     "hf_train_split": str(manifest.get("hf_train_split", "")),
+                    "experiment_group_id": str(manifest.get("experiment_group_id", "")),
+                    "experiment_group_title": str(manifest.get("experiment_group_title", "")),
+                    "preset_id": str(manifest.get("preset_id", "")),
+                    "preset_title": str(manifest.get("preset_title", "")),
                     "output_path": output_path,
                     "adapter_set_hash": adapter_set_hash,
                     "target_repo": str(manifest.get("target_repo", "")),
                     "published_repo": publish["target_repo"] if publish else "",
                     "publish_job_id": publish["job_id"] if publish else "",
+                    "publish_backend": publish["publish_backend"] if publish else "",
+                    "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
+                    "publish_parent_lineage": publish["parent_lineage"] if publish else {},
                     "status": status,
                     "activation_status": "removed" if removal_applied else activation["status"] if activation else "pending_activation",
                     "derived_model_id": "" if removal_applied else activation["derived_model_id"] if activation else "",
@@ -407,6 +440,20 @@ class ModelOpsJobRegistry:
                             manifest.get("experiment.checkpoint_count", 0),
                         )
                     ),
+                    "latest_checkpoint_path": str(
+                        manifest.get(
+                            "latest_checkpoint_path",
+                            manifest.get("experiment.latest_checkpoint_path", ""),
+                        )
+                    ),
+                    "resume_source_path": str(
+                        manifest.get(
+                            "resume_source_path",
+                            manifest.get("experiment.resume_source_path", ""),
+                        )
+                    ),
+                    "resume_source_job_id": str(manifest.get("resume_source_job_id", "")),
+                    "resume_source_manifest_path": str(manifest.get("resume_source_manifest_path", "")),
                     "resume_ready": bool(
                         manifest.get(
                             "resume_ready",
@@ -433,6 +480,30 @@ class ModelOpsJobRegistry:
 
     @staticmethod
     def _derived_model_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        publish_by_model_path: dict[str, dict[str, Any]] = {}
+        publish_by_manifest_path: dict[str, dict[str, Any]] = {}
+        for job in jobs:
+            if job["operation"] != "upload" or job["status"] != "completed":
+                continue
+            manifest = job.get("manifest") or {}
+            export_artifact_kind = str(manifest.get("export_artifact_kind", ""))
+            if export_artifact_kind != "merged_export":
+                continue
+            publish = {
+                "job_id": job["job_id"],
+                "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ""))),
+                "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
+                "export_artifact_kind": export_artifact_kind,
+                "parent_lineage": manifest.get("parent_lineage") if isinstance(manifest.get("parent_lineage"), dict) else {},
+            }
+            parent_lineage = publish["parent_lineage"]
+            manifest_path = str(parent_lineage.get("local_manifest_path", ""))
+            model_path = str(parent_lineage.get("local_artifact_path", ""))
+            if manifest_path:
+                publish_by_manifest_path[manifest_path] = publish
+            if model_path:
+                publish_by_model_path[model_path] = publish
+
         removed_targets = ModelOpsJobRegistry._removed_derived_targets(jobs)
         removed_model_ids = removed_targets["model_ids"]
         removed_activation_job_ids = removed_targets["activation_job_ids"]
@@ -446,11 +517,14 @@ class ModelOpsJobRegistry:
             derived_model_id = str(manifest.get("derived_model_id", ""))
             if derived_model_id in removed_model_ids:
                 continue
+            activation_manifest_path = str(job.get("output_path", ""))
+            model_path = str(manifest.get("derived_model_path", ""))
+            publish = publish_by_manifest_path.get(activation_manifest_path) or publish_by_model_path.get(model_path)
             derived_models.append(
                 {
                     "job_id": job["job_id"],
                     "model_id": derived_model_id,
-                    "model_path": str(manifest.get("derived_model_path", "")),
+                    "model_path": model_path,
                     "adapter_set_hash": str(manifest.get("adapter_set_hash", "")),
                     "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
                     "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
@@ -459,6 +533,12 @@ class ModelOpsJobRegistry:
                     "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                     "source_model": str(manifest.get("source_model", "")),
                     "activation_mode": str(manifest.get("activation_mode", "")),
+                    "published_repo": publish["target_repo"] if publish else "",
+                    "publish_job_id": publish["job_id"] if publish else "",
+                    "publish_backend": publish["publish_backend"] if publish else "",
+                    "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
+                    "publish_parent_lineage": publish["parent_lineage"] if publish else {},
+                    "published_state": "published" if publish else "not_published",
                     "status": "activated",
                 }
             )

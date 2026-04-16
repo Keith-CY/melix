@@ -107,10 +107,27 @@ class LoraExperimentStore:
                     "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
                     "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
                     "latest_checkpoint_count": int(latest_run.get("checkpoint_count", 0)),
+                    "latest_checkpoint_path": str(latest_run.get("latest_checkpoint_path", "")),
+                    "latest_resume_source_path": str(latest_run.get("resume_source_path", "")),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
+                    "resume_ready_run_ids": [
+                        str(run.get("run_id", ""))
+                        for run in group_runs
+                        if bool(run.get("resume_ready", False)) and str(run.get("run_id", "")).strip()
+                    ],
+                    "checkpoint_lineage": [self._checkpoint_lineage_entry(run) for run in group_runs],
                     "best_run_id": str(best_run.get("run_id", "")),
                     "best_loss": best_loss if best_loss is not None else 0.0,
                     "recommended_manifest_path": str(best_run.get("manifest_path", "")),
+                    "best_known_adapter": {
+                        "run_id": str(best_run.get("run_id", "")),
+                        "manifest_path": str(best_run.get("manifest_path", "")),
+                        "adapter_name": str(best_run.get("adapter_name", "")),
+                        "checkpoint_count": int(best_run.get("checkpoint_count", 0)),
+                        "latest_checkpoint_path": str(best_run.get("latest_checkpoint_path", "")),
+                        "resume_ready": bool(best_run.get("resume_ready", False)),
+                        "loss_best": best_loss if best_loss is not None else 0.0,
+                    },
                     "updated_at_unix_ms": int(latest_run.get("updated_at_unix_ms", 0)),
                 }
             )
@@ -150,6 +167,14 @@ class LoraExperimentStore:
             "training_backend": str(manifest.get("training_backend", "")),
             "status": str(manifest.get("status", "completed")),
             "checkpoint_count": int(manifest.get("checkpoint_count", manifest.get("experiment.checkpoint_count", 0))),
+            "latest_checkpoint_path": str(
+                manifest.get("latest_checkpoint_path", manifest.get("experiment.latest_checkpoint_path", ""))
+            ),
+            "resume_source_path": str(
+                manifest.get("resume_source_path", manifest.get("experiment.resume_source_path", ""))
+            ),
+            "resume_source_job_id": str(manifest.get("resume_source_job_id", "")),
+            "resume_source_manifest_path": str(manifest.get("resume_source_manifest_path", "")),
             "resume_ready": bool(manifest.get("resume_ready", manifest.get("experiment.resume_ready", False))),
             "tokens_per_second": float(
                 manifest.get("tokens_per_second", manifest.get("training.tokens_per_second", 0.0))
@@ -163,6 +188,18 @@ class LoraExperimentStore:
             "output_dir": str(manifest_path.parent),
             "created_at_unix_ms": created_at_unix_ms,
             "updated_at_unix_ms": updated_at_unix_ms,
+        }
+
+    @staticmethod
+    def _checkpoint_lineage_entry(run: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": str(run.get("run_id", "")),
+            "checkpoint_count": int(run.get("checkpoint_count", 0)),
+            "latest_checkpoint_path": str(run.get("latest_checkpoint_path", "")),
+            "resume_source_path": str(run.get("resume_source_path", "")),
+            "resume_source_job_id": str(run.get("resume_source_job_id", "")),
+            "resume_source_manifest_path": str(run.get("resume_source_manifest_path", "")),
+            "resume_ready": bool(run.get("resume_ready", False)),
         }
 
     @staticmethod

@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -24,6 +25,8 @@ class TrainingMetrics:
     learning_rate_final: float
     checkpoint_count: int = 0
     resume_ready: bool = False
+    latest_checkpoint_path: str = ""
+    resume_source_path: str = ""
     tokens_per_second: float = 0.0
     peak_memory_gb: float = 0.0
 
@@ -38,6 +41,7 @@ class TrainingRequest:
     normalized_dataset_dir: Path
     config: LoRATrainingConfig
     dataset_format: str
+    resume_source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -147,7 +151,7 @@ class MLXLMRunner:
         tokens_per_second = 0.0
         if duration_ms > 0.0 and collector.tokens_seen > 0:
             tokens_per_second = collector.tokens_seen / (duration_ms / 1000.0)
-        checkpoint_count = _count_training_checkpoints(request.adapter_output_dir)
+        checkpoint_count, latest_checkpoint_path = _checkpoint_summary(request.adapter_output_dir)
         return TrainingResult(
             weights_path=request.adapter_output_dir / "adapters.safetensors",
             adapter_config_path=request.adapter_output_dir / "adapter_config.json",
@@ -159,7 +163,9 @@ class MLXLMRunner:
                 loss_best=min(losses),
                 learning_rate_final=learning_rates[-1],
                 checkpoint_count=checkpoint_count,
-                resume_ready=checkpoint_count > 0,
+                resume_ready=latest_checkpoint_path != "",
+                latest_checkpoint_path=latest_checkpoint_path,
+                resume_source_path=str(request.resume_source_path) if request.resume_source_path is not None else "",
                 tokens_per_second=tokens_per_second,
                 peak_memory_gb=_mlx_peak_memory_gb(),
             ),
@@ -281,7 +287,11 @@ def _mlx_lora_namespace(request: TrainingRequest):
         steps_per_report=request.config.steps_per_report,
         steps_per_eval=request.config.steps_per_eval,
         grad_accumulation_steps=1,
-        resume_adapter_file=None,
+        resume_adapter_file=(
+            str(request.resume_source_path)
+            if request.resume_source_path is not None
+            else None
+        ),
         adapter_path=str(request.adapter_output_dir),
         save_every=request.config.steps_per_save,
         test=False,
@@ -310,6 +320,11 @@ def _serialize_training_request(request: TrainingRequest) -> dict:
         "model_revision": request.model_revision,
         "adapter_output_dir": str(request.adapter_output_dir),
         "normalized_dataset_dir": str(request.normalized_dataset_dir),
+        "resume_source_path": (
+            str(request.resume_source_path)
+            if request.resume_source_path is not None
+            else ""
+        ),
         "dataset_format": request.dataset_format,
         "config": asdict(request.config),
     }
@@ -328,6 +343,11 @@ def _deserialize_training_request(payload: dict) -> TrainingRequest:
         normalized_dataset_dir=Path(payload["normalized_dataset_dir"]),
         config=config,
         dataset_format=str(payload["dataset_format"]),
+        resume_source_path=(
+            Path(payload["resume_source_path"])
+            if str(payload.get("resume_source_path", "")).strip()
+            else None
+        ),
     )
 
 
@@ -376,18 +396,31 @@ def _mlx_peak_memory_gb() -> float:
     return 0.0
 
 
-def _count_training_checkpoints(adapter_output_dir: Path) -> int:
-    checkpoint_ids: set[str] = set()
+def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
+    checkpoint_candidates: dict[str, Path] = {}
     root_weights_path = adapter_output_dir / "adapters.safetensors"
     for weights_path in adapter_output_dir.rglob("*.safetensors"):
         if weights_path == root_weights_path:
             continue
         relative_path = weights_path.relative_to(adapter_output_dir)
         if len(relative_path.parts) > 1:
-            checkpoint_ids.add(relative_path.parts[0])
+            checkpoint_candidates.setdefault(relative_path.parts[0], weights_path)
             continue
-        checkpoint_ids.add(weights_path.stem)
-    return len(checkpoint_ids)
+        checkpoint_candidates.setdefault(weights_path.stem, weights_path)
+
+    if not checkpoint_candidates:
+        return 0, ""
+
+    latest_checkpoint_path = max(
+        checkpoint_candidates.values(),
+        key=_checkpoint_order_key,
+    )
+    return len(checkpoint_candidates), str(latest_checkpoint_path)
+
+
+def _checkpoint_order_key(path: Path) -> tuple[int, str]:
+    numeric_tokens = [int(token) for token in re.findall(r"\d+", str(path))]
+    return (numeric_tokens[-1] if numeric_tokens else -1, str(path))
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:
