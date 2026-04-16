@@ -44,6 +44,10 @@ The most detailed acceptance evidence summary is tracked in:
 - [`docs/runbooks/phase-8-product-acceptance.md`](runbooks/phase-8-product-acceptance.md)
 - [`docs/plans/2026-03-30-full-capability-roadmap-execution-index.md`](plans/2026-03-30-full-capability-roadmap-execution-index.md)
 
+The current forward-looking LoRA expansion breakdown is tracked in:
+
+- [`docs/plans/2026-04-16-lora-capability-modules-and-commit-plan.md`](plans/2026-04-16-lora-capability-modules-and-commit-plan.md)
+
 ## Honest Boundaries
 
 - Melix is intentionally scoped to macOS on Apple Silicon.
