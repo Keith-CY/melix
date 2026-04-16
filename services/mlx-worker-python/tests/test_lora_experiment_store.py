@@ -69,3 +69,32 @@ def test_optional_finite_float_rejects_invalid_and_non_finite_values() -> None:
     assert lora_experiment_store_module._optional_finite_float(object()) is None
     assert lora_experiment_store_module._optional_finite_float("not-a-number") is None
     assert lora_experiment_store_module._optional_finite_float(float("inf")) is None
+
+
+def test_persist_training_run_rewrites_non_finite_metrics_to_null(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    manifest_path = jobs_root / "train_lora" / "model-ops-0001" / "train_lora.adapter.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{}\n", encoding="utf-8")
+
+    result = LoraExperimentStore().persist_training_run(
+        jobs_root=jobs_root,
+        manifest={
+            "job_id": "model-ops-0001",
+            "source_model": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "adapter_name": "demo-adapter",
+            "tokens_per_second": float("inf"),
+            "peak_memory_gb": float("nan"),
+            "loss_best": float("inf"),
+            "loss_final": float("nan"),
+        },
+        manifest_path=manifest_path,
+    )
+
+    run_text = result["run"].read_text(encoding="utf-8")
+    index_text = result["index"].read_text(encoding="utf-8")
+
+    assert "Infinity" not in run_text
+    assert "NaN" not in run_text
+    assert "Infinity" not in index_text
+    assert "NaN" not in index_text

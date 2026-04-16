@@ -608,22 +608,34 @@ contract for the LoRA workflow.
   inspection helpers
 - prefer reported loss metrics when recommending the best experiment run; missing or non-finite
   loss values no longer outrank measured runs
+- sanitize experiment run and index payloads before writing them so non-finite metrics cannot
+  leak invalid `NaN` or `Infinity` JSON literals into persisted evidence
 - keep `hf` as the primary Hugging Face CLI entrypoint, but add a compatibility fallback to
   `huggingface-cli` when only the legacy binary is installed
+- make `real_workload` release-gate collection read persisted family evidence from the current
+  jobs root and fail closed when those artifacts are missing
+- annotate the phase-8 acceptance bundle double-write pattern so the latency measurement write is
+  visibly intentional
 
 ### Verification Results
 
 - Focused regression tests:
   - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_lora_experiment_store.py -q`
   - Result: `120 passed`
+- Extended review-remediation verification:
+  - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_training_dataset_builder.py services/mlx-worker-python/tests/test_lora_model_ops.py services/mlx-worker-python/tests/test_maintenance_service.py services/mlx-worker-python/tests/test_lora_experiment_store.py services/mlx-worker-python/tests/test_release_gates.py tests/test_phase8_acceptance_bundle.py -q`
+  - Result: `187 passed`
+- Swift CLI verification for the dataset-source review thread:
+  - `HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" swift test --filter 'MelixCLIRunnerTests/(loraDatasetInspectForwardsExpectedOperationPayload|loraDatasetBuildForwardsExpectedOperationPayload)'`
+  - Result: `2 tests passed`
 - Python repository coverage:
   - `make py-coverage`
-  - Result: `777 passed`
+  - Result: `778 passed`
   - Coverage report total: `95%`
 - Python changed-line coverage for review-remediated files:
   - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage json -o /tmp/lora-review-python-coverage.json`
-  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/lora-review-python-coverage.json services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/productization/lora_experiment_store.py`
-  - Result: `100.00% (39/39)`
+  - `python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/lora-review-python-coverage.json services/mlx-worker-python/worker/model_ops/training_dataset.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/worker/productization/lora_experiment_store.py services/mlx-worker-python/worker/productization/release_gates.py`
+  - Result: `100.00% (20/20)` for the second remediation pass, with the first remediation pass already recorded at `100.00% (39/39)`
 
 ### Metrics Report
 
@@ -632,5 +644,12 @@ contract for the LoRA workflow.
 - `dataset.duplicate_digest_key`: measurable through duplicate-detection coverage for the
   remediated dataset inspection path
 - `experiment.best_loss_selection`: measurable through explicit best-run regression coverage
+- `experiment.json_payload_validity`: measurable through strict JSON persistence coverage for the
+  remediated experiment store path
 - `publish.cli_resolution`: measurable through explicit `hf` and `huggingface-cli` resolution
   coverage
+- `release_gate.real_workload.family_count`: measurable through persisted-family release-gate
+  coverage with fail-closed missing-artifact assertions
+- `phase8.cli.acceptance_bundle_write_ms`: measurable already; the script change only documents the
+  intentional double-write pattern, so changed-line runtime coverage is `N/A` for that comment-only
+  line

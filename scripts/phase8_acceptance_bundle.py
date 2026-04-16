@@ -659,6 +659,7 @@ def run_acceptance_bundle(
     }
 
     bundle_write_started_at = time.perf_counter()
+    # First write measures bundle persistence latency; the second write persists that metric.
     _write_json(bundle_path, bundle)
     timings["phase8.cli.acceptance_bundle_write_ms"] = _elapsed_ms(bundle_write_started_at)
     _write_json(bundle_path, bundle)

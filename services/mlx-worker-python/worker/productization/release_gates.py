@@ -626,7 +626,7 @@ def collect_real_workload_evidence(
     *,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    _ = jobs_root
+    jobs_root = Path(jobs_root)
     active_policy = (
         policy
         if isinstance(policy, dict) and policy
@@ -643,10 +643,10 @@ def collect_real_workload_evidence(
 
     families: dict[str, dict[str, Any]] = {}
     for family_id in required_family_ids:
-        payload = _DEFAULT_REAL_WORKLOAD_EVIDENCE.get(family_id)
+        payload = _load_persisted_real_workload_family(jobs_root, family_id=family_id)
         if payload is None:
             continue
-        families[family_id] = copy.deepcopy(payload)
+        families[family_id] = payload
 
     return {
         "summary": _summarize_real_workload_families(families),
@@ -1178,6 +1178,18 @@ def _summarize_real_workload_families(
         "failure_count": failure_count,
         "family_count": family_count,
     }
+
+
+def _load_persisted_real_workload_family(
+    jobs_root: Path,
+    *,
+    family_id: str,
+) -> dict[str, Any] | None:
+    evidence_path = jobs_root / "real_workload" / f"{family_id}.json"
+    if evidence_path.exists() is False:
+        return None
+    payload = _read_json(evidence_path)
+    return payload if isinstance(payload, dict) else None
 
 
 def evaluate_real_workload_evidence(

@@ -23,10 +23,9 @@ class LoraExperimentStore:
     ) -> dict[str, Path]:
         run_payload = self._build_run_payload(manifest=manifest, manifest_path=manifest_path)
         run_path = manifest_path.parent / self.run_record_name
-        run_path.write_text(json.dumps(run_payload, indent=2) + "\n", encoding="utf-8")
+        run_path.write_text(json.dumps(_json_safe(run_payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
         index_path = self._index_path(jobs_root)
-        index_payload = self.rebuild_index(jobs_root)
-        _ = index_payload
+        self.rebuild_index(jobs_root)
         return {"run": run_path, "index": index_path}
 
     def load_index(self, jobs_root: Path) -> dict[str, Any]:
@@ -68,7 +67,7 @@ class LoraExperimentStore:
         }
         index_path = self._index_path(jobs_root)
         index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        index_path.write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
         return payload
 
     def _build_group_payloads(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -105,8 +104,8 @@ class LoraExperimentStore:
                     "latest_dataset_uri": str(latest_run.get("dataset_uri", "")),
                     "latest_preset_id": str(latest_run.get("preset_id", "")),
                     "latest_preset_title": str(latest_run.get("preset_title", "")),
-                    "latest_tokens_per_second": float(latest_run.get("tokens_per_second", 0.0)),
-                    "latest_peak_memory_gb": float(latest_run.get("peak_memory_gb", 0.0)),
+                    "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
+                    "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
                     "latest_checkpoint_count": int(latest_run.get("checkpoint_count", 0)),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
                     "best_run_id": str(best_run.get("run_id", "")),
@@ -203,3 +202,13 @@ def _optional_finite_float(value: Any) -> float | None:
     if not math.isfinite(parsed):
         return None
     return parsed
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and math.isfinite(value) is False:
+        return None
+    return value

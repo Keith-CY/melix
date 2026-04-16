@@ -211,6 +211,16 @@ def _passing_real_workload_evidence() -> dict[str, object]:
     }
 
 
+def _write_persisted_real_workload_evidence(jobs_root: Path) -> None:
+    real_workload_root = jobs_root / "real_workload"
+    real_workload_root.mkdir(parents=True, exist_ok=True)
+    for family_id, payload in _passing_real_workload_evidence()["families"].items():
+        (real_workload_root / f"{family_id}.json").write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+
 def _write_persisted_evaluation_compare_evidence(
     jobs_root: Path,
     *,
@@ -615,6 +625,7 @@ def test_load_release_gate_policy_includes_real_workload_family_rules() -> None:
 def test_collect_real_workload_evidence_reports_qwen_gemma_and_kimi_families(
     tmp_path: Path,
 ) -> None:
+    _write_persisted_real_workload_evidence(tmp_path / "jobs")
     evidence = release_gates_module.collect_real_workload_evidence(tmp_path / "jobs")
 
     assert evidence["summary"]["pass_count"] == 3.0
@@ -638,8 +649,8 @@ def test_collect_real_workload_evidence_handles_policy_fallback_and_unknown_fami
         policy={"families": {"unknown": {"passed": {"min": 1.0}}}},
     )
 
-    assert fallback["summary"]["family_count"] == 3.0
-    assert set(fallback["families"].keys()) == {"qwen", "gemma", "kimi"}
+    assert fallback["summary"]["family_count"] == 0.0
+    assert fallback["families"] == {}
     assert unknown_family["summary"]["family_count"] == 0.0
     assert unknown_family["families"] == {}
 
@@ -1039,6 +1050,7 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_real_workload_evidence(tmp_path / "jobs")
     _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
@@ -1239,6 +1251,7 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
 ) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    _write_persisted_real_workload_evidence(tmp_path / "jobs")
     _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
@@ -1359,6 +1372,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         release_gates_module,
         "collect_evaluation_compare_evidence",
         lambda jobs_root, policy=None: _passing_evaluation_compare_evidence(),
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_real_workload_evidence",
+        lambda jobs_root, policy=None: _passing_real_workload_evidence(),
     )
 
     report = build_release_gate_report(
