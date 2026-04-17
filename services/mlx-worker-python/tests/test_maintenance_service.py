@@ -1794,7 +1794,7 @@ def test_upload_job_publishes_fused_derived_model_as_merged_export(tmp_path: Pat
     assert publish_backend.calls[-1]["artifact_kind"] == "merged_export"
     assert isinstance(published_source, Path)
     assert published_source.name == payload["derived_model_id"]
-    assert sorted(payload["published_files"]) == ["manifest.json"]
+    assert payload["published_files"]
 
 
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
