@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import threading
 import time
 from typing import Iterable, Mapping
 
@@ -620,31 +621,35 @@ class WorkerModelCatalog:
                 self._seed_models[model.model_id] = model
         self._models = dict(self._seed_models)
         self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
+        self._registry_lock = threading.RLock()
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
         self._registry_snapshot_cache[self._active_registry_roots] = self._last_registry_snapshot
 
     def get(self, model_id: str) -> common_pb2.ModelSpec | None:
-        return self._models.get(model_id)
+        with self._registry_lock:
+            return self._models.get(model_id)
 
     def all_models(self) -> list[common_pb2.ModelSpec]:
-        return [self._models[model_id] for model_id in sorted(self._models)]
+        with self._registry_lock:
+            return [self._models[model_id] for model_id in sorted(self._models)]
 
     def register_model(self, model: common_pb2.ModelSpec) -> common_pb2.ModelSpec:
         registered = common_pb2.ModelSpec()
         registered.CopyFrom(model)
-        self._overlay_models[registered.model_id] = registered
-        self._models[registered.model_id] = registered
-        return registered
+        with self._registry_lock:
+            self._overlay_models[registered.model_id] = registered
+            self._rebuild_runtime_models()
+            return self._models[registered.model_id]
 
     def remove_model(self, model_id: str) -> bool:
-        removed = self._overlay_models.pop(model_id, None)
-        self._models.pop(model_id, None)
-        if removed is None:
-            return False
-        self._rebuild_runtime_models()
-        return True
+        with self._registry_lock:
+            removed = self._overlay_models.pop(model_id, None)
+            if removed is None:
+                return False
+            self._rebuild_runtime_models()
+            return True
 
     def registry_snapshot(
         self,
@@ -653,21 +658,23 @@ class WorkerModelCatalog:
         registry_roots: Iterable[str] | None = None,
     ) -> RegistrySnapshot:
         roots_key = tuple(self._resolved_registry_roots(registry_roots))
-        if rescan or roots_key not in self._registry_snapshot_cache:
-            self._registry_snapshot_cache[roots_key] = self._refresh_registry_snapshot(roots_key)
-        snapshot = self._registry_snapshot_cache[roots_key]
-        self._active_registry_roots = roots_key
-        self._last_registry_snapshot = snapshot
-        self._rebuild_runtime_models(snapshot=snapshot)
-        return snapshot
+        with self._registry_lock:
+            if rescan or roots_key not in self._registry_snapshot_cache:
+                self._registry_snapshot_cache[roots_key] = self._refresh_registry_snapshot(roots_key)
+            snapshot = self._registry_snapshot_cache[roots_key]
+            self._active_registry_roots = roots_key
+            self._last_registry_snapshot = snapshot
+            self._rebuild_runtime_models(snapshot=snapshot)
+            return snapshot
 
     def _rebuild_runtime_models(self, snapshot: RegistrySnapshot | None = None) -> None:
         active_snapshot = snapshot or self._last_registry_snapshot
-        self._models = dict(self._seed_models)
+        new_models = dict(self._seed_models)
         for model in active_snapshot.models:
-            self._models.setdefault(model.model_id, model)
+            new_models.setdefault(model.model_id, model)
         for model_id, model in self._overlay_models.items():
-            self._models[model_id] = model
+            new_models[model_id] = model
+        self._models = new_models
 
     def registry_snapshot_payload(
         self,

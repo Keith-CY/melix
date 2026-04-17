@@ -368,7 +368,7 @@ class UploadReceiptPipeline:
         if source_path.is_dir():
             return source_path
         manifest_payload = descriptor.manifest_payload or {}
-        if descriptor.artifact_kind == "converted_model_bundle":
+        if descriptor.artifact_kind == "converted_model_bundle" and source_path.is_file():
             parent_dir = source_path.parent
             if (parent_dir / "manifest.json").is_file():
                 return parent_dir
