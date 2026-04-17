@@ -131,6 +131,36 @@ public struct LoraRemoveDerivedOptions: Equatable, Sendable {
     }
 }
 
+public enum LoraPublishExportKind: String, Equatable, Sendable {
+    case adapterExport = "adapter_export"
+    case mergedExport = "merged_export"
+}
+
+public struct LoraPublishOptions: Equatable, Sendable {
+    public let modelID: String
+    public let targetRepo: String
+    public let exportKind: LoraPublishExportKind
+    public let artifactPath: String
+    public let artifactManifestPath: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        targetRepo: String,
+        exportKind: LoraPublishExportKind,
+        artifactPath: String,
+        artifactManifestPath: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.targetRepo = targetRepo
+        self.exportKind = exportKind
+        self.artifactPath = artifactPath
+        self.artifactManifestPath = artifactManifestPath
+        self.json = json
+    }
+}
+
 public struct BenchRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
@@ -828,6 +858,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case loraDatasetBuild(LoraDatasetBuildOptions)
     case loraActivate(LoraActivateOptions)
     case loraRemoveDerived(LoraRemoveDerivedOptions)
+    case loraPublish(LoraPublishOptions)
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
@@ -937,6 +968,7 @@ public enum MelixCLIParser {
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
+      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
@@ -1436,6 +1468,50 @@ public enum MelixCLIParser {
                     modelID: modelID,
                     derivedModelID: derivedModelID,
                     manifestPath: manifestPath,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "publish":
+            let values = try cursor.parse()
+            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model-id is required for melix lora publish.")
+            }
+            guard let targetRepo = values.single["--target-repo"], !targetRepo.isEmpty else {
+                throw MelixCLIError.missingRequired("--target-repo is required for melix lora publish.")
+            }
+            let adapterPath = values.single["--adapter-path"] ?? ""
+            let mergedModelPath = values.single["--merged-model-path"] ?? ""
+            let manifestPath = values.single["--manifest-path"] ?? ""
+            let selectedCount = [adapterPath, mergedModelPath, manifestPath].filter { $0.isEmpty == false }.count
+            guard selectedCount == 1 else {
+                throw MelixCLIError.missingRequired(
+                    "Exactly one of --adapter-path, --merged-model-path, or --manifest-path is required for melix lora publish."
+                )
+            }
+            let exportKind: LoraPublishExportKind
+            let artifactPath: String
+            let artifactManifestPath: String
+            if adapterPath.isEmpty == false {
+                exportKind = .adapterExport
+                artifactPath = adapterPath
+                // Adapter publish accepts the adapter manifest JSON itself as the source artifact.
+                artifactManifestPath = adapterPath
+            } else if mergedModelPath.isEmpty == false {
+                exportKind = .mergedExport
+                artifactPath = mergedModelPath
+                artifactManifestPath = ""
+            } else {
+                exportKind = .mergedExport
+                artifactPath = manifestPath
+                artifactManifestPath = manifestPath
+            }
+            return .loraPublish(
+                LoraPublishOptions(
+                    modelID: modelID,
+                    targetRepo: targetRepo,
+                    exportKind: exportKind,
+                    artifactPath: artifactPath,
+                    artifactManifestPath: artifactManifestPath,
                     json: values.flags.contains("--json")
                 )
             )
@@ -2814,6 +2890,22 @@ public actor MelixCLIRunner {
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
+        case .loraPublish(let options):
+            var ext = [
+                "target_repo": options.targetRepo,
+                "artifact_path": options.artifactPath,
+                "artifact_kind": options.exportKind.rawValue,
+            ]
+            if !options.artifactManifestPath.isEmpty {
+                ext["artifact_manifest_path"] = options.artifactManifestPath
+            }
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "upload",
+                outputDir: "",
+                ext: ext
+            )
+            return options.json ? result.manifestJson : result.outputPath
         case .benchRun(let options):
             let result = try await runBenchmark(options)
             if options.json {
@@ -3105,6 +3197,25 @@ public actor MelixCLIRunner {
             arguments.append("--json")
             return arguments
         case "upload":
+            let artifactKind = ext["artifact_kind"] ?? ""
+            if let exportKind = LoraPublishExportKind(rawValue: artifactKind) {
+                var arguments = ["lora", "publish", "--model-id", modelID]
+                appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
+                switch exportKind {
+                case .adapterExport:
+                    appendOption("--adapter-path", value: ext["artifact_path"], into: &arguments)
+                case .mergedExport:
+                    let artifactPath = ext["artifact_path"] ?? ""
+                    let manifestPath = ext["artifact_manifest_path"] ?? ""
+                    if manifestPath.isEmpty == false {
+                        appendOption("--manifest-path", value: manifestPath, into: &arguments)
+                    } else {
+                        appendOption("--merged-model-path", value: artifactPath, into: &arguments)
+                    }
+                }
+                arguments.append("--json")
+                return arguments
+            }
             var arguments = ["upload", "--model-id", modelID]
             if outputDir.isEmpty == false {
                 arguments.append(contentsOf: ["--output-dir", outputDir])
@@ -3764,9 +3875,10 @@ public actor MelixCLIRunner {
         }
 
         let adapters = payload["adapters"] as? [[String: Any]] ?? []
+        let derivedModels = payload["derived_models"] as? [[String: Any]] ?? []
         let experimentGroups = payload["experiment_groups"] as? [[String: Any]] ?? []
-        if adapters.isEmpty && experimentGroups.isEmpty {
-            return "No adapters found.\n"
+        if adapters.isEmpty && derivedModels.isEmpty && experimentGroups.isEmpty {
+            return "No adapters or derived models found.\n"
         }
 
         var sections: [String] = []
@@ -3775,9 +3887,31 @@ public actor MelixCLIRunner {
                 let name = (adapter["adapter_name"] as? String) ?? "adapter"
                 let status = (adapter["status"] as? String) ?? "unknown"
                 let sourceModel = (adapter["source_model"] as? String) ?? ""
-                return "\(name)\t\(status)\t\(sourceModel)"
+                let activationMode = (adapter["activation_mode"] as? String) ?? ""
+                let derivedModelID = (adapter["derived_model_id"] as? String) ?? ""
+                let publishedRepo = (adapter["published_repo"] as? String) ?? ""
+                let publishKind = (adapter["publish_artifact_kind"] as? String) ?? ""
+                return "\(name)\t\(status)\t\(sourceModel)\t\(activationMode)\t\(derivedModelID)\t\(publishedRepo)\t\(publishKind)"
             }
-            sections.append((["adapter\tstatus\tsource_model"] + adapterLines).joined(separator: "\n"))
+            sections.append(
+                (["adapter\tstatus\tsource_model\tactivation_mode\tderived_model_id\tpublished_repo\tpublish_artifact_kind"] + adapterLines)
+                    .joined(separator: "\n")
+            )
+        }
+
+        if derivedModels.isEmpty == false {
+            let derivedLines = derivedModels.map { derivedModel in
+                let modelID = (derivedModel["model_id"] as? String) ?? ""
+                let alias = (derivedModel["derived_model_alias"] as? String) ?? ""
+                let activationMode = (derivedModel["activation_mode"] as? String) ?? ""
+                let activationBackend = (derivedModel["activation_backend"] as? String) ?? ""
+                let sourceModel = (derivedModel["source_model"] as? String) ?? ""
+                return "\(modelID)\t\(alias)\t\(activationMode)\t\(activationBackend)\t\(sourceModel)"
+            }
+            sections.append(
+                (["derived_model_id\talias\tactivation_mode\tactivation_backend\tsource_model"] + derivedLines)
+                    .joined(separator: "\n")
+            )
         }
 
         if experimentGroups.isEmpty == false {

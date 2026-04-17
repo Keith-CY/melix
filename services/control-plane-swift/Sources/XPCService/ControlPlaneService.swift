@@ -3310,7 +3310,10 @@ public actor ControlPlaneService {
         }
 
         let adapterName = (payload["adapter_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        model.settings.alias = adapterName.isEmpty ? modelID : "\(adapterName) Activated"
+        let derivedModelAlias = (payload["derived_model_alias"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        model.settings.alias = derivedModelAlias.isEmpty
+            ? (adapterName.isEmpty ? modelID : "\(adapterName) Activated")
+            : derivedModelAlias
         model.settings.pinOnLoad = false
         model.settings.ext["melix.model_path"] = modelPath
         model.settings.ext["melix.model_revision"] = (payload["source_model_revision"] as? String) ?? "derived"

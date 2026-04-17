@@ -45,18 +45,29 @@ class LoRATrainingConfig:
     target_repo: str
 
 
+_DENSE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
+_DENSE_QKV_TARGETS = ["q_proj", "k_proj", "v_proj"]
+_DENSE_MLP_TARGETS = ["gate_proj", "up_proj", "down_proj"]
+_DENSE_FULL_TARGETS = [*_DENSE_ATTENTION_TARGETS, *_DENSE_MLP_TARGETS]
+
+_MIXTRAL_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
+_MIXTRAL_EXPERT_TARGETS = ["gate_proj", "up_proj", "down_proj"]
+_MIXTRAL_FULL_TARGETS = [*_MIXTRAL_ATTENTION_TARGETS, *_MIXTRAL_EXPERT_TARGETS]
+
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
+        "family_kind": "dense",
+        "support_tier": "stable",
         "default_total_layers": 2,
-        "default_target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        "default_target_preset": "attention_mlp",
+        "default_target_modules": list(_DENSE_FULL_TARGETS),
+        "target_module_presets": {
+            "default": list(_DENSE_FULL_TARGETS),
+            "attention": list(_DENSE_ATTENTION_TARGETS),
+            "mlp": list(_DENSE_MLP_TARGETS),
+            "attention_mlp": list(_DENSE_FULL_TARGETS),
+            "full": list(_DENSE_FULL_TARGETS),
+        },
         "module_templates": {
             "q_proj": "model.layers.{layer}.self_attn.q_proj",
             "k_proj": "model.layers.{layer}.self_attn.k_proj",
@@ -68,16 +79,19 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
         },
     },
     "qwen": {
+        "family_kind": "dense",
+        "support_tier": "stable",
         "default_total_layers": 2,
-        "default_target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        "default_target_preset": "attention_mlp",
+        "default_target_modules": list(_DENSE_FULL_TARGETS),
+        "target_module_presets": {
+            "default": list(_DENSE_FULL_TARGETS),
+            "attention": list(_DENSE_ATTENTION_TARGETS),
+            "qkv": list(_DENSE_QKV_TARGETS),
+            "mlp": list(_DENSE_MLP_TARGETS),
+            "attention_mlp": list(_DENSE_FULL_TARGETS),
+            "full": list(_DENSE_FULL_TARGETS),
+        },
         "module_templates": {
             "q_proj": "model.layers.{layer}.self_attn.q_proj",
             "k_proj": "model.layers.{layer}.self_attn.k_proj",
@@ -89,16 +103,19 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
         },
     },
     "gemma": {
+        "family_kind": "dense",
+        "support_tier": "stable",
         "default_total_layers": 2,
-        "default_target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        "default_target_preset": "attention_mlp",
+        "default_target_modules": list(_DENSE_FULL_TARGETS),
+        "target_module_presets": {
+            "default": list(_DENSE_FULL_TARGETS),
+            "attention": list(_DENSE_ATTENTION_TARGETS),
+            "gated_mlp": list(_DENSE_MLP_TARGETS),
+            "mlp": list(_DENSE_MLP_TARGETS),
+            "attention_mlp": list(_DENSE_FULL_TARGETS),
+            "full": list(_DENSE_FULL_TARGETS),
+        },
         "module_templates": {
             "q_proj": "model.layers.{layer}.self_attn.q_proj",
             "k_proj": "model.layers.{layer}.self_attn.k_proj",
@@ -110,16 +127,19 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
         },
     },
     "kimi": {
+        "family_kind": "dense",
+        "support_tier": "stable",
         "default_total_layers": 2,
-        "default_target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        "default_target_preset": "attention_mlp",
+        "default_target_modules": list(_DENSE_FULL_TARGETS),
+        "target_module_presets": {
+            "default": list(_DENSE_FULL_TARGETS),
+            "attention": list(_DENSE_ATTENTION_TARGETS),
+            "qkv": list(_DENSE_QKV_TARGETS),
+            "mlp": list(_DENSE_MLP_TARGETS),
+            "attention_mlp": list(_DENSE_FULL_TARGETS),
+            "full": list(_DENSE_FULL_TARGETS),
+        },
         "module_templates": {
             "q_proj": "model.layers.{layer}.self_attn.q_proj",
             "k_proj": "model.layers.{layer}.self_attn.k_proj",
@@ -131,16 +151,17 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
         },
     },
     "mixtral": {
+        "family_kind": "moe",
+        "support_tier": "experimental",
         "default_total_layers": 2,
-        "default_target_modules": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        "default_target_preset": "attention",
+        "default_target_modules": list(_MIXTRAL_ATTENTION_TARGETS),
+        "target_module_presets": {
+            "default": list(_MIXTRAL_ATTENTION_TARGETS),
+            "attention": list(_MIXTRAL_ATTENTION_TARGETS),
+            "experts": list(_MIXTRAL_EXPERT_TARGETS),
+            "full": list(_MIXTRAL_FULL_TARGETS),
+        },
         "module_templates": {
             "q_proj": "model.layers.{layer}.self_attn.q_proj",
             "k_proj": "model.layers.{layer}.self_attn.k_proj",
@@ -150,6 +171,39 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
             "up_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w3",
             "down_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w2",
         },
+    },
+}
+
+_ADVANCED_FAMILY_HOOKS: dict[str, dict[str, str]] = {
+    "mixtral": {
+        "family_kind": "moe",
+        "support_tier": "experimental",
+        "training_ready": "true",
+        "default_target_preset": "attention",
+    },
+    "qwen3moe": {
+        "family_kind": "moe",
+        "support_tier": "experimental",
+        "training_ready": "false",
+        "default_target_preset": "attention",
+    },
+    "deepseek-mla": {
+        "family_kind": "moe",
+        "support_tier": "experimental",
+        "training_ready": "false",
+        "default_target_preset": "attention",
+    },
+    "mistral4": {
+        "family_kind": "dense",
+        "support_tier": "experimental",
+        "training_ready": "false",
+        "default_target_preset": "attention",
+    },
+    "nemotron-h": {
+        "family_kind": "advanced_text",
+        "support_tier": "experimental",
+        "training_ready": "false",
+        "default_target_preset": "attention",
     },
 }
 
@@ -222,11 +276,19 @@ def normalize_training_config(
     preset = _resolve_training_preset(preset_id)
 
     family_id = _resolve_family_id(source_model)
+    family_hooks = _resolve_family_hooks(source_model, family_id=family_id)
     profile = _FAMILY_PROFILES.get(family_id)
     if profile is None:
         raise ModelOperationError(
             code="unsupported_model_family",
             message=f"Unsupported LoRA family: {family_id}",
+            details=family_hooks,
+        )
+    if family_hooks.get("training_ready", "true") != "true":
+        raise ModelOperationError(
+            code="unsupported_model_family",
+            message=f"LoRA training hooks for family {family_id} are not productized yet.",
+            details=family_hooks,
         )
 
     total_layer_count = _int_value(
@@ -249,11 +311,7 @@ def normalize_training_config(
     num_layers = min(requested_num_layers, total_layer_count)
     selected_layer_indices = list(range(total_layer_count - num_layers, total_layer_count))
 
-    configured_targets = [
-        item.strip()
-        for item in ext.get("target_modules", "").split(",")
-        if item.strip()
-    ] or list(profile["default_target_modules"])
+    configured_targets = _resolve_target_modules(ext.get("target_modules", ""), profile=profile)
 
     templates = profile["module_templates"]
     expanded_target_modules: list[str] = []
@@ -386,9 +444,17 @@ def _resolve_training_preset(preset_id: str) -> dict[str, object]:
 
 
 def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
+    explicit_lora = source_model.ext.get("melix.lora.family_id", "").strip().lower()
+    if explicit_lora:
+        return explicit_lora
+
     explicit = source_model.ext.get("text_family_id", "").strip().lower()
     if explicit:
         return explicit
+
+    detected = source_model.ext.get("detected_family_id", "").strip().lower()
+    if detected:
+        return detected
 
     searchable = " ".join(
         [
@@ -399,15 +465,71 @@ def _resolve_family_id(source_model: common_pb2.ModelSpec) -> str:
     )
     if "mixtral" in searchable:
         return "mixtral"
+    if "qwen3" in searchable and "moe" in searchable:
+        return "qwen3moe"
     if "qwen" in searchable:
         return "qwen"
     if "gemma" in searchable:
         return "gemma"
+    if "deepseek" in searchable:
+        return "deepseek-mla"
+    if "mistral4" in searchable or "mistral-small-4" in searchable:
+        return "mistral4"
+    if "nemotron_h" in searchable or "nemotron-h" in searchable:
+        return "nemotron-h"
     if "kimi" in searchable or "moonshot" in searchable:
         return "kimi"
     if any(token in searchable for token in ("mistral", "llama", "text")):
         return "llama"
     return "llama"
+
+
+def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str) -> dict[str, str]:
+    family_hooks = dict(_ADVANCED_FAMILY_HOOKS.get(family_id, {}))
+    ext = source_model.ext
+    family_hooks["family_id"] = family_id
+    family_hooks["family_kind"] = (
+        ext.get("melix.lora.family_kind", "").strip().lower()
+        or family_hooks.get("family_kind", "dense")
+    )
+    family_hooks["support_tier"] = (
+        ext.get("melix.lora.support_tier", "").strip().lower()
+        or family_hooks.get("support_tier", str(_FAMILY_PROFILES.get(family_id, {}).get("support_tier", "stable")))
+    )
+    family_hooks["training_ready"] = (
+        ext.get("melix.lora.training_ready", "").strip().lower()
+        or family_hooks.get("training_ready", "true")
+    )
+    family_hooks["default_target_preset"] = (
+        ext.get("melix.lora.default_target_preset", "").strip().lower()
+        or family_hooks.get(
+            "default_target_preset",
+            str(_FAMILY_PROFILES.get(family_id, {}).get("default_target_preset", "default")),
+        )
+    )
+    return family_hooks
+
+
+def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> list[str]:
+    presets = {
+        str(key).strip().lower(): [str(item).strip().lower() for item in value]
+        for key, value in profile.get("target_module_presets", {}).items()
+    }
+    default_targets = [str(item).strip().lower() for item in profile["default_target_modules"]]
+    requested = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
+    if not requested:
+        return default_targets
+
+    resolved_targets: list[str] = []
+    seen: set[str] = set()
+    for requested_target in requested:
+        target_key = requested_target.lstrip("@")
+        expanded_targets = presets.get(target_key, [requested_target])
+        for expanded_target in expanded_targets:
+            if expanded_target not in seen:
+                seen.add(expanded_target)
+                resolved_targets.append(expanded_target)
+    return resolved_targets
 
 
 def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]:

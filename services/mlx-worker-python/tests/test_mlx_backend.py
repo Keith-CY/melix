@@ -289,6 +289,19 @@ def test_auto_backend_resolves_adapter_weights_from_manifest_when_ext_omits_them
     assert loaded_model["adapter_weights_path"] == str(weights_path)
 
 
+def test_auto_backend_rejects_adapter_backed_runtime_without_manifest_metadata() -> None:
+    backend = AutoMLXBackend(
+        load_fn=lambda *args, **kwargs: (object(), FakeTokenizer()),
+        stream_generate_fn=lambda **kwargs: iter(()),
+        sampler_factory=lambda **kwargs: "unused",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+
+    with pytest.raises(RuntimeError, match="adapter_manifest_path"):
+        backend.load_model(model_spec)
+
+
 def test_auto_backend_rejects_adapter_backed_runtime_without_weights_metadata() -> None:
     backend = AutoMLXBackend(
         load_fn=lambda *args, **kwargs: (object(), FakeTokenizer()),
@@ -297,6 +310,7 @@ def test_auto_backend_rejects_adapter_backed_runtime_without_weights_metadata() 
     )
     model_spec = WorkerModelCatalog.dev_text_model()
     model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
 
     with pytest.raises(RuntimeError, match="adapter_weights_path"):
         backend.load_model(model_spec)

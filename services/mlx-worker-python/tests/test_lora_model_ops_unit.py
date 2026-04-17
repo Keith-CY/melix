@@ -9,11 +9,14 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
+from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.lora_training_pipeline import _int_ext
+from worker.model_ops.mlx_lm_runner import MLXLMRunner
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
 
 
@@ -62,6 +65,59 @@ def _text_model(*, model_path: str = "models/plain-llama", quant_profile_id: str
         model.ext["text_family_id"] = family_id
     model.ext["text_layer_count"] = "2"
     return model
+
+
+class _UnexpectedActivationRunner(MLXLMRunner):
+    def activate(self, request):  # noqa: ANN001
+        raise AssertionError("adapter_backed_runtime should not invoke fused activation")
+
+
+
+def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_contract(tmp_path: Path) -> None:
+    weights_dir = tmp_path / "adapter-weights"
+    weights_dir.mkdir(parents=True)
+    manifest_path = tmp_path / "train_lora.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "weights_path": str(weights_dir / "adapters.safetensors"),
+                "adapter_name": "unit-adapter",
+                "adapter_set_hash": "adapter-hash-1234",
+                "job_id": "model-ops-0001",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_model = _text_model(model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit", quant_profile_id="q4")
+    source_model.parser_mode = "structured"
+    source_model.reasoning_mode = "separate"
+    source_model.tokenizer_hash = "tok-hash-a"
+    source_model.ext["text_family_id"] = "qwen"
+
+    result = AdapterActivationPipeline(runner=_UnexpectedActivationRunner()).run(
+        job_id="model-ops-0002",
+        request_ext={
+            "artifact_path": str(manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+            "derived_model_alias": "Runtime Alias",
+        },
+        source_model=source_model,
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["activation_mode"] == "adapter_backed_runtime"
+    assert result.manifest["adapter_manifest_path"] == str(manifest_path)
+    assert result.manifest["adapter_weights_path"] == str(weights_dir / "adapters.safetensors")
+    assert result.manifest["source_model_kind"] == "text"
+    assert result.manifest["source_model_parser_mode"] == "structured"
+    assert result.manifest["source_model_reasoning_mode"] == "separate"
+    assert result.manifest["source_model_quant_profile_id"] == "q4"
+    assert result.manifest["source_model_tokenizer_hash"] == "tok-hash-a"
+    assert result.manifest["source_model_ext"]["text_family_id"] == "qwen"
+
 
 
 def test_normalize_training_config_rejects_non_text_models() -> None:
@@ -607,3 +663,83 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.resume_ready is True
     assert result.metrics.tokens_per_second == pytest.approx(60.0)
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("weights_path_value", [None, ""])
+def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(
+    tmp_path: Path,
+    weights_path_value: object,
+) -> None:
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-alpha",
+                "adapter_name": "demo-adapter",
+                "weights_path": weights_path_value,
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    pipeline = AdapterActivationPipeline()
+
+    with pytest.raises(ModelOperationError) as exc:
+        pipeline.run(
+            job_id="activate-1",
+            request_ext={
+                "artifact_path": str(adapter_manifest_path),
+                "activation_mode": "adapter_backed_runtime",
+            },
+            source_model=_text_model(model_path=str(tmp_path / "base-model")),
+            output_dir=tmp_path / "activate",
+        )
+
+    assert exc.value.code == "activation_failure"
+    assert "weights_path" in exc.value.message
+
+
+def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_path: Path) -> None:
+    adapter_weights_path = tmp_path / "weights" / "adapters.safetensors"
+    adapter_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_weights_path.write_text("adapter", encoding="utf-8")
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-beta",
+                "adapter_name": "demo-adapter",
+                "weights_path": str(adapter_weights_path),
+                "desired_derived_model_alias": "Demo Alias",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    class GuardRunner:
+        def activate(self, request) -> None:  # pragma: no cover - should never be called
+            raise AssertionError(f"unexpected fused activation request: {request}")
+
+    pipeline = AdapterActivationPipeline(runner=GuardRunner())
+    result = pipeline.run(
+        job_id="activate-2",
+        request_ext={
+            "artifact_path": str(adapter_manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["schema_version"] == "melix.derived_text_model.v1"
+    assert result.manifest["activation_mode"] == "adapter_backed_runtime"
+    assert result.manifest["activation_backend"] == "internal"
+    assert result.manifest["adapter_manifest_path"] == str(adapter_manifest_path)
+    assert result.manifest["adapter_weights_path"] == str(adapter_weights_path)
+    assert result.manifest["derived_model_path"] == str(tmp_path / "base-model")
+    assert result.manifest["derived_model_alias"] == "Demo Alias"
+    assert result.manifest_path.exists()

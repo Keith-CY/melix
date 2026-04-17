@@ -50,6 +50,10 @@ class PreparedPublishSource:
     published_files: list[str]
 
 
+_ADAPTER_EXPORT_KINDS = {"adapter", "adapter_export"}
+_MERGED_EXPORT_KINDS = {"merged", "merged_export", "converted_model_bundle"}
+
+
 class HuggingFacePublishBackend:
     def publish(
         self,
@@ -150,6 +154,10 @@ class UploadReceiptPipeline:
             )
         runtime = ""
         source_manifest = descriptor.manifest_payload or {}
+        export_artifact_kind = self._resolve_export_artifact_kind(
+            descriptor=descriptor,
+            requested_kind=request.ext.get("artifact_kind", "").strip(),
+        )
         compatibility = source_manifest.get("compatibility")
         if isinstance(compatibility, dict):
             runtime = str(compatibility.get("runtime", "")).strip()
@@ -158,11 +166,12 @@ class UploadReceiptPipeline:
             descriptor,
             receipt_dir=receipt_path.parent,
             target_repo=target_repo,
+            export_artifact_kind=export_artifact_kind,
         )
         publish_result = self._publisher.publish(
             source_path=prepared_source.source_path,
             target_repo=target_repo,
-            artifact_kind=descriptor.artifact_kind,
+            artifact_kind=export_artifact_kind,
             token=self._resolve_hf_token(request.ext),
             private=_bool_ext(request.ext, "hf_private"),
             commit_message=self._commit_message(descriptor, target_repo),
@@ -177,6 +186,7 @@ class UploadReceiptPipeline:
             "source_model": request.source_model,
             "target_repo": target_repo,
             "artifact_path": descriptor.artifact_path,
+            "export_artifact_kind": export_artifact_kind,
             "source_artifact_kind": descriptor.artifact_kind,
             "source_artifact_schema_version": descriptor.schema_version,
             "source_manifest_path": descriptor.manifest_path,
@@ -195,12 +205,27 @@ class UploadReceiptPipeline:
             linked_quantization = self._linked_quantization(source_manifest)
             if linked_quantization is not None:
                 manifest_payload["linked_quantization"] = linked_quantization
+            parent_lineage = self._parent_lineage(
+                descriptor=descriptor,
+                source_manifest=source_manifest,
+                export_artifact_kind=export_artifact_kind,
+            )
+            if parent_lineage:
+                manifest_payload["parent_lineage"] = parent_lineage
             if descriptor.artifact_kind == "adapter":
                 manifest_payload["adapter_name"] = str(source_manifest.get("adapter_name", ""))
                 manifest_payload["source_adapter_job_id"] = str(source_manifest.get("job_id", ""))
+                manifest_payload["distribution_contract"] = "adapter_only"
             if descriptor.artifact_kind == "converted_model_bundle":
                 manifest_payload["target_format"] = str(source_manifest.get("target_format", ""))
                 manifest_payload["conversion_backend"] = str(source_manifest.get("conversion_backend", ""))
+                manifest_payload["distribution_contract"] = "merged_model"
+            if descriptor.schema_version == "melix.derived_text_model.v1":
+                manifest_payload["derived_model_id"] = str(source_manifest.get("derived_model_id", ""))
+                manifest_payload["source_activation_job_id"] = str(source_manifest.get("job_id", ""))
+                manifest_payload["activation_mode"] = str(source_manifest.get("activation_mode", ""))
+                if export_artifact_kind == "merged_export":
+                    manifest_payload["distribution_contract"] = "merged_model"
 
         manifest_bytes = 0
         artifact_bytes = 0
@@ -230,6 +255,7 @@ class UploadReceiptPipeline:
         *,
         receipt_dir: Path,
         target_repo: str,
+        export_artifact_kind: str,
     ) -> PreparedPublishSource:
         source_path = Path(descriptor.artifact_path).expanduser().resolve()
         if not source_path.exists():
@@ -237,6 +263,15 @@ class UploadReceiptPipeline:
                 code="invalid_artifact",
                 message="upload requires a valid local artifact_path.",
             )
+        if export_artifact_kind == "merged_export":
+            merged_source = self._resolve_merged_publish_source(descriptor, source_path)
+            published_files = sorted(
+                str(path.relative_to(merged_source))
+                for path in merged_source.rglob("*")
+                if path.is_file()
+            )
+            return PreparedPublishSource(source_path=merged_source, published_files=published_files)
+
         if descriptor.artifact_kind != "adapter" or descriptor.manifest_payload is None:
             if source_path.is_dir():
                 published_files = sorted(
@@ -288,6 +323,92 @@ class UploadReceiptPipeline:
             ),
         )
 
+    @staticmethod
+    def _resolve_export_artifact_kind(
+        *,
+        descriptor: SourceArtifactDescriptor,
+        requested_kind: str,
+    ) -> str:
+        normalized_requested = requested_kind.strip()
+        if normalized_requested in _ADAPTER_EXPORT_KINDS:
+            if descriptor.artifact_kind != "adapter":
+                raise ModelOperationError(
+                    code="invalid_argument",
+                    message="Adapter export requires an adapter artifact_path.",
+                )
+            return "adapter_export"
+        if normalized_requested in _MERGED_EXPORT_KINDS:
+            if UploadReceiptPipeline._is_merged_publishable_descriptor(descriptor) is False:
+                raise ModelOperationError(
+                    code="invalid_argument",
+                    message="Merged export requires a fused derived-model artifact or converted model bundle.",
+                )
+            return "merged_export"
+        if descriptor.artifact_kind == "adapter":
+            return "adapter_export"
+        if UploadReceiptPipeline._is_merged_publishable_descriptor(descriptor):
+            return "merged_export"
+        return "model_export"
+
+    @staticmethod
+    def _is_merged_publishable_descriptor(descriptor: SourceArtifactDescriptor) -> bool:
+        if descriptor.artifact_kind == "converted_model_bundle":
+            return True
+        manifest_payload = descriptor.manifest_payload or {}
+        return (
+            descriptor.schema_version == "melix.derived_text_model.v1"
+            and str(manifest_payload.get("activation_mode", "")).strip() == "fused_derived_model"
+        )
+
+    @staticmethod
+    def _resolve_merged_publish_source(
+        descriptor: SourceArtifactDescriptor,
+        source_path: Path,
+    ) -> Path:
+        if source_path.is_dir():
+            return source_path
+        manifest_payload = descriptor.manifest_payload or {}
+        if descriptor.artifact_kind == "converted_model_bundle" and source_path.is_file():
+            parent_dir = source_path.parent
+            if (parent_dir / "manifest.json").is_file():
+                return parent_dir
+        if descriptor.schema_version == "melix.derived_text_model.v1":
+            activation_mode = str(manifest_payload.get("activation_mode", "")).strip()
+            derived_model_path = Path(str(manifest_payload.get("derived_model_path", "")).strip()).expanduser()
+            if activation_mode != "fused_derived_model":
+                raise ModelOperationError(
+                    code="invalid_argument",
+                    message="Merged export requires a fused derived-model activation output.",
+                )
+            if derived_model_path.is_dir():
+                return derived_model_path.resolve()
+        raise ModelOperationError(
+            code="invalid_artifact",
+            message="Merged export requires a publishable local directory.",
+        )
+
+    @staticmethod
+    def _parent_lineage(
+        *,
+        descriptor: SourceArtifactDescriptor,
+        source_manifest: dict[str, Any],
+        export_artifact_kind: str,
+    ) -> dict[str, Any]:
+        parent_lineage = {
+            "local_artifact_path": descriptor.artifact_path,
+            "local_manifest_path": descriptor.manifest_path,
+            "source_artifact_kind": descriptor.artifact_kind,
+            "source_schema_version": descriptor.schema_version,
+            "source_job_id": str(source_manifest.get("job_id", "")).strip(),
+            "source_model": descriptor.source_model,
+            "export_artifact_kind": export_artifact_kind,
+        }
+        if descriptor.schema_version == "melix.derived_text_model.v1":
+            parent_lineage["derived_model_id"] = str(source_manifest.get("derived_model_id", "")).strip()
+            parent_lineage["activation_mode"] = str(source_manifest.get("activation_mode", "")).strip()
+            parent_lineage["source_adapter_job_id"] = str(source_manifest.get("source_adapter_job_id", "")).strip()
+        return {key: value for key, value in parent_lineage.items() if value not in {"", None}}
+
     def _resolve_source_artifact(
         self,
         request: maintenance_pb2.ConvertModelRequest,
@@ -334,14 +455,22 @@ class UploadReceiptPipeline:
                 manifest_payload=None,
             )
 
+        inferred_artifact_kind = self._inferred_artifact_kind_from_manifest(manifest_payload)
         return SourceArtifactDescriptor(
             artifact_path=str(artifact_path),
-            artifact_kind=str(manifest_payload.get("artifact_kind", "")).strip() or requested_kind or "model",
+            artifact_kind=inferred_artifact_kind or str(manifest_payload.get("artifact_kind", "")).strip() or requested_kind or "model",
             schema_version=str(manifest_payload.get("schema_version", "")).strip(),
             manifest_path=str(manifest_path),
             source_model=str(manifest_payload.get("source_model", "")).strip(),
             manifest_payload=manifest_payload,
         )
+
+    @staticmethod
+    def _inferred_artifact_kind_from_manifest(manifest_payload: dict[str, Any]) -> str:
+        schema_version = str(manifest_payload.get("schema_version", "")).strip()
+        if schema_version == "melix.derived_text_model.v1":
+            return "derived_text_model"
+        return ""
 
     @staticmethod
     def _linked_quantization(manifest_payload: dict[str, Any]) -> dict[str, Any] | None:

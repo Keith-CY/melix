@@ -42,8 +42,13 @@ def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
         return {}
 
     adapter_manifest_path = _normalized_ext_value(model_spec, "melix.adapter_manifest_path")
+    if not adapter_manifest_path:
+        raise RuntimeError(
+            "Adapter-backed runtime model is missing adapter_manifest_path metadata."
+        )
+
     adapter_weights_path = _normalized_ext_value(model_spec, "melix.adapter_weights_path")
-    if not adapter_weights_path and adapter_manifest_path:
+    if not adapter_weights_path:
         manifest_path = Path(adapter_manifest_path).expanduser()
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))

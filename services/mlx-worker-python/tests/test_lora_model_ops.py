@@ -23,6 +23,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.training_dataset import (
     HFDatasetReference,
@@ -78,7 +79,11 @@ class SuccessfulRunner(MLXLMRunner):
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        checkpoint_dir = request.adapter_output_dir / "checkpoint-2"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
         weights_path.write_bytes(b"melix-test-adapter")
+        latest_checkpoint_path.write_bytes(b"melix-test-checkpoint")
         adapter_config_path.write_text(
             json.dumps(
                 {
@@ -109,6 +114,8 @@ class SuccessfulRunner(MLXLMRunner):
                 learning_rate_final=1e-4,
                 checkpoint_count=2,
                 resume_ready=True,
+                latest_checkpoint_path=str(latest_checkpoint_path),
+                resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=128.5,
                 peak_memory_gb=5.25,
             ),
@@ -158,7 +165,11 @@ class NativeUnavailableRunner(SuccessfulRunner):
         request.adapter_output_dir.mkdir(parents=True, exist_ok=True)
         weights_path = request.adapter_output_dir / "adapters.safetensors"
         adapter_config_path = request.adapter_output_dir / "adapter_config.json"
+        checkpoint_dir = request.adapter_output_dir / "checkpoint-2"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
         weights_path.write_bytes(b"melix-test-adapter")
+        latest_checkpoint_path.write_bytes(b"melix-test-checkpoint")
         adapter_config_path.write_text(
             json.dumps(
                 {
@@ -187,6 +198,8 @@ class NativeUnavailableRunner(SuccessfulRunner):
                 learning_rate_final=1e-4,
                 checkpoint_count=2,
                 resume_ready=True,
+                latest_checkpoint_path=str(latest_checkpoint_path),
+                resume_source_path=str(request.resume_source_path or ""),
                 tokens_per_second=128.5,
                 peak_memory_gb=5.25,
             ),
@@ -207,6 +220,24 @@ def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceServ
         adapter_activation_pipeline=AdapterActivationPipeline(runner=runner),
     )
     return service
+
+
+def _configure_lora_family(
+    source_model: common_pb2.ModelSpec,
+    *,
+    model_path: str,
+    family_id: str,
+    family_kind: str,
+    support_tier: str,
+    training_ready: bool = True,
+    default_target_preset: str,
+) -> None:
+    source_model.model_path = model_path
+    source_model.ext["melix.lora.family_id"] = family_id
+    source_model.ext["melix.lora.family_kind"] = family_kind
+    source_model.ext["melix.lora.support_tier"] = support_tier
+    source_model.ext["melix.lora.training_ready"] = "true" if training_ready else "false"
+    source_model.ext["melix.lora.default_target_preset"] = default_target_preset
 
 
 class FakeHFDatasetFetcher:
@@ -319,10 +350,14 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
     assert payload["preset_title"] == "Balanced Adapter"
     assert payload["experiment_group_id"] == "nightly-qwen35"
     assert payload["checkpoint_count"] == 2
+    assert payload["latest_checkpoint_path"].endswith("checkpoint-2/adapters.safetensors")
+    assert payload["resume_source_path"] == ""
     assert payload["resume_ready"] is True
     assert payload["tokens_per_second"] == 128.5
     assert payload["peak_memory_gb"] == 5.25
     assert payload["experiment.checkpoint_count"] == 2
+    assert payload["experiment.latest_checkpoint_path"].endswith("checkpoint-2/adapters.safetensors")
+    assert payload["experiment.resume_source_path"] == ""
     assert payload["experiment.resume_ready"] is True
     assert payload["training.tokens_per_second"] == 128.5
     assert payload["training.peak_memory_gb"] == 5.25
@@ -348,6 +383,70 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
         "model.layers.1.mlp.gate_proj",
     ]
 
+
+def test_train_lora_records_resume_manifest_metadata_and_reuses_checkpoint_path(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-resume",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+
+    first_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-initial"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-resume-source",
+                    "dataset_uri": str(dataset_dir),
+                    "experiment_group_id": "nightly-qwen35",
+                },
+            ),
+            context=None,
+        )
+    )
+    first_payload = json.loads(
+        next(event.manifest for event in first_events if event.HasField("manifest")).manifest_json
+    )
+
+    resume_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-resumed"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-resumed-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "experiment_group_id": "nightly-qwen35",
+                    "resume_manifest_path": first_payload["artifact_path"],
+                },
+            ),
+            context=None,
+        )
+    )
+    resume_payload = json.loads(
+        next(event.manifest for event in resume_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.resume_source_path is not None
+    assert str(runner.last_train_request.resume_source_path) == first_payload["latest_checkpoint_path"]
+    assert resume_payload["resume_source_path"] == first_payload["latest_checkpoint_path"]
+    assert resume_payload["resume_source_manifest_path"] == first_payload["artifact_path"]
+    assert resume_payload["resume_source_job_id"] == first_payload["job_id"]
+    assert resume_payload["experiment.resume_source_path"] == first_payload["latest_checkpoint_path"]
 
 def test_resolve_training_dataset_rejects_invalid_source_kind_and_missing_hf_path(tmp_path: Path) -> None:
     with pytest.raises(Exception) as invalid_source:
@@ -517,6 +616,404 @@ def test_train_lora_rejects_qlora_for_non_quantized_base_model(tmp_path: Path) -
     )
 
     assert events[-1].failed.error.code == "unsupported_training_mode"
+
+
+def test_train_lora_resolves_qwen_attention_preset_and_catalog_support_metadata(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        family_id="qwen",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-qwen-attention-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "@attention",
+                    "num_layers": "2",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert source_model.ext["melix.lora.family_id"] == "qwen"
+    assert source_model.ext["melix.lora.family_kind"] == "dense"
+    assert source_model.ext["melix.lora.support_tier"] == "stable"
+    assert source_model.ext["melix.lora.default_target_preset"] == "attention_mlp"
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert runner.last_train_request.config.backend_target_modules == [
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+    ]
+    assert payload["target_modules"] == [
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.1.self_attn.v_proj",
+        "model.layers.0.self_attn.o_proj",
+        "model.layers.1.self_attn.o_proj",
+    ]
+
+
+def test_train_lora_resolves_gemma_gated_mlp_preset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+
+    _configure_lora_family(
+        source_model,
+        model_path="google/gemma-3-4b-it",
+        family_id="gemma",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+    gemma_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "gemma-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-gemma-mlp-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "gated_mlp",
+                },
+            ),
+            context=None,
+        )
+    )
+    gemma_payload = json.loads(next(event.manifest for event in gemma_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "gemma"
+    assert runner.last_train_request.config.target_modules == ["gate_proj", "up_proj", "down_proj"]
+    assert gemma_payload["target_modules"] == [
+        "model.layers.0.mlp.gate_proj",
+        "model.layers.1.mlp.gate_proj",
+        "model.layers.0.mlp.up_proj",
+        "model.layers.1.mlp.up_proj",
+        "model.layers.0.mlp.down_proj",
+        "model.layers.1.mlp.down_proj",
+    ]
+
+
+def test_train_lora_resolves_kimi_qkv_preset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+
+    _configure_lora_family(
+        source_model,
+        model_path="moonshotai/Kimi-K2-Instruct-0905",
+        family_id="kimi",
+        family_kind="dense",
+        support_tier="stable",
+        default_target_preset="attention_mlp",
+    )
+    kimi_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "kimi-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-kimi-qkv-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "qkv",
+                },
+            ),
+            context=None,
+        )
+    )
+    kimi_payload = json.loads(next(event.manifest for event in kimi_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "kimi"
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj"]
+    assert kimi_payload["target_modules"] == [
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.1.self_attn.v_proj",
+    ]
+
+
+def test_train_lora_separates_moe_hooks_from_dense_defaults(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Mixtral-8x7B-Instruct-4bit",
+        family_id="mixtral",
+        family_kind="moe",
+        support_tier="experimental",
+        default_target_preset="attention",
+    )
+    mixtral_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "mixtral-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-mixtral-attention-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    mixtral_payload = json.loads(next(event.manifest for event in mixtral_events if event.HasField("manifest")).manifest_json)
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "mixtral"
+    assert runner.last_train_request.config.target_modules == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert all("block_sparse_moe" not in item for item in mixtral_payload["target_modules"])
+
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+        family_id="qwen3moe",
+        family_kind="moe",
+        support_tier="experimental",
+        training_ready=False,
+        default_target_preset="attention",
+    )
+    unsupported_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "qwen3moe-train"),
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-qwen3moe-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert unsupported_events[-1].failed.error.code == "unsupported_model_family"
+    assert unsupported_events[-1].failed.error.details["family_id"] == "qwen3moe"
+    assert unsupported_events[-1].failed.error.details["family_kind"] == "moe"
+    assert unsupported_events[-1].failed.error.details["support_tier"] == "experimental"
+    assert unsupported_events[-1].failed.error.details["training_ready"] == "false"
+
+
+def test_training_config_validates_direct_error_paths() -> None:
+    non_text_model = common_pb2.ModelSpec(model_id="embed", model_kind="embedding")
+    with pytest.raises(Exception) as non_text_error:
+        training_config_module.normalize_training_config(
+            source_model=non_text_model,
+            ext={},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert non_text_error.value.code == "unsupported_model_family"
+
+    text_model = common_pb2.ModelSpec(
+        model_id="plain-text",
+        model_path="models/plain-llama",
+        model_kind="text",
+        revision="dev",
+        max_context=2048,
+        ext={"text_family_id": "llama"},
+    )
+    with pytest.raises(Exception) as bad_mode_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"training_mode": "dora"},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert bad_mode_error.value.code == "unsupported_training_mode"
+
+    with pytest.raises(Exception) as preset_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"preset_id": "unknown-preset"},
+            dataset_format="text_completion",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert preset_error.value.code == "invalid_training_preset"
+
+    with pytest.raises(Exception) as response_error:
+        training_config_module.normalize_training_config(
+            source_model=text_model,
+            ext={"response_only": "true"},
+            dataset_format="prompt_completion",
+            response_only_supported=False,
+            sample_count=1,
+        )
+    assert response_error.value.code == "invalid_dataset_package"
+
+
+def test_training_config_helper_resolution_paths_and_limits() -> None:
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="explicit", model_kind="text", ext={"melix.lora.family_id": "qwen"})
+    ) == "qwen"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="detected", model_kind="text", ext={"detected_family_id": "gemma"})
+    ) == "gemma"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/deepseek-v3")
+    ) == "deepseek-mla"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/mistral-small-4")
+    ) == "mistral4"
+    assert training_config_module._resolve_family_id(
+        common_pb2.ModelSpec(model_id="heuristic", model_kind="text", model_path="models/nemotron-h")
+    ) == "nemotron-h"
+
+    hooks = training_config_module._resolve_family_hooks(
+        common_pb2.ModelSpec(
+            model_id="mixtral",
+            model_kind="text",
+            ext={"melix.lora.family_kind": "moe", "melix.lora.support_tier": "experimental"},
+        ),
+        family_id="mixtral",
+    )
+    assert hooks["family_kind"] == "moe"
+    assert hooks["support_tier"] == "experimental"
+    assert hooks["default_target_preset"] == "attention"
+
+    mistral4_hooks = training_config_module._resolve_family_hooks(
+        common_pb2.ModelSpec(model_id="mistral4", model_kind="text"),
+        family_id="mistral4",
+    )
+    assert mistral4_hooks["family_kind"] == "dense"
+    assert mistral4_hooks["support_tier"] == "experimental"
+    assert mistral4_hooks["training_ready"] == "false"
+
+    # Mixed preset aliases and literal module names should collapse to one deduplicated target set.
+    qwen_targets = training_config_module._resolve_target_modules(
+        "@attention,q_proj,attention",
+        profile=training_config_module._FAMILY_PROFILES["qwen"],
+    )
+    assert qwen_targets == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert training_config_module._resolve_target_modules(
+        "",
+        profile=training_config_module._FAMILY_PROFILES["mixtral"],
+    ) == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert training_config_module._backend_target_modules(["standalone.module"]) == ["standalone.module"]
+
+    bounded = training_config_module.normalize_training_config(
+        source_model=common_pb2.ModelSpec(
+            model_id="bounded",
+            model_path="models/qwen",
+            model_kind="text",
+            revision="dev",
+            max_context=4096,
+            quant_profile_id="q4",
+            ext={
+                "text_family_id": "qwen",
+                "text_layer_count": "4",
+                "melix.lora.family_id": "qwen",
+                "melix.lora.family_kind": "dense",
+                "melix.lora.support_tier": "stable",
+                "melix.lora.training_ready": "true",
+                "melix.lora.default_target_preset": "attention_mlp",
+            },
+        ),
+        ext={
+            "training_mode": "qlora",
+            "batch_size": "4",
+            "epochs": "3",
+            "max_steps": "2",
+            "preset_id": "balanced_adapter",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+        validation_sample_count=1,
+    )
+    assert bounded.iters == 2
+    assert bounded.steps_per_eval == 2
+
+    with pytest.raises(Exception) as int_error:
+        training_config_module._int_value("0", default=1, minimum=1, field_name="rank")
+    assert int_error.value.code == "invalid_argument"
+
+    with pytest.raises(Exception) as float_error:
+        training_config_module._float_value("-0.5", default=0.0, minimum=0.0, field_name="dropout")
+    assert float_error.value.code == "invalid_argument"
 
 
 def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_path: Path) -> None:
@@ -1115,10 +1612,27 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert activation_payload["base_model_repo_id"] == "melix-dev-text"
     assert activation_payload["adapter_manifest_path"] == adapter_manifest_path
     assert activation_payload["adapter_weights_path"].endswith("adapters.safetensors")
+    assert activation_payload["source_model_kind"] == "text"
+    assert activation_payload["source_model_ext"]["text_family_id"] == "llama"
     assert activation_payload["derived_model_path"] == source_model.model_path
     assert activation_payload["remove_supported"] is True
+    assert snapshot_payload["adapters"][0]["activation_mode"] == "adapter_backed_runtime"
+    assert snapshot_payload["adapters"][0]["activation_backend"] == "internal"
+    assert snapshot_payload["adapters"][0]["adapter_weights_path"] == activation_payload["adapter_weights_path"]
     assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
+    assert snapshot_payload["derived_models"][0]["activation_backend"] == "internal"
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
+
+    registered_model = service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
+    assert registered_model is not None
+    assert registered_model.model_path == source_model.model_path
+    assert registered_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
+    assert registered_model.ext["melix.adapter_manifest_path"] == adapter_manifest_path
+    loaded = service._core._registry.load_model(
+        common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
+    )
+    assert loaded.spec.model_id == activation_payload["derived_model_id"]
+    assert loaded.spec.ext["melix.adapter_weights_path"] == activation_payload["adapter_weights_path"]
 
 
 def test_activate_adapter_rejects_unknown_activation_mode(tmp_path: Path) -> None:
@@ -1273,6 +1787,68 @@ def test_remove_derived_model_deletes_artifacts_and_prunes_registry_snapshot(tmp
     assert service._core._registry.list_loaded_models() == []
     assert snapshot_payload["derived_models"] == []
     assert snapshot_payload["adapters"][0]["activation_status"] == "removed"
+
+
+
+def test_adapter_backed_runtime_catalog_registration_restores_from_jobs_root(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "activation_mode": "adapter_backed_runtime",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    restored_service = _build_service(tmp_path, SuccessfulRunner())
+    restored_model = restored_service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
+
+    assert restored_model is not None
+    assert restored_model.model_path == activation_payload["derived_model_path"]
+    assert restored_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
+    loaded = restored_service._core._registry.load_model(
+        common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
+    )
+    assert loaded.spec.ext["melix.adapter_manifest_path"] == adapter_manifest_path
 
 
 def test_remove_derived_model_requires_a_known_target(tmp_path: Path) -> None:

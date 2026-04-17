@@ -10,6 +10,7 @@ Prepare a local dataset package, train a Melix LoRA adapter, activate it into a 
 - the source model is a text-capable Melix model summary
 - the dataset exists either as a local `melix.training_dataset_package.v1` or as a supported Hugging Face dataset configuration
 - the target model family is supported by the current LoRA config mapper
+- operators understand whether the chosen family is stable, experimental, or currently blocked for LoRA training
 
 ## Window UI And CLI Entry Points
 
@@ -110,7 +111,7 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "dataset_uri": "/absolute/path/to/dataset",
   "training_mode": "qlora",
   "target_repo": "melix/adapters/melix-dev-adapter",
-  "target_modules": "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+  "target_modules": "attention_mlp",
   "num_layers": "8",
   "rank": "16",
   "alpha": "32",
@@ -164,10 +165,40 @@ Expected training behavior:
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix supports both `lora` and `qlora` through the same `train_lora` surface
 - if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
-- Melix expands compact target modules into family-specific module paths
+- Melix expands compact target modules or preset groups into family-specific module paths
+- supported preset groups currently include `attention`, `mlp`, `attention_mlp`, and `full`; `qwen` plus `kimi` also accept `qkv`, `gemma` also accepts `gated_mlp`, and experimental `mixtral` also accepts `experts`
+- dense-family defaults stay on the family-owned `attention_mlp` baseline, while experimental MoE families default to `attention` unless the operator explicitly opts into expert modules
 - Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
 - the completed artifact is `train_lora.adapter.json` with schema `melix.lora_adapter_package.v1`
+
+## Family Support Boundaries
+
+Stable LoRA training families:
+
+- `llama`
+- `qwen`
+- `gemma`
+- `kimi`
+
+Experimental LoRA training families:
+
+- `mixtral` is exposed through separate MoE hooks and currently defaults to `attention` targets only; expert-module presets are available but should be treated as an operator-tuned path
+
+Explicitly unsupported or not-yet-productized LoRA families:
+
+- `qwen3moe`
+- `deepseek-mla`
+- `mistral4`
+- `nemotron-h`
+- embedding-family models and other non-text capability classes
+
+Operator guidance:
+
+- prefer the family default unless you have repeatable evaluation evidence for a narrower preset
+- use `attention` or `qkv` first when validating a new dense family rollout
+- treat MoE expert targeting as experimental and record compare evidence before promoting an adapter for wider use
+- if the registry marks `melix.lora.training_ready = false`, do not expect `train_lora` to accept that family yet
 
 ## Activate Adapter
 
@@ -216,27 +247,61 @@ For operator state inspection, request a `registry_snapshot` and confirm:
 - the adapter row shows `activation_status = "activated"` or `published_state = "published"` as appropriate
 - the `derived_models` list contains the activated derived model entry
 
-## Publish Adapter
+## Publish Adapter Or Merged Artifact
 
-Publish the adapter package, not the fused local serving directory.
+Melix now treats adapter-only export and merged-model export as separate distribution contracts.
+Use adapter export when you want a reusable LoRA package for downstream activation. Use merged export
+only when you intentionally want to distribute a fused derived model directory.
 
-Trigger `RunModelOperation(upload)` with adapter metadata:
+Adapter publish request:
 
 ```json
 {
   "operation": "upload",
-  "artifact_kind": "adapter",
+  "artifact_kind": "adapter_export",
   "artifact_path": "/absolute/path/to/train_lora.adapter.json",
   "adapter_name": "melix-dev-adapter",
   "target_repo": "melix/adapters/melix-dev-adapter"
 }
 ```
 
+Equivalent CLI example:
+
+```bash
+swift run melix lora publish \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-repo melix/adapters/melix-dev-adapter \
+  --adapter-path /absolute/path/to/train_lora.adapter.json
+```
+
+Merged publish request from a fused activation manifest:
+
+```json
+{
+  "operation": "upload",
+  "artifact_kind": "merged_export",
+  "artifact_path": "/absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json",
+  "artifact_manifest_path": "/absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json",
+  "target_repo": "melix/models/melix-dev-fused"
+}
+```
+
+Equivalent CLI example:
+
+```bash
+swift run melix lora publish \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-repo melix/models/melix-dev-fused \
+  --manifest-path /absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json
+```
+
 Expected publish behavior:
 
-- the upload operation records publish metadata against the adapter package
-- the adapter row becomes `published`
-- the local fused derived model remains a local serving artifact and is not uploaded as the adapter payload
+- adapter export uploads a staged adapter bundle containing the adapter manifest plus adapter weights and config
+- merged export uploads the fused derived-model directory and rejects `adapter_backed_runtime` manifests
+- upload receipts record `export_artifact_kind`, `published_repo`, publish backend, and `parent_lineage`
+- registry snapshots show adapter and merged publish lineage so operators can confirm which local artifact produced each remote repo
+- `swift run melix lora list` now includes published repo and publish artifact kind in the operator-readable table
 
 ## Hub Discovery Backend
 

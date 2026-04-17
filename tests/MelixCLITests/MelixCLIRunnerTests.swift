@@ -927,7 +927,7 @@ struct MelixCLIRunnerTests {
             makeModelSummary(id: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", kind: "text"),
         ]))
         await client.setModelOperationResult(makeModelOperationResult(
-            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"ready","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit"}],"experiment_groups":[{"group_id":"nightly-qwen35","run_count":2,"latest_preset_title":"Balanced Adapter","best_loss":0.33,"recommended_manifest_path":"/tmp/melix/train_lora/job-2/train_lora.adapter.json"}]}"#
+            manifestJSON: #"{"adapters":[{"adapter_name":"demo-adapter","status":"activated","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit","activation_mode":"adapter_backed_runtime","derived_model_id":"melix-qwen35-runtime"}],"derived_models":[{"model_id":"melix-qwen35-runtime","derived_model_alias":"Runtime Alias","activation_mode":"adapter_backed_runtime","activation_backend":"internal","source_model":"mlx-community/Qwen3.5-0.8B-OptiQ-4bit"}],"experiment_groups":[{"group_id":"nightly-qwen35","run_count":2,"latest_preset_title":"Balanced Adapter","best_loss":0.33,"recommended_manifest_path":"/tmp/melix/train_lora/job-2/train_lora.adapter.json"}]}"#
         ))
 
         let output = try await MelixCLIRunner(client: client).run(.loraList(.init()))
@@ -935,8 +935,10 @@ struct MelixCLIRunnerTests {
 
         #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(call.operation == "registry_snapshot")
-        #expect(output.contains("adapter\tstatus\tsource_model"))
-        #expect(output.contains("demo-adapter\tready\tmlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
+        #expect(output.contains("adapter\tstatus\tsource_model\tactivation_mode\tderived_model_id"))
+        #expect(output.contains("demo-adapter\tactivated\tmlx-community/Qwen3.5-0.8B-OptiQ-4bit\tadapter_backed_runtime\tmelix-qwen35-runtime"))
+        #expect(output.contains("derived_model_id\talias\tactivation_mode\tactivation_backend\tsource_model"))
+        #expect(output.contains("melix-qwen35-runtime\tRuntime Alias\tadapter_backed_runtime\tinternal\tmlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
         #expect(output.contains("experiment_group\truns\tpreset\tbest_loss\trecommended_manifest"))
         #expect(output.contains("nightly-qwen35\t2\tBalanced Adapter\t0.330\t/tmp/melix/train_lora/job-2/train_lora.adapter.json"))
     }
@@ -1276,6 +1278,56 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["manifest_path"] == "/tmp/melix/activate_adapter/job-2/activate_adapter.derived_model.json")
     }
 
+    @Test("lora publish forwards adapter and merged export selections")
+    func loraPublishForwardsExplicitExportSelections() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/job-5"))
+
+        let adapterOutput = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    targetRepo: "melix/adapters/demo",
+                    exportKind: .adapterExport,
+                    artifactPath: "/tmp/melix/train_lora.adapter.json",
+                    artifactManifestPath: "/tmp/melix/train_lora.adapter.json"
+                )
+            )
+        )
+        let adapterCall = try #require(await client.lastModelOperationCall)
+
+        #expect(adapterOutput == "/tmp/melix/upload/job-5")
+        #expect(adapterCall.operation == "upload")
+        #expect(adapterCall.ext["target_repo"] == "melix/adapters/demo")
+        #expect(adapterCall.ext["artifact_kind"] == "adapter_export")
+        #expect(adapterCall.ext["artifact_path"] == "/tmp/melix/train_lora.adapter.json")
+        #expect(adapterCall.ext["artifact_manifest_path"] == "/tmp/melix/train_lora.adapter.json")
+
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/upload/job-6",
+            manifestJSON: #"{"job_id":"job-6","operation":"upload"}"#
+        ))
+        let mergedOutput = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    targetRepo: "melix/models/demo-merged",
+                    exportKind: .mergedExport,
+                    artifactPath: "/tmp/melix/activate_adapter/job-2/manifest.json",
+                    artifactManifestPath: "/tmp/melix/activate_adapter/job-2/manifest.json",
+                    json: true
+                )
+            )
+        )
+        let mergedCall = try #require(await client.lastModelOperationCall)
+
+        #expect(mergedOutput.contains("job-6"))
+        #expect(mergedCall.ext["target_repo"] == "melix/models/demo-merged")
+        #expect(mergedCall.ext["artifact_kind"] == "merged_export")
+        #expect(mergedCall.ext["artifact_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
+        #expect(mergedCall.ext["artifact_manifest_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
+    }
+
     @Test("subprocess-backed lora operations build public melix arguments and decode manifest payloads")
     func subprocessBackedLoraOperationsBuildPublicCLIArguments() async throws {
         let client = StubControlPlaneXPCClient()
@@ -1347,6 +1399,50 @@ struct MelixCLIRunnerTests {
         #expect(commands[1].contains("--activation-mode"))
         #expect(commands[1].contains("adapter_backed_runtime"))
         #expect(commands[2] == ["lora", "list", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit", "--json"])
+    }
+
+    @Test("subprocess-backed lora publish builds explicit adapter and merged publish arguments")
+    func subprocessBackedLoraPublishBuildsExplicitArguments() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                #"{"operation":"upload","job_id":"upload-adapter-1","output_path":"/tmp/melix/upload/adapter"}"#,
+                #"{"operation":"upload","job_id":"upload-merged-1","output_path":"/tmp/melix/upload/merged"}"#,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        _ = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "upload",
+            outputDir: "",
+            ext: [
+                "target_repo": "melix/adapters/demo",
+                "artifact_path": "/tmp/melix/train_lora.adapter.json",
+                "artifact_kind": "adapter_export",
+                "artifact_manifest_path": "/tmp/melix/train_lora.adapter.json",
+            ]
+        )
+        _ = try await runner.performModelOperation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            operation: "upload",
+            outputDir: "",
+            ext: [
+                "target_repo": "melix/models/demo-merged",
+                "artifact_path": "/tmp/melix/activate_adapter/manifest.json",
+                "artifact_kind": "merged_export",
+                "artifact_manifest_path": "/tmp/melix/activate_adapter/manifest.json",
+            ]
+        )
+        let commands = await executor.commands
+
+        #expect(commands.count == 2)
+        #expect(commands[0].starts(with: ["lora", "publish", "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]))
+        #expect(commands[0].contains("--adapter-path"))
+        #expect(commands[0].contains("/tmp/melix/train_lora.adapter.json"))
+        #expect(commands[1].contains("--manifest-path"))
+        #expect(commands[1].contains("/tmp/melix/activate_adapter/manifest.json"))
+        #expect(commands[1].contains("melix/models/demo-merged"))
     }
 
     @Test("subprocess-backed evaluation compare builds public melix compare arguments")
