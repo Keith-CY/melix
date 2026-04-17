@@ -216,27 +216,61 @@ For operator state inspection, request a `registry_snapshot` and confirm:
 - the adapter row shows `activation_status = "activated"` or `published_state = "published"` as appropriate
 - the `derived_models` list contains the activated derived model entry
 
-## Publish Adapter
+## Publish Adapter Or Merged Artifact
 
-Publish the adapter package, not the fused local serving directory.
+Melix now treats adapter-only export and merged-model export as separate distribution contracts.
+Use adapter export when you want a reusable LoRA package for downstream activation. Use merged export
+only when you intentionally want to distribute a fused derived model directory.
 
-Trigger `RunModelOperation(upload)` with adapter metadata:
+Adapter publish request:
 
 ```json
 {
   "operation": "upload",
-  "artifact_kind": "adapter",
+  "artifact_kind": "adapter_export",
   "artifact_path": "/absolute/path/to/train_lora.adapter.json",
   "adapter_name": "melix-dev-adapter",
   "target_repo": "melix/adapters/melix-dev-adapter"
 }
 ```
 
+Equivalent CLI example:
+
+```bash
+swift run melix lora publish \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-repo melix/adapters/melix-dev-adapter \
+  --adapter-path /absolute/path/to/train_lora.adapter.json
+```
+
+Merged publish request from a fused activation manifest:
+
+```json
+{
+  "operation": "upload",
+  "artifact_kind": "merged_export",
+  "artifact_path": "/absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json",
+  "artifact_manifest_path": "/absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json",
+  "target_repo": "melix/models/melix-dev-fused"
+}
+```
+
+Equivalent CLI example:
+
+```bash
+swift run melix lora publish \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-repo melix/models/melix-dev-fused \
+  --manifest-path /absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json
+```
+
 Expected publish behavior:
 
-- the upload operation records publish metadata against the adapter package
-- the adapter row becomes `published`
-- the local fused derived model remains a local serving artifact and is not uploaded as the adapter payload
+- adapter export uploads a staged adapter bundle containing the adapter manifest plus adapter weights and config
+- merged export uploads the fused derived-model directory and rejects `adapter_backed_runtime` manifests
+- upload receipts record `export_artifact_kind`, `published_repo`, publish backend, and `parent_lineage`
+- registry snapshots show adapter and merged publish lineage so operators can confirm which local artifact produced each remote repo
+- `swift run melix lora list` now includes published repo and publish artifact kind in the operator-readable table
 
 ## Hub Discovery Backend
 

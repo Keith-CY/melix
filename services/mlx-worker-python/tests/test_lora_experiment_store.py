@@ -16,6 +16,10 @@ def _write_run_record(
     updated_at_unix_ms: int,
     loss_best: float | None = None,
     loss_final: float | None = None,
+    checkpoint_count: int = 0,
+    latest_checkpoint_path: str = "",
+    resume_source_path: str = "",
+    resume_ready: bool = False,
 ) -> None:
     run_dir = jobs_root / "train_lora" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -28,6 +32,10 @@ def _write_run_record(
         "source_model": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
         "status": "completed",
         "manifest_path": manifest_path,
+        "checkpoint_count": checkpoint_count,
+        "latest_checkpoint_path": latest_checkpoint_path,
+        "resume_source_path": resume_source_path,
+        "resume_ready": resume_ready,
         "updated_at_unix_ms": updated_at_unix_ms,
     }
     if loss_best is not None:
@@ -49,6 +57,9 @@ def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Pa
         manifest_path="/tmp/model-ops-0001/train_lora.adapter.json",
         updated_at_unix_ms=1_000,
         loss_best=0.42,
+        checkpoint_count=1,
+        latest_checkpoint_path="/tmp/model-ops-0001/adapter/checkpoint-1/adapters.safetensors",
+        resume_ready=True,
     )
     _write_run_record(
         jobs_root,
@@ -56,6 +67,10 @@ def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Pa
         group_id="nightly-qwen",
         manifest_path="/tmp/model-ops-0002/train_lora.adapter.json",
         updated_at_unix_ms=2_000,
+        checkpoint_count=2,
+        latest_checkpoint_path="/tmp/model-ops-0002/adapter/checkpoint-2/adapters.safetensors",
+        resume_source_path="/tmp/model-ops-0001/adapter/checkpoint-1/adapters.safetensors",
+        resume_ready=True,
     )
 
     payload = LoraExperimentStore().rebuild_index(jobs_root)
@@ -63,6 +78,12 @@ def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Pa
     assert payload["groups"][0]["latest_run_id"] == "model-ops-0002"
     assert payload["groups"][0]["best_run_id"] == "model-ops-0001"
     assert payload["groups"][0]["best_loss"] == 0.42
+    assert payload["groups"][0]["latest_checkpoint_path"].endswith("checkpoint-2/adapters.safetensors")
+    assert payload["groups"][0]["latest_resume_source_path"].endswith("checkpoint-1/adapters.safetensors")
+    assert payload["groups"][0]["resume_ready_run_ids"] == ["model-ops-0002", "model-ops-0001"]
+    assert payload["groups"][0]["checkpoint_lineage"][0]["run_id"] == "model-ops-0002"
+    assert payload["groups"][0]["best_known_adapter"]["run_id"] == "model-ops-0001"
+    assert payload["groups"][0]["best_known_adapter"]["latest_checkpoint_path"].endswith("checkpoint-1/adapters.safetensors")
 
 
 def test_optional_finite_float_rejects_invalid_and_non_finite_values() -> None:

@@ -186,6 +186,7 @@ class MaintenanceCore:
         self._benchmark_store = None
         self._benchmark_queue_store = BenchmarkQueueStore()
         self._benchmark_suite_catalog = benchmark_suite_catalog or BenchmarkSuiteCatalog()
+        self._restore_derived_models_into_catalog()
 
     @staticmethod
     def _worker_quant_profile(profile) -> maintenance_pb2.QuantizationProfile:
@@ -620,6 +621,12 @@ class MaintenanceCore:
                     job.job_id,
                     str(completed_output_path),
                 )
+                if operation == "activate_adapter":
+                    self._register_derived_model_manifest(pipeline_result.manifest)
+                elif operation == "remove_derived_model":
+                    self._registry.model_catalog.remove_model(
+                        str(pipeline_result.manifest.get("derived_model_id", ""))
+                    )
                 yield maintenance_pb2.ConvertModelEvent(
                     completed=maintenance_pb2.ConvertCompleted(
                         output_path=str(completed_output_path)
@@ -1773,6 +1780,78 @@ class MaintenanceCore:
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         progress("write_manifest", 0.95)
         return ModelOperationManifestResult(manifest=manifest, manifest_path=manifest_path)
+
+    def _restore_derived_models_into_catalog(self) -> None:
+        for manifest in self._job_registry.active_derived_model_manifests():
+            self._register_derived_model_manifest(manifest)
+
+    def _register_derived_model_manifest(self, manifest: dict[str, Any]) -> common_pb2.ModelSpec | None:
+        model_spec = self._derived_model_spec_from_manifest(manifest)
+        if model_spec is None:
+            return None
+        return self._registry.model_catalog.register_model(model_spec)
+
+    def _derived_model_spec_from_manifest(self, manifest: dict[str, Any]) -> common_pb2.ModelSpec | None:
+        derived_model_id = str(manifest.get("derived_model_id", "")).strip()
+        derived_model_path = str(manifest.get("derived_model_path", "")).strip()
+        source_model_id = str(manifest.get("source_model", "")).strip()
+        if not derived_model_id or not derived_model_path:
+            return None
+
+        source_model = self._registry.model_catalog.get(source_model_id) if source_model_id else None
+        model_spec = common_pb2.ModelSpec()
+        if source_model is not None:
+            model_spec.CopyFrom(source_model)
+
+        model_spec.model_id = derived_model_id
+        model_spec.model_path = derived_model_path
+        model_spec.model_kind = str(manifest.get("source_model_kind", "")).strip() or model_spec.model_kind or "text"
+        model_spec.revision = str(manifest.get("source_model_revision", "")).strip() or model_spec.revision or "derived"
+        model_spec.tokenizer_hash = (
+            str(manifest.get("source_model_tokenizer_hash", "")).strip() or model_spec.tokenizer_hash
+        )
+        model_spec.quant_profile_id = (
+            str(manifest.get("source_model_quant_profile_id", "")).strip() or model_spec.quant_profile_id
+        )
+        model_spec.parser_mode = (
+            str(manifest.get("source_model_parser_mode", "")).strip() or model_spec.parser_mode or "text"
+        )
+        model_spec.reasoning_mode = (
+            str(manifest.get("source_model_reasoning_mode", "")).strip() or model_spec.reasoning_mode or "off"
+        )
+        try:
+            resolved_max_context = int(manifest.get("source_model_max_context", 0))
+        except (TypeError, ValueError):
+            resolved_max_context = 0
+        if resolved_max_context > 0:
+            model_spec.max_context = resolved_max_context
+
+        source_ext = manifest.get("source_model_ext")
+        if isinstance(source_ext, dict):
+            model_spec.ext.clear()
+            for key, value in source_ext.items():
+                normalized_key = str(key).strip()
+                if normalized_key:
+                    model_spec.ext[normalized_key] = str(value)
+
+        model_spec.ext["melix.model_path"] = derived_model_path
+        model_spec.ext["melix.model_revision"] = model_spec.revision
+        model_spec.ext["melix.derived_from_adapter"] = "true"
+        model_spec.ext["melix.derived_from_model_id"] = source_model_id
+        model_spec.ext["melix.derived_from_model_revision"] = str(manifest.get("source_model_revision", "")).strip()
+        model_spec.ext["melix.derived_model_alias"] = str(manifest.get("derived_model_alias", "")).strip()
+        activation_mode = str(manifest.get("activation_mode", "")).strip()
+        if activation_mode:
+            model_spec.ext["melix.activation_mode"] = activation_mode
+        for manifest_key, ext_key in (
+            ("adapter_manifest_path", "melix.adapter_manifest_path"),
+            ("adapter_weights_path", "melix.adapter_weights_path"),
+            ("adapter_set_hash", "melix.adapter_set_hash"),
+        ):
+            value = str(manifest.get(manifest_key, "")).strip()
+            if value:
+                model_spec.ext[ext_key] = value
+        return model_spec
 
     @staticmethod
     def _linked_quantization_metadata(
