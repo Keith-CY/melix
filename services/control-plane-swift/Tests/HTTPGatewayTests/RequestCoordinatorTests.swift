@@ -1174,14 +1174,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-hot",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.hot")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-hot")
+        #expect(laneProgress?.lane == "text.prefill.hot")
         await workerClient.emitDecodeStarted(requestID: "req-hot", decodeHandle: "decode-hot")
         await workerClient.emitToken(requestID: "req-hot", text: "hot")
         await workerClient.finishDecode(requestID: "req-hot")
@@ -1255,14 +1250,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-partial-restore",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.hot")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-partial-restore")
+        #expect(laneProgress?.lane == "text.prefill.hot")
         await workerClient.emitDecodeStarted(requestID: "req-partial-restore", decodeHandle: "decode-req-partial-restore")
         await workerClient.emitToken(requestID: "req-partial-restore", text: "partial")
         await workerClient.finishDecode(requestID: "req-partial-restore")
@@ -1687,14 +1677,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-cold-prefill",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.background")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-cold-prefill")
+        #expect(laneProgress?.lane == "text.prefill.background")
         await workerClient.emitDecodeStarted(requestID: "req-cold-prefill", decodeHandle: "decode-cold")
         await workerClient.finishDecode(requestID: "req-cold-prefill")
         _ = await consumer.result
