@@ -429,7 +429,6 @@ def test_train_lora_records_resume_manifest_metadata_and_reuses_checkpoint_path(
     assert resume_payload["resume_source_job_id"] == first_payload["job_id"]
     assert resume_payload["experiment.resume_source_path"] == first_payload["latest_checkpoint_path"]
 
-
 def test_resolve_training_dataset_rejects_invalid_source_kind_and_missing_hf_path(tmp_path: Path) -> None:
     with pytest.raises(Exception) as invalid_source:
         resolve_training_dataset_package(
