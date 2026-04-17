@@ -1616,7 +1616,11 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert activation_payload["source_model_ext"]["text_family_id"] == "llama"
     assert activation_payload["derived_model_path"] == source_model.model_path
     assert activation_payload["remove_supported"] is True
+    assert snapshot_payload["adapters"][0]["activation_mode"] == "adapter_backed_runtime"
+    assert snapshot_payload["adapters"][0]["activation_backend"] == "internal"
+    assert snapshot_payload["adapters"][0]["adapter_weights_path"] == activation_payload["adapter_weights_path"]
     assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
+    assert snapshot_payload["derived_models"][0]["activation_backend"] == "internal"
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
 
     registered_model = service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
