@@ -82,7 +82,40 @@ jobs:
       - name: Python tests
         run: make py-test
 
+  integration-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.scope.outputs.should_run }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether integration tests are affected
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          should_run=false
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/ci-pr.yml|Makefile|Package.swift|Package.resolved|pyproject.toml|uv.lock|buf.yaml|buf.gen.yaml|packages/protocol/*|scripts/*|services/control-plane-swift/*|services/mlx-text-worker-swift/*|services/mlx-worker-python/*|tests/integration/*)
+                should_run=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
   integration-tests:
+    if: github.event_name == 'merge_group' || needs.integration-scope.outputs.should_run == 'true'
+    needs:
+      - integration-scope
     runs-on: macos-15
     timeout-minutes: 60
 

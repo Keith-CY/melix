@@ -60,11 +60,17 @@ def _extract_sections(body_text: str) -> dict[str, str]:
 
 def _normalized_tokens(body_text: str) -> list[str]:
     cleaned = []
+    in_fence = False
     for raw_line in body_text.splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("```"):
+        if not line:
             continue
-        if line.startswith("- "):
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence and line.startswith("#"):
+            continue
+        if not in_fence and line.startswith("- "):
             line = line[2:].strip()
         cleaned.append(line)
     return cleaned

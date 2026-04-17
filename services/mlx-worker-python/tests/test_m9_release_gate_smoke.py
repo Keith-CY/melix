@@ -7,6 +7,7 @@ import pytest
 
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "scripts" / "m9_release_gate_smoke.py"
+REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_SPEC = importlib.util.spec_from_file_location("m9_release_gate_smoke", MODULE_PATH)
 assert MODULE_SPEC is not None
 assert MODULE_SPEC.loader is not None
@@ -82,3 +83,9 @@ def test_main_returns_nonzero_for_failing_fixture(
 
     assert '"passed": false' in output
     assert '"release_gate.m9_missing_probe_count": 1.0' in output
+
+
+def test_run_smoke_passes_for_passing_fixture() -> None:
+    payload = m9_release_gate_smoke.run_smoke(REPO_ROOT, "passing")
+
+    assert payload["passed"] is True

@@ -1041,6 +1041,7 @@ def test_evaluate_release_gate_fails_closed_for_missing_real_workload_evidence()
 
     failures = evaluate_release_gate(report, policy)
 
+    assert "eval.mmlu.typed_score_mean is missing" not in failures
     assert "real_workload evidence is missing" in failures
 
 
@@ -1596,6 +1597,63 @@ def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt
 
     assert list(backend.generate_tokens({}, "2 + 2 ?", None, canceled)) == []
     assert list(backend.generate_tokens({}, "hello world", None, active)) == ["Answer: 0"]
+
+
+def test_evaluation_metric_alias_helper_backfills_canonical_and_legacy_names() -> None:
+    metrics = {"eval.mmlu.accuracy": 0.75}
+
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        metrics,
+        suite_id="mmlu",
+        primary_score_value=0.5,
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.75
+    assert normalized["eval.mmlu.accuracy"] == 0.75
+
+
+def test_evaluation_metric_alias_helper_uses_primary_score_when_metrics_are_missing() -> None:
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        {},
+        suite_id="mmlu",
+        primary_score_value=0.5,
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.5
+    assert normalized["eval.mmlu.accuracy"] == 0.5
+
+
+def test_evaluation_metric_alias_helper_leaves_metrics_unchanged_without_numeric_source() -> None:
+    metrics = {"eval.mmlu.label": "n/a"}
+
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        metrics,
+        suite_id="mmlu",
+        primary_score_value="unknown",
+    )
+
+    assert normalized == metrics
+
+
+def test_normalize_evaluation_metrics_for_policy_handles_non_dict_inputs() -> None:
+    assert release_gates_module._normalize_evaluation_metrics_for_policy([], {}) == {}
+    assert release_gates_module._normalize_evaluation_metrics_for_policy(
+        {"eval.mmlu.accuracy": 0.75},
+        [],
+    ) == {"eval.mmlu.accuracy": 0.75}
+
+
+def test_normalize_evaluation_metrics_for_policy_ignores_non_metric_rules() -> None:
+    normalized = release_gates_module._normalize_evaluation_metrics_for_policy(
+        {"eval.mmlu.accuracy": 0.75},
+        {
+            "eval.mmlu.typed_score_mean": {"min": 0.5},
+            "non_metric_rule": {"min": 1.0},
+        },
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.75
+    assert normalized["eval.mmlu.accuracy"] == 0.75
 
 
 def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: Path) -> None:

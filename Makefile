@@ -120,7 +120,13 @@ integration-test:
 
 package-smoke:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_build_metadata.py services/mlx-worker-python/tests/test_packaging_targets.py services/mlx-worker-python/tests/test_macos_app_bundle.py services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py -q
+	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx pytest \
+		services/mlx-worker-python/tests/test_build_metadata.py \
+		services/mlx-worker-python/tests/test_packaging_targets.py \
+		services/mlx-worker-python/tests/test_macos_app_bundle.py \
+		services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py \
+		services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py \
+		-q
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_packaging_target_smoke.py --json
 
 swift-coverage:

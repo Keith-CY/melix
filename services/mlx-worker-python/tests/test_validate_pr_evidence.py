@@ -158,6 +158,28 @@ make py-test
     assert "Section 'Known Gaps' must not be placeholder text." in errors
 
 
+def test_validate_body_text_rejects_placeholder_comment_inside_commands_fence() -> None:
+    body = """
+## Plan or Spec
+- docs/plans/2026-04-15-ci-failure-remediation.md
+
+## Commands Run
+```text
+# paste the commands you ran and their outcomes
+```
+
+## Coverage and Metrics
+- N/A: workflow-only change.
+
+## Known Gaps
+- GitHub validation still pending.
+"""
+
+    errors = validate_pr_evidence.validate_body_text(body)
+
+    assert "Section 'Commands Run' is missing meaningful content." in errors
+
+
 def test_main_returns_non_zero_when_body_is_invalid(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         validate_pr_evidence,

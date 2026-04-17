@@ -132,9 +132,12 @@ def _build_fixture_report(
         },
         "evaluation": {
             "metrics": {
+                "eval.mmlu.typed_score_mean": 1.0,
                 "eval.mmlu.accuracy": 1.0,
             },
         },
+        "evaluation_compare": _build_passing_evaluation_compare_report(),
+        "real_workload": _build_passing_real_workload_report(),
         "m9": m9,
     }
     if fixture_mode == "passing" and m9_failures:
@@ -195,6 +198,109 @@ def _build_passing_m9_report() -> dict[str, object]:
                 "closure_audit.blocker_count": 0.0,
                 "closure_audit.evidence_gap_count": 0.0,
             }
+        },
+    }
+
+
+def _build_passing_evaluation_compare_report() -> dict[str, object]:
+    return {
+        "suite_id": "mmlu",
+        "base_model_id": "melix-dev-text",
+        "target_model_id": "melix-dev-text-lora-a",
+        "sample_size": 8,
+        "effect_threshold": 0.1,
+        "verdict": "improvement",
+        "metrics": {
+            "eval.compare.delta_accuracy": 0.5,
+            "eval.compare.effect_threshold": 0.1,
+        },
+        "category_breakdown": {
+            "math": {
+                "sample_size": 8,
+                "base_accuracy": 0.5,
+                "target_accuracy": 1.0,
+                "delta_accuracy": 0.5,
+            }
+        },
+        "statistical_evidence": {
+            "sample_size": 8,
+            "delta_accuracy": 0.5,
+            "bootstrap": {
+                "method": "paired_bootstrap_percentile",
+                "confidence_level": 0.95,
+                "lower_bound": 0.12,
+                "upper_bound": 0.84,
+                "crosses_zero": False,
+                "iterations": 400,
+                "seed": 9,
+            },
+            "analytical": {
+                "method": "paired_difference_normal_approximation",
+                "confidence_level": 0.95,
+                "lower_bound": 0.18,
+                "upper_bound": 0.82,
+                "crosses_zero": False,
+            },
+        },
+        "release_gate_summary": {
+            "verdict": "improvement",
+            "reason": "delta_exceeds_threshold_with_supported_intervals",
+            "effect_threshold": 0.1,
+            "delta_accuracy": 0.5,
+            "threshold_passed": True,
+            "both_intervals_same_side": True,
+        },
+        "report_path": "/tmp/evaluation-compare-report.md",
+    }
+
+
+def _build_passing_real_workload_report() -> dict[str, object]:
+    return {
+        "summary": {
+            "pass_count": 3.0,
+            "failure_count": 0.0,
+            "family_count": 3.0,
+        },
+        "families": {
+            "qwen": {
+                "family_id": "qwen",
+                "model_id": "melix-dev-qwen-local",
+                "scenario_id": "support-triage",
+                "dataset_id": "melix.release.real_workload.qwen.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 24.0,
+                    "latency_ms": 842.0,
+                    "throughput_tps": 31.4,
+                    "peak_memory_gb": 8.6,
+                },
+            },
+            "gemma": {
+                "family_id": "gemma",
+                "model_id": "melix-dev-gemma-local",
+                "scenario_id": "product-qa",
+                "dataset_id": "melix.release.real_workload.gemma.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 18.0,
+                    "latency_ms": 918.0,
+                    "throughput_tps": 28.7,
+                    "peak_memory_gb": 10.4,
+                },
+            },
+            "kimi": {
+                "family_id": "kimi",
+                "model_id": "melix-dev-kimi-local",
+                "scenario_id": "long-context-rewrite",
+                "dataset_id": "melix.release.real_workload.kimi.v1",
+                "metrics": {
+                    "passed": 1.0,
+                    "sample_count": 20.0,
+                    "latency_ms": 887.0,
+                    "throughput_tps": 29.9,
+                    "peak_memory_gb": 9.8,
+                },
+            },
         },
     }
 

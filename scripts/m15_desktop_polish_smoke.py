@@ -53,24 +53,22 @@ def run_swift_smoke(repo_root: Path) -> dict[str, object]:
             text=True,
             env=env,
         )
-        if getattr(completed, "returncode", 0) == 0:
+        if completed.returncode == 0:
             break
         if (
             attempt < _SWIFTPM_LOCK_RETRIES
             and _SWIFTPM_LOCK_MARKER in "\n".join(
-                part for part in [getattr(completed, "stdout", ""), getattr(completed, "stderr", "")] if part
+                part for part in [completed.stdout, completed.stderr] if part
             )
         ):
             time.sleep(_SWIFTPM_LOCK_BACKOFF_SECONDS * (attempt + 1))
             continue
         raise subprocess.CalledProcessError(
-            getattr(completed, "returncode", 1),
+            completed.returncode,
             command,
-            output=getattr(completed, "stdout", ""),
-            stderr=getattr(completed, "stderr", ""),
+            output=completed.stdout,
+            stderr=completed.stderr,
         )
-    else:
-        raise RuntimeError("Swift smoke did not complete successfully.")
 
     for stream in (completed.stdout, completed.stderr):
         if not stream:

@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-gates-${{ github.ref }}
+  group: release-gates-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -53,7 +53,13 @@ jobs:
       - name: Phase 8 release gate
         id: phase8-release-gate
         continue-on-error: true
-        run: make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json" > "$RUNNER_TEMP/phase8-release-gate.json"
+        run: |
+          if ! make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json" > "$RUNNER_TEMP/phase8-release-gate.json"; then
+            if [ ! -s "$RUNNER_TEMP/phase8-release-gate.json" ]; then
+              printf '{\n  "passed": false,\n  "failures": ["phase8-release-gate failed before emitting JSON"],\n  "runner_failure": true\n}\n' > "$RUNNER_TEMP/phase8-release-gate.json"
+            fi
+            exit 1
+          fi
 
       - name: Upload release-gate evidence
         if: always()

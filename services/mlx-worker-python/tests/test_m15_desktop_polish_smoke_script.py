@@ -28,6 +28,7 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
     captured: dict[str, object] = {}
 
     class _Completed:
+        returncode = 0
         stdout = (
             'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2},'
             '"signals":{"top_banner_title":"Download Recovery Available","download_recovery_visible":1,'
@@ -109,6 +110,7 @@ def test_run_swift_smoke_requires_marker(
     module = _load_module()
 
     class _Completed:
+        returncode = 0
         stdout = "ok"
         stderr = ""
 

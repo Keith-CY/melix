@@ -43,8 +43,23 @@ This slice does not add:
   expiry has already completed after a fixed sleep.
 - `validate_pr_evidence.py` currently accepts empty fenced code blocks and loose placeholder text
   such as `TODO: fill later`, which weakens the mandatory PR evidence gate.
+- `validate_pr_evidence.py` also accepts the shipped `Commands Run` placeholder comment inside a
+  fenced block, so a template-only PR body can still pass validation.
 - `package-self-contained-app` grants `contents: write` for the full workflow even though only the
   tag-release attachment path needs repository write access.
+- the release-gate evaluation policy now requires `eval.<suite>.typed_score_mean`, but legacy
+  evidence producers and fixtures still emit `eval.<suite>.accuracy`, so the gate currently fails
+  valid historical evidence during the metric migration.
+- the scheduled and push-triggered `release-gates` runs on `main` currently share the same
+  concurrency key and can cancel each other.
+- the release attachment job references `softprops/action-gh-release` by mutable tag instead of an
+  immutable commit SHA.
+- the root Dependabot `pip` entry duplicates the worker Python ecosystem even though the workspace
+  root has no direct Python dependencies.
+- `ci-pr` still runs the full `integration-tests` job for docs-only pull requests because the job
+  has no change-scope gate.
+- the packaging workflow relies on generated GitHub release notes by design, but that assumption is
+  not documented near the write-scoped release action.
 
 ## Planned Changes
 
@@ -60,6 +75,15 @@ This slice does not add:
   runs.
 - Reduce packaging workflow permissions to `contents: read` by default and isolate release-asset
   publication in a tag-only write-scoped job.
+- Separate scheduled and push-triggered release-gate workflow concurrency keys on `main`.
+- Pin the release-attachment action to an immutable commit SHA.
+- Drop the redundant root Dependabot `pip` updater so the worker remains the single Python package
+  update surface.
+- Gate `integration-tests` behind a PR diff scope check so docs-only pull requests skip the 18-minute
+  integration suite while merge-queue runs still execute it unconditionally.
+- Document that tag pushes are the source of truth for release body generation in the packaging
+  workflow so `generate_release_notes: true` is an explicit policy choice rather than an implicit
+  default.
 
 ### Python sandbox execution
 
@@ -69,6 +93,11 @@ This slice does not add:
   stable.
 - Tighten PR evidence parsing so empty fenced blocks and placeholder-prefixed bullets fail
   validation.
+- Ignore placeholder comment lines inside fenced `Commands Run` blocks so the shipped template text
+  cannot satisfy the evidence gate by itself.
+- Normalize release-gate evaluation evidence so both `eval.<suite>.accuracy` and
+  `eval.<suite>.typed_score_mean` remain accepted during the metric migration, while keeping the
+  canonical `typed_score_mean` output.
 
 ### Swift compatibility and determinism
 
@@ -91,9 +120,16 @@ Measurement points for this remediation:
 - Disconnect-grace test determinism: terminal failure metrics are observed before assertions run.
 - PR evidence gate strength: required sections reject empty code fences and placeholder-prefixed
   items while still accepting justified `N/A:` coverage statements.
+- Release-gate metric migration: canonical and legacy evaluation metric names both satisfy the
+  gate during the transition period, and the deterministic smoke fixture remains green.
 - Protocol generation determinism: the same repository-locked protobuf toolchain is used in CI and
   local regeneration paths.
 - Packaging workflow permissions: pull request execution paths stay read-only.
+- Workflow scheduling isolation: scheduled and push-triggered release-gate runs do not cancel each
+  other on `main`.
+- Supply-chain hardening: write-scoped release publication uses an immutable action revision.
+- Pull-request CI scope control: docs-only pull requests skip the integration suite, while
+  merge-group validation continues to run the full integration path.
 
 Success targets:
 
