@@ -194,7 +194,7 @@ _ADVANCED_FAMILY_HOOKS: dict[str, dict[str, str]] = {
         "default_target_preset": "attention",
     },
     "mistral4": {
-        "family_kind": "moe",
+        "family_kind": "dense",
         "support_tier": "experimental",
         "training_ready": "false",
         "default_target_preset": "attention",

@@ -607,7 +607,7 @@ def test_train_lora_resolves_qwen_attention_preset_and_catalog_support_metadata(
     ]
 
 
-def test_train_lora_resolves_gemma_and_kimi_family_presets(tmp_path: Path) -> None:
+def test_train_lora_resolves_gemma_gated_mlp_preset(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset",
         samples=[
@@ -660,6 +660,24 @@ def test_train_lora_resolves_gemma_and_kimi_family_presets(tmp_path: Path) -> No
         "model.layers.0.mlp.down_proj",
         "model.layers.1.mlp.down_proj",
     ]
+
+
+def test_train_lora_resolves_kimi_qkv_preset(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Say hi."},
+                    {"role": "assistant", "content": "Hi there."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
 
     _configure_lora_family(
         source_model,
@@ -855,6 +873,14 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
     assert hooks["family_kind"] == "moe"
     assert hooks["support_tier"] == "experimental"
     assert hooks["default_target_preset"] == "attention"
+
+    mistral4_hooks = training_config_module._resolve_family_hooks(
+        common_pb2.ModelSpec(model_id="mistral4", model_kind="text"),
+        family_id="mistral4",
+    )
+    assert mistral4_hooks["family_kind"] == "dense"
+    assert mistral4_hooks["support_tier"] == "experimental"
+    assert mistral4_hooks["training_ready"] == "false"
 
     # Mixed preset aliases and literal module names should collapse to one deduplicated target set.
     qwen_targets = training_config_module._resolve_target_modules(
