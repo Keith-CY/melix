@@ -221,8 +221,6 @@ def _configure_lora_family(
     default_target_preset: str,
 ) -> None:
     source_model.model_path = model_path
-    source_model.ext["text_family_id"] = family_id
-    source_model.ext["detected_family_id"] = family_id
     source_model.ext["melix.lora.family_id"] = family_id
     source_model.ext["melix.lora.family_kind"] = family_kind
     source_model.ext["melix.lora.support_tier"] = support_tier
@@ -858,6 +856,7 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
     assert hooks["support_tier"] == "experimental"
     assert hooks["default_target_preset"] == "attention"
 
+    # Mixed preset aliases and literal module names should collapse to one deduplicated target set.
     qwen_targets = training_config_module._resolve_target_modules(
         "@attention,q_proj,attention",
         profile=training_config_module._FAMILY_PROFILES["qwen"],

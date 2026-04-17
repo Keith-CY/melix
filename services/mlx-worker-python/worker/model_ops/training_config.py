@@ -513,9 +513,9 @@ def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str)
 def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> list[str]:
     presets = {
         str(key).strip().lower(): [str(item).strip().lower() for item in value]
-        for key, value in dict(profile.get("target_module_presets", {})).items()
+        for key, value in profile.get("target_module_presets", {}).items()
     }
-    default_targets = [str(item).strip().lower() for item in list(profile["default_target_modules"])]
+    default_targets = [str(item).strip().lower() for item in profile["default_target_modules"]]
     requested = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
     if not requested:
         return default_targets
