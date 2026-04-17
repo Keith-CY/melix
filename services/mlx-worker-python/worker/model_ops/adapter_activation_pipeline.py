@@ -74,7 +74,7 @@ class AdapterActivationPipeline:
                 code="activation_failure",
                 message="Adapter package is missing adapter_set_hash.",
             )
-        adapter_weights_path = str(adapter_manifest.get("weights_path", "")).strip()
+        adapter_weights_path = str(adapter_manifest.get("weights_path") or "").strip()
         if activation_mode == "adapter_backed_runtime" and not adapter_weights_path:
             raise ModelOperationError(
                 code="activation_failure",

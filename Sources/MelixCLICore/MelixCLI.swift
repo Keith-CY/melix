@@ -3871,7 +3871,7 @@ public actor MelixCLIRunner {
         let derivedModels = payload["derived_models"] as? [[String: Any]] ?? []
         let experimentGroups = payload["experiment_groups"] as? [[String: Any]] ?? []
         if adapters.isEmpty && derivedModels.isEmpty && experimentGroups.isEmpty {
-            return "No adapters found.\n"
+            return "No adapters or derived models found.\n"
         }
 
         var sections: [String] = []

@@ -665,7 +665,11 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
 
 
-def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(tmp_path: Path) -> None:
+@pytest.mark.parametrize("weights_path_value", [None, ""])
+def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(
+    tmp_path: Path,
+    weights_path_value: object,
+) -> None:
     adapter_manifest_path = tmp_path / "train_lora.adapter.json"
     adapter_manifest_path.write_text(
         json.dumps(
@@ -674,6 +678,7 @@ def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(tmp_path:
                 "source_model": "melix-test-text",
                 "adapter_set_hash": "adapter-alpha",
                 "adapter_name": "demo-adapter",
+                "weights_path": weights_path_value,
             }
         ) + "\n",
         encoding="utf-8",
