@@ -324,19 +324,20 @@ class ModelOpsJobRegistry:
             if artifact_kind != "adapter":
                 continue
 
+            raw_lineage = manifest.get("parent_lineage")
             publish = {
                 "job_id": job["job_id"],
                 "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ext.get("target_repo", "")))),
                 "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
                 "export_artifact_kind": str(manifest.get("export_artifact_kind", "")),
-                "parent_lineage": manifest.get("parent_lineage") if isinstance(manifest.get("parent_lineage"), dict) else {},
+                "parent_lineage": raw_lineage if isinstance(raw_lineage, dict) else {},
             }
             adapter_name = str(ext.get("adapter_name", manifest.get("adapter_name", "")))
             artifact_path = str(ext.get("artifact_path", manifest.get("artifact_path", "")))
             if adapter_name:
-                publish_by_name[adapter_name] = publish
+                publish_by_name.setdefault(adapter_name, publish)
             if artifact_path:
-                publish_by_path[artifact_path] = publish
+                publish_by_path.setdefault(artifact_path, publish)
 
         for job in jobs:
             if job["operation"] != "activate_adapter" or job["status"] != "completed":
@@ -489,20 +490,21 @@ class ModelOpsJobRegistry:
             export_artifact_kind = str(manifest.get("export_artifact_kind", ""))
             if export_artifact_kind != "merged_export":
                 continue
+            raw_lineage = manifest.get("parent_lineage")
             publish = {
                 "job_id": job["job_id"],
                 "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ""))),
                 "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
                 "export_artifact_kind": export_artifact_kind,
-                "parent_lineage": manifest.get("parent_lineage") if isinstance(manifest.get("parent_lineage"), dict) else {},
+                "parent_lineage": raw_lineage if isinstance(raw_lineage, dict) else {},
             }
             parent_lineage = publish["parent_lineage"]
-            manifest_path = str(parent_lineage.get("local_manifest_path", ""))
-            model_path = str(parent_lineage.get("local_artifact_path", ""))
+            manifest_path = str(parent_lineage.get("local_manifest_path", "")).strip()
+            model_path = str(parent_lineage.get("local_artifact_path", "")).strip()
             if manifest_path:
-                publish_by_manifest_path[manifest_path] = publish
+                publish_by_manifest_path.setdefault(manifest_path, publish)
             if model_path:
-                publish_by_model_path[model_path] = publish
+                publish_by_model_path.setdefault(model_path, publish)
 
         removed_targets = ModelOpsJobRegistry._removed_derived_targets(jobs)
         removed_model_ids = removed_targets["model_ids"]
@@ -517,9 +519,12 @@ class ModelOpsJobRegistry:
             derived_model_id = str(manifest.get("derived_model_id", ""))
             if derived_model_id in removed_model_ids:
                 continue
-            activation_manifest_path = str(job.get("output_path", ""))
-            model_path = str(manifest.get("derived_model_path", ""))
-            publish = publish_by_manifest_path.get(activation_manifest_path) or publish_by_model_path.get(model_path)
+            activation_manifest_path = str(job.get("output_path", "")).strip()
+            model_path = str(manifest.get("derived_model_path", "")).strip()
+            publish = (
+                (activation_manifest_path and publish_by_manifest_path.get(activation_manifest_path))
+                or (model_path and publish_by_model_path.get(model_path))
+            )
             derived_models.append(
                 {
                     "job_id": job["job_id"],

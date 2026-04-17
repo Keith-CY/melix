@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-import time
+import re
 from typing import Any, Callable
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -108,7 +108,11 @@ class LoRATrainingPipeline:
         checkpoint_count = training_result.metrics.checkpoint_count
         resume_ready = training_result.metrics.resume_ready
         latest_checkpoint_path = training_result.metrics.latest_checkpoint_path
-        resume_source_path = training_result.metrics.resume_source_path or str(resume_context["resume_source_path"] or "")
+        resume_source_path = str(
+            training_result.metrics.resume_source_path
+            or resume_context["resume_source_path"]
+            or ""
+        )
         tokens_per_second = training_result.metrics.tokens_per_second
         peak_memory_gb = training_result.metrics.peak_memory_gb
         experiment_group_id = (
@@ -315,13 +319,18 @@ def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> 
 
 
 def _latest_checkpoint_from_directory(path: Path) -> Path:
-    checkpoint_candidates = sorted(path.rglob("*.safetensors"))
+    checkpoint_candidates = list(path.rglob("*.safetensors"))
     if not checkpoint_candidates:
         raise ModelOperationError(
             code="invalid_resume_source",
             message=f"Resume directory does not contain adapter weights: {path}",
         )
-    return checkpoint_candidates[-1].resolve()
+
+    def order_key(candidate: Path) -> tuple[int, str]:
+        numbers = [int(value) for value in re.findall(r"\d+", str(candidate))]
+        return (numbers[-1] if numbers else -1, str(candidate))
+
+    return max(checkpoint_candidates, key=order_key).resolve()
 
 
 def _validated_resume_path(path: Path, *, source_label: str) -> Path:
