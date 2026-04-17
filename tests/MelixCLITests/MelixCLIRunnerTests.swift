@@ -1288,7 +1288,7 @@ struct MelixCLIRunnerTests {
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     targetRepo: "melix/adapters/demo",
-                    exportKind: "adapter_export",
+                    exportKind: .adapterExport,
                     artifactPath: "/tmp/melix/train_lora.adapter.json",
                     artifactManifestPath: "/tmp/melix/train_lora.adapter.json"
                 )
@@ -1312,7 +1312,7 @@ struct MelixCLIRunnerTests {
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     targetRepo: "melix/models/demo-merged",
-                    exportKind: "merged_export",
+                    exportKind: .mergedExport,
                     artifactPath: "/tmp/melix/activate_adapter/job-2/manifest.json",
                     artifactManifestPath: "/tmp/melix/activate_adapter/job-2/manifest.json",
                     json: true

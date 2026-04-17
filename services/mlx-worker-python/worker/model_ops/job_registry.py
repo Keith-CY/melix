@@ -222,28 +222,24 @@ class ModelOpsJobRegistry:
             }
         return None
 
-    def active_derived_model_manifests(self) -> list[dict[str, Any]]:
-        with self._lock:
-            jobs = [
-                self._snapshot_job(job)
-                for job in sorted(self._jobs.values(), key=self._job_sort_key, reverse=True)
-            ]
-
-        removed_targets = self._removed_derived_targets(jobs)
-        removed_model_ids = removed_targets["model_ids"]
-        removed_activation_job_ids = removed_targets["activation_job_ids"]
+    def active_derived_model_manifests(self) -> tuple[dict[str, Any], ...]:
+        snapshot = self.snapshot()
+        active_manifest_paths = {
+            str(model.get("activation_manifest_path", "")).strip()
+            for model in snapshot.get("derived_models", [])
+            if str(model.get("activation_manifest_path", "")).strip()
+        }
         manifests: list[dict[str, Any]] = []
-        for job in jobs:
-            if job["operation"] != "activate_adapter" or job["status"] != "completed":
+        for job in snapshot.get("jobs", []):
+            if job.get("operation") != "activate_adapter" or job.get("status") != "completed":
                 continue
-            if job["job_id"] in removed_activation_job_ids:
+            output_path = str(job.get("output_path", "")).strip()
+            if output_path not in active_manifest_paths:
                 continue
-            manifest = job.get("manifest") or {}
-            derived_model_id = str(manifest.get("derived_model_id", "")).strip()
-            if not derived_model_id or derived_model_id in removed_model_ids:
-                continue
-            manifests.append(dict(manifest))
-        return manifests
+            manifest = job.get("manifest")
+            if isinstance(manifest, dict):
+                manifests.append(manifest)
+        return tuple(manifests)
 
     def _max_numeric_job_id(self) -> int:
         max_job_id = 0
@@ -544,6 +540,7 @@ class ModelOpsJobRegistry:
                     "source_model": str(manifest.get("source_model", "")),
                     "activation_mode": str(manifest.get("activation_mode", "")),
                     "activation_backend": str(manifest.get("activation_backend", "")),
+                    "activation_manifest_path": activation_manifest_path,
                     "published_repo": publish["target_repo"] if publish else "",
                     "publish_job_id": publish["job_id"] if publish else "",
                     "publish_backend": publish["publish_backend"] if publish else "",

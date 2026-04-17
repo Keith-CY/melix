@@ -131,10 +131,15 @@ public struct LoraRemoveDerivedOptions: Equatable, Sendable {
     }
 }
 
+public enum LoraPublishExportKind: String, Equatable, Sendable {
+    case adapterExport = "adapter_export"
+    case mergedExport = "merged_export"
+}
+
 public struct LoraPublishOptions: Equatable, Sendable {
     public let modelID: String
     public let targetRepo: String
-    public let exportKind: String
+    public let exportKind: LoraPublishExportKind
     public let artifactPath: String
     public let artifactManifestPath: String
     public let json: Bool
@@ -142,7 +147,7 @@ public struct LoraPublishOptions: Equatable, Sendable {
     public init(
         modelID: String,
         targetRepo: String,
-        exportKind: String,
+        exportKind: LoraPublishExportKind,
         artifactPath: String,
         artifactManifestPath: String = "",
         json: Bool = false
@@ -1483,19 +1488,20 @@ public enum MelixCLIParser {
                     "Exactly one of --adapter-path, --merged-model-path, or --manifest-path is required for melix lora publish."
                 )
             }
-            let exportKind: String
+            let exportKind: LoraPublishExportKind
             let artifactPath: String
             let artifactManifestPath: String
             if adapterPath.isEmpty == false {
-                exportKind = "adapter_export"
+                exportKind = .adapterExport
                 artifactPath = adapterPath
+                // Adapter publish accepts the adapter manifest JSON itself as the source artifact.
                 artifactManifestPath = adapterPath
             } else if mergedModelPath.isEmpty == false {
-                exportKind = "merged_export"
+                exportKind = .mergedExport
                 artifactPath = mergedModelPath
                 artifactManifestPath = ""
             } else {
-                exportKind = "merged_export"
+                exportKind = .mergedExport
                 artifactPath = manifestPath
                 artifactManifestPath = manifestPath
             }
@@ -2888,7 +2894,7 @@ public actor MelixCLIRunner {
             var ext = [
                 "target_repo": options.targetRepo,
                 "artifact_path": options.artifactPath,
-                "artifact_kind": options.exportKind,
+                "artifact_kind": options.exportKind.rawValue,
             ]
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
@@ -3192,16 +3198,17 @@ public actor MelixCLIRunner {
             return arguments
         case "upload":
             let artifactKind = ext["artifact_kind"] ?? ""
-            if ["adapter_export", "merged_export"].contains(artifactKind) {
+            if let exportKind = LoraPublishExportKind(rawValue: artifactKind) {
                 var arguments = ["lora", "publish", "--model-id", modelID]
                 appendOption("--target-repo", value: ext["target_repo"], into: &arguments)
-                if artifactKind == "adapter_export" {
+                switch exportKind {
+                case .adapterExport:
                     appendOption("--adapter-path", value: ext["artifact_path"], into: &arguments)
-                } else {
+                case .mergedExport:
                     let artifactPath = ext["artifact_path"] ?? ""
                     let manifestPath = ext["artifact_manifest_path"] ?? ""
-                    if manifestPath.isEmpty == false || artifactPath.hasSuffix(".json") {
-                        appendOption("--manifest-path", value: manifestPath.isEmpty ? artifactPath : manifestPath, into: &arguments)
+                    if manifestPath.isEmpty == false {
+                        appendOption("--manifest-path", value: manifestPath, into: &arguments)
                     } else {
                         appendOption("--merged-model-path", value: artifactPath, into: &arguments)
                     }
