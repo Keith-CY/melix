@@ -1341,13 +1341,13 @@ struct MelixCLIParserTests {
 
         #expect(adapterOptions.modelID == "melix-dev-text")
         #expect(adapterOptions.targetRepo == "melix/adapters/demo")
-        #expect(adapterOptions.exportKind == "adapter_export")
+        #expect(adapterOptions.exportKind == .adapterExport)
         #expect(adapterOptions.artifactPath == "/tmp/melix/train_lora.adapter.json")
         #expect(adapterOptions.artifactManifestPath == "/tmp/melix/train_lora.adapter.json")
         #expect(adapterOptions.json == false)
 
         #expect(mergedOptions.targetRepo == "melix/models/demo-merged")
-        #expect(mergedOptions.exportKind == "merged_export")
+        #expect(mergedOptions.exportKind == .mergedExport)
         #expect(mergedOptions.artifactPath == "/tmp/melix/activate_adapter/manifest.json")
         #expect(mergedOptions.artifactManifestPath == "/tmp/melix/activate_adapter/manifest.json")
         #expect(mergedOptions.json)
