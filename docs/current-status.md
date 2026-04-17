@@ -14,7 +14,7 @@ closed the original Phase 8 productization scope for this codebase.
 - local model registry management, including multi-root discovery, local import, and Hub-backed download flows
 - server session lifecycle workflows, including create, update, select, start, pause, resume, wake, and stop
 - local chat and operator workflows through the public `melix` CLI
-- LoRA and QLoRA training, adapter activation, derived-model lifecycle, and compare-ready outputs
+- LoRA and QLoRA training, adapter activation, derived-model lifecycle, compare-ready outputs, and architecture-aware LoRA target presets for stable dense text families
 - benchmark, matrix benchmark, evaluation, compare, and export flows from shared product-owned surfaces
 - a native macOS operator surface backed by the same CLI-first workflow authority used by the shipped product
 - packaging and install paths for launch agents, Homebrew service use, and preview app-bundle delivery
@@ -52,6 +52,7 @@ The current forward-looking LoRA expansion breakdown is tracked in:
 
 - Melix is intentionally scoped to macOS on Apple Silicon.
 - The current docs should be read as productized local-runtime documentation, not as a promise of cross-platform support.
+- LoRA family coverage is intentionally uneven today: `llama`, `qwen`, `gemma`, and `kimi` are the stable dense-family path; `mixtral` remains experimental through separate MoE hooks; `qwen3moe`, `deepseek-mla`, `mistral4`, `nemotron-h`, and embedding-family models are not yet productized for `train_lora`.
 - Disk-streaming remains an evidence-only boundary today. The repository documents the probes and unsupported-path evidence, but true SSD-backed runtime execution is still not shipped.
 - The historical plan archive is broader than the curated product docs. Use the execution index as an engineering record, not as shorthand for every archived plan being equally product-ready.
 - `progress.md` still tracks active repository-level verification notes. If you are working inside the repo, treat the latest progress log as the operational truth for known local issues.

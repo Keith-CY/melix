@@ -348,6 +348,11 @@ def test_registry_snapshot_applies_text_family_adapter_metadata_from_local_confi
     assert qwen3moe.ext["melix.text.moe.enabled"] == "true"
     assert qwen3moe.ext["melix.text.moe.expert_count"] == "128"
     assert qwen3moe.ext["melix.text.moe.gate_dequant"] == "true"
+    assert qwen3moe.ext["melix.lora.family_id"] == "qwen3moe"
+    assert qwen3moe.ext["melix.lora.family_kind"] == "moe"
+    assert qwen3moe.ext["melix.lora.support_tier"] == "experimental"
+    assert qwen3moe.ext["melix.lora.training_ready"] == "false"
+    assert qwen3moe.ext["melix.lora.default_target_preset"] == "attention"
 
 
 def test_registry_snapshot_ignores_invalid_model_config_payloads(tmp_path: Path) -> None:
