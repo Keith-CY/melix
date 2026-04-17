@@ -74,6 +74,12 @@ class AdapterActivationPipeline:
                 code="activation_failure",
                 message="Adapter package is missing adapter_set_hash.",
             )
+        adapter_weights_path = str(adapter_manifest.get("weights_path") or "").strip()
+        if activation_mode == "adapter_backed_runtime" and not adapter_weights_path:
+            raise ModelOperationError(
+                code="activation_failure",
+                message="Adapter-backed runtime activation requires adapter package weights_path metadata.",
+            )
 
         derived_model_id = f"{source_model.model_id}-lora-{adapter_set_hash[:8]}"
         derived_model_dir = output_dir / derived_model_id
@@ -85,7 +91,7 @@ class AdapterActivationPipeline:
                     job_id=job_id,
                     base_model_id=source_model.model_id,
                     model_path=Path(source_model.model_path).expanduser(),
-                    adapter_dir=Path(adapter_manifest["weights_path"]).expanduser().resolve().parent,
+                    adapter_dir=Path(adapter_weights_path).expanduser().resolve().parent,
                     adapter_manifest_path=adapter_manifest_path,
                     derived_model_dir=derived_model_dir,
                     activation_mode=activation_mode,
@@ -127,7 +133,7 @@ class AdapterActivationPipeline:
             "source_model_ext": dict(source_model.ext),
             "base_model_repo_id": source_model.model_id,
             "adapter_manifest_path": str(adapter_manifest_path),
-            "adapter_weights_path": str(adapter_manifest.get("weights_path", "")),
+            "adapter_weights_path": adapter_weights_path,
             "adapter_name": adapter_manifest.get("adapter_name", ""),
             "adapter_set_hash": adapter_set_hash,
             "source_adapter_job_id": str(adapter_manifest.get("job_id", "")),

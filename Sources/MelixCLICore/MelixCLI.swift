@@ -3868,9 +3868,10 @@ public actor MelixCLIRunner {
         }
 
         let adapters = payload["adapters"] as? [[String: Any]] ?? []
+        let derivedModels = payload["derived_models"] as? [[String: Any]] ?? []
         let experimentGroups = payload["experiment_groups"] as? [[String: Any]] ?? []
-        if adapters.isEmpty && experimentGroups.isEmpty {
-            return "No adapters found.\n"
+        if adapters.isEmpty && derivedModels.isEmpty && experimentGroups.isEmpty {
+            return "No adapters or derived models found.\n"
         }
 
         var sections: [String] = []
@@ -3879,11 +3880,31 @@ public actor MelixCLIRunner {
                 let name = (adapter["adapter_name"] as? String) ?? "adapter"
                 let status = (adapter["status"] as? String) ?? "unknown"
                 let sourceModel = (adapter["source_model"] as? String) ?? ""
+                let activationMode = (adapter["activation_mode"] as? String) ?? ""
+                let derivedModelID = (adapter["derived_model_id"] as? String) ?? ""
                 let publishedRepo = (adapter["published_repo"] as? String) ?? ""
                 let publishKind = (adapter["publish_artifact_kind"] as? String) ?? ""
-                return "\(name)\t\(status)\t\(sourceModel)\t\(publishedRepo)\t\(publishKind)"
+                return "\(name)\t\(status)\t\(sourceModel)\t\(activationMode)\t\(derivedModelID)\t\(publishedRepo)\t\(publishKind)"
             }
-            sections.append((["adapter\tstatus\tsource_model\tpublished_repo\tpublish_artifact_kind"] + adapterLines).joined(separator: "\n"))
+            sections.append(
+                (["adapter\tstatus\tsource_model\tactivation_mode\tderived_model_id\tpublished_repo\tpublish_artifact_kind"] + adapterLines)
+                    .joined(separator: "\n")
+            )
+        }
+
+        if derivedModels.isEmpty == false {
+            let derivedLines = derivedModels.map { derivedModel in
+                let modelID = (derivedModel["model_id"] as? String) ?? ""
+                let alias = (derivedModel["derived_model_alias"] as? String) ?? ""
+                let activationMode = (derivedModel["activation_mode"] as? String) ?? ""
+                let activationBackend = (derivedModel["activation_backend"] as? String) ?? ""
+                let sourceModel = (derivedModel["source_model"] as? String) ?? ""
+                return "\(modelID)\t\(alias)\t\(activationMode)\t\(activationBackend)\t\(sourceModel)"
+            }
+            sections.append(
+                (["derived_model_id\talias\tactivation_mode\tactivation_backend\tsource_model"] + derivedLines)
+                    .joined(separator: "\n")
+            )
         }
 
         if experimentGroups.isEmpty == false {

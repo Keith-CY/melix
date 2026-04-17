@@ -3276,6 +3276,7 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.operation == "activate_adapter")
         #expect(derived.routeClass == .workerRoutePythonTextCompatibility)
         #expect(derived.capabilityClass == .modelCapabilityText)
+        #expect(derived.settings.alias == "Runtime Alias")
         #expect(derived.settings.ext["melix.model_path"] == "models/dev-text")
         #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
         #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
