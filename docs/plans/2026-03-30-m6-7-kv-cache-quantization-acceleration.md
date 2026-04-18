@@ -29,6 +29,9 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - the shared real-model helper should keep deterministic test fixtures local, while allowing benchmark commands to resolve an existing local Hugging Face cache or managed model path before falling back to the Hub id
 - Phase 8 real-model E2E uses `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`; the Swift active-KV pre-optimization baseline currently uses `mlx-community/Qwen3-0.6B-4bit` because the pinned Swift MLXLLM registry does not support `model_type = qwen3_5`
 - live Swift MLX model probes must run with a metallib matching the Swift MLX dependency; `MELIX_SWIFT_MLX_METALLIB_PATH` should point at an MLX 0.24.2 `mlx.metallib` when the Python worker environment carries a newer MLX wheel
+- the first post-baseline optimization removes redundant decode-side quantization maintenance calls once the cache is already quantized; the post-run evidence is `docs/metrics/phase2-active-kv-decode-guard-postopt.json`
+- `turboquant-q4` must be treated as a measured fallback profile until the kernel path is no longer `fallback`; true TurboQuant optimization requires a fused decode kernel path
+- architecture notes for the fused-kernel route live in `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`
 
 ## Verification
 
@@ -36,7 +39,9 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - `make integration-test`
 - `MELIX_SWIFT_MLX_METALLIB_PATH=/path/to/mlx-0.24.2/mlx.metallib MELIX_DEV_TEXT_MODEL_PATH=/path/to/mlx-community/Qwen3-0.6B-4bit bash scripts/dev_up.sh --prefer-built`
 - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py --json --runtime-dir "$MELIX_RUNTIME_DIR" --http-prompt "Continue this sentence with five short words: Melix measures cache speed by" --model-path /path/to/mlx-community/Qwen3-0.6B-4bit --model-revision main --decode-repeats 5 --active-kv-profiles q4 --skip-abort --output docs/metrics/phase2-affine-q4-preopt.json`
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py --json --runtime-dir "$MELIX_RUNTIME_DIR" --http-prompt "Continue this sentence with five short words: Melix measures cache speed by" --model-path /path/to/mlx-community/Qwen3-0.6B-4bit --model-revision main --decode-repeats 5 --active-kv-profiles q4,turboquant-q4 --skip-abort --output docs/metrics/phase2-active-kv-decode-guard-postopt.json`
 - inspect `swift_worker_direct.decode[]` for `label = "decode_affine_q4"`
+- inspect `swift_worker_direct.decode[]` for `label = "decode_turboquant_q4"` and require `active_kv_kernel_path != "fallback"` before claiming fused TurboQuant
 - inspect `swift_worker_direct.comparisons.affine_q4_vs_baseline` for throughput overhead, TTFT delta, quantization share, and estimated memory savings
 - preserve the emitted JSON as the affine q4 pre-optimization baseline before making TurboQuant kernel changes
 
@@ -46,3 +51,4 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - memory and throughput effects are measurable and benchmarked
 - optimization work is blocked until the report contains non-`N/A` baseline and affine q4 decode rows plus an affine-vs-baseline comparison
 - any later TurboQuant profile must be compared against both baseline and affine q4 using the same probe fields
+- true TurboQuant remains incomplete until a post-run JSON shows the TurboQuant profile on a non-fallback fused kernel path with measured throughput overhead improvement

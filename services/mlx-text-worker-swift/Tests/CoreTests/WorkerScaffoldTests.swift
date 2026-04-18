@@ -981,6 +981,54 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
         XCTAssertEqual(activeKVProbe.fallbackCount, 0)
     }
+
+    func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge lazy active kv decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-baseline-prefill-active-kv-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 1)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 10)
+        XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
+    }
     #endif
 
     func testChatMessageConversionFlattensTextAndRejectsUnsupportedParts() throws {
@@ -5612,6 +5660,67 @@ final class WorkerScaffoldTests: XCTestCase {
             50
         )
     }
+
+    #if canImport(MLXLMCommon)
+    func testActiveKVDecodeQuantizationGuardSkipsWhenCacheIsAlreadyQuantized() {
+        var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        activeAcceleration.mode = .activeKvQuantized
+        activeAcceleration.activeKvQuantProfile = "q4"
+
+        let standardCache = KVCacheSimple()
+        standardCache.offset = 2
+        XCTAssertTrue(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        let quantizedCache = QuantizedKVCache(groupSize: 64, bits: 4)
+        quantizedCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [quantizedCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        standardCache.offset = 0
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        standardCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: nil,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        var baselineAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        baselineAcceleration.mode = .baseline
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: baselineAcceleration
+            )
+        )
+    }
+    #endif
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()

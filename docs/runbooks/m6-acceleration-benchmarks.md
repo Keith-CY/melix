@@ -57,6 +57,23 @@ uv run --project services/mlx-worker-python python scripts/phase2_metrics_report
   --output docs/metrics/phase2-affine-q4-preopt.json
 ```
 
+After a decode-path optimization, run the same command family with both affine q4
+and the TurboQuant probe profile:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py \
+  --json \
+  --runtime-dir "$MELIX_RUNTIME_DIR" \
+  --http-prompt "Continue this sentence with five short words: Melix measures cache speed by" \
+  --model-path "$MELIX_DEV_TEXT_MODEL_PATH" \
+  --model-revision main \
+  --decode-repeats 5 \
+  --active-kv-profiles q4,turboquant-q4 \
+  --skip-abort \
+  --output docs/metrics/phase2-active-kv-decode-guard-postopt.json
+```
+
 ## Evidence To Inspect
 
 ### Active KV Quantization
@@ -97,6 +114,19 @@ Expected comparison fields:
 - `active_kv_estimated_memory_savings_pct`
 
 The comparison block is the release-gate evidence for before/after active-KV optimization.
+
+For the current decode-guard post-run, `decode_affine_q4` and
+`decode_turboquant_q4` both report `active_kv_decode_quantize_total_us = 0`
+across all five repeats. The end-to-end throughput overhead remains about 43
+percent, so the remaining optimization target is the quantized attention model
+call and fused kernel path, not decode-loop quantization maintenance.
+
+For any future fused TurboQuant claim, `decode_turboquant_q4` must report:
+
+- `active_kv_backend = "turboquant"`
+- `active_kv_kernel_path != "fallback"`
+- `active_kv_fallback_count = 0`
+- measured throughput overhead improvement against the frozen affine q4 pre-run
 
 ### Sparse Prefill
 

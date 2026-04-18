@@ -11,3 +11,9 @@ Use this area for documents that answer questions such as:
 - how the module is verified
 
 Keep the current top-level specs in `docs/` as the canonical source until a dedicated migration task moves them.
+
+## Notes
+
+- [`2026-04-01-server-session-desktop-shell.md`](2026-04-01-server-session-desktop-shell.md)
+- [`2026-04-02-service-first-sidecar-reuse.md`](2026-04-02-service-first-sidecar-reuse.md)
+- [`2026-04-18-turboquant-kv-cache-optimization.md`](2026-04-18-turboquant-kv-cache-optimization.md)

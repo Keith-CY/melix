@@ -599,6 +599,22 @@ private func applyActiveKVQuantizationIfNeeded(
         quantizedKVStart: parameters.quantizedKVStart
     )
 }
+
+func shouldAttemptActiveKVDecodeQuantization(
+    cache: [KVCache],
+    kvBits: Int?,
+    quantizedKVStart: Int,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) -> Bool {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized, kvBits != nil else {
+        return false
+    }
+    guard let firstCache = cache.first, firstCache.offset > quantizedKVStart else {
+        return false
+    }
+    return !(firstCache is QuantizedKVCacheProtocol)
+}
 #endif
 
 private func makePreparedDecodeGeneration(
@@ -681,6 +697,12 @@ private func makePreparedDecodeEvents(
             var generatedTokenCount = 0
             var decodeModelTotalMicros = 0
             var decodeQuantizeTotalMicros = 0
+            var shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
+                cache: cache,
+                kvBits: parameters.kvBits,
+                quantizedKVStart: parameters.quantizedKVStart,
+                acceleration: acceleration
+            )
             let startedAt = Date.timeIntervalSinceReferenceDate
 
             while parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
@@ -716,14 +738,22 @@ private func makePreparedDecodeEvents(
                     state: output.state
                 )
                 decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
-                let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
-                maybeQuantizeKVCache(
-                    cache: &cache,
-                    kvBits: parameters.kvBits,
-                    kvGroupSize: parameters.kvGroupSize,
-                    quantizedKVStart: parameters.quantizedKVStart
-                )
-                decodeQuantizeTotalMicros += elapsedMicros(since: quantizeStartedAt)
+                if shouldMaintainQuantizedDecodeCache {
+                    let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
+                    maybeQuantizeKVCache(
+                        cache: &cache,
+                        kvBits: parameters.kvBits,
+                        kvGroupSize: parameters.kvGroupSize,
+                        quantizedKVStart: parameters.quantizedKVStart
+                    )
+                    decodeQuantizeTotalMicros += elapsedMicros(since: quantizeStartedAt)
+                    shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
+                        cache: cache,
+                        kvBits: parameters.kvBits,
+                        quantizedKVStart: parameters.quantizedKVStart,
+                        acceleration: acceleration
+                    )
+                }
             }
 
             let elapsed = max(Date.timeIntervalSinceReferenceDate - startedAt, 0.000_001)

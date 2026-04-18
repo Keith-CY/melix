@@ -56,6 +56,7 @@ These top-level specs remain canonical and should not be moved without an explic
 - [`architecture/README.md`](architecture/README.md)
 - [`architecture/2026-04-01-server-session-desktop-shell.md`](architecture/2026-04-01-server-session-desktop-shell.md)
 - [`architecture/2026-04-02-service-first-sidecar-reuse.md`](architecture/2026-04-02-service-first-sidecar-reuse.md)
+- [`architecture/2026-04-18-turboquant-kv-cache-optimization.md`](architecture/2026-04-18-turboquant-kv-cache-optimization.md)
 - [`decisions/README.md`](decisions/README.md)
 
 ## Historical Planning Archive
