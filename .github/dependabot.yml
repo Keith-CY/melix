@@ -21,31 +21,16 @@ updates:
           - "*"
 
   - package-ecosystem: "swift"
-    directory: "/"
+    directories:
+      - "/"
+      - "/packages/protocol/swift"
+      - "/services/mlx-text-worker-swift"
+      - "/services/control-plane-swift"
+      - "/apps/macos-menubar"
     schedule:
       interval: "weekly"
       day: "monday"
-
-  - package-ecosystem: "swift"
-    directory: "/packages/protocol/swift"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-
-  - package-ecosystem: "swift"
-    directory: "/services/mlx-text-worker-swift"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-
-  - package-ecosystem: "swift"
-    directory: "/services/control-plane-swift"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-
-  - package-ecosystem: "swift"
-    directory: "/apps/macos-menubar"
-    schedule:
-      interval: "weekly"
-      day: "monday"
+    groups:
+      swift-grpc:
+        patterns:
+          - "*github.com/grpc/*"

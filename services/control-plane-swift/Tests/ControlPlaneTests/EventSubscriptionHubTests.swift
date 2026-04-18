@@ -282,8 +282,9 @@ struct CoreUtilityTests {
         let secondTask = Task {
             await gate.acquire(requestID: "req-2")
         }
-        await Task.yield()
-        let snapshotBeforeRelease = await gate.snapshot()
+        let snapshotBeforeRelease = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.activeRequestID == "req-1" && snapshot.queuedRequestIDs == ["req-2"]
+        }
         #expect(snapshotBeforeRelease.activeRequestID == "req-1")
         #expect(snapshotBeforeRelease.queuedRequestIDs == ["req-2"])
 
