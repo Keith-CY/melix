@@ -12,6 +12,7 @@ The current benchmark evidence is:
 | --- | --- | --- | --- |
 | Pre-optimization baseline | `docs/metrics/phase2-affine-q4-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4` |
 | Decode-guard post-optimization | `docs/metrics/phase2-active-kv-decode-guard-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Runtime speedup post-optimization | `docs/metrics/phase2-active-kv-runtime-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Fused TurboQuant candidate audit | `docs/metrics/phase2-active-kv-fused-turboquant-candidate.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
@@ -149,9 +150,23 @@ still come from the Swift MLX model path, so the release gate remains blocked
 until the post-run JSON shows both a non-fallback kernel path and
 `worker_tps_overhead_pct <= 15`.
 
+The first runtime-speedup slice removes the candidate dispatch from the default
+blocked route. `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` now explicitly opts
+into the live fused-candidate probe; without that flag, `turboquant-q4` still
+reports the blocked route and fallback kernel path, but it does not pay for a
+custom Metal dispatch that cannot affect model logits. `scripts/dev_up.py`
+passes the probe flag through to the Swift worker and writes it into `env.sh`
+only when the parent environment sets it, so normal runtime paths stay
+measurement-clean while candidate-audit runs remain reproducible.
+
+This is a small runtime cleanup, not the real TurboQuant decode architecture.
+The new default real-model run confirms candidate dispatch count drops from
+five to zero, but the worker throughput overhead remains 45.76 percent because
+the dependency-owned quantized attention model call is still the hot path.
+
 ## Before And After Metrics
 
-Both runs used:
+The current runs used:
 
 - model path: `/Users/ChenYu/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/73e3e38d981303bc594367cd910ea6eb48349da8`
 - model revision: `main`
@@ -161,37 +176,39 @@ Both runs used:
 - Swift worker metallib: explicit `mlx_metal` 0.29.1 `mlx.metallib`, matching
   `mlx-swift` 0.29.1 in `Package.resolved`
 
-| Metric | Pre affine q4 | Post affine q4 | Post turboquant-q4 candidate |
-| --- | ---: | ---: | ---: |
-| Baseline worker decode tok/s | 65.0 | 59.0 | 59.0 |
-| Active worker decode tok/s | 38.0 | 32.0 | 32.0 |
-| Worker TPS overhead | 41.54% | 45.76% | 45.76% |
-| Baseline wall tok/s | 65.75 | 59.15 | 59.15 |
-| Active wall tok/s | 38.35 | 32.50 | 32.53 |
-| Wall TPS overhead | 41.67% | 45.05% | 45.00% |
-| TTFT delta | 31.07 ms | 33.67 ms | 31.53 ms |
-| Total latency delta | 725.72 ms | 935.48 ms | 923.13 ms |
-| Active-KV decode model avg | 8910 us | 9879 us | 9875 us |
-| Active-KV decode quantize avg | 0 us | 0 us | 0 us |
-| Active-KV memory savings | 75% | 75% | 75% |
-| Kernel path | affine quantized SDPA | affine quantized SDPA | fallback |
-| Runtime route | N/A | N/A | blocked |
-| Runtime block reason | N/A | N/A | attention hook unavailable |
-| Candidate dispatch count, 5 runs | N/A | N/A | 5 |
-| Per-run fallback count | 0 | 0 | 1 |
-| Release-gate fallback count, 5 runs | 0 | 0 | 5 |
+| Metric | Pre affine q4 | Post affine q4 | Default turboquant-q4 | Probe-mode turboquant-q4 |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline worker decode tok/s | 65.0 | 59.0 | 59.0 | 58.0 |
+| Active worker decode tok/s | 38.0 | 32.0 | 32.0 | 32.0 |
+| Worker TPS overhead | 41.54% | 45.76% | 45.76% | 44.83% |
+| Baseline wall tok/s | 65.75 | 59.43 | 59.43 | 58.90 |
+| Active wall tok/s | 38.35 | 32.41 | 32.80 | 32.08 |
+| Wall TPS overhead | 41.67% | 45.47% | 44.81% | 45.53% |
+| TTFT delta | 31.07 ms | 32.09 ms | 33.72 ms | 38.08 ms |
+| Total latency delta | 725.72 ms | 933.50 ms | 912.69 ms | 941.51 ms |
+| Active-KV decode model avg | 8910 us | 9814 us | 9740 us | 9809 us |
+| Active-KV decode quantize avg | 0 us | 0 us | 0 us | 0 us |
+| Active-KV memory savings | 75% | 75% | 75% | 75% |
+| Kernel path | affine quantized SDPA | affine quantized SDPA | fallback | fallback |
+| Runtime route | N/A | N/A | blocked | blocked |
+| Runtime block reason | N/A | N/A | attention hook unavailable | attention hook unavailable |
+| Candidate dispatch count, 5 runs | N/A | N/A | 0 | 5 |
+| Per-run fallback count | 0 | 0 | 1 | 1 |
+| Release-gate fallback count, 5 runs | 0 | 0 | 5 | 5 |
 
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
-The fused TurboQuant release gate still intentionally fails on the current
-candidate post-run: `status = "fail"`, `observed_kernel_paths =
-["fallback"]`, `observed_runtime_routes = ["blocked"]`,
-`observed_runtime_block_reasons = ["attention_hook_unavailable"]`,
-`candidate_dispatch_count = 5`, `fallback_count = 5`, and
-`worker_tps_overhead_pct = 45.76`. This proves the candidate dispatch is
-connected and explains the runtime block without claiming an optimized decode
-path.
+The fused TurboQuant release gate still intentionally fails on both current
+post-runs. The default speedup post-run reports `status = "fail"`,
+`candidate_dispatch_count = 0`, `fallback_count = 5`, and
+`worker_tps_overhead_pct = 45.76`. The explicit probe-mode candidate post-run
+reports `status = "fail"`, `candidate_dispatch_count = 5`,
+`fallback_count = 5`, `observed_kernel_paths = ["fallback"]`,
+`observed_runtime_routes = ["blocked"]`,
+`observed_runtime_block_reasons = ["attention_hook_unavailable"]`, and
+`worker_tps_overhead_pct = 44.83`. This preserves candidate-dispatch evidence
+without treating it as runtime success.
 
 Interpretation: the guard did remove the redundant maintenance work, but that
 work was already too small to move end-to-end throughput. The remaining overhead

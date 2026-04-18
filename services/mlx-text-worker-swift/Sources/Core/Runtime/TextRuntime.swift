@@ -305,7 +305,9 @@ func makeTextRuntime(
         )
     default:
         return TextRuntime(
-            backend: AutoSwiftMLXBackend(),
+            backend: AutoSwiftMLXBackend(
+                turboQuantCandidateProbeEnabled: configuration.turboQuantCandidateProbeEnabled
+            ),
             residentMemoryReader: residentMemoryReader
         )
     }

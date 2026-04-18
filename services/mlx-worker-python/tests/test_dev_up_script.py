@@ -250,6 +250,7 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
     metallib_path.parent.mkdir(parents=True)
     metallib_path.write_text("mlx", encoding="utf-8")
     monkeypatch.setenv("MELIX_SWIFT_MLX_METALLIB_PATH", str(metallib_path))
+    monkeypatch.setenv("MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE", "1")
 
     env_path = dev_up.write_runtime_environment(layout)
     payload = env_path.read_text(encoding="utf-8")
@@ -260,6 +261,7 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
     assert f'export MELIX_SWIFT_MLX_METALLIB_PATH="{metallib_path}"' in payload
+    assert 'export MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE="1"' in payload
 
 
 def test_prepare_swift_worker_launch_cwd_symlinks_runtime_local_default_metallib(tmp_path: Path) -> None:
@@ -541,6 +543,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
     calls: list[tuple[str, object]] = []
     pid_values = iter([101, 202, 303])
+    monkeypatch.setenv("MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE", "1")
 
     monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
     monkeypatch.setattr(
@@ -586,6 +589,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-text-worker-swift"]
     )
     assert swift_spawn["cwd"] == layout.runtime_dir / "swift-text-worker-cwd"
+    assert swift_spawn["env_overrides"]["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"] == "1"
     control_plane_spawn = next(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
     )

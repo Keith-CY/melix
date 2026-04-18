@@ -31,6 +31,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 0)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
         XCTAssertEqual(configuration.initialCacheBlocks, 0)
+        XCTAssertFalse(configuration.turboQuantCandidateProbeEnabled)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -47,6 +48,7 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "4096",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "1024",
             "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
+            "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE": "true",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -61,6 +63,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 4_096)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 1_024)
         XCTAssertEqual(configuration.initialCacheBlocks, 4)
+        XCTAssertTrue(configuration.turboQuantCandidateProbeEnabled)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -934,7 +937,7 @@ final class WorkerScaffoldTests: XCTestCase {
     }
 
     func testAutoSwiftMLXBackendDecodeReportsTurboQuantCandidateDispatchWithoutPromotingKernelPath() async throws {
-        let backend = AutoSwiftMLXBackend()
+        let backend = AutoSwiftMLXBackend(turboQuantCandidateProbeEnabled: true)
         let promptTokens = [1, 2, 3, 4, 5]
         var sampling = Melix_Worker_V1_SamplingConfig()
         sampling.temperature = 0
@@ -6048,6 +6051,39 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testTurboQuantCandidateDispatchRequiresExplicitProbeMode() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            var acceleration = Melix_Worker_V1_AccelerationPolicy()
+            acceleration.mode = .activeKvQuantized
+            acceleration.activeKvQuantProfile = "turboquant-q4"
+
+            XCTAssertFalse(shouldDispatchTurboQuantFusedAttentionCandidate(
+                cache: [cache],
+                acceleration: acceleration,
+                candidateProbeEnabled: false
+            ))
+            XCTAssertTrue(shouldDispatchTurboQuantFusedAttentionCandidate(
+                cache: [cache],
+                acceleration: acceleration,
+                candidateProbeEnabled: true
+            ))
+        }
+    }
+
     func testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable() async throws {
         try await withTemporaryDefaultMetallib {
             let sequenceLength = 3
@@ -6268,6 +6304,13 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         XCTAssertGreaterThanOrEqual(bootstrap.services.metrics.counters["swift_text.spawn_to_bootstrap_ms"] ?? -1, 0)
+    }
+
+    func testSwiftBackendReceivesTurboQuantCandidateProbeConfiguration() throws {
+        let runtime = makeTextRuntime(for: WorkerConfiguration(turboQuantCandidateProbeEnabled: true))
+        let backend = try XCTUnwrap(runtime.backend as? AutoSwiftMLXBackend)
+
+        XCTAssertTrue(backend.turboQuantCandidateProbeEnabled)
     }
 
     func testDeterministicBackendModeBuildsARepeatableTextRuntime() async throws {

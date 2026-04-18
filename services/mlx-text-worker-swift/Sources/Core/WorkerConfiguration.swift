@@ -13,6 +13,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
     var prefillMemoryHeadroomBytes: UInt64
     var prefillQuadraticGuardTokenThreshold: UInt32
     var initialCacheBlocks: UInt32
+    var turboQuantCandidateProbeEnabled: Bool
 
     init(
         workerID: String = "swift-text-worker-001",
@@ -26,7 +27,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
         modelLoadHeadroomBytes: UInt64 = 0,
         prefillMemoryHeadroomBytes: UInt64 = 0,
         prefillQuadraticGuardTokenThreshold: UInt32 = 0,
-        initialCacheBlocks: UInt32 = 0
+        initialCacheBlocks: UInt32 = 0,
+        turboQuantCandidateProbeEnabled: Bool = false
     ) {
         self.workerID = workerID
         self.socketPath = socketPath
@@ -40,6 +42,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
         self.prefillMemoryHeadroomBytes = prefillMemoryHeadroomBytes
         self.prefillQuadraticGuardTokenThreshold = prefillQuadraticGuardTokenThreshold
         self.initialCacheBlocks = initialCacheBlocks
+        self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
     }
 
     package static func fromEnvironment(
@@ -69,6 +72,9 @@ package struct WorkerConfiguration: Sendable, Equatable {
             ),
             initialCacheBlocks: positiveUInt32(
                 from: environment["MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS"]
+            ),
+            turboQuantCandidateProbeEnabled: truthyBool(
+                from: environment["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"]
             )
         )
     }

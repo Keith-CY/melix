@@ -46,6 +46,7 @@ enum RawTextGenerationEvent: Sendable {
 
 struct AutoSwiftMLXBackend: TextRuntimeBackend {
     let runtimeName: String
+    let turboQuantCandidateProbeEnabled: Bool
 
     private let directLoader: (@Sendable (String) async throws -> LoadedTextModel)?
     private let directoryLoader: @Sendable (URL) async throws -> LoadedTextModel
@@ -58,6 +59,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
     init(
         runtimeName: String? = nil,
+        turboQuantCandidateProbeEnabled: Bool = false,
         loader: (@Sendable (String) async throws -> Any)? = nil,
         directoryLoader: (@Sendable (URL) async throws -> LoadedTextModel)? = nil,
         identifierLoader: (@Sendable (String, String) async throws -> LoadedTextModel)? = nil,
@@ -121,6 +123,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 sampling: sampling
             )
         }
+        self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
 
         if let runtimeName {
             self.runtimeName = runtimeName
@@ -256,7 +259,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             maxOutputTokens: maxOutputTokens,
             decodeStepSize: decodeStepSize,
             prefillToken: prefillToken,
-            acceleration: effectiveAcceleration
+            acceleration: effectiveAcceleration,
+            turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
         )
 
         return AsyncThrowingStream { continuation in
@@ -635,7 +639,8 @@ private func makePreparedDecodeGeneration(
     maxOutputTokens: UInt32,
     decodeStepSize: UInt32,
     prefillToken: String,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) async throws -> PreparedTextGeneration {
     #if canImport(MLXLMCommon)
     _ = prefillToken
@@ -663,7 +668,8 @@ private func makePreparedDecodeGeneration(
             decodeState: decodeState,
             context: modelContext,
             parameters: parameters,
-            acceleration: acceleration
+            acceleration: acceleration,
+            turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
         )
     }
 
@@ -683,7 +689,8 @@ private func makePreparedDecodeEvents(
     decodeState: PreparedDecodeState,
     context: ModelContext,
     parameters: GenerateParameters,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
     let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
 
@@ -746,7 +753,8 @@ private func makePreparedDecodeEvents(
                 if !didDispatchTurboQuantFusedAttention {
                     didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
                         cache: cache,
-                        acceleration: acceleration
+                        acceleration: acceleration,
+                        candidateProbeEnabled: turboQuantCandidateProbeEnabled
                     )
                 }
                 let modelStartedAt = Date.timeIntervalSinceReferenceDate
@@ -952,13 +960,14 @@ private func activeKVCandidateDispatchCode(
 
 private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
     cache: [KVCache],
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    candidateProbeEnabled: Bool = false
 ) -> Bool {
-    let normalized = normalizedAccelerationPolicy(acceleration)
-    guard normalized.mode == .activeKvQuantized else {
-        return false
-    }
-    guard normalized.activeKvQuantProfile.lowercased().hasPrefix("turboquant") else {
+    guard shouldDispatchTurboQuantFusedAttentionCandidate(
+        cache: cache,
+        acceleration: acceleration,
+        candidateProbeEnabled: candidateProbeEnabled
+    ) else {
         return false
     }
 
@@ -1029,6 +1038,22 @@ private struct SupportedTurboQuantQ4QuantizedCacheState {
     let headDimension: Int
     let groupSize: Int
     let bits: Int
+}
+
+func shouldDispatchTurboQuantFusedAttentionCandidate(
+    cache: [KVCache],
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    candidateProbeEnabled: Bool
+) -> Bool {
+    _ = cache
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard candidateProbeEnabled,
+          normalized.mode == .activeKvQuantized,
+          normalized.activeKvQuantProfile.lowercased().hasPrefix("turboquant")
+    else {
+        return false
+    }
+    return true
 }
 
 func turboQuantRuntimeFusedAttentionRoute(
