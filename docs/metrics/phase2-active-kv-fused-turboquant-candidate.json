@@ -166,7 +166,8 @@
             "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel",
             "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState",
             "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs",
-            "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState"
+            "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState",
+            "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable"
           ],
           "status": "smoke_proven"
         },

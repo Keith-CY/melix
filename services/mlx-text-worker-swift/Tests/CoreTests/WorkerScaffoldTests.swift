@@ -6039,6 +6039,37 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertTrue(dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [cache]))
         }
     }
+
+    func testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            var acceleration = Melix_Worker_V1_AccelerationPolicy()
+            acceleration.mode = .activeKvQuantized
+            acceleration.activeKvQuantProfile = "turboquant-q4"
+
+            let route = turboQuantRuntimeFusedAttentionRoute(
+                cache: [cache],
+                acceleration: acceleration
+            )
+
+            XCTAssertEqual(route, .blocked(.attentionHookUnavailable))
+            XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 90)
+            XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 1)
+        }
+    }
     #endif
     #endif
 

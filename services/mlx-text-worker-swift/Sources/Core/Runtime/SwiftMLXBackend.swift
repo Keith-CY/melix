@@ -578,6 +578,17 @@ private func applyActiveKVQuantizationProfile(
 }
 
 #if canImport(MLXLMCommon)
+enum TurboQuantRuntimeFusedAttentionBlockReason: Equatable {
+    case unsupportedCacheState
+    case attentionHookUnavailable
+}
+
+enum TurboQuantRuntimeFusedAttentionRoute: Equatable {
+    case disabled
+    case blocked(TurboQuantRuntimeFusedAttentionBlockReason)
+    case routed
+}
+
 private func applyActiveKVQuantizationIfNeeded(
     cache: inout [KVCache],
     acceleration: Melix_Worker_V1_AccelerationPolicy
@@ -840,7 +851,14 @@ private func makeActiveKVProbeSummary(
     let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
     let quantizedBytes = estimatedCacheStateBytes(cache)
     let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
-    let kernelPathCode = activeKVKernelPathCode(for: normalized)
+    let turboQuantRuntimeRoute = turboQuantRuntimeFusedAttentionRoute(
+        cache: cache,
+        acceleration: normalized
+    )
+    let kernelPathCode = activeKVKernelPathCode(
+        for: normalized,
+        turboQuantRuntimeRoute: turboQuantRuntimeRoute
+    )
     let savingsPercent = fp16Bytes > 0
         ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
         : max(0, 100 - quantizationRatio)
@@ -855,7 +873,10 @@ private func makeActiveKVProbeSummary(
         estimatedFP16Bytes: Int(clamping: fp16Bytes),
         estimatedQuantizedBytes: Int(clamping: quantizedBytes),
         estimatedMemorySavingsPercent: savingsPercent,
-        fallbackCount: kernelPathCode == 90 ? 1 : 0,
+        fallbackCount: activeKVFallbackCount(
+            for: normalized,
+            turboQuantRuntimeRoute: turboQuantRuntimeRoute
+        ),
         candidateDispatchCode: activeKVCandidateDispatchCode(
             for: normalized,
             turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
@@ -871,14 +892,25 @@ private func activeKVBackendCode(for policy: Melix_Worker_V1_AccelerationPolicy)
     return 1
 }
 
-private func activeKVKernelPathCode(
-    for policy: Melix_Worker_V1_AccelerationPolicy
+func activeKVKernelPathCode(
+    for policy: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantRuntimeRoute: TurboQuantRuntimeFusedAttentionRoute = .disabled
 ) -> Int {
     let profile = policy.activeKvQuantProfile.lowercased()
     if profile.hasPrefix("turboquant") {
-        return 90
+        return turboQuantRuntimeRoute == .routed ? 20 : 90
     }
     return 10
+}
+
+func activeKVFallbackCount(
+    for policy: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantRuntimeRoute: TurboQuantRuntimeFusedAttentionRoute
+) -> Int {
+    activeKVKernelPathCode(
+        for: policy,
+        turboQuantRuntimeRoute: turboQuantRuntimeRoute
+    ) == 90 ? 1 : 0
 }
 
 private func activeKVCandidateDispatchCode(
@@ -964,7 +996,57 @@ private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
 }
 
 #if canImport(MLX)
+private struct SupportedTurboQuantQ4QuantizedCacheState {
+    let quantizedKeys: (MLXArray, MLXArray, MLXArray?)
+    let quantizedValues: (MLXArray, MLXArray, MLXArray?)
+    let sequenceLength: Int
+    let headDimension: Int
+    let groupSize: Int
+    let bits: Int
+}
+
+func turboQuantRuntimeFusedAttentionRoute(
+    cache: [KVCache],
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) -> TurboQuantRuntimeFusedAttentionRoute {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized,
+          normalized.activeKvQuantProfile.lowercased().hasPrefix("turboquant")
+    else {
+        return .disabled
+    }
+
+    guard firstSupportedTurboQuantQ4QuantizedCacheState(cache: cache) != nil else {
+        return .blocked(.unsupportedCacheState)
+    }
+
+    return .blocked(.attentionHookUnavailable)
+}
+
 func dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [KVCache]) -> Bool {
+    guard let state = firstSupportedTurboQuantQ4QuantizedCacheState(cache: cache) else {
+        return false
+    }
+
+    let query = MLXArray(turboQuantCandidateQueryValues(headDimension: state.headDimension))
+    guard let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+        query: query,
+        quantizedKeys: state.quantizedKeys,
+        quantizedValues: state.quantizedValues,
+        sequenceLength: state.sequenceLength,
+        headDimension: state.headDimension,
+        groupSize: state.groupSize,
+        bits: state.bits
+    ) else {
+        return false
+    }
+    eval(output)
+    return true
+}
+
+private func firstSupportedTurboQuantQ4QuantizedCacheState(
+    cache: [KVCache]
+) -> SupportedTurboQuantQ4QuantizedCacheState? {
     for layer in cache {
         guard let quantizedCache = layer as? QuantizedKVCacheProtocol,
               quantizedCache.bits == 4,
@@ -994,23 +1076,17 @@ func dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [KV
             continue
         }
 
-        let query = MLXArray(turboQuantCandidateQueryValues(headDimension: keyHeadDimension))
-        guard let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
-            query: query,
+        return SupportedTurboQuantQ4QuantizedCacheState(
             quantizedKeys: quantizedKeys,
             quantizedValues: quantizedValues,
             sequenceLength: sequenceLength,
             headDimension: keyHeadDimension,
             groupSize: quantizedCache.groupSize,
             bits: quantizedCache.bits
-        ) else {
-            continue
-        }
-        eval(output)
-        return true
+        )
     }
 
-    return false
+    return nil
 }
 
 private func turboQuantCandidateQueryValues(headDimension: Int) -> [Float] {

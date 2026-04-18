@@ -427,6 +427,10 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState"
         in probe["capability_evidence"]["smoke_tests"]
     )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert "active_kv_kernel_path != fallback" in probe["next_required_evidence"]
@@ -1098,6 +1102,7 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
         in smoke_tests
     )
     assert "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState" in smoke_tests
+    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable" in smoke_tests
 
 
 def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monkeypatch, capsys) -> None:

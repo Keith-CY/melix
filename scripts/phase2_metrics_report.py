@@ -55,6 +55,7 @@ TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState",
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs",
         "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState",
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable",
     ],
 }
 TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS = [

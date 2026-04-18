@@ -129,6 +129,15 @@ and decodes MLX's `uint32` bit-packed q4 layout in one Metal dispatch for
 score, softmax, and value. If no supported cache state is available, the decode
 probe falls back to the original fixed smoke arrays.
 
+The runtime route decision is now explicit. Even when a live q4 cache can feed
+the fused candidate kernel, Melix reports the TurboQuant runtime route as
+blocked with `attentionHookUnavailable`. The reason is structural: Qwen/Llama
+model attention in the pinned `mlx-swift-lm` package calls dependency-owned
+`MLXLMCommon.attentionWithCacheUpdate(...)`, and Melix currently can only pass a
+cache object into that function. It cannot replace the dependency's quantized
+attention call from this target without a vendored dependency patch, upstream
+hook, or Melix-owned model implementation.
+
 This still deliberately keeps `active_kv_kernel_path = "fallback"` until model
 attention is actually routed through a fused TurboQuant cache. Model logits
 still come from the Swift MLX model path, so the release gate remains blocked
