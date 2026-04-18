@@ -52,6 +52,9 @@ TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel",
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel",
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel",
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState",
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs",
+        "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState",
     ],
 }
 TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS = [
@@ -1046,7 +1049,7 @@ def ensure_active_kv_release_gates(report: dict[str, Any]) -> None:
     ):
         direct["active_kv_release_gates"] = build_active_kv_release_gates(decode_rows, comparisons)
     gates = direct.get("active_kv_release_gates")
-    if "active_kv_fused_candidate_probes" not in direct and isinstance(gates, dict):
+    if isinstance(gates, dict):
         direct["active_kv_fused_candidate_probes"] = build_active_kv_fused_candidate_probes(gates)
 
 

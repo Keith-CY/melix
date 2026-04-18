@@ -107,9 +107,13 @@ and dispatch a custom `MLXFast.metalKernel(...)` kernel:
   accumulation kernel for a single query token in one custom Metal dispatch
 - `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`
   `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`,
-  and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`
-  run the kernels under the existing temporary `default.metallib` fixture and
-  skip only when no local MLX metallib is available
+  `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`,
+  and
+  `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState`
+  run the kernels under the existing temporary `default.metallib` fixture;
+  `WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs`
+  keeps the affine-q4 guard rails explicit before runtime routing is promoted.
+  These tests skip only when no local MLX metallib is available.
 
 This does not route runtime decode through a new TurboQuant cache. The fused
 attention smoke kernel intentionally favors capability and correctness over the
@@ -117,13 +121,19 @@ final parallel layout, so it removes uncertainty around whether the current
 Swift package can host custom Metal kernels for packed-q4 score, softmax, and
 value work without claiming an optimized runtime path.
 
-The first runtime-candidate slice dispatches the same fused MSE q4 Metal smoke
-kernel once from the `turboquant-q4` decode path and reports
-`active_kv_candidate_dispatch_code = 1` when that dispatch runs. It deliberately
-keeps `active_kv_kernel_path = "fallback"` until model attention is actually
-routed through a fused TurboQuant cache. Model logits still come from the Swift
-MLX model path, so the release gate remains blocked until the post-run JSON
-shows both a non-fallback kernel path and `worker_tps_overhead_pct <= 15`.
+The second runtime-candidate slice keeps
+`active_kv_candidate_dispatch_code = 1` as "a candidate dispatch ran", but now
+prefers a live `QuantizedKVCache` state over the fixed smoke arrays. The
+candidate helper slices the first batch/head from MLXLM's affine q4 cache tuple
+and decodes MLX's `uint32` bit-packed q4 layout in one Metal dispatch for
+score, softmax, and value. If no supported cache state is available, the decode
+probe falls back to the original fixed smoke arrays.
+
+This still deliberately keeps `active_kv_kernel_path = "fallback"` until model
+attention is actually routed through a fused TurboQuant cache. Model logits
+still come from the Swift MLX model path, so the release gate remains blocked
+until the post-run JSON shows both a non-fallback kernel path and
+`worker_tps_overhead_pct <= 15`.
 
 ## Before And After Metrics
 
@@ -135,20 +145,20 @@ Both runs used:
 - decode repeats: `5`
 - abort probe: skipped
 - Swift worker metallib: MLX 0.24.2 `mlx.metallib` for the original pre/post
-  guard evidence; MLX 0.29.1 `mlx.metallib` for the fused candidate rerun,
-  matching `mlx-swift` 0.29.1 in `Package.resolved`
+  guard evidence; explicit `mlx_metal` 0.29.1 `mlx.metallib` for the fused
+  candidate rerun, matching `mlx-swift` 0.29.1 in `Package.resolved`
 
 | Metric | Pre affine q4 | Post affine q4 | Post turboquant-q4 candidate |
 | --- | ---: | ---: | ---: |
-| Baseline worker decode tok/s | 65.0 | 61.0 | 59.0 |
+| Baseline worker decode tok/s | 65.0 | 61.0 | 60.0 |
 | Active worker decode tok/s | 38.0 | 35.0 | 32.0 |
-| Worker TPS overhead | 41.54% | 42.62% | 45.76% |
-| Baseline wall tok/s | 65.75 | 61.59 | 59.57 |
-| Active wall tok/s | 38.35 | 35.23 | 32.45 |
-| Wall TPS overhead | 41.67% | 42.80% | 45.53% |
-| TTFT delta | 31.07 ms | 36.75 ms | 32.23 ms |
-| Total latency delta | 725.72 ms | 816.20 ms | 929.08 ms |
-| Active-KV decode model avg | 8910 us | 9520 us | 9780 us |
+| Worker TPS overhead | 41.54% | 42.62% | 46.67% |
+| Baseline wall tok/s | 65.75 | 61.59 | 60.27 |
+| Active wall tok/s | 38.35 | 35.23 | 32.95 |
+| Wall TPS overhead | 41.67% | 42.80% | 45.33% |
+| TTFT delta | 31.07 ms | 36.75 ms | 34.83 ms |
+| Total latency delta | 725.72 ms | 816.20 ms | 915.00 ms |
+| Active-KV decode model avg | 8910 us | 9520 us | 9683 us |
 | Active-KV decode quantize avg | 0 us | 0 us | 0 us |
 | Active-KV memory savings | 75% | 75% | 75% |
 | Kernel path | affine quantized SDPA | affine quantized SDPA | fallback |
@@ -162,7 +172,7 @@ for `decode_turboquant_q4`.
 The fused TurboQuant release gate still intentionally fails on the current
 candidate post-run: `status = "fail"`, `observed_kernel_paths =
 ["fallback"]`, `candidate_dispatch_count = 5`, `fallback_count = 5`, and
-`worker_tps_overhead_pct = 45.76`. This proves the candidate dispatch is
+`worker_tps_overhead_pct = 46.67`. This proves the candidate dispatch is
 connected without claiming an optimized decode path.
 
 Interpretation: the guard did remove the redundant maintenance work, but that

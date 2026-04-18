@@ -415,6 +415,18 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel"
         in probe["capability_evidence"]["smoke_tests"]
     )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert "active_kv_kernel_path != fallback" in probe["next_required_evidence"]
@@ -1012,6 +1024,22 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
                             "failures": ["active_kv_kernel_path=fallback"],
                         }
                     },
+                    "active_kv_fused_candidate_probes": {
+                        "turboquant_q4": {
+                            "status": "stale",
+                            "profile_label": "decode_turboquant_q4",
+                            "capability_evidence": {
+                                "status": "smoke_proven",
+                                "runtime_path": "not_connected",
+                                "smoke_tests": ["WorkerScaffoldTests.testOldTurboQuantSmoke"],
+                            },
+                            "runtime_evidence": {
+                                "release_gate_status": "stale",
+                                "observed_kernel_paths": [],
+                            },
+                            "next_required_evidence": [],
+                        }
+                    },
                     "decode": [],
                     "prefill": [],
                     "comparisons": {},
@@ -1057,6 +1085,19 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
     assert written["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["runtime_evidence"][
         "observed_kernel_paths"
     ] == ["fallback"]
+    smoke_tests = written["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"][
+        "capability_evidence"
+    ]["smoke_tests"]
+    assert "WorkerScaffoldTests.testOldTurboQuantSmoke" not in smoke_tests
+    assert (
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState"
+        in smoke_tests
+    )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs"
+        in smoke_tests
+    )
+    assert "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState" in smoke_tests
 
 
 def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monkeypatch, capsys) -> None:

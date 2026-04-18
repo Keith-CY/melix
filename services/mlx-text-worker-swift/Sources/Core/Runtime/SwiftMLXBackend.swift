@@ -734,6 +734,7 @@ private func makePreparedDecodeEvents(
                 let nextInput = LMInput.Text(tokens: token)
                 if !didDispatchTurboQuantFusedAttention {
                     didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+                        cache: cache,
                         acceleration: acceleration
                     )
                 }
@@ -892,6 +893,7 @@ private func activeKVCandidateDispatchCode(
 }
 
 private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+    cache: [KVCache],
     acceleration: Melix_Worker_V1_AccelerationPolicy
 ) -> Bool {
     let normalized = normalizedAccelerationPolicy(acceleration)
@@ -904,6 +906,10 @@ private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
 
     #if canImport(MLX)
     return Device.withDefaultDevice(.gpu) {
+        if dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: cache) {
+            return true
+        }
+
         let query = MLXArray([Float(0.25), Float(-0.5), Float(0.75), Float(1.0)])
         let packedKeys = MLXArray(
             [
@@ -956,6 +962,63 @@ private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
     return false
     #endif
 }
+
+#if canImport(MLX)
+func dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [KVCache]) -> Bool {
+    for layer in cache {
+        guard let quantizedCache = layer as? QuantizedKVCacheProtocol,
+              quantizedCache.bits == 4,
+              quantizedCache.mode.rawValue == QuantizationMode.affine.rawValue,
+              let state = quantizedCache.getQuantizedState()
+        else {
+            continue
+        }
+
+        let quantizedKeys = state.0
+        let quantizedValues = state.1
+        guard quantizedKeys.0.shape.count >= 4, quantizedValues.0.shape.count >= 4 else {
+            continue
+        }
+        guard quantizedKeys.0.dtype == DType.uint32, quantizedValues.0.dtype == DType.uint32 else {
+            continue
+        }
+
+        let sequenceLength = quantizedKeys.0.dim(2)
+        let keyHeadDimension = quantizedKeys.0.dim(3) * 8
+        let valueHeadDimension = quantizedValues.0.dim(3) * 8
+        guard sequenceLength > 0,
+              keyHeadDimension > 0,
+              keyHeadDimension == valueHeadDimension,
+              keyHeadDimension % 8 == 0
+        else {
+            continue
+        }
+
+        let query = MLXArray(turboQuantCandidateQueryValues(headDimension: keyHeadDimension))
+        guard let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+            query: query,
+            quantizedKeys: quantizedKeys,
+            quantizedValues: quantizedValues,
+            sequenceLength: sequenceLength,
+            headDimension: keyHeadDimension,
+            groupSize: quantizedCache.groupSize,
+            bits: quantizedCache.bits
+        ) else {
+            continue
+        }
+        eval(output)
+        return true
+    }
+
+    return false
+}
+
+private func turboQuantCandidateQueryValues(headDimension: Int) -> [Float] {
+    (0 ..< headDimension).map { index in
+        Float((index % 17) - 8) / 16.0
+    }
+}
+#endif
 
 private func estimatedCacheStateBytes(_ cache: [KVCache]) -> UInt64 {
     cache.reduce(UInt64(0)) { partial, layer in

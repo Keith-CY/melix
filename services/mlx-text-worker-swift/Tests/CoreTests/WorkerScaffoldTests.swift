@@ -5834,6 +5834,212 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertTrue(allClose(output, expected).all().item())
         }
     }
+
+    #if canImport(MLXLMCommon)
+    func testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let queryValues = (0 ..< headDimension).map { Float($0 - 12) / 16.0 }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, 1, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let output = try XCTUnwrap(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: queries[0, 0, 0, 0...],
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )[0, 0, 0, 0...]
+
+            XCTAssertEqual(quantizedKeys.0.dtype, DType.uint32)
+            XCTAssertEqual(output.shape, [headDimension])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let query = MLXArray((0 ..< headDimension).map { Float($0 - 12) / 16.0 })
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            let int32PackedKeys = MLXArray([Int32](repeating: 0, count: sequenceLength * headDimension / 8), [
+                1, 1, sequenceLength, headDimension / 8,
+            ])
+            let rankOnePackedKeys = quantizedKeys.0[0, 0, 0, 0...]
+
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 2
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (quantizedKeys.0, quantizedKeys.1, nil),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: 0,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: 31,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (int32PackedKeys, quantizedKeys.1, quantizedKeys.2),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (rankOnePackedKeys, quantizedKeys.1, quantizedKeys.2),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    batchIndex: 1,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    headIndex: 1,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength + 1,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: 16,
+                    bits: 4
+                )
+            )
+        }
+    }
+
+    func testTurboQuantCandidateDispatchReadsQuantizedKVCacheState() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+
+            XCTAssertTrue(dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [cache]))
+        }
+    }
+    #endif
     #endif
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
