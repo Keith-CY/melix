@@ -34,6 +34,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - fallback `turboquant-q4` probes must fail the explicit fused release gate in `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`
 - the report CLI supports `--require-fused-turboquant`; use it for fused-kernel candidates, not for the current fallback post-run
 - architecture notes for the fused-kernel route live in `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`
+- the Swift custom Metal feasibility slice is covered by `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)` and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`; it proves `MLXFast.metalKernel(...)` can compile and dispatch in the text worker target before any TurboQuant runtime path is changed
 
 ## Verification
 
@@ -48,6 +49,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - inspect `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`; current fallback probes should report `status = "fail"`, while fused candidates must report `status = "pass"`
 - inspect `swift_worker_direct.comparisons.affine_q4_vs_baseline` for throughput overhead, TTFT delta, quantization share, and estimated memory savings
 - preserve the emitted JSON as the affine q4 pre-optimization baseline before making TurboQuant kernel changes
+- run `xcrun swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests/testTurboQuantMetalCapabilityRunsCustomIdentityKernel` after custom Metal changes; the test requires a discoverable local MLX `mlx.metallib` and uses the existing temporary `default.metallib` fixture
 
 ## Acceptance
 

@@ -34,6 +34,12 @@ text worker with a metallib matching the pinned Swift MLX runtime:
 - env: `MELIX_SWIFT_MLX_METALLIB_PATH`
 - expected version for this baseline: MLX `0.24.2` `mlx.metallib`
 
+Swift custom Metal smoke tests use the same runtime requirement. The
+`WorkerScaffoldTests/testTurboQuantMetalCapabilityRunsCustomIdentityKernel`
+test creates a temporary `default.metallib` symlink from a discoverable local
+MLX `mlx.metallib`; it skips when no local metallib is available and dispatches
+the custom `MLXFast.metalKernel(...)` identity kernel when one is present.
+
 ## Command
 
 ```bash

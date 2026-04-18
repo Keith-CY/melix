@@ -5722,6 +5722,20 @@ final class WorkerScaffoldTests: XCTestCase {
     }
     #endif
 
+    #if canImport(MLX)
+    func testTurboQuantMetalCapabilityRunsCustomIdentityKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let input = MLXArray([Float(1.0), Float(-2.0), Float(3.5), Float(4.25)])
+
+            let output = TurboQuantMetalKernelCapability.runIdentitySmokeKernel(input)
+
+            XCTAssertEqual(output.shape, input.shape)
+            XCTAssertEqual(output.dtype, input.dtype)
+            XCTAssertTrue(allClose(output, input).all().item())
+        }
+    }
+    #endif
+
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
         let convertWriter = RecordingRPCWriter<Melix_Worker_V1_ConvertModelEvent>()

@@ -90,6 +90,21 @@ phase:
   records decode-side quantization maintenance, or lacks the expected memory
   savings evidence
 
+A follow-up feasibility slice proves the Swift text worker target can compile
+and dispatch a custom `MLXFast.metalKernel(...)` kernel:
+
+- `MelixTextWorkerCore` now depends explicitly on the `MLX` and `MLXFast`
+  products from `mlx-swift`
+- `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)` dispatches a
+  one-output identity kernel through the same custom Metal surface needed by a
+  fused TurboQuant decode kernel
+- `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`
+  runs the kernel under the existing temporary `default.metallib` fixture and
+  skips only when no local MLX metallib is available
+
+This does not implement TurboQuant attention. It only removes the uncertainty
+around whether the current Swift package can host a custom fused Metal kernel.
+
 ## Before And After Metrics
 
 Both runs used:
@@ -143,9 +158,11 @@ with a fused decode implementation. The recommended order is:
 2. Prove custom Metal feasibility in Swift.
    The pinned Swift MLX checkout exposes `MLXFast.metalKernel(...)` and
    `MLXFastKernel.callAsFunction(...)`, which is the required custom Metal
-   dispatch surface. The next implementation should add the `MLXFast` product
-   dependency to the text worker target and prototype a minimal MSE q4
-   single-token decode kernel before changing the active runtime path.
+   dispatch surface. The text worker target now has the `MLXFast` product
+   dependency and a runtime smoke test that dispatches an identity custom
+   kernel. The next implementation should replace the identity body with a
+   minimal MSE q4 single-token decode kernel before changing the active runtime
+   path.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
