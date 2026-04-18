@@ -45,6 +45,8 @@ struct SparsePrefillPlan: Sendable {
 struct ActiveKVProbeSummary: Sendable {
     let backendCode: Int
     let kernelPathCode: Int
+    let runtimeRouteCode: Int
+    let runtimeBlockReasonCode: Int
     let prefillQuantizeMicros: Int
     let decodeModelTotalMicros: Int
     let decodeQuantizeTotalMicros: Int
@@ -58,6 +60,8 @@ struct ActiveKVProbeSummary: Sendable {
     init(
         backendCode: Int,
         kernelPathCode: Int,
+        runtimeRouteCode: Int = 0,
+        runtimeBlockReasonCode: Int = 0,
         prefillQuantizeMicros: Int,
         decodeModelTotalMicros: Int,
         decodeQuantizeTotalMicros: Int,
@@ -70,6 +74,8 @@ struct ActiveKVProbeSummary: Sendable {
     ) {
         self.backendCode = backendCode
         self.kernelPathCode = kernelPathCode
+        self.runtimeRouteCode = runtimeRouteCode
+        self.runtimeBlockReasonCode = runtimeBlockReasonCode
         self.prefillQuantizeMicros = prefillQuantizeMicros
         self.decodeModelTotalMicros = decodeModelTotalMicros
         self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros

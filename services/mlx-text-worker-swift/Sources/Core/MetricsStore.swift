@@ -33,6 +33,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.active_kv_quantization_ratio": 0,
         "swift_text.active_kv_backend_code": 0,
         "swift_text.active_kv_kernel_path_code": 0,
+        "swift_text.active_kv_runtime_route_code": 0,
+        "swift_text.active_kv_runtime_block_reason_code": 0,
         "swift_text.active_kv_prefill_quantize_us": 0,
         "swift_text.active_kv_decode_model_total_us": 0,
         "swift_text.active_kv_decode_model_avg_us": 0,

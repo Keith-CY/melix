@@ -148,6 +148,8 @@ Expected gate fields:
 
 - `status`
 - `observed_kernel_paths`
+- `observed_runtime_routes`
+- `observed_runtime_block_reasons`
 - `fallback_count`
 - `decode_quantize_total_us`
 - `estimated_memory_savings_pct`
@@ -171,6 +173,8 @@ Expected fused-candidate fields:
 - `capability_evidence.runtime_path`
 - `capability_evidence.smoke_tests`
 - `runtime_evidence.release_gate_status`
+- `runtime_evidence.observed_runtime_routes`
+- `runtime_evidence.observed_runtime_block_reasons`
 - `runtime_evidence.failures`
 - `next_required_evidence`
 

@@ -391,6 +391,8 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
                 "label": "decode_turboquant_q4",
                 "active_kv_backend": "turboquant",
                 "active_kv_kernel_path": "fallback",
+                "active_kv_runtime_route": "blocked",
+                "active_kv_runtime_block_reason": "attention_hook_unavailable",
                 "active_kv_fallback_count": 1,
                 "active_kv_decode_quantize_total_us": 0,
                 "active_kv_estimated_memory_savings_pct": 75,
@@ -433,6 +435,15 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
     )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
+    assert probe["runtime_evidence"]["observed_runtime_routes"] == ["blocked"]
+    assert probe["runtime_evidence"]["observed_runtime_block_reasons"] == [
+        "attention_hook_unavailable"
+    ]
+    assert "active_kv_runtime_route=blocked" in probe["runtime_evidence"]["failures"]
+    assert (
+        "active_kv_runtime_block_reason=attention_hook_unavailable"
+        in probe["runtime_evidence"]["failures"]
+    )
     assert "active_kv_kernel_path != fallback" in probe["next_required_evidence"]
 
 
@@ -571,6 +582,8 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_quantization_ratio": 25,
                     "swift_text.active_kv_backend_code": 1,
                     "swift_text.active_kv_kernel_path_code": 10,
+                    "swift_text.active_kv_runtime_route_code": 0,
+                    "swift_text.active_kv_runtime_block_reason_code": 0,
                     "swift_text.active_kv_prefill_quantize_us": 100,
                     "swift_text.active_kv_decode_model_total_us": 200,
                     "swift_text.active_kv_decode_model_avg_us": 20,
@@ -613,10 +626,14 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
 
     assert baseline["active_kv_backend"] is None
     assert baseline["active_kv_kernel_path"] is None
+    assert baseline["active_kv_runtime_route"] is None
+    assert baseline["active_kv_runtime_block_reason"] is None
     assert baseline["active_kv_quantization_ratio"] == 0
     assert baseline["active_kv_estimated_memory_savings_pct"] == 0
     assert active["active_kv_backend"] == "affine"
     assert active["active_kv_kernel_path"] == "affine_quantized_sdpa"
+    assert active["active_kv_runtime_route"] is None
+    assert active["active_kv_runtime_block_reason"] is None
     assert active["active_kv_estimated_memory_savings_pct"] == 75
 
 
@@ -636,12 +653,20 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     )
     assert inactive_metrics["active_kv_backend"] is None
     assert inactive_metrics["active_kv_kernel_path"] is None
+    assert inactive_metrics["active_kv_runtime_route"] is None
+    assert inactive_metrics["active_kv_runtime_block_reason"] is None
     assert inactive_metrics["active_kv_estimated_memory_savings_pct"] == 0
 
     assert phase2_metrics_report.active_kv_backend_name("not-an-int") is None
     assert phase2_metrics_report.active_kv_backend_name(7) == "unknown_7"
     assert phase2_metrics_report.active_kv_kernel_path_name(None) is None
     assert phase2_metrics_report.active_kv_kernel_path_name(77) == "unknown_77"
+    assert phase2_metrics_report.active_kv_runtime_route_name(None) is None
+    assert phase2_metrics_report.active_kv_runtime_route_name(1) == "blocked"
+    assert phase2_metrics_report.active_kv_runtime_route_name(42) == "unknown_42"
+    assert phase2_metrics_report.active_kv_runtime_block_reason_name(None) is None
+    assert phase2_metrics_report.active_kv_runtime_block_reason_name(2) == "attention_hook_unavailable"
+    assert phase2_metrics_report.active_kv_runtime_block_reason_name(42) == "unknown_42"
     assert phase2_metrics_report.overhead_percent(None, 1.0) is None
     assert phase2_metrics_report.overhead_percent(0.0, 1.0) is None
     assert phase2_metrics_report.delta(None, 1.0) is None
@@ -1224,6 +1249,24 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
                     "active_kv_decode_model_avg_us": 300,
                     "active_kv_decode_quantize_avg_us": 40,
                     "active_kv_estimated_memory_savings_pct": 75,
+                },
+                {
+                    "label": "decode_turboquant_q4",
+                    "mode": "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+                    "ttft_ms": 5.0,
+                    "total_ms": 10.0,
+                    "tokens_per_second": 12.0,
+                    "worker_decode_tokens_per_second": 12.0,
+                    "speculative_acceptance_rate": 0.0,
+                    "speculative_rollback_rate": 0.0,
+                    "active_kv_quantization_ratio": 25.0,
+                    "active_kv_backend": "turboquant",
+                    "active_kv_kernel_path": "fallback",
+                    "active_kv_runtime_route": "blocked",
+                    "active_kv_runtime_block_reason": "attention_hook_unavailable",
+                    "active_kv_decode_model_avg_us": 300,
+                    "active_kv_decode_quantize_avg_us": 0,
+                    "active_kv_estimated_memory_savings_pct": 75,
                 }
             ],
             "comparisons": {
@@ -1241,4 +1284,6 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
     assert "sparse_prefill_accepted_skip_count" in rendered
     assert "sparse_prefill_protected_region_count" in rendered
     assert "active_kv_kernel_path" in rendered
+    assert "active_kv_runtime_route" in rendered
+    assert "attention_hook_unavailable" in rendered
     assert "affine_q4_vs_baseline" in rendered

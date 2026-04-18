@@ -138,6 +138,11 @@ cache object into that function. It cannot replace the dependency's quantized
 attention call from this target without a vendored dependency patch, upstream
 hook, or Melix-owned model implementation.
 
+The same route decision is exported into metrics as `active_kv_runtime_route`
+and `active_kv_runtime_block_reason`. Current fallback reports should show the
+route blocked by the missing attention hook, which makes the release evidence
+auditable without treating candidate dispatch as runtime success.
+
 This still deliberately keeps `active_kv_kernel_path = "fallback"` until model
 attention is actually routed through a fused TurboQuant cache. Model logits
 still come from the Swift MLX model path, so the release gate remains blocked

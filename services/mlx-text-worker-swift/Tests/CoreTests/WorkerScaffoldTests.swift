@@ -115,6 +115,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
         XCTAssertEqual(counters["swift_text.active_kv_backend_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_kernel_path_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_runtime_route_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_runtime_block_reason_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
@@ -974,6 +976,8 @@ final class WorkerScaffoldTests: XCTestCase {
         let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
         XCTAssertEqual(activeKVProbe.backendCode, 2)
         XCTAssertEqual(activeKVProbe.kernelPathCode, 90)
+        XCTAssertEqual(activeKVProbe.runtimeRouteCode, 1)
+        XCTAssertEqual(activeKVProbe.runtimeBlockReasonCode, 2)
         XCTAssertEqual(activeKVProbe.candidateDispatchCode, 1)
         XCTAssertGreaterThanOrEqual(activeKVProbe.prefillQuantizeMicros, 0)
         XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
@@ -3744,6 +3748,8 @@ final class WorkerScaffoldTests: XCTestCase {
                 activeKVProbeSummary: ActiveKVProbeSummary(
                     backendCode: 1,
                     kernelPathCode: 10,
+                    runtimeRouteCode: 1,
+                    runtimeBlockReasonCode: 2,
                     prefillQuantizeMicros: 150,
                     decodeModelTotalMicros: 900,
                     decodeQuantizeTotalMicros: 120,
@@ -3811,6 +3817,8 @@ final class WorkerScaffoldTests: XCTestCase {
         let metrics = services.metrics.counters
         XCTAssertEqual(metrics["swift_text.active_kv_backend_code"], 1)
         XCTAssertEqual(metrics["swift_text.active_kv_kernel_path_code"], 10)
+        XCTAssertEqual(metrics["swift_text.active_kv_runtime_route_code"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_runtime_block_reason_code"], 2)
         XCTAssertEqual(metrics["swift_text.active_kv_prefill_quantize_us"], 150)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_total_us"], 900)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_avg_us"], 300)
@@ -6068,7 +6076,18 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(route, .blocked(.attentionHookUnavailable))
             XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 90)
             XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 1)
+            XCTAssertEqual(activeKVRuntimeRouteCode(for: route), 1)
+            XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: route), 2)
         }
+    }
+
+    func testTurboQuantRuntimeRouteCodeMappingsCoverInactiveUnsupportedAndRoutedStates() {
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .disabled), 0)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .disabled), 0)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .blocked(.unsupportedCacheState)), 1)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .blocked(.unsupportedCacheState)), 1)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .routed), 2)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .routed), 0)
     }
     #endif
     #endif

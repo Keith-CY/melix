@@ -923,6 +923,10 @@ def decode_active_kv_metrics(
             "active_kv_backend": None,
             "active_kv_kernel_path_code": 0,
             "active_kv_kernel_path": None,
+            "active_kv_runtime_route_code": 0,
+            "active_kv_runtime_route": None,
+            "active_kv_runtime_block_reason_code": 0,
+            "active_kv_runtime_block_reason": None,
             "active_kv_prefill_quantize_us": 0,
             "active_kv_decode_model_total_us": 0,
             "active_kv_decode_model_avg_us": 0,
@@ -942,6 +946,16 @@ def decode_active_kv_metrics(
         "active_kv_backend": active_kv_backend_name(exported.get("swift_text.active_kv_backend_code")),
         "active_kv_kernel_path_code": exported.get("swift_text.active_kv_kernel_path_code"),
         "active_kv_kernel_path": active_kv_kernel_path_name(exported.get("swift_text.active_kv_kernel_path_code")),
+        "active_kv_runtime_route_code": exported.get("swift_text.active_kv_runtime_route_code"),
+        "active_kv_runtime_route": active_kv_runtime_route_name(
+            exported.get("swift_text.active_kv_runtime_route_code")
+        ),
+        "active_kv_runtime_block_reason_code": exported.get(
+            "swift_text.active_kv_runtime_block_reason_code"
+        ),
+        "active_kv_runtime_block_reason": active_kv_runtime_block_reason_name(
+            exported.get("swift_text.active_kv_runtime_block_reason_code")
+        ),
         "active_kv_prefill_quantize_us": exported.get("swift_text.active_kv_prefill_quantize_us"),
         "active_kv_decode_model_total_us": exported.get("swift_text.active_kv_decode_model_total_us"),
         "active_kv_decode_model_avg_us": exported.get("swift_text.active_kv_decode_model_avg_us"),
@@ -985,6 +999,30 @@ def active_kv_kernel_path_name(raw_code: Any) -> str | None:
         30: "tq_prod_fully_fused",
         31: "tq_prod_tiled",
         90: "fallback",
+    }.get(code, f"unknown_{code}")
+
+
+def active_kv_runtime_route_name(raw_code: Any) -> str | None:
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return None
+    return {
+        0: None,
+        1: "blocked",
+        2: "routed",
+    }.get(code, f"unknown_{code}")
+
+
+def active_kv_runtime_block_reason_name(raw_code: Any) -> str | None:
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return None
+    return {
+        0: None,
+        1: "unsupported_cache_state",
+        2: "attention_hook_unavailable",
     }.get(code, f"unknown_{code}")
 
 
@@ -1066,6 +1104,8 @@ def build_active_kv_release_gates(
                 "status": "not_requested",
                 "profile_label": "decode_turboquant_q4",
                 "observed_kernel_paths": [],
+                "observed_runtime_routes": [],
+                "observed_runtime_block_reasons": [],
                 "fallback_count": 0,
                 "candidate_dispatch_count": 0,
                 "decode_quantize_total_us": 0,
@@ -1079,6 +1119,16 @@ def build_active_kv_release_gates(
         str(row["active_kv_kernel_path"])
         for row in turbo_rows
         if row.get("active_kv_kernel_path") not in (None, "")
+    })
+    observed_runtime_routes = sorted({
+        str(row["active_kv_runtime_route"])
+        for row in turbo_rows
+        if row.get("active_kv_runtime_route") not in (None, "")
+    })
+    observed_runtime_block_reasons = sorted({
+        str(row["active_kv_runtime_block_reason"])
+        for row in turbo_rows
+        if row.get("active_kv_runtime_block_reason") not in (None, "")
     })
     fallback_count = sum(int_value(row.get("active_kv_fallback_count")) for row in turbo_rows)
     candidate_dispatch_count = sum(
@@ -1095,6 +1145,12 @@ def build_active_kv_release_gates(
         failures.append("active_kv_kernel_path=fallback")
     if any(path.startswith("unknown_") for path in observed_kernel_paths):
         failures.append(f"active_kv_kernel_path={','.join(observed_kernel_paths)}")
+    if "blocked" in observed_runtime_routes:
+        failures.append("active_kv_runtime_route=blocked")
+    if any(route.startswith("unknown_") for route in observed_runtime_routes):
+        failures.append(f"active_kv_runtime_route={','.join(observed_runtime_routes)}")
+    if observed_runtime_block_reasons:
+        failures.append(f"active_kv_runtime_block_reason={','.join(observed_runtime_block_reasons)}")
     if fallback_count > 0:
         failures.append(f"active_kv_fallback_count={fallback_count}")
     if decode_quantize_total_us > 0:
@@ -1109,6 +1165,8 @@ def build_active_kv_release_gates(
             "status": "fail" if failures else "pass",
             "profile_label": "decode_turboquant_q4",
             "observed_kernel_paths": observed_kernel_paths,
+            "observed_runtime_routes": observed_runtime_routes,
+            "observed_runtime_block_reasons": observed_runtime_block_reasons,
             "fallback_count": fallback_count,
             "candidate_dispatch_count": candidate_dispatch_count,
             "decode_quantize_total_us": decode_quantize_total_us,
@@ -1134,6 +1192,8 @@ def build_active_kv_fused_candidate_probes(
         status = "runtime_blocked"
         next_required_evidence = list(TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS)
     observed_kernel_paths = gate.get("observed_kernel_paths", [])
+    observed_runtime_routes = gate.get("observed_runtime_routes", [])
+    observed_runtime_block_reasons = gate.get("observed_runtime_block_reasons", [])
     capability_evidence = dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE)
     if int_value(gate.get("candidate_dispatch_count")) > 0:
         capability_evidence["runtime_path"] = "candidate_dispatch_connected"
@@ -1146,6 +1206,8 @@ def build_active_kv_fused_candidate_probes(
             "runtime_evidence": {
                 "release_gate_status": gate_status,
                 "observed_kernel_paths": observed_kernel_paths,
+                "observed_runtime_routes": observed_runtime_routes,
+                "observed_runtime_block_reasons": observed_runtime_block_reasons,
                 "fallback_count": gate.get("fallback_count"),
                 "candidate_dispatch_count": gate.get("candidate_dispatch_count"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
@@ -1304,6 +1366,8 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_quantization_ratio",
                 "active_kv_backend",
                 "active_kv_kernel_path",
+                "active_kv_runtime_route",
+                "active_kv_runtime_block_reason",
                 "active_kv_candidate_dispatch_code",
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_quantize_avg_us",
@@ -1341,6 +1405,8 @@ def render_report(report: dict[str, Any]) -> str:
                 "status",
                 "profile_label",
                 "observed_kernel_paths",
+                "observed_runtime_routes",
+                "observed_runtime_block_reasons",
                 "fallback_count",
                 "candidate_dispatch_count",
                 "decode_quantize_total_us",
@@ -1359,6 +1425,10 @@ def render_report(report: dict[str, Any]) -> str:
                     "runtime_path": values.get("capability_evidence", {}).get("runtime_path"),
                     "release_gate_status": values.get("runtime_evidence", {}).get("release_gate_status"),
                     "observed_kernel_paths": values.get("runtime_evidence", {}).get("observed_kernel_paths"),
+                    "observed_runtime_routes": values.get("runtime_evidence", {}).get("observed_runtime_routes"),
+                    "observed_runtime_block_reasons": values.get("runtime_evidence", {}).get(
+                        "observed_runtime_block_reasons"
+                    ),
                     "candidate_dispatch_count": values.get("runtime_evidence", {}).get("candidate_dispatch_count"),
                     "next_required_evidence": values.get("next_required_evidence"),
                     **values,
@@ -1375,6 +1445,8 @@ def render_report(report: dict[str, Any]) -> str:
                 "runtime_path",
                 "release_gate_status",
                 "observed_kernel_paths",
+                "observed_runtime_routes",
+                "observed_runtime_block_reasons",
                 "candidate_dispatch_count",
                 "next_required_evidence",
             ],

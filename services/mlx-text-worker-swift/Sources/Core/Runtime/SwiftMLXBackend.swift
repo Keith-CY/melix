@@ -866,6 +866,8 @@ private func makeActiveKVProbeSummary(
     return ActiveKVProbeSummary(
         backendCode: activeKVBackendCode(for: normalized),
         kernelPathCode: kernelPathCode,
+        runtimeRouteCode: activeKVRuntimeRouteCode(for: turboQuantRuntimeRoute),
+        runtimeBlockReasonCode: activeKVRuntimeBlockReasonCode(for: turboQuantRuntimeRoute),
         prefillQuantizeMicros: prefillQuantizeMicros,
         decodeModelTotalMicros: decodeModelTotalMicros,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
@@ -911,6 +913,30 @@ func activeKVFallbackCount(
         for: policy,
         turboQuantRuntimeRoute: turboQuantRuntimeRoute
     ) == 90 ? 1 : 0
+}
+
+func activeKVRuntimeRouteCode(for route: TurboQuantRuntimeFusedAttentionRoute) -> Int {
+    switch route {
+    case .disabled:
+        return 0
+    case .blocked:
+        return 1
+    case .routed:
+        return 2
+    }
+}
+
+func activeKVRuntimeBlockReasonCode(for route: TurboQuantRuntimeFusedAttentionRoute) -> Int {
+    guard case .blocked(let reason) = route else {
+        return 0
+    }
+
+    switch reason {
+    case .unsupportedCacheState:
+        return 1
+    case .attentionHookUnavailable:
+        return 2
+    }
 }
 
 private func activeKVCandidateDispatchCode(
