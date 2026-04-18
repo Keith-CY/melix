@@ -426,8 +426,9 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
             {
                 "label": "decode_turboquant_q4",
                 "active_kv_backend": "turboquant",
-                "active_kv_kernel_path": "tq_mse_single",
-                "active_kv_fallback_count": 0,
+                "active_kv_kernel_path": "fallback",
+                "active_kv_fallback_count": 1,
+                "active_kv_candidate_dispatch_code": 1,
                 "active_kv_decode_quantize_total_us": 0,
                 "active_kv_estimated_memory_savings_pct": 75,
             }
@@ -435,7 +436,7 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
         {
             "turboquant_q4_vs_baseline": {
                 "worker_tps_overhead_pct": 42.62,
-                "active_kv_kernel_path": "tq_mse_single",
+                "active_kv_kernel_path": "fallback",
             }
         },
     )
@@ -445,6 +446,8 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
     probe = probes["turboquant_q4"]
     assert probe["status"] == "runtime_blocked"
     assert probe["capability_evidence"]["runtime_path"] == "candidate_dispatch_connected"
+    assert probe["runtime_evidence"]["candidate_dispatch_count"] == 1
+    assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert "worker_tps_overhead_pct=42.62" in probe["runtime_evidence"]["failures"]
 
 

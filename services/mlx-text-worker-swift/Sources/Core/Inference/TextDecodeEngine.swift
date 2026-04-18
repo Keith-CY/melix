@@ -308,6 +308,10 @@ struct TextDecodeEngine: Sendable {
             value: probe.estimatedMemorySavingsPercent
         )
         metrics.set("swift_text.active_kv_fallback_count", value: probe.fallbackCount)
+        metrics.set(
+            "swift_text.active_kv_candidate_dispatch_code",
+            value: probe.candidateDispatchCode
+        )
     }
 }
 

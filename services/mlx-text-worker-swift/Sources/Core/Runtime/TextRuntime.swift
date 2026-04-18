@@ -53,6 +53,33 @@ struct ActiveKVProbeSummary: Sendable {
     let estimatedQuantizedBytes: Int
     let estimatedMemorySavingsPercent: Int
     let fallbackCount: Int
+    let candidateDispatchCode: Int
+
+    init(
+        backendCode: Int,
+        kernelPathCode: Int,
+        prefillQuantizeMicros: Int,
+        decodeModelTotalMicros: Int,
+        decodeQuantizeTotalMicros: Int,
+        decodeTokenCount: Int,
+        estimatedFP16Bytes: Int,
+        estimatedQuantizedBytes: Int,
+        estimatedMemorySavingsPercent: Int,
+        fallbackCount: Int,
+        candidateDispatchCode: Int = 0
+    ) {
+        self.backendCode = backendCode
+        self.kernelPathCode = kernelPathCode
+        self.prefillQuantizeMicros = prefillQuantizeMicros
+        self.decodeModelTotalMicros = decodeModelTotalMicros
+        self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
+        self.decodeTokenCount = decodeTokenCount
+        self.estimatedFP16Bytes = estimatedFP16Bytes
+        self.estimatedQuantizedBytes = estimatedQuantizedBytes
+        self.estimatedMemorySavingsPercent = estimatedMemorySavingsPercent
+        self.fallbackCount = fallbackCount
+        self.candidateDispatchCode = candidateDispatchCode
+    }
 
     var decodeModelAverageMicros: Int {
         averageMicros(total: decodeModelTotalMicros)

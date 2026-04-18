@@ -839,10 +839,7 @@ private func makeActiveKVProbeSummary(
     let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
     let quantizedBytes = estimatedCacheStateBytes(cache)
     let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
-    let kernelPathCode = activeKVKernelPathCode(
-        for: normalized,
-        turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
-    )
+    let kernelPathCode = activeKVKernelPathCode(for: normalized)
     let savingsPercent = fp16Bytes > 0
         ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
         : max(0, 100 - quantizationRatio)
@@ -857,7 +854,11 @@ private func makeActiveKVProbeSummary(
         estimatedFP16Bytes: Int(clamping: fp16Bytes),
         estimatedQuantizedBytes: Int(clamping: quantizedBytes),
         estimatedMemorySavingsPercent: savingsPercent,
-        fallbackCount: kernelPathCode == 90 ? 1 : 0
+        fallbackCount: kernelPathCode == 90 ? 1 : 0,
+        candidateDispatchCode: activeKVCandidateDispatchCode(
+            for: normalized,
+            turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
+        )
     )
 }
 
@@ -870,14 +871,24 @@ private func activeKVBackendCode(for policy: Melix_Worker_V1_AccelerationPolicy)
 }
 
 private func activeKVKernelPathCode(
+    for policy: Melix_Worker_V1_AccelerationPolicy
+) -> Int {
+    let profile = policy.activeKvQuantProfile.lowercased()
+    if profile.hasPrefix("turboquant") {
+        return 90
+    }
+    return 10
+}
+
+private func activeKVCandidateDispatchCode(
     for policy: Melix_Worker_V1_AccelerationPolicy,
     turboQuantFusedAttentionDispatched: Bool
 ) -> Int {
     let profile = policy.activeKvQuantProfile.lowercased()
-    if profile.hasPrefix("turboquant") {
-        return turboQuantFusedAttentionDispatched ? 20 : 90
+    if profile.hasPrefix("turboquant"), turboQuantFusedAttentionDispatched {
+        return 1
     }
-    return 10
+    return 0
 }
 
 private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(

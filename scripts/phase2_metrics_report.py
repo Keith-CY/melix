@@ -929,6 +929,7 @@ def decode_active_kv_metrics(
             "active_kv_estimated_quantized_bytes": 0,
             "active_kv_estimated_memory_savings_pct": 0,
             "active_kv_fallback_count": 0,
+            "active_kv_candidate_dispatch_code": 0,
         }
 
     return {
@@ -949,6 +950,9 @@ def decode_active_kv_metrics(
             "swift_text.active_kv_estimated_memory_savings_pct"
         ),
         "active_kv_fallback_count": exported.get("swift_text.active_kv_fallback_count"),
+        "active_kv_candidate_dispatch_code": exported.get(
+            "swift_text.active_kv_candidate_dispatch_code", 0
+        ),
     }
 
 
@@ -1059,6 +1063,7 @@ def build_active_kv_release_gates(
                 "profile_label": "decode_turboquant_q4",
                 "observed_kernel_paths": [],
                 "fallback_count": 0,
+                "candidate_dispatch_count": 0,
                 "decode_quantize_total_us": 0,
                 "estimated_memory_savings_pct": None,
                 "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
@@ -1072,6 +1077,9 @@ def build_active_kv_release_gates(
         if row.get("active_kv_kernel_path") not in (None, "")
     })
     fallback_count = sum(int_value(row.get("active_kv_fallback_count")) for row in turbo_rows)
+    candidate_dispatch_count = sum(
+        int_value(row.get("active_kv_candidate_dispatch_code")) for row in turbo_rows
+    )
     decode_quantize_total_us = sum(int_value(row.get("active_kv_decode_quantize_total_us")) for row in turbo_rows)
     memory_savings = median_numeric(turbo_rows, "active_kv_estimated_memory_savings_pct")
     worker_tps_overhead = numeric_value(comparison.get("worker_tps_overhead_pct"))
@@ -1098,6 +1106,7 @@ def build_active_kv_release_gates(
             "profile_label": "decode_turboquant_q4",
             "observed_kernel_paths": observed_kernel_paths,
             "fallback_count": fallback_count,
+            "candidate_dispatch_count": candidate_dispatch_count,
             "decode_quantize_total_us": decode_quantize_total_us,
             "estimated_memory_savings_pct": memory_savings,
             "worker_tps_overhead_pct": worker_tps_overhead,
@@ -1122,7 +1131,7 @@ def build_active_kv_fused_candidate_probes(
         next_required_evidence = list(TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS)
     observed_kernel_paths = gate.get("observed_kernel_paths", [])
     capability_evidence = dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE)
-    if any(path not in ("fallback", "") for path in observed_kernel_paths):
+    if int_value(gate.get("candidate_dispatch_count")) > 0:
         capability_evidence["runtime_path"] = "candidate_dispatch_connected"
 
     return {
@@ -1134,6 +1143,7 @@ def build_active_kv_fused_candidate_probes(
                 "release_gate_status": gate_status,
                 "observed_kernel_paths": observed_kernel_paths,
                 "fallback_count": gate.get("fallback_count"),
+                "candidate_dispatch_count": gate.get("candidate_dispatch_count"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
                 "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
                 "worker_tps_overhead_pct": gate.get("worker_tps_overhead_pct"),
@@ -1290,6 +1300,7 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_quantization_ratio",
                 "active_kv_backend",
                 "active_kv_kernel_path",
+                "active_kv_candidate_dispatch_code",
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_quantize_avg_us",
                 "active_kv_estimated_memory_savings_pct",
@@ -1327,6 +1338,7 @@ def render_report(report: dict[str, Any]) -> str:
                 "profile_label",
                 "observed_kernel_paths",
                 "fallback_count",
+                "candidate_dispatch_count",
                 "decode_quantize_total_us",
                 "estimated_memory_savings_pct",
                 "worker_tps_overhead_pct",
@@ -1343,6 +1355,7 @@ def render_report(report: dict[str, Any]) -> str:
                     "runtime_path": values.get("capability_evidence", {}).get("runtime_path"),
                     "release_gate_status": values.get("runtime_evidence", {}).get("release_gate_status"),
                     "observed_kernel_paths": values.get("runtime_evidence", {}).get("observed_kernel_paths"),
+                    "candidate_dispatch_count": values.get("runtime_evidence", {}).get("candidate_dispatch_count"),
                     "next_required_evidence": values.get("next_required_evidence"),
                     **values,
                 }
@@ -1358,6 +1371,7 @@ def render_report(report: dict[str, Any]) -> str:
                 "runtime_path",
                 "release_gate_status",
                 "observed_kernel_paths",
+                "candidate_dispatch_count",
                 "next_required_evidence",
             ],
         ),
