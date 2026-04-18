@@ -4,6 +4,9 @@ import MelixWorkerProtocol
 #if canImport(MLX)
 import MLX
 #endif
+#if canImport(MLXNN)
+import MLXNN
+#endif
 #if canImport(MLXLMCommon)
 import MLXLMCommon
 #endif
@@ -1034,6 +1037,52 @@ final class WorkerScaffoldTests: XCTestCase {
         let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
         XCTAssertEqual(activeKVProbe.candidateDispatchCode, 0)
         XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 0)
+    }
+
+    func testAutoSwiftMLXBackendDecodeSkipsTerminalModelCallAtMaxOutputTokens() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let counter = CountingLanguageModelCallCounter()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 1
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeCountingPreparedLogitsModelContainer(counter: counter)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge counted decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-counted-decode",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.completionTokens, 1)
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.decodeModelCallCount, 0)
+        XCTAssertEqual(counter.stepCallCount, 0)
     }
 
     func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {
@@ -3803,6 +3852,7 @@ final class WorkerScaffoldTests: XCTestCase {
                     runtimeBlockReasonCode: 2,
                     prefillQuantizeMicros: 150,
                     decodeModelTotalMicros: 900,
+                    decodeModelCallCount: 3,
                     decodeQuantizeTotalMicros: 120,
                     decodeTokenCount: 3,
                     estimatedFP16Bytes: 4_000,
@@ -3872,6 +3922,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_runtime_block_reason_code"], 2)
         XCTAssertEqual(metrics["swift_text.active_kv_prefill_quantize_us"], 150)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_total_us"], 900)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_call_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_avg_us"], 300)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
@@ -7320,6 +7371,54 @@ private func makeQuantizableLiveSwiftMLXModelContainer(promptTokens: [Int]) -> M
         configuration: ModelConfiguration(id: "melix-tests/live-swift-mlx-quant"),
         model: model,
         processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private final class CountingLanguageModelCallCounter: @unchecked Sendable {
+    var stepCallCount = 0
+}
+
+@available(macOS 15.0, *)
+private final class CountingPreparedLogitsLanguageModel: Module, LanguageModel {
+    let counter: CountingLanguageModelCallCounter
+    let vocabularySize = 32
+
+    init(counter: CountingLanguageModelCallCounter) {
+        self.counter = counter
+        super.init()
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        .logits(LMOutput(logits: logitsForToken(2)))
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        counter.stepCallCount += 1
+        return LMOutput(logits: logitsForToken(3))
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        [KVCacheSimple()]
+    }
+
+    private func logitsForToken(_ tokenID: Int) -> MLXArray {
+        let values = (0 ..< vocabularySize).map { index in
+            index == tokenID ? Float(10) : Float(-10)
+        }
+        return MLXArray(values, [1, 1, vocabularySize])
+    }
+}
+
+@available(macOS 15.0, *)
+private func makeCountingPreparedLogitsModelContainer(counter: CountingLanguageModelCallCounter) -> ModelContainer {
+    let vocabularySize = 32
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/counting-prepared-logits"),
+        model: CountingPreparedLogitsLanguageModel(counter: counter),
+        processor: DeterministicUserInputProcessor(promptTokens: [1, 2, 3]),
         tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
     )
     return ModelContainer(context: context)

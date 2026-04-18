@@ -929,6 +929,7 @@ def decode_active_kv_metrics(
             "active_kv_runtime_block_reason": None,
             "active_kv_prefill_quantize_us": 0,
             "active_kv_decode_model_total_us": 0,
+            "active_kv_decode_model_call_count": 0,
             "active_kv_decode_model_avg_us": 0,
             "active_kv_decode_quantize_total_us": 0,
             "active_kv_decode_quantize_avg_us": 0,
@@ -959,6 +960,9 @@ def decode_active_kv_metrics(
         ),
         "active_kv_prefill_quantize_us": exported.get("swift_text.active_kv_prefill_quantize_us"),
         "active_kv_decode_model_total_us": exported.get("swift_text.active_kv_decode_model_total_us"),
+        "active_kv_decode_model_call_count": exported.get(
+            "swift_text.active_kv_decode_model_call_count", 0
+        ),
         "active_kv_decode_model_avg_us": exported.get("swift_text.active_kv_decode_model_avg_us"),
         "active_kv_decode_quantize_total_us": exported.get("swift_text.active_kv_decode_quantize_total_us"),
         "active_kv_decode_quantize_avg_us": exported.get("swift_text.active_kv_decode_quantize_avg_us"),
@@ -1141,6 +1145,9 @@ def build_active_kv_release_gates(
     candidate_eligibility_check_count = sum(
         int_value(row.get("active_kv_candidate_eligibility_check_count")) for row in turbo_rows
     )
+    decode_model_call_count = sum(
+        int_value(row.get("active_kv_decode_model_call_count")) for row in turbo_rows
+    )
     decode_quantize_total_us = sum(int_value(row.get("active_kv_decode_quantize_total_us")) for row in turbo_rows)
     memory_savings = median_numeric(turbo_rows, "active_kv_estimated_memory_savings_pct")
     worker_tps_overhead = numeric_value(comparison.get("worker_tps_overhead_pct"))
@@ -1177,6 +1184,7 @@ def build_active_kv_release_gates(
             "fallback_count": fallback_count,
             "candidate_dispatch_count": candidate_dispatch_count,
             "candidate_eligibility_check_count": candidate_eligibility_check_count,
+            "decode_model_call_count": decode_model_call_count,
             "decode_quantize_total_us": decode_quantize_total_us,
             "estimated_memory_savings_pct": memory_savings,
             "worker_tps_overhead_pct": worker_tps_overhead,
@@ -1221,6 +1229,7 @@ def build_active_kv_fused_candidate_probes(
                 "candidate_eligibility_check_count": gate.get(
                     "candidate_eligibility_check_count"
                 ),
+                "decode_model_call_count": gate.get("decode_model_call_count"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
                 "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
                 "worker_tps_overhead_pct": gate.get("worker_tps_overhead_pct"),
@@ -1381,6 +1390,7 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_runtime_block_reason",
                 "active_kv_candidate_dispatch_code",
                 "active_kv_candidate_eligibility_check_count",
+                "active_kv_decode_model_call_count",
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_quantize_avg_us",
                 "active_kv_estimated_memory_savings_pct",

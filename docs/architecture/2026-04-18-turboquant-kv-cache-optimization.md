@@ -14,6 +14,8 @@ The current benchmark evidence is:
 | Decode-guard post-optimization | `docs/metrics/phase2-active-kv-decode-guard-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Runtime speedup post-optimization | `docs/metrics/phase2-active-kv-runtime-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Fused TurboQuant candidate audit | `docs/metrics/phase2-active-kv-fused-turboquant-candidate.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Terminal model-call pre-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Terminal model-call post-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
@@ -170,6 +172,14 @@ The new default real-model run confirms candidate dispatch count drops from
 five to zero, but the worker throughput overhead remains 45.76 percent because
 the dependency-owned quantized attention model call is still the hot path.
 
+The second runtime-speedup slice adds `active_kv_decode_model_call_count` and
+stops prepared decode before a terminal next-token model call once
+`maxOutputTokens` has already been emitted. This removes one unused model call
+per 64-token active-KV decode run in the current benchmark shape. The real-model
+probe confirms the release gate remains blocked because the TurboQuant kernel
+path is still `fallback` and worker throughput overhead is still above 15
+percent.
+
 ## Before And After Metrics
 
 The current runs used:
@@ -201,6 +211,22 @@ The current runs used:
 | Candidate dispatch count, 5 runs | N/A | N/A | 0 | 5 |
 | Per-run fallback count | 0 | 0 | 1 | 1 |
 | Release-gate fallback count, 5 runs | 0 | 0 | 5 | 5 |
+
+Terminal model-call cleanup evidence:
+
+| Metric | Pre terminal-call cleanup | Post terminal-call cleanup |
+| --- | ---: | ---: |
+| TurboQuant decode model calls, 5 runs | 320 | 315 |
+| TurboQuant per-run decode model calls | 64 | 63 |
+| Affine q4 decode model calls, 5 runs | 320 | 315 |
+| Affine q4 per-run decode model calls | 64 | 63 |
+| Baseline worker decode tok/s | 61.0 | 62.0 |
+| TurboQuant worker decode tok/s | 35.0 | 35.0 |
+| TurboQuant worker TPS overhead | 42.62% | 43.55% |
+| TurboQuant wall TPS overhead | 42.97% | 43.45% |
+| TurboQuant active-KV decode model avg | 9597 us | 9523 us |
+| TurboQuant kernel path | fallback | fallback |
+| TurboQuant release gate | fail | fail |
 
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero

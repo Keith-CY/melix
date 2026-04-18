@@ -714,6 +714,7 @@ private func makePreparedDecodeEvents(
             )
             var generatedTokenCount = 0
             var decodeModelTotalMicros = 0
+            var decodeModelCallCount = 0
             var decodeQuantizeTotalMicros = 0
             var didDispatchTurboQuantFusedAttention = false
             var turboQuantCandidateEligibilityCheckCount = 0
@@ -755,6 +756,10 @@ private func makePreparedDecodeEvents(
                     continuation.yield(.chunk(chunk))
                 }
 
+                if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                    break
+                }
+
                 let nextInput = LMInput.Text(tokens: token)
                 if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
                     turboQuantCandidateEligibilityCheckCount += 1
@@ -770,6 +775,7 @@ private func makePreparedDecodeEvents(
                     cache: cache.isEmpty ? nil : cache,
                     state: output.state
                 )
+                decodeModelCallCount += 1
                 decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
                 if shouldMaintainQuantizedDecodeCache {
                     let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
@@ -795,6 +801,7 @@ private func makePreparedDecodeEvents(
                 acceleration: acceleration,
                 prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
                 decodeModelTotalMicros: decodeModelTotalMicros,
+                decodeModelCallCount: decodeModelCallCount,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
                 decodeTokenCount: generatedTokenCount,
                 turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention,
@@ -855,6 +862,7 @@ private func makeActiveKVProbeSummary(
     acceleration: Melix_Worker_V1_AccelerationPolicy,
     prefillQuantizeMicros: Int,
     decodeModelTotalMicros: Int,
+    decodeModelCallCount: Int,
     decodeQuantizeTotalMicros: Int,
     decodeTokenCount: Int,
     turboQuantFusedAttentionDispatched: Bool = false,
@@ -887,6 +895,7 @@ private func makeActiveKVProbeSummary(
         runtimeBlockReasonCode: activeKVRuntimeBlockReasonCode(for: turboQuantRuntimeRoute),
         prefillQuantizeMicros: prefillQuantizeMicros,
         decodeModelTotalMicros: decodeModelTotalMicros,
+        decodeModelCallCount: decodeModelCallCount,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
         decodeTokenCount: decodeTokenCount,
         estimatedFP16Bytes: Int(clamping: fp16Bytes),

@@ -49,6 +49,7 @@ struct ActiveKVProbeSummary: Sendable {
     let runtimeBlockReasonCode: Int
     let prefillQuantizeMicros: Int
     let decodeModelTotalMicros: Int
+    let decodeModelCallCount: Int
     let decodeQuantizeTotalMicros: Int
     let decodeTokenCount: Int
     let estimatedFP16Bytes: Int
@@ -65,6 +66,7 @@ struct ActiveKVProbeSummary: Sendable {
         runtimeBlockReasonCode: Int = 0,
         prefillQuantizeMicros: Int,
         decodeModelTotalMicros: Int,
+        decodeModelCallCount: Int = 0,
         decodeQuantizeTotalMicros: Int,
         decodeTokenCount: Int,
         estimatedFP16Bytes: Int,
@@ -80,6 +82,7 @@ struct ActiveKVProbeSummary: Sendable {
         self.runtimeBlockReasonCode = runtimeBlockReasonCode
         self.prefillQuantizeMicros = prefillQuantizeMicros
         self.decodeModelTotalMicros = decodeModelTotalMicros
+        self.decodeModelCallCount = decodeModelCallCount
         self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
         self.decodeTokenCount = decodeTokenCount
         self.estimatedFP16Bytes = estimatedFP16Bytes

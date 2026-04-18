@@ -302,6 +302,7 @@ struct TextDecodeEngine: Sendable {
         )
         metrics.set("swift_text.active_kv_prefill_quantize_us", value: probe.prefillQuantizeMicros)
         metrics.set("swift_text.active_kv_decode_model_total_us", value: probe.decodeModelTotalMicros)
+        metrics.set("swift_text.active_kv_decode_model_call_count", value: probe.decodeModelCallCount)
         metrics.set("swift_text.active_kv_decode_model_avg_us", value: probe.decodeModelAverageMicros)
         metrics.set("swift_text.active_kv_decode_quantize_total_us", value: probe.decodeQuantizeTotalMicros)
         metrics.set("swift_text.active_kv_decode_quantize_avg_us", value: probe.decodeQuantizeAverageMicros)

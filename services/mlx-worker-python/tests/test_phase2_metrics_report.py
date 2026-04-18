@@ -590,6 +590,7 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_runtime_block_reason_code": 0,
                     "swift_text.active_kv_prefill_quantize_us": 100,
                     "swift_text.active_kv_decode_model_total_us": 200,
+                    "swift_text.active_kv_decode_model_call_count": 10,
                     "swift_text.active_kv_decode_model_avg_us": 20,
                     "swift_text.active_kv_decode_quantize_total_us": 30,
                     "swift_text.active_kv_decode_quantize_avg_us": 3,
@@ -641,6 +642,7 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_runtime_route"] is None
     assert active["active_kv_runtime_block_reason"] is None
     assert active["active_kv_estimated_memory_savings_pct"] == 75
+    assert active["active_kv_decode_model_call_count"] == 10
     assert active["active_kv_candidate_eligibility_check_count"] == 7
 
 
@@ -663,6 +665,7 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert inactive_metrics["active_kv_runtime_route"] is None
     assert inactive_metrics["active_kv_runtime_block_reason"] is None
     assert inactive_metrics["active_kv_estimated_memory_savings_pct"] == 0
+    assert inactive_metrics["active_kv_decode_model_call_count"] == 0
     assert inactive_metrics["active_kv_candidate_eligibility_check_count"] == 0
 
     assert phase2_metrics_report.active_kv_backend_name("not-an-int") is None
