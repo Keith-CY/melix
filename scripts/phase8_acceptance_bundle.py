@@ -14,6 +14,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+try:
+    from scripts.real_model_support import (
+        REAL_SMALL_TEXT_MODEL_ID,
+        REAL_SMALL_TEXT_MODEL_PATH_ENV,
+        resolve_real_small_text_model_source,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct `python scripts/...` execution fallback.
+    from real_model_support import (  # type: ignore[no-redef]
+        REAL_SMALL_TEXT_MODEL_ID,
+        REAL_SMALL_TEXT_MODEL_PATH_ENV,
+        resolve_real_small_text_model_source,
+    )
+
 
 _BASE_CHAT_PROMPT = "Reply with BASE_OK"
 _DERIVED_CHAT_PROMPT = "Reply with DERIVED_OK"
@@ -21,8 +34,8 @@ _TRAINING_FIXTURE_DATASET_ID = "melix-dev-dataset.v1"
 _ADAPTER_NAME = "phase8-acceptance"
 _DERIVED_ALIAS = "phase8-acceptance-derived"
 _BUNDLE_SCHEMA_VERSION = "melix.phase8.acceptance_bundle.v1"
-_REAL_SMALL_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
-_REAL_SMALL_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
+_REAL_SMALL_MODEL_ID = REAL_SMALL_TEXT_MODEL_ID
+_REAL_SMALL_MODEL_PATH_ENV = REAL_SMALL_TEXT_MODEL_PATH_ENV
 _BENCH_CONTEXT_LENGTH = "1024"
 _BENCH_GENERATION_LENGTH = "64"
 _BENCH_BATCH_SIZE = "1"
@@ -822,24 +835,21 @@ def _resolve_model_source(
             return model_id, False, local_model_path, "explicit_local_path", ()
         return model_id, False, "", "", ()
 
-    resolved_model_id = model_id or _REAL_SMALL_MODEL_ID
-    if live:
-        return resolved_model_id, True, "", "explicit_live_hub", ()
-    if local_model_path:
-        return resolved_model_id, False, local_model_path, "explicit_local_path", ()
-
-    configured_path = os.environ.get(_REAL_SMALL_MODEL_PATH_ENV, "").strip()
-    if not configured_path:
-        return resolved_model_id, True, "", "hub_fallback", ()
-
-    resolved_path = Path(configured_path).expanduser().resolve()
-    if resolved_path.is_dir():
-        return resolved_model_id, False, str(resolved_path), "env_local_path", ()
-
-    warning = (
-        f"Ignored {_REAL_SMALL_MODEL_PATH_ENV} because it does not point to an existing directory: {resolved_path}"
+    source = resolve_real_small_text_model_source(
+        model_id=model_id,
+        local_model_path=local_model_path,
+        live=live,
+        environment=os.environ,
+        allow_managed_root=False,
+        allow_hf_cache=False,
     )
-    return resolved_model_id, True, "", "env_invalid_hub_fallback", (warning,)
+    return (
+        source.model_id,
+        source.live,
+        source.local_model_path,
+        source.source_resolution_mode,
+        source.warnings,
+    )
 
 
 def _default_source_resolution_mode(config: AcceptanceBundleConfig) -> str:

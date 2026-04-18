@@ -7,6 +7,9 @@ import MelixWorkerProtocol
 #if canImport(MLXLMCommon)
 @preconcurrency import MLXLMCommon
 #endif
+#if canImport(MLXLLM)
+@preconcurrency import MLXLLM
+#endif
 
 struct RuntimeUnavailableError: LocalizedError {
     let message: String
@@ -32,6 +35,7 @@ struct PreparedDecodeState: @unchecked Sendable {
     let prepared: PrepareResult
     let cache: [KVCache]
     let promptPrefillTime: TimeInterval
+    let prefillQuantizeMicros: Int
 }
 #endif
 
@@ -442,16 +446,19 @@ private func makePreparedPromptContext(
             cache: cache,
             windowSize: effectiveWindowSize
         )
+        let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
         applyActiveKVQuantizationIfNeeded(
             cache: &cache,
             acceleration: acceleration
         )
+        let prefillQuantizeMicros = elapsedMicros(since: quantizeStartedAt)
         let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
         return PreparedDecodeState(
             input: input,
             prepared: prepared,
             cache: cache,
-            promptPrefillTime: promptPrefillTime
+            promptPrefillTime: promptPrefillTime,
+            prefillQuantizeMicros: prefillQuantizeMicros
         )
     }
     return PreparedPrefillContext(
@@ -628,7 +635,8 @@ private func makePreparedDecodeGeneration(
         try makePreparedDecodeEvents(
             decodeState: decodeState,
             context: modelContext,
-            parameters: parameters
+            parameters: parameters,
+            acceleration: acceleration
         )
     }
 
@@ -647,7 +655,8 @@ private func makePreparedDecodeGeneration(
 private func makePreparedDecodeEvents(
     decodeState: PreparedDecodeState,
     context: ModelContext,
-    parameters: GenerateParameters
+    parameters: GenerateParameters,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
 ) throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
     let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
 
@@ -670,6 +679,8 @@ private func makePreparedDecodeEvents(
                 cache: cache
             )
             var generatedTokenCount = 0
+            var decodeModelTotalMicros = 0
+            var decodeQuantizeTotalMicros = 0
             let startedAt = Date.timeIntervalSinceReferenceDate
 
             while parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
@@ -698,25 +709,38 @@ private func makePreparedDecodeEvents(
                 }
 
                 let nextInput = LMInput.Text(tokens: token)
+                let modelStartedAt = Date.timeIntervalSinceReferenceDate
                 output = context.model(
                     nextInput[text: .newAxis],
                     cache: cache.isEmpty ? nil : cache,
                     state: output.state
                 )
+                decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
                 maybeQuantizeKVCache(
                     cache: &cache,
                     kvBits: parameters.kvBits,
                     kvGroupSize: parameters.kvGroupSize,
                     quantizedKVStart: parameters.quantizedKVStart
                 )
+                decodeQuantizeTotalMicros += elapsedMicros(since: quantizeStartedAt)
             }
 
             let elapsed = max(Date.timeIntervalSinceReferenceDate - startedAt, 0.000_001)
+            let activeKVProbe = makeActiveKVProbeSummary(
+                cache: cache,
+                acceleration: acceleration,
+                prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
+                decodeModelTotalMicros: decodeModelTotalMicros,
+                decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
+                decodeTokenCount: generatedTokenCount
+            )
             continuation.yield(.summary(
                 TextGenerationSummary(
                     promptTokens: decodeState.input.text.tokens.size,
                     completionTokens: generatedTokenCount,
-                    tokensPerSecond: Double(generatedTokenCount) / elapsed
+                    tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    activeKVProbe: activeKVProbe
                 )
             ))
             continuation.finish()
@@ -759,5 +783,75 @@ private func sampleNextToken(
     let token = sampler.sample(logits: logits)
     processor?.didSample(token: token)
     return token
+}
+
+private func makeActiveKVProbeSummary(
+    cache: [KVCache],
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    prefillQuantizeMicros: Int,
+    decodeModelTotalMicros: Int,
+    decodeQuantizeTotalMicros: Int,
+    decodeTokenCount: Int
+) -> ActiveKVProbeSummary? {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized else {
+        return nil
+    }
+
+    let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
+    let quantizedBytes = estimatedCacheStateBytes(cache)
+    let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
+    let savingsPercent = fp16Bytes > 0
+        ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
+        : max(0, 100 - quantizationRatio)
+
+    return ActiveKVProbeSummary(
+        backendCode: activeKVBackendCode(for: normalized),
+        kernelPathCode: activeKVKernelPathCode(for: normalized),
+        prefillQuantizeMicros: prefillQuantizeMicros,
+        decodeModelTotalMicros: decodeModelTotalMicros,
+        decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
+        decodeTokenCount: decodeTokenCount,
+        estimatedFP16Bytes: Int(clamping: fp16Bytes),
+        estimatedQuantizedBytes: Int(clamping: quantizedBytes),
+        estimatedMemorySavingsPercent: savingsPercent,
+        fallbackCount: 0
+    )
+}
+
+private func activeKVBackendCode(for policy: Melix_Worker_V1_AccelerationPolicy) -> Int {
+    let profile = policy.activeKvQuantProfile.lowercased()
+    if profile.hasPrefix("turboquant") {
+        return 2
+    }
+    return 1
+}
+
+private func activeKVKernelPathCode(for policy: Melix_Worker_V1_AccelerationPolicy) -> Int {
+    let profile = policy.activeKvQuantProfile.lowercased()
+    if profile.hasPrefix("turboquant") {
+        return 90
+    }
+    return 10
+}
+
+private func estimatedCacheStateBytes(_ cache: [KVCache]) -> UInt64 {
+    cache.reduce(UInt64(0)) { partial, layer in
+        partial + layer.innerState().reduce(UInt64(0)) { statePartial, array in
+            let elementBytes = max(array.dtype.size, 1)
+            return statePartial + UInt64(max(array.size, 0)) * UInt64(elementBytes)
+        }
+    }
+}
+
+private func estimatedFP16Bytes(quantizedBytes: UInt64, quantizationRatio: Int) -> UInt64 {
+    guard quantizedBytes > 0, quantizationRatio > 0 else {
+        return 0
+    }
+    return (quantizedBytes * 100) / UInt64(quantizationRatio)
+}
+
+private func elapsedMicros(since startedAt: TimeInterval) -> Int {
+    max(0, Int(((Date.timeIntervalSinceReferenceDate - startedAt) * 1_000_000).rounded()))
 }
 #endif

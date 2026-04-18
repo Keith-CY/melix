@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 from scripts import phase2_metrics_report
@@ -17,9 +19,18 @@ class _FakeInferenceStub:
         response.applied_acceleration.profile_id = request.execution.acceleration.profile_id
         return response
 
+    def Decode(self, request, timeout: int = 120):  # noqa: ANN001
+        yield inference_pb2.ExecuteEvent(token_delta=inference_pb2.TokenDelta(text="x"))
+        yield inference_pb2.ExecuteEvent(usage_delta=inference_pb2.UsageDelta(prompt_tokens=12, completion_tokens=1))
+        yield inference_pb2.ExecuteEvent(completed=inference_pb2.Completed(finish_reason="stop"))
+
 
 class _FakeRuntimeStub:
+    def __init__(self) -> None:
+        self.load_requests: list[runtime_pb2.LoadModelRequest] = []
+
     def LoadModel(self, request, timeout: int = 120):  # noqa: ANN001
+        self.load_requests.append(request)
         response = runtime_pb2.LoadModelResponse()
         response.ok = True
         response.model_handle = "melix-dev-text::1"
@@ -146,10 +157,467 @@ def test_collect_direct_phase_two_metrics_includes_sparse_prefill_probe(
         prompt="decode",
         queue_prompt='{"kind":"structured"}',
         abort_prompt="abort prompt",
+        decode_repeats=1,
+        active_kv_profiles=["q4"],
     )
 
     assert prefill_labels == ["prefill_baseline", "prefill_accelerated", "prefill_sparse"]
     assert [entry["label"] for entry in result["swift_worker_direct"]["prefill"]] == prefill_labels
+
+
+def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_baseline(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path,
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="deterministic",
+        python_backend_mode="deterministic",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    stack.control_plane_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+    stack.swift_worker_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+
+    monkeypatch.setattr(phase2_metrics_report.grpc, "insecure_channel", lambda target: _FakeChannel())
+    monkeypatch.setattr(
+        phase2_metrics_report.runtime_pb2_grpc,
+        "RuntimeServiceStub",
+        lambda channel: _FakeRuntimeStub(),
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report.inference_pb2_grpc,
+        "InferenceServiceStub",
+        lambda channel: _FakeInferenceStub(),
+    )
+    monkeypatch.setattr(phase2_metrics_report, "wait_for_worker_handshake", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_prefill_probe",
+        lambda *args, **kwargs: {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"},
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_decode_abort",
+        lambda *args, **kwargs: {"label": "decode_abort", "abort_ms": 1.0, "finish_reason": "cancelled"},
+    )
+
+    decode_calls: list[str] = []
+
+    def fake_measure_decode_probe(*args, **kwargs):  # noqa: ANN002, ANN003
+        label = kwargs["label"]
+        decode_calls.append(label)
+        is_baseline = label == "decode_baseline"
+        return {
+            "label": label,
+            "mode": "ACCELERATION_MODE_BASELINE" if is_baseline else "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+            "ttft_ms": 10.0 if is_baseline else 12.0,
+            "total_ms": 100.0 if is_baseline else 120.0,
+            "tokens_per_second": 20.0 if is_baseline else 16.0,
+            "worker_decode_tokens_per_second": 20.0 if is_baseline else 15.0,
+            "active_kv_quantization_ratio": 0.0 if is_baseline else 25.0,
+            "active_kv_backend": None if is_baseline else "affine",
+            "active_kv_kernel_path": None if is_baseline else "affine_quantized_sdpa",
+            "active_kv_decode_model_avg_us": 0 if is_baseline else 300,
+            "active_kv_decode_quantize_avg_us": 0 if is_baseline else 40,
+            "active_kv_estimated_memory_savings_pct": 0 if is_baseline else 75,
+        }
+
+    monkeypatch.setattr(phase2_metrics_report, "measure_decode_probe", fake_measure_decode_probe)
+
+    result = phase2_metrics_report.collect_direct_phase_two_metrics(
+        stack=stack,
+        prompt="decode",
+        queue_prompt='{"kind":"structured"}',
+        abort_prompt="abort prompt",
+        decode_repeats=2,
+        active_kv_profiles=["q4"],
+    )
+
+    assert decode_calls == [
+        "decode_baseline",
+        "decode_affine_q4",
+        "decode_baseline",
+        "decode_affine_q4",
+        "decode_speculative",
+    ]
+    comparisons = result["swift_worker_direct"]["comparisons"]
+    assert comparisons["affine_q4_vs_baseline"]["worker_tps_overhead_pct"] == 25.0
+    assert comparisons["affine_q4_vs_baseline"]["ttft_delta_ms"] == 2.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_estimated_memory_savings_pct"] == 75.0
+
+
+def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "swift-worker-metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "values": {
+                    "swift_text.decode_ttft_ms": 12,
+                    "swift_text.decode_tokens_per_second": 4,
+                    "swift_text.speculative_acceptance_rate": 0,
+                    "swift_text.speculative_rollback_rate": 0,
+                    "swift_text.active_kv_quantization_ratio": 25,
+                    "swift_text.active_kv_backend_code": 1,
+                    "swift_text.active_kv_kernel_path_code": 10,
+                    "swift_text.active_kv_prefill_quantize_us": 100,
+                    "swift_text.active_kv_decode_model_total_us": 200,
+                    "swift_text.active_kv_decode_model_avg_us": 20,
+                    "swift_text.active_kv_decode_quantize_total_us": 30,
+                    "swift_text.active_kv_decode_quantize_avg_us": 3,
+                    "swift_text.active_kv_decode_token_count": 10,
+                    "swift_text.active_kv_estimated_fp16_bytes": 400,
+                    "swift_text.active_kv_estimated_quantized_bytes": 100,
+                    "swift_text.active_kv_estimated_memory_savings_pct": 75,
+                    "swift_text.active_kv_fallback_count": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    baseline = phase2_metrics_report.measure_decode_probe(
+        _FakeInferenceStub(),
+        metrics_path,
+        model_handle="melix-dev-text::1",
+        prompt="decode",
+        label="decode_baseline",
+        policy=common_pb2.AccelerationPolicy(
+            mode=common_pb2.ACCELERATION_MODE_BASELINE,
+            allow_baseline_fallback=True,
+        ),
+    )
+    active = phase2_metrics_report.measure_decode_probe(
+        _FakeInferenceStub(),
+        metrics_path,
+        model_handle="melix-dev-text::1",
+        prompt="decode",
+        label="decode_affine_q4",
+        policy=common_pb2.AccelerationPolicy(
+            mode=common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED,
+            active_kv_quant_profile="q4",
+            allow_baseline_fallback=True,
+        ),
+    )
+
+    assert baseline["active_kv_backend"] is None
+    assert baseline["active_kv_kernel_path"] is None
+    assert baseline["active_kv_quantization_ratio"] == 0
+    assert baseline["active_kv_estimated_memory_savings_pct"] == 0
+    assert active["active_kv_backend"] == "affine"
+    assert active["active_kv_kernel_path"] == "affine_quantized_sdpa"
+    assert active["active_kv_estimated_memory_savings_pct"] == 75
+
+
+def test_active_kv_helper_edges_return_stable_defaults() -> None:
+    assert phase2_metrics_report.parse_active_kv_profiles("") == ["q4"]
+    assert phase2_metrics_report.parse_active_kv_profiles("q4, turboquant-q4, custom.v1") == [
+        "q4",
+        "turboquant-q4",
+        "custom.v1",
+    ]
+    assert phase2_metrics_report.active_kv_decode_label("turboquant-q4") == "decode_turboquant_q4"
+    assert phase2_metrics_report.active_kv_decode_label("custom.v1") == "decode_active_kv_customv1"
+
+    inactive_metrics = phase2_metrics_report.decode_active_kv_metrics(
+        {},
+        common_pb2.AccelerationPolicy(mode=common_pb2.ACCELERATION_MODE_BASELINE),
+    )
+    assert inactive_metrics["active_kv_backend"] is None
+    assert inactive_metrics["active_kv_kernel_path"] is None
+    assert inactive_metrics["active_kv_estimated_memory_savings_pct"] == 0
+
+    assert phase2_metrics_report.active_kv_backend_name("not-an-int") is None
+    assert phase2_metrics_report.active_kv_backend_name(7) == "unknown_7"
+    assert phase2_metrics_report.active_kv_kernel_path_name(None) is None
+    assert phase2_metrics_report.active_kv_kernel_path_name(77) == "unknown_77"
+    assert phase2_metrics_report.overhead_percent(None, 1.0) is None
+    assert phase2_metrics_report.overhead_percent(0.0, 1.0) is None
+    assert phase2_metrics_report.delta(None, 1.0) is None
+    assert phase2_metrics_report.quantize_share_percent(None, 1.0) is None
+    assert phase2_metrics_report.quantize_share_percent(0.0, 0.0) is None
+    assert phase2_metrics_report.first_non_empty([{"value": None}, {"value": ""}, {"value": 0}], "value") is None
+
+
+def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp_path: Path) -> None:
+    hf_home = tmp_path / "hf"
+    snapshot = (
+        hf_home
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+        / "abc123"
+    )
+    snapshot.mkdir(parents=True)
+    refs = snapshot.parents[1] / "refs"
+    refs.mkdir()
+    (refs / "main").write_text("abc123\n", encoding="utf-8")
+
+    model = phase2_metrics_report.resolve_model_configuration(
+        real_small_model=True,
+        model_id="",
+        model_path="",
+        model_revision="",
+        environment={"HF_HOME": str(hf_home)},
+    )
+
+    assert model.model_id == "melix-dev-text"
+    assert model.model_path == str(snapshot.resolve())
+    assert model.revision == "main"
+    assert model.source_resolution_mode == "hf_cache_snapshot"
+    assert model.warnings == ()
+
+
+def test_collect_direct_phase_two_metrics_loads_configured_model_revision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path,
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="deterministic",
+        python_backend_mode="deterministic",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    stack.control_plane_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+    stack.swift_worker_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+    runtime_stub = _FakeRuntimeStub()
+
+    monkeypatch.setattr(phase2_metrics_report.grpc, "insecure_channel", lambda target: _FakeChannel())
+    monkeypatch.setattr(
+        phase2_metrics_report.runtime_pb2_grpc,
+        "RuntimeServiceStub",
+        lambda channel: runtime_stub,
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report.inference_pb2_grpc,
+        "InferenceServiceStub",
+        lambda channel: _FakeInferenceStub(),
+    )
+    monkeypatch.setattr(phase2_metrics_report, "wait_for_worker_handshake", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_prefill_probe",
+        lambda *args, **kwargs: {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"},
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_decode_probe",
+        lambda *args, **kwargs: {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"},
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_decode_abort",
+        lambda *args, **kwargs: {"label": "decode_abort", "abort_ms": 1.0, "finish_reason": "cancelled"},
+    )
+
+    model = phase2_metrics_report.Phase2ModelConfiguration(
+        model_id="melix-dev-text",
+        model_path=str(tmp_path / "qwen-real-small"),
+        revision="main",
+        source_resolution_mode="hf_cache_snapshot",
+    )
+    phase2_metrics_report.collect_direct_phase_two_metrics(
+        stack=stack,
+        prompt="decode",
+        queue_prompt='{"kind":"structured"}',
+        abort_prompt="abort prompt",
+        decode_repeats=1,
+        active_kv_profiles=["q4"],
+        model=model,
+    )
+
+    loaded_model = runtime_stub.load_requests[0].model
+    assert loaded_model.model_id == "melix-dev-text"
+    assert loaded_model.model_path == str(tmp_path / "qwen-real-small")
+    assert loaded_model.revision == "main"
+
+
+def test_collect_direct_phase_two_metrics_can_skip_abort_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path,
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="deterministic",
+        python_backend_mode="deterministic",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    stack.control_plane_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+    stack.swift_worker_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+
+    monkeypatch.setattr(phase2_metrics_report.grpc, "insecure_channel", lambda target: _FakeChannel())
+    monkeypatch.setattr(
+        phase2_metrics_report.runtime_pb2_grpc,
+        "RuntimeServiceStub",
+        lambda channel: _FakeRuntimeStub(),
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report.inference_pb2_grpc,
+        "InferenceServiceStub",
+        lambda channel: _FakeInferenceStub(),
+    )
+    monkeypatch.setattr(phase2_metrics_report, "wait_for_worker_handshake", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_prefill_probe",
+        lambda *args, **kwargs: {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"},
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_decode_probe",
+        lambda *args, **kwargs: {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"},
+    )
+
+    abort_probe = Mock(side_effect=AssertionError("abort probe should be skipped"))
+    monkeypatch.setattr(phase2_metrics_report, "measure_decode_abort", abort_probe)
+
+    result = phase2_metrics_report.collect_direct_phase_two_metrics(
+        stack=stack,
+        prompt="decode",
+        queue_prompt='{"kind":"structured"}',
+        abort_prompt="abort prompt",
+        decode_repeats=1,
+        active_kv_profiles=["q4"],
+        skip_abort=True,
+    )
+
+    assert result["swift_worker_direct"]["abort"] == {
+        "label": "decode_abort",
+        "skipped": True,
+        "reason": "disabled_by_cli",
+    }
+    abort_probe.assert_not_called()
+
+
+def test_main_assembles_report_from_cli_model_options(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    output_path = tmp_path / "phase2.json"
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path / "runtime",
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="swift-mlx",
+        python_backend_mode="auto",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    model = phase2_metrics_report.Phase2ModelConfiguration(
+        model_id="melix-dev-text",
+        model_path="/models/qwen-real-small",
+        revision="main",
+        source_resolution_mode="explicit",
+        warnings=("cache miss",),
+    )
+
+    monkeypatch.setattr(phase2_metrics_report, "resolve_stack_configuration", lambda runtime_dir: stack)
+
+    resolved_model_args: dict[str, object] = {}
+
+    def fake_resolve_model_configuration(**kwargs):  # noqa: ANN003
+        resolved_model_args.update(kwargs)
+        return model
+
+    monkeypatch.setattr(phase2_metrics_report, "resolve_model_configuration", fake_resolve_model_configuration)
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_http_stream",
+        lambda port, prompt, *, label, model_id: {
+            "label": label,
+            "port": port,
+            "prompt": prompt,
+            "model_id": model_id,
+        },
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_queue_pressure",
+        lambda stack, prompt, *, model_id: {"prompt": prompt, "model_id": model_id},
+    )
+
+    direct_args: dict[str, object] = {}
+
+    def fake_collect_direct_phase_two_metrics(**kwargs):  # noqa: ANN003
+        direct_args.update(kwargs)
+        return {"swift_worker_direct": {"decode": [], "prefill": [], "comparisons": {}, "abort": {}}}
+
+    monkeypatch.setattr(phase2_metrics_report, "collect_direct_phase_two_metrics", fake_collect_direct_phase_two_metrics)
+    monkeypatch.setattr(phase2_metrics_report, "read_metrics_export", lambda path: {"path": str(path)})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--runtime-dir",
+            str(stack.runtime_dir),
+            "--decode-repeats",
+            "3",
+            "--active-kv-profiles",
+            "q4,turboquant-q4",
+            "--model-id",
+            "melix-dev-text",
+            "--model-path",
+            "/models/qwen-real-small",
+            "--model-revision",
+            "main",
+            "--real-small-model",
+            "--skip-abort",
+            "--output",
+            str(output_path),
+            "--json",
+        ],
+    )
+
+    phase2_metrics_report.main()
+
+    emitted = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert emitted["model_path"] == "/models/qwen-real-small"
+    assert written["model_warnings"] == ["cache miss"]
+    assert resolved_model_args["real_small_model"] is True
+    assert direct_args["decode_repeats"] == 3
+    assert direct_args["active_kv_profiles"] == ["q4", "turboquant-q4"]
+    assert direct_args["skip_abort"] is True
+
+
+def test_emit_report_writes_json_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "metrics" / "phase2-affine-q4-preopt.json"
+    report = {
+        "runtime_dir": "/tmp/melix",
+        "swift_backend_mode": "swift",
+        "python_backend_mode": "auto",
+        "model_id": "melix-dev-text",
+        "model_path": "/models/qwen-real-small",
+        "model_revision": "main",
+        "http_baseline": {},
+        "queue_pressure": {},
+        "swift_worker_direct": {"decode": [], "prefill": [], "comparisons": {}, "abort": {}},
+        "control_plane_metrics": {},
+        "swift_worker_metrics": {},
+    }
+
+    rendered = phase2_metrics_report.emit_report(
+        report,
+        json_output=True,
+        output_path=output_path,
+    )
+
+    assert json.loads(rendered)["model_revision"] == "main"
+    assert json.loads(output_path.read_text(encoding="utf-8"))["model_path"] == "/models/qwen-real-small"
 
 
 def test_render_report_includes_sparse_prefill_columns() -> None:
@@ -180,7 +648,7 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
             ],
             "decode": [
                 {
-                    "label": "decode_active_kv_quantized",
+                    "label": "decode_affine_q4",
                     "mode": "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
                     "ttft_ms": 5.0,
                     "total_ms": 10.0,
@@ -189,8 +657,19 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
                     "speculative_acceptance_rate": 0.0,
                     "speculative_rollback_rate": 0.0,
                     "active_kv_quantization_ratio": 25.0,
+                    "active_kv_backend": "affine",
+                    "active_kv_kernel_path": "affine_quantized_sdpa",
+                    "active_kv_decode_model_avg_us": 300,
+                    "active_kv_decode_quantize_avg_us": 40,
+                    "active_kv_estimated_memory_savings_pct": 75,
                 }
             ],
+            "comparisons": {
+                "affine_q4_vs_baseline": {
+                    "worker_tps_overhead_pct": 8.0,
+                    "active_kv_estimated_memory_savings_pct": 75.0,
+                }
+            },
             "abort": {"label": "decode_abort", "abort_ms": 1.0, "finish_reason": "cancelled"},
         },
     }
@@ -199,3 +678,5 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
 
     assert "sparse_prefill_accepted_skip_count" in rendered
     assert "sparse_prefill_protected_region_count" in rendered
+    assert "active_kv_kernel_path" in rendered
+    assert "affine_q4_vs_baseline" in rendered

@@ -15,11 +15,46 @@ Capture repository-owned benchmark evidence for the remaining M6 acceleration sl
 
 Start the local stack before running this benchmark sequence.
 
+The repository shared real small text model convention remains:
+
+- model id: `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`
+- preferred local path env: `MELIX_PHASE8_REAL_SMALL_MODEL_PATH`
+- fallback local sources: existing `MELIX_MANAGED_MODEL_ROOT` import, then the local Hugging Face cache
+
+That convention is used by the Phase 8 real-model E2E path. The current Swift
+MLXLLM dependency does not support `model_type = qwen3_5`, so the Swift
+active-KV pre-optimization baseline uses this Swift-supported real model:
+
+- model id: `mlx-community/Qwen3-0.6B-4bit`
+- revision: `main`
+
+When the Python worker environment contains a newer MLX wheel, start the Swift
+text worker with a metallib matching the pinned Swift MLX runtime:
+
+- env: `MELIX_SWIFT_MLX_METALLIB_PATH`
+- expected version for this baseline: MLX `0.24.2` `mlx.metallib`
+
 ## Command
 
 ```bash
+export MELIX_RUNTIME_DIR="${MELIX_RUNTIME_DIR:-/tmp/melix-phase2-qwen3-preopt}"
+export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-11438}"
+export MELIX_DEV_TEXT_MODEL_PATH="/path/to/mlx-community/Qwen3-0.6B-4bit"
+export MELIX_SWIFT_MLX_METALLIB_PATH="/path/to/mlx-0.24.2/mlx.metallib"
+
+bash scripts/dev_up.sh --prefer-built
+
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
-uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py --json
+uv run --project services/mlx-worker-python python scripts/phase2_metrics_report.py \
+  --json \
+  --runtime-dir "$MELIX_RUNTIME_DIR" \
+  --http-prompt "Continue this sentence with five short words: Melix measures cache speed by" \
+  --model-path "$MELIX_DEV_TEXT_MODEL_PATH" \
+  --model-revision main \
+  --decode-repeats 5 \
+  --active-kv-profiles q4 \
+  --skip-abort \
+  --output docs/metrics/phase2-affine-q4-preopt.json
 ```
 
 ## Evidence To Inspect
@@ -28,7 +63,7 @@ uv run --project services/mlx-worker-python python scripts/phase2_metrics_report
 
 Look in `swift_worker_direct.decode` for the row with:
 
-- `label = "decode_active_kv_quantized"`
+- `label = "decode_affine_q4"`
 
 Expected evidence fields:
 
@@ -37,8 +72,31 @@ Expected evidence fields:
 - `tokens_per_second`
 - `worker_decode_tokens_per_second`
 - `active_kv_quantization_ratio`
+- `active_kv_backend`
+- `active_kv_kernel_path`
+- `active_kv_prefill_quantize_us`
+- `active_kv_decode_model_avg_us`
+- `active_kv_decode_quantize_avg_us`
+- `active_kv_estimated_fp16_bytes`
+- `active_kv_estimated_quantized_bytes`
+- `active_kv_estimated_memory_savings_pct`
 
-The active-KV row proves the acceleration mode can be requested, observed, and compared against the baseline and speculative decode rows in the same report.
+The active-KV row proves the acceleration mode can be requested and observed. Before any TurboQuant optimization work, preserve this affine q4 row as the pre-optimization baseline.
+
+Look in `swift_worker_direct.comparisons` for:
+
+- `affine_q4_vs_baseline`
+
+Expected comparison fields:
+
+- `worker_tps_overhead_pct`
+- `wall_tps_overhead_pct`
+- `ttft_delta_ms`
+- `total_ms_delta`
+- `active_kv_decode_quantize_share_pct`
+- `active_kv_estimated_memory_savings_pct`
+
+The comparison block is the release-gate evidence for before/after active-KV optimization.
 
 ### Sparse Prefill
 
@@ -58,6 +116,8 @@ The sparse-prefill row proves structured prompts can trigger sparse skipping whi
 
 ## Acceptance
 
-- the report contains a `decode_active_kv_quantized` row with a non-`N/A` `active_kv_quantization_ratio`
+- the report contains a `decode_affine_q4` row with non-`N/A` active-KV probe fields
+- the report contains an `affine_q4_vs_baseline` comparison with non-`N/A` throughput overhead and memory-savings fields
 - the report contains a `prefill_sparse` row with non-`N/A` sparse-prefill counters
 - baseline, accelerated-prefill, sparse-prefill, speculative-decode, and active-KV rows are emitted from one repository-owned command
+- TurboQuant optimization must not proceed until this pre-optimization report has been captured and attached to the implementation handoff

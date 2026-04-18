@@ -113,6 +113,11 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
+        XCTAssertEqual(counters["swift_text.active_kv_backend_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_kernel_path_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
     }
 
     func testWorkerServicesPublishMemoryEnforcementAndInitialCacheMetrics() {
@@ -924,6 +929,57 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.promptTokens, promptTokens.count)
         XCTAssertGreaterThan(summary.completionTokens, 0)
         XCTAssertNotNil(summary.tokensPerSecond)
+    }
+
+    func testAutoSwiftMLXBackendDecodeReportsActiveKVProbeForLiveBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge active kv decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-active-kv-decode",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 2)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 90)
+        XCTAssertGreaterThanOrEqual(activeKVProbe.prefillQuantizeMicros, 0)
+        XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedFP16Bytes, activeKVProbe.estimatedQuantizedBytes)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 0)
     }
     #endif
 
@@ -3629,6 +3685,113 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.active_kv_quantization_ratio"], 50)
     }
 
+    func testDecodeStreamingRpcRecordsActiveKVProbeSummary() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ],
+            backend: FakeRuntimeBackend(
+                decodedChunks: ["probe"],
+                activeKVProbeSummary: ActiveKVProbeSummary(
+                    backendCode: 1,
+                    kernelPathCode: 10,
+                    prefillQuantizeMicros: 150,
+                    decodeModelTotalMicros: 900,
+                    decodeQuantizeTotalMicros: 120,
+                    decodeTokenCount: 3,
+                    estimatedFP16Bytes: 4_000,
+                    estimatedQuantizedBytes: 1_000,
+                    estimatedMemorySavingsPercent: 75,
+                    fallbackCount: 0
+                )
+            )
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-active-kv-probe-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.execution.acceleration.mode = .activeKvQuantized
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("active kv probe")]
+
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-active-kv-probe-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.active_kv_backend_code"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_kernel_path_code"], 10)
+        XCTAssertEqual(metrics["swift_text.active_kv_prefill_quantize_us"], 150)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_total_us"], 900)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_avg_us"], 300)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_fp16_bytes"], 4_000)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_quantized_bytes"], 1_000)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_memory_savings_pct"], 75)
+        XCTAssertEqual(metrics["swift_text.active_kv_fallback_count"], 0)
+    }
+
+    func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {
+        let summary = ActiveKVProbeSummary(
+            backendCode: 1,
+            kernelPathCode: 10,
+            prefillQuantizeMicros: 0,
+            decodeModelTotalMicros: 120,
+            decodeQuantizeTotalMicros: 80,
+            decodeTokenCount: 0,
+            estimatedFP16Bytes: 0,
+            estimatedQuantizedBytes: 0,
+            estimatedMemorySavingsPercent: 0,
+            fallbackCount: 0
+        )
+
+        XCTAssertEqual(summary.decodeModelAverageMicros, 0)
+        XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
+    }
+
     func testCacheManagementRpcsExposeHotAndDiskTierMetadata() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let services = makeServices(
@@ -6055,6 +6218,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
     private let tokenDelayNanos: UInt64
     private let prefillDelayNanos: UInt64
     private let decodeDelayNanos: UInt64
+    private let activeKVProbeSummary: ActiveKVProbeSummary?
     private let storage = FakeRuntimeBackendStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
@@ -6067,7 +6231,8 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         decodedChunks: [String]? = nil,
         tokenDelayNanos: UInt64 = 0,
         prefillDelayNanos: UInt64 = 0,
-        decodeDelayNanos: UInt64 = 0
+        decodeDelayNanos: UInt64 = 0,
+        activeKVProbeSummary: ActiveKVProbeSummary? = nil
     ) {
         self.loadError = loadError
         self.prefillError = prefillError
@@ -6078,6 +6243,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         self.tokenDelayNanos = tokenDelayNanos
         self.prefillDelayNanos = prefillDelayNanos
         self.decodeDelayNanos = decodeDelayNanos
+        self.activeKVProbeSummary = activeKVProbeSummary
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -6207,7 +6373,8 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
                         completionTokens: emitted,
                         tokensPerSecond: emitted > 0 ? Double(emitted) * 8.0 : nil,
                         speculativeAcceptedTokens: speculativeAccepted,
-                        speculativeRejectedTokens: speculativeRejected
+                        speculativeRejectedTokens: speculativeRejected,
+                        activeKVProbe: activeKVProbeSummary
                     )
                 ))
                 continuation.finish()

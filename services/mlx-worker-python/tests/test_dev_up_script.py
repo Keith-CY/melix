@@ -243,9 +243,13 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     dev_up.ensure_runtime_is_stopped(layout)
 
 
-def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path) -> None:
+def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     dev_up = load_dev_up_module()
     layout = replace(make_layout(dev_up, tmp_path), service_instance_name="team-a")
+    metallib_path = tmp_path / "swift-mlx-0.24.2" / "mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+    monkeypatch.setenv("MELIX_SWIFT_MLX_METALLIB_PATH", str(metallib_path))
 
     env_path = dev_up.write_runtime_environment(layout)
     payload = env_path.read_text(encoding="utf-8")
@@ -255,6 +259,7 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path) -> None
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
+    assert f'export MELIX_SWIFT_MLX_METALLIB_PATH="{metallib_path}"' in payload
 
 
 def test_prepare_swift_worker_launch_cwd_symlinks_runtime_local_default_metallib(tmp_path: Path) -> None:
@@ -287,6 +292,42 @@ def test_prepare_swift_worker_launch_cwd_uses_configured_uv_cache_dir_for_metall
     assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
     assert default_metallib.is_symlink()
     assert default_metallib.resolve() == metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_prefers_configured_metallib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    layout = replace(make_layout(dev_up, tmp_path), uv_cache_dir=tmp_path / "custom-uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    configured_metallib_path = tmp_path / "swift-mlx-0.24.2" / "mlx.metallib"
+    configured_metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    configured_metallib_path.write_text("swift-mlx", encoding="utf-8")
+    cache_metallib_path = layout.uv_cache_dir / "mlx/runtime/mlx.metallib"
+    cache_metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_metallib_path.write_text("python-mlx", encoding="utf-8")
+    monkeypatch.setenv("MELIX_SWIFT_MLX_METALLIB_PATH", str(configured_metallib_path))
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == configured_metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_rejects_missing_configured_metallib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("MELIX_SWIFT_MLX_METALLIB_PATH", str(tmp_path / "missing.metallib"))
+
+    with pytest.raises(RuntimeError, match="MELIX_SWIFT_MLX_METALLIB_PATH"):
+        dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
 
 
 def test_prepare_swift_worker_launch_cwd_falls_back_to_repo_root_without_local_metallib(tmp_path: Path) -> None:

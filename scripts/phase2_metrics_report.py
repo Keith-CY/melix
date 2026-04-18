@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import threading
 import time
 import urllib.request
@@ -13,6 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import grpc
+
+try:
+    from scripts.real_model_support import resolve_real_small_text_model_source
+except ModuleNotFoundError:  # pragma: no cover - direct `python scripts/...` execution fallback.
+    from real_model_support import resolve_real_small_text_model_source  # type: ignore[no-redef]
 
 from packages.protocol.python.worker.v1 import (
     common_pb2,
@@ -49,6 +55,15 @@ class StackConfiguration:
     swift_worker_metrics_path: Path
 
 
+@dataclass(frozen=True)
+class Phase2ModelConfiguration:
+    model_id: str
+    model_path: str
+    revision: str
+    source_resolution_mode: str
+    warnings: tuple[str, ...] = ()
+
+
 @dataclass
 class StreamMetrics:
     label: str
@@ -75,18 +90,50 @@ def main() -> None:
     parser.add_argument("--http-prompt", default=DEFAULT_HTTP_PROMPT)
     parser.add_argument("--queue-prompt", default=DEFAULT_QUEUE_PROMPT)
     parser.add_argument("--abort-prompt", default=DEFAULT_ABORT_PROMPT)
+    parser.add_argument("--decode-repeats", type=int, default=1)
+    parser.add_argument("--active-kv-profiles", default="q4")
+    parser.add_argument("--model-id", default="", help="Model id sent to HTTP and worker probes.")
+    parser.add_argument("--model-path", default="", help="Model path or Hub id used by direct worker probes.")
+    parser.add_argument("--model-revision", default="", help="Model revision used by direct worker probes.")
+    parser.add_argument(
+        "--real-small-model",
+        action="store_true",
+        help="Use the shared Phase 8 real small text model for the Phase 2 probe run.",
+    )
+    parser.add_argument(
+        "--skip-abort",
+        action="store_true",
+        help="Skip the decode abort subprobe while still collecting prefill/decode metrics.",
+    )
+    parser.add_argument("--output", default="", help="Optional path to write the rendered report.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     stack = resolve_stack_configuration(Path(args.runtime_dir))
-    baseline_http = measure_http_stream(stack.http_port, args.http_prompt, label="http_baseline")
-    queue_pressure = measure_queue_pressure(stack, args.queue_prompt)
+    model = resolve_model_configuration(
+        real_small_model=bool(args.real_small_model),
+        model_id=str(args.model_id or ""),
+        model_path=str(args.model_path or ""),
+        model_revision=str(args.model_revision or ""),
+        environment=os.environ,
+    )
+    baseline_http = measure_http_stream(
+        stack.http_port,
+        args.http_prompt,
+        label="http_baseline",
+        model_id=model.model_id,
+    )
+    queue_pressure = measure_queue_pressure(stack, args.queue_prompt, model_id=model.model_id)
 
     direct_worker = collect_direct_phase_two_metrics(
         stack=stack,
         prompt=args.http_prompt,
         queue_prompt=args.queue_prompt,
         abort_prompt=args.abort_prompt,
+        decode_repeats=max(1, args.decode_repeats),
+        active_kv_profiles=parse_active_kv_profiles(args.active_kv_profiles),
+        model=model,
+        skip_abort=bool(args.skip_abort),
     )
 
     report = {
@@ -94,7 +141,11 @@ def main() -> None:
         "runtime_dir": os.fspath(stack.runtime_dir),
         "swift_backend_mode": stack.swift_backend_mode,
         "python_backend_mode": stack.python_backend_mode,
-        "model_id": "melix-dev-text",
+        "model_id": model.model_id,
+        "model_path": model.model_path,
+        "model_revision": model.revision,
+        "model_source_resolution_mode": model.source_resolution_mode,
+        "model_warnings": list(model.warnings),
         "http_baseline": baseline_http,
         "queue_pressure": queue_pressure,
         **direct_worker,
@@ -102,10 +153,7 @@ def main() -> None:
         "swift_worker_metrics": read_metrics_export(stack.swift_worker_metrics_path),
     }
 
-    if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        print(render_report(report))
+    print(emit_report(report, json_output=bool(args.json), output_path=Path(args.output) if args.output else None))
 
 
 def resolve_stack_configuration(runtime_dir: Path) -> StackConfiguration:
@@ -156,13 +204,64 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def resolve_model_configuration(
+    *,
+    real_small_model: bool,
+    model_id: str,
+    model_path: str,
+    model_revision: str,
+    environment: dict[str, str] | None = None,
+) -> Phase2ModelConfiguration:
+    env = dict(os.environ if environment is None else environment)
+    resolved_model_id = model_id.strip() or "melix-dev-text"
+
+    if real_small_model:
+        source = resolve_real_small_text_model_source(
+            local_model_path=model_path,
+            environment=env,
+            allow_managed_root=True,
+            allow_hf_cache=True,
+        )
+        return Phase2ModelConfiguration(
+            model_id=resolved_model_id,
+            model_path=source.model_path_for_runtime,
+            revision=model_revision.strip() or "main",
+            source_resolution_mode=source.source_resolution_mode,
+            warnings=source.warnings,
+        )
+
+    env_model_path = env.get("MELIX_DEV_TEXT_MODEL_PATH", "").strip()
+    env_model_revision = env.get("MELIX_DEV_TEXT_MODEL_REVISION", "").strip()
+    resolved_model_path = model_path.strip() or env_model_path or "models/melix-dev-text"
+    source_resolution_mode = "explicit_model_path" if model_path.strip() else (
+        "env_model_path" if env_model_path else "dev_text_default"
+    )
+    return Phase2ModelConfiguration(
+        model_id=resolved_model_id,
+        model_path=resolved_model_path,
+        revision=model_revision.strip() or env_model_revision or "dev",
+        source_resolution_mode=source_resolution_mode,
+    )
+
+
 def collect_direct_phase_two_metrics(
     *,
     stack: StackConfiguration,
     prompt: str,
     queue_prompt: str,
     abort_prompt: str,
+    decode_repeats: int = 1,
+    active_kv_profiles: list[str] | None = None,
+    model: Phase2ModelConfiguration | None = None,
+    skip_abort: bool = False,
 ) -> dict[str, Any]:
+    active_kv_profiles = active_kv_profiles or ["q4"]
+    model = model or resolve_model_configuration(
+        real_small_model=False,
+        model_id="",
+        model_path="",
+        model_revision="",
+    )
     with grpc.insecure_channel(f"unix://{stack.swift_socket_path}") as channel:
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
@@ -171,7 +270,7 @@ def collect_direct_phase_two_metrics(
         load_started_at = time.perf_counter()
         load_response = runtime_stub.LoadModel(
             runtime_pb2.LoadModelRequest(
-                model=dev_text_model_spec(),
+                model=dev_text_model_spec(model),
                 memory_budget_bytes=0,
                 pin_on_load=False,
                 warmup_after_load=False,
@@ -221,48 +320,66 @@ def collect_direct_phase_two_metrics(
                 allow_baseline_fallback=True,
             ),
         )
-        decode_baseline = measure_decode_probe(
-            inference_stub,
-            stack.swift_worker_metrics_path,
-            model_handle=model_handle,
-            prompt=prompt,
-            label="decode_baseline",
-            policy=common_pb2.AccelerationPolicy(
-                mode=common_pb2.ACCELERATION_MODE_BASELINE,
-                allow_baseline_fallback=True,
-            ),
+        decode_rows: list[dict[str, Any]] = []
+        for _ in range(max(1, decode_repeats)):
+            decode_rows.append(
+                measure_decode_probe(
+                    inference_stub,
+                    stack.swift_worker_metrics_path,
+                    model_handle=model_handle,
+                    prompt=prompt,
+                    label="decode_baseline",
+                    policy=common_pb2.AccelerationPolicy(
+                        mode=common_pb2.ACCELERATION_MODE_BASELINE,
+                        allow_baseline_fallback=True,
+                    ),
+                )
+            )
+            for profile in active_kv_profiles:
+                decode_rows.append(
+                    measure_decode_probe(
+                        inference_stub,
+                        stack.swift_worker_metrics_path,
+                        model_handle=model_handle,
+                        prompt=prompt,
+                        label=active_kv_decode_label(profile),
+                        policy=common_pb2.AccelerationPolicy(
+                            mode=common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED,
+                            profile_id=f"{profile}-active-kv",
+                            active_kv_quant_profile=profile,
+                            allow_baseline_fallback=True,
+                        ),
+                    )
+                )
+
+        decode_rows.append(
+            measure_decode_probe(
+                inference_stub,
+                stack.swift_worker_metrics_path,
+                model_handle=model_handle,
+                prompt=prompt,
+                label="decode_speculative",
+                policy=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                    profile_id="draft-q4",
+                    draft_model_id="melix-dev-text-draft",
+                    allow_baseline_fallback=True,
+                ),
+            )
         )
-        decode_speculative = measure_decode_probe(
-            inference_stub,
-            stack.swift_worker_metrics_path,
-            model_handle=model_handle,
-            prompt=prompt,
-            label="decode_speculative",
-            policy=common_pb2.AccelerationPolicy(
-                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
-                profile_id="draft-q4",
-                draft_model_id="melix-dev-text-draft",
-                allow_baseline_fallback=True,
-            ),
-        )
-        decode_active_kv = measure_decode_probe(
-            inference_stub,
-            stack.swift_worker_metrics_path,
-            model_handle=model_handle,
-            prompt=prompt,
-            label="decode_active_kv_quantized",
-            policy=common_pb2.AccelerationPolicy(
-                mode=common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED,
-                profile_id="q4-active-kv",
-                active_kv_quant_profile="q4",
-                allow_baseline_fallback=True,
-            ),
-        )
-        abort_probe = measure_decode_abort(
-            inference_stub,
-            model_handle=model_handle,
-            prompt=abort_prompt,
-        )
+        comparisons = build_decode_comparisons(decode_rows)
+        if skip_abort:
+            abort_probe = {
+                "label": "decode_abort",
+                "skipped": True,
+                "reason": "disabled_by_cli",
+            }
+        else:
+            abort_probe = measure_decode_abort(
+                inference_stub,
+                model_handle=model_handle,
+                prompt=abort_prompt,
+            )
 
         unload = runtime_stub.UnloadModel(
             runtime_pb2.UnloadModelRequest(model_handle=model_handle),
@@ -276,18 +393,19 @@ def collect_direct_phase_two_metrics(
             "load_model_ms": load_model_ms,
             "resident_bytes": int(max(load_response.estimated_resident_bytes, stats.stats.resident_bytes)),
             "prefill": [prefill_baseline, prefill_accelerated, prefill_sparse],
-            "decode": [decode_baseline, decode_speculative, decode_active_kv],
+            "decode": decode_rows,
+            "comparisons": comparisons,
             "abort": abort_probe,
         }
     }
 
 
-def measure_http_stream(http_port: int, prompt: str, *, label: str) -> dict[str, Any]:
+def measure_http_stream(http_port: int, prompt: str, *, label: str, model_id: str = "melix-dev-text") -> dict[str, Any]:
     request = urllib.request.Request(
         f"http://127.0.0.1:{http_port}/v1/chat/completions",
         data=json.dumps(
             {
-                "model": "melix-dev-text",
+                "model": model_id,
                 "stream": True,
                 "messages": [{"role": "user", "content": prompt}],
             }
@@ -367,11 +485,11 @@ def measure_http_stream(http_port: int, prompt: str, *, label: str) -> dict[str,
     ).json_dict()
 
 
-def measure_queue_pressure(stack: StackConfiguration, prompt: str) -> dict[str, Any]:
+def measure_queue_pressure(stack: StackConfiguration, prompt: str, *, model_id: str = "melix-dev-text") -> dict[str, Any]:
     results: dict[str, dict[str, Any]] = {}
 
     def run(label: str) -> None:
-        results[label] = measure_http_stream(stack.http_port, prompt, label=label)
+        results[label] = measure_http_stream(stack.http_port, prompt, label=label, model_id=model_id)
 
     leader = threading.Thread(target=run, args=("queue_leader",), daemon=True)
     follower = threading.Thread(target=run, args=("queue_follower",), daemon=True)
@@ -514,6 +632,7 @@ def measure_decode_probe(
     total_ms = elapsed_ms(started_at)
     completion_tokens = completion_tokens or len(assistant_chunks)
     exported = read_metrics_export(metrics_path).get("values", {})
+    active_kv_metrics = decode_active_kv_metrics(exported, policy)
 
     return {
         "label": label,
@@ -531,7 +650,7 @@ def measure_decode_probe(
         "worker_decode_tokens_per_second": exported.get("swift_text.decode_tokens_per_second"),
         "speculative_acceptance_rate": exported.get("swift_text.speculative_acceptance_rate"),
         "speculative_rollback_rate": exported.get("swift_text.speculative_rollback_rate"),
-        "active_kv_quantization_ratio": exported.get("swift_text.active_kv_quantization_ratio"),
+        **active_kv_metrics,
     }
 
 
@@ -672,12 +791,18 @@ def read_metrics_export(path: Path) -> dict[str, Any]:
     return {"values": {}}
 
 
-def dev_text_model_spec() -> common_pb2.ModelSpec:
+def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common_pb2.ModelSpec:
+    model = model or resolve_model_configuration(
+        real_small_model=False,
+        model_id="",
+        model_path="",
+        model_revision="",
+    )
     return common_pb2.ModelSpec(
-        model_id="melix-dev-text",
-        model_path=os.environ.get("MELIX_DEV_TEXT_MODEL_PATH", "models/melix-dev-text"),
+        model_id=model.model_id,
+        model_path=model.model_path,
         model_kind="text",
-        revision="dev",
+        revision=model.revision,
         tokenizer_hash="tok-dev",
         quant_profile_id="q4",
         parser_mode="text",
@@ -698,6 +823,184 @@ def acceleration_mode_name(mode: int) -> str:
         return common_pb2.AccelerationMode.Name(mode)
     except ValueError:
         return str(mode)
+
+
+def parse_active_kv_profiles(raw_profiles: str) -> list[str]:
+    profiles = [profile.strip() for profile in raw_profiles.split(",") if profile.strip()]
+    return profiles or ["q4"]
+
+
+def active_kv_decode_label(profile: str) -> str:
+    normalized = profile.lower().replace("-", "_").replace(".", "")
+    if normalized.startswith("turboquant"):
+        return f"decode_{normalized}"
+    if normalized in {"q4", "q8"}:
+        return f"decode_affine_{normalized}"
+    return f"decode_active_kv_{normalized}"
+
+
+def active_kv_comparison_name(label: str) -> str:
+    prefix = "decode_"
+    normalized = label.removeprefix(prefix) if label.startswith(prefix) else label
+    return f"{normalized}_vs_baseline"
+
+
+def decode_active_kv_metrics(
+    exported: dict[str, Any],
+    policy: common_pb2.AccelerationPolicy,
+) -> dict[str, Any]:
+    if policy.mode != common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED:
+        return {
+            "active_kv_quantization_ratio": 0,
+            "active_kv_backend_code": 0,
+            "active_kv_backend": None,
+            "active_kv_kernel_path_code": 0,
+            "active_kv_kernel_path": None,
+            "active_kv_prefill_quantize_us": 0,
+            "active_kv_decode_model_total_us": 0,
+            "active_kv_decode_model_avg_us": 0,
+            "active_kv_decode_quantize_total_us": 0,
+            "active_kv_decode_quantize_avg_us": 0,
+            "active_kv_decode_token_count": 0,
+            "active_kv_estimated_fp16_bytes": 0,
+            "active_kv_estimated_quantized_bytes": 0,
+            "active_kv_estimated_memory_savings_pct": 0,
+            "active_kv_fallback_count": 0,
+        }
+
+    return {
+        "active_kv_quantization_ratio": exported.get("swift_text.active_kv_quantization_ratio"),
+        "active_kv_backend_code": exported.get("swift_text.active_kv_backend_code"),
+        "active_kv_backend": active_kv_backend_name(exported.get("swift_text.active_kv_backend_code")),
+        "active_kv_kernel_path_code": exported.get("swift_text.active_kv_kernel_path_code"),
+        "active_kv_kernel_path": active_kv_kernel_path_name(exported.get("swift_text.active_kv_kernel_path_code")),
+        "active_kv_prefill_quantize_us": exported.get("swift_text.active_kv_prefill_quantize_us"),
+        "active_kv_decode_model_total_us": exported.get("swift_text.active_kv_decode_model_total_us"),
+        "active_kv_decode_model_avg_us": exported.get("swift_text.active_kv_decode_model_avg_us"),
+        "active_kv_decode_quantize_total_us": exported.get("swift_text.active_kv_decode_quantize_total_us"),
+        "active_kv_decode_quantize_avg_us": exported.get("swift_text.active_kv_decode_quantize_avg_us"),
+        "active_kv_decode_token_count": exported.get("swift_text.active_kv_decode_token_count"),
+        "active_kv_estimated_fp16_bytes": exported.get("swift_text.active_kv_estimated_fp16_bytes"),
+        "active_kv_estimated_quantized_bytes": exported.get("swift_text.active_kv_estimated_quantized_bytes"),
+        "active_kv_estimated_memory_savings_pct": exported.get(
+            "swift_text.active_kv_estimated_memory_savings_pct"
+        ),
+        "active_kv_fallback_count": exported.get("swift_text.active_kv_fallback_count"),
+    }
+
+
+def active_kv_backend_name(raw_code: Any) -> str | None:
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return None
+    return {
+        0: None,
+        1: "affine",
+        2: "turboquant",
+    }.get(code, f"unknown_{code}")
+
+
+def active_kv_kernel_path_name(raw_code: Any) -> str | None:
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return None
+    return {
+        0: None,
+        10: "affine_quantized_sdpa",
+        20: "tq_mse_single",
+        21: "tq_mse_2pass",
+        30: "tq_prod_fully_fused",
+        31: "tq_prod_tiled",
+        90: "fallback",
+    }.get(code, f"unknown_{code}")
+
+
+def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    baseline_rows = [row for row in rows if row.get("label") == "decode_baseline"]
+    baseline_worker_tps = median_numeric(baseline_rows, "worker_decode_tokens_per_second")
+    baseline_wall_tps = median_numeric(baseline_rows, "tokens_per_second")
+    baseline_ttft = median_numeric(baseline_rows, "ttft_ms")
+    baseline_total = median_numeric(baseline_rows, "total_ms")
+    if baseline_worker_tps is None and baseline_wall_tps is None:
+        return {}
+
+    comparisons: dict[str, dict[str, Any]] = {}
+    active_labels = sorted({
+        str(row.get("label"))
+        for row in rows
+        if str(row.get("label", "")).startswith("decode_")
+        and row.get("label") not in {"decode_baseline", "decode_speculative"}
+    })
+    for label in active_labels:
+        active_rows = [row for row in rows if row.get("label") == label]
+        worker_tps = median_numeric(active_rows, "worker_decode_tokens_per_second")
+        wall_tps = median_numeric(active_rows, "tokens_per_second")
+        ttft = median_numeric(active_rows, "ttft_ms")
+        total = median_numeric(active_rows, "total_ms")
+        model_avg = median_numeric(active_rows, "active_kv_decode_model_avg_us")
+        quantize_avg = median_numeric(active_rows, "active_kv_decode_quantize_avg_us")
+        comparisons[active_kv_comparison_name(label)] = {
+            "baseline_worker_decode_tokens_per_second": baseline_worker_tps,
+            "active_worker_decode_tokens_per_second": worker_tps,
+            "worker_tps_overhead_pct": overhead_percent(baseline_worker_tps, worker_tps),
+            "baseline_tokens_per_second": baseline_wall_tps,
+            "active_tokens_per_second": wall_tps,
+            "wall_tps_overhead_pct": overhead_percent(baseline_wall_tps, wall_tps),
+            "ttft_delta_ms": delta(ttft, baseline_ttft),
+            "total_ms_delta": delta(total, baseline_total),
+            "active_kv_backend": first_non_empty(active_rows, "active_kv_backend"),
+            "active_kv_kernel_path": first_non_empty(active_rows, "active_kv_kernel_path"),
+            "active_kv_decode_model_avg_us": model_avg,
+            "active_kv_decode_quantize_avg_us": quantize_avg,
+            "active_kv_decode_quantize_share_pct": quantize_share_percent(model_avg, quantize_avg),
+            "active_kv_estimated_memory_savings_pct": median_numeric(
+                active_rows,
+                "active_kv_estimated_memory_savings_pct",
+            ),
+        }
+    return comparisons
+
+
+def median_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
+    values: list[float] = []
+    for row in rows:
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    if not values:
+        return None
+    return round(float(statistics.median(values)), 2)
+
+
+def overhead_percent(baseline: float | None, active: float | None) -> float | None:
+    if baseline is None or active is None or baseline <= 0:
+        return None
+    return round(((baseline - active) / baseline) * 100.0, 2)
+
+
+def delta(active: float | None, baseline: float | None) -> float | None:
+    if active is None or baseline is None:
+        return None
+    return round(active - baseline, 2)
+
+
+def quantize_share_percent(model_avg_us: float | None, quantize_avg_us: float | None) -> float | None:
+    if model_avg_us is None or quantize_avg_us is None:
+        return None
+    total = model_avg_us + quantize_avg_us
+    if total <= 0:
+        return None
+    return round((quantize_avg_us / total) * 100.0, 2)
+
+
+def first_non_empty(rows: list[dict[str, Any]], key: str) -> Any:
+    for row in rows:
+        value = row.get(key)
+        if value not in (None, "", 0):
+            return value
+    return None
 
 
 def compute_tokens_per_second(
@@ -721,6 +1024,9 @@ def render_report(report: dict[str, Any]) -> str:
         f"runtime_dir: {report['runtime_dir']}",
         f"swift_backend_mode: {report['swift_backend_mode']}",
         f"python_backend_mode: {report['python_backend_mode']}",
+        f"model_id: {report.get('model_id', 'melix-dev-text')}",
+        f"model_path: {report.get('model_path', 'models/melix-dev-text')}",
+        f"model_revision: {report.get('model_revision', 'dev')}",
         "",
         "HTTP Baseline",
         format_table([report["http_baseline"]], ["label", "ttft_ms", "total_ms", "tokens_per_second", "completion_tokens", "finish_reason"]),
@@ -755,16 +1061,66 @@ def render_report(report: dict[str, Any]) -> str:
         "Swift Worker Decode",
         format_table(
             report["swift_worker_direct"]["decode"],
-            ["label", "mode", "ttft_ms", "total_ms", "tokens_per_second", "worker_decode_tokens_per_second", "speculative_acceptance_rate", "speculative_rollback_rate", "active_kv_quantization_ratio"],
+            [
+                "label",
+                "mode",
+                "ttft_ms",
+                "total_ms",
+                "tokens_per_second",
+                "worker_decode_tokens_per_second",
+                "speculative_acceptance_rate",
+                "speculative_rollback_rate",
+                "active_kv_quantization_ratio",
+                "active_kv_backend",
+                "active_kv_kernel_path",
+                "active_kv_decode_model_avg_us",
+                "active_kv_decode_quantize_avg_us",
+                "active_kv_estimated_memory_savings_pct",
+            ],
+        ),
+        "",
+        "Swift Worker Decode Comparisons",
+        format_table(
+            [
+                {"comparison": name, **values}
+                for name, values in report["swift_worker_direct"].get("comparisons", {}).items()
+            ],
+            [
+                "comparison",
+                "worker_tps_overhead_pct",
+                "wall_tps_overhead_pct",
+                "ttft_delta_ms",
+                "total_ms_delta",
+                "active_kv_backend",
+                "active_kv_kernel_path",
+                "active_kv_decode_quantize_share_pct",
+                "active_kv_estimated_memory_savings_pct",
+            ],
         ),
         "",
         "Abort",
-        format_table([report["swift_worker_direct"]["abort"]], ["label", "abort_ms", "finish_reason"]),
+        format_table(
+            [report["swift_worker_direct"]["abort"]],
+            ["label", "skipped", "reason", "abort_ms", "finish_reason"],
+        ),
         "",
         "JSON",
         json.dumps(report, indent=2, sort_keys=True),
     ]
     return "\n".join(lines)
+
+
+def emit_report(
+    report: dict[str, Any],
+    *,
+    json_output: bool,
+    output_path: Path | None = None,
+) -> str:
+    rendered = json.dumps(report, indent=2, sort_keys=True) if json_output else render_report(report)
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(f"{rendered}\n", encoding="utf-8")
+    return rendered
 
 
 def format_table(rows: list[dict[str, Any]], headers: list[str]) -> str:

@@ -42,25 +42,56 @@ struct SparsePrefillPlan: Sendable {
     )
 }
 
+struct ActiveKVProbeSummary: Sendable {
+    let backendCode: Int
+    let kernelPathCode: Int
+    let prefillQuantizeMicros: Int
+    let decodeModelTotalMicros: Int
+    let decodeQuantizeTotalMicros: Int
+    let decodeTokenCount: Int
+    let estimatedFP16Bytes: Int
+    let estimatedQuantizedBytes: Int
+    let estimatedMemorySavingsPercent: Int
+    let fallbackCount: Int
+
+    var decodeModelAverageMicros: Int {
+        averageMicros(total: decodeModelTotalMicros)
+    }
+
+    var decodeQuantizeAverageMicros: Int {
+        averageMicros(total: decodeQuantizeTotalMicros)
+    }
+
+    private func averageMicros(total: Int) -> Int {
+        guard decodeTokenCount > 0 else {
+            return 0
+        }
+        return max(0, total / decodeTokenCount)
+    }
+}
+
 struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
     let speculativeAcceptedTokens: Int?
     let speculativeRejectedTokens: Int?
+    let activeKVProbe: ActiveKVProbeSummary?
 
     init(
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double?,
         speculativeAcceptedTokens: Int? = nil,
-        speculativeRejectedTokens: Int? = nil
+        speculativeRejectedTokens: Int? = nil,
+        activeKVProbe: ActiveKVProbeSummary? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
         self.speculativeAcceptedTokens = speculativeAcceptedTokens
         self.speculativeRejectedTokens = speculativeRejectedTokens
+        self.activeKVProbe = activeKVProbe
     }
 }
 
