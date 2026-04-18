@@ -107,6 +107,11 @@ def main() -> None:
     )
     parser.add_argument("--output", default="", help="Optional path to write the rendered report.")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--require-fused-turboquant",
+        action="store_true",
+        help="Exit non-zero unless the turboquant-q4 probe reports a non-fallback fused decode kernel.",
+    )
     args = parser.parse_args()
 
     stack = resolve_stack_configuration(Path(args.runtime_dir))
@@ -153,7 +158,13 @@ def main() -> None:
         "swift_worker_metrics": read_metrics_export(stack.swift_worker_metrics_path),
     }
 
-    print(emit_report(report, json_output=bool(args.json), output_path=Path(args.output) if args.output else None))
+    ensure_active_kv_release_gates(report)
+    rendered = emit_report(report, json_output=bool(args.json), output_path=Path(args.output) if args.output else None)
+    print(rendered)
+    if args.require_fused_turboquant:
+        failures = fused_turboquant_gate_failures(report)
+        if failures:
+            raise SystemExit(f"Phase 2 fused TurboQuant gate failed: {'; '.join(failures)}")
 
 
 def resolve_stack_configuration(runtime_dir: Path) -> StackConfiguration:
@@ -388,6 +399,7 @@ def collect_direct_phase_two_metrics(
         if not unload.ok:
             raise RuntimeError(f"UnloadModel failed for phase 2 metrics: {unload.error}")
 
+    active_kv_release_gates = build_active_kv_release_gates(decode_rows, comparisons)
     return {
         "swift_worker_direct": {
             "load_model_ms": load_model_ms,
@@ -395,6 +407,7 @@ def collect_direct_phase_two_metrics(
             "prefill": [prefill_baseline, prefill_accelerated, prefill_sparse],
             "decode": decode_rows,
             "comparisons": comparisons,
+            "active_kv_release_gates": active_kv_release_gates,
             "abort": abort_probe,
         }
     }
@@ -963,6 +976,105 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
     return comparisons
 
 
+def ensure_active_kv_release_gates(report: dict[str, Any]) -> None:
+    direct = report.get("swift_worker_direct")
+    if not isinstance(direct, dict):
+        return
+    if "active_kv_release_gates" in direct:
+        return
+    decode_rows = direct.get("decode", [])
+    comparisons = direct.get("comparisons", {})
+    if isinstance(decode_rows, list) and isinstance(comparisons, dict):
+        direct["active_kv_release_gates"] = build_active_kv_release_gates(decode_rows, comparisons)
+
+
+def build_active_kv_release_gates(
+    rows: list[dict[str, Any]],
+    comparisons: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    turbo_rows = [row for row in rows if row.get("label") == "decode_turboquant_q4"]
+    comparison = comparisons.get("turboquant_q4_vs_baseline", {})
+    if not turbo_rows:
+        return {
+            "turboquant_fused_decode": {
+                "status": "not_requested",
+                "profile_label": "decode_turboquant_q4",
+                "observed_kernel_paths": [],
+                "fallback_count": 0,
+                "decode_quantize_total_us": 0,
+                "estimated_memory_savings_pct": None,
+                "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
+                "failures": ["decode_turboquant_q4=missing"],
+            }
+        }
+
+    observed_kernel_paths = sorted({
+        str(row["active_kv_kernel_path"])
+        for row in turbo_rows
+        if row.get("active_kv_kernel_path") not in (None, "")
+    })
+    fallback_count = sum(int_value(row.get("active_kv_fallback_count")) for row in turbo_rows)
+    decode_quantize_total_us = sum(int_value(row.get("active_kv_decode_quantize_total_us")) for row in turbo_rows)
+    memory_savings = median_numeric(turbo_rows, "active_kv_estimated_memory_savings_pct")
+    failures: list[str] = []
+
+    if not observed_kernel_paths:
+        failures.append("active_kv_kernel_path=missing")
+    if "fallback" in observed_kernel_paths:
+        failures.append("active_kv_kernel_path=fallback")
+    if any(path.startswith("unknown_") for path in observed_kernel_paths):
+        failures.append(f"active_kv_kernel_path={','.join(observed_kernel_paths)}")
+    if fallback_count > 0:
+        failures.append(f"active_kv_fallback_count={fallback_count}")
+    if decode_quantize_total_us > 0:
+        failures.append(f"active_kv_decode_quantize_total_us={decode_quantize_total_us}")
+    if memory_savings is None or memory_savings < 67:
+        failures.append(f"active_kv_estimated_memory_savings_pct={stringify_gate_value(memory_savings)}")
+
+    return {
+        "turboquant_fused_decode": {
+            "status": "fail" if failures else "pass",
+            "profile_label": "decode_turboquant_q4",
+            "observed_kernel_paths": observed_kernel_paths,
+            "fallback_count": fallback_count,
+            "decode_quantize_total_us": decode_quantize_total_us,
+            "estimated_memory_savings_pct": memory_savings,
+            "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
+            "failures": failures,
+        }
+    }
+
+
+def fused_turboquant_gate_failures(report: dict[str, Any]) -> list[str]:
+    ensure_active_kv_release_gates(report)
+    direct = report.get("swift_worker_direct")
+    if not isinstance(direct, dict):
+        return ["swift_worker_direct=missing"]
+    gates = direct.get("active_kv_release_gates")
+    if not isinstance(gates, dict):
+        return ["active_kv_release_gates=missing"]
+    gate = gates.get("turboquant_fused_decode")
+    if not isinstance(gate, dict):
+        return ["turboquant_fused_decode=missing"]
+    if gate.get("status") == "pass":
+        return []
+    failures = gate.get("failures")
+    if isinstance(failures, list) and failures:
+        return [str(failure) for failure in failures]
+    return [f"turboquant_fused_decode={gate.get('status', 'unknown')}"]
+
+
+def int_value(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def stringify_gate_value(value: Any) -> str:
+    return "missing" if value is None else str(value)
+
+
 def median_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
     values: list[float] = []
     for row in rows:
@@ -1095,6 +1207,25 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_kernel_path",
                 "active_kv_decode_quantize_share_pct",
                 "active_kv_estimated_memory_savings_pct",
+            ],
+        ),
+        "",
+        "Active-KV Release Gates",
+        format_table(
+            [
+                {"gate": name, **values}
+                for name, values in report["swift_worker_direct"].get("active_kv_release_gates", {}).items()
+            ],
+            [
+                "gate",
+                "status",
+                "profile_label",
+                "observed_kernel_paths",
+                "fallback_count",
+                "decode_quantize_total_us",
+                "estimated_memory_savings_pct",
+                "worker_tps_overhead_pct",
+                "failures",
             ],
         ),
         "",

@@ -831,13 +831,14 @@ private func makeActiveKVProbeSummary(
     let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
     let quantizedBytes = estimatedCacheStateBytes(cache)
     let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
+    let kernelPathCode = activeKVKernelPathCode(for: normalized)
     let savingsPercent = fp16Bytes > 0
         ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
         : max(0, 100 - quantizationRatio)
 
     return ActiveKVProbeSummary(
         backendCode: activeKVBackendCode(for: normalized),
-        kernelPathCode: activeKVKernelPathCode(for: normalized),
+        kernelPathCode: kernelPathCode,
         prefillQuantizeMicros: prefillQuantizeMicros,
         decodeModelTotalMicros: decodeModelTotalMicros,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
@@ -845,7 +846,7 @@ private func makeActiveKVProbeSummary(
         estimatedFP16Bytes: Int(clamping: fp16Bytes),
         estimatedQuantizedBytes: Int(clamping: quantizedBytes),
         estimatedMemorySavingsPercent: savingsPercent,
-        fallbackCount: 0
+        fallbackCount: kernelPathCode == 90 ? 1 : 0
     )
 }
 

@@ -250,6 +250,143 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
     assert comparisons["affine_q4_vs_baseline"]["active_kv_estimated_memory_savings_pct"] == 75.0
 
 
+def test_active_kv_release_gates_block_turboquant_fallback() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": "fallback",
+                "active_kv_fallback_count": 0,
+                "active_kv_decode_quantize_total_us": 0,
+                "active_kv_estimated_memory_savings_pct": 75,
+            }
+        ],
+        {
+            "turboquant_q4_vs_baseline": {
+                "worker_tps_overhead_pct": 43.55,
+                "active_kv_kernel_path": "fallback",
+            }
+        },
+    )
+
+    gate = gates["turboquant_fused_decode"]
+    assert gate["status"] == "fail"
+    assert gate["observed_kernel_paths"] == ["fallback"]
+    assert gate["worker_tps_overhead_pct"] == 43.55
+    assert "active_kv_kernel_path=fallback" in gate["failures"]
+
+
+def test_active_kv_release_gates_report_not_requested_without_turboquant_probe() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [{"label": "decode_affine_q4"}],
+        {"turboquant_q4_vs_baseline": {"worker_tps_overhead_pct": 12.5}},
+    )
+
+    gate = gates["turboquant_fused_decode"]
+    assert gate["status"] == "not_requested"
+    assert gate["failures"] == ["decode_turboquant_q4=missing"]
+    assert gate["worker_tps_overhead_pct"] == 12.5
+
+
+def test_active_kv_release_gates_block_incomplete_turboquant_evidence() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": None,
+                "active_kv_fallback_count": "invalid",
+                "active_kv_decode_quantize_total_us": None,
+            }
+        ],
+        {},
+    )
+
+    gate = gates["turboquant_fused_decode"]
+    assert gate["status"] == "fail"
+    assert "active_kv_kernel_path=missing" in gate["failures"]
+    assert "active_kv_estimated_memory_savings_pct=missing" in gate["failures"]
+    assert gate["fallback_count"] == 0
+    assert gate["decode_quantize_total_us"] == 0
+
+
+def test_active_kv_release_gates_block_unknown_kernel_and_decode_work() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": "unknown_91",
+                "active_kv_fallback_count": "2",
+                "active_kv_decode_quantize_total_us": "7",
+                "active_kv_estimated_memory_savings_pct": 50,
+            }
+        ],
+        {},
+    )
+
+    gate = gates["turboquant_fused_decode"]
+    assert gate["status"] == "fail"
+    assert "active_kv_kernel_path=unknown_91" in gate["failures"]
+    assert "active_kv_fallback_count=2" in gate["failures"]
+    assert "active_kv_decode_quantize_total_us=7" in gate["failures"]
+    assert "active_kv_estimated_memory_savings_pct=50.0" in gate["failures"]
+
+
+def test_active_kv_release_gates_pass_nonfallback_turboquant_probe() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": "tq_mse_single",
+                "active_kv_fallback_count": 0,
+                "active_kv_decode_quantize_total_us": 0,
+                "active_kv_estimated_memory_savings_pct": 75,
+            }
+        ],
+        {
+            "turboquant_q4_vs_baseline": {
+                "worker_tps_overhead_pct": 12.5,
+                "active_kv_kernel_path": "tq_mse_single",
+            }
+        },
+    )
+
+    gate = gates["turboquant_fused_decode"]
+    assert gate["status"] == "pass"
+    assert gate["failures"] == []
+
+
+def test_fused_turboquant_gate_failure_reporting_handles_malformed_reports() -> None:
+    assert phase2_metrics_report.fused_turboquant_gate_failures({}) == ["swift_worker_direct=missing"]
+    assert phase2_metrics_report.fused_turboquant_gate_failures(
+        {"swift_worker_direct": {"active_kv_release_gates": "bad"}}
+    ) == ["active_kv_release_gates=missing"]
+    assert phase2_metrics_report.fused_turboquant_gate_failures(
+        {"swift_worker_direct": {"active_kv_release_gates": {}}}
+    ) == ["turboquant_fused_decode=missing"]
+    assert phase2_metrics_report.fused_turboquant_gate_failures(
+        {
+            "swift_worker_direct": {
+                "active_kv_release_gates": {
+                    "turboquant_fused_decode": {"status": "pass", "failures": []}
+                }
+            }
+        }
+    ) == []
+    assert phase2_metrics_report.fused_turboquant_gate_failures(
+        {
+            "swift_worker_direct": {
+                "active_kv_release_gates": {
+                    "turboquant_fused_decode": {"status": "fail", "failures": []}
+                }
+            }
+        }
+    ) == ["turboquant_fused_decode=fail"]
+
+
 def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_path: Path) -> None:
     metrics_path = tmp_path / "swift-worker-metrics.json"
     metrics_path.write_text(
@@ -592,6 +729,102 @@ def test_main_assembles_report_from_cli_model_options(
     assert direct_args["decode_repeats"] == 3
     assert direct_args["active_kv_profiles"] == ["q4", "turboquant-q4"]
     assert direct_args["skip_abort"] is True
+
+
+def test_main_can_require_fused_turboquant_after_writing_report(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    output_path = tmp_path / "phase2.json"
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path / "runtime",
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="swift-mlx",
+        python_backend_mode="auto",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    model = phase2_metrics_report.Phase2ModelConfiguration(
+        model_id="melix-dev-text",
+        model_path="/models/qwen-real-small",
+        revision="main",
+        source_resolution_mode="explicit",
+    )
+
+    monkeypatch.setattr(phase2_metrics_report, "resolve_stack_configuration", lambda runtime_dir: stack)
+    monkeypatch.setattr(phase2_metrics_report, "resolve_model_configuration", lambda **kwargs: model)
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_http_stream",
+        lambda port, prompt, *, label, model_id: {"label": label},
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_queue_pressure",
+        lambda stack, prompt, *, model_id: {
+            "leader": {"label": "queue_leader"},
+            "follower": {"label": "queue_follower"},
+            "scheduler": {},
+        },
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "collect_direct_phase_two_metrics",
+        lambda **kwargs: {
+            "swift_worker_direct": {
+                "decode": [
+                    {
+                        "label": "decode_turboquant_q4",
+                        "active_kv_backend": "turboquant",
+                        "active_kv_kernel_path": "fallback",
+                        "active_kv_fallback_count": 0,
+                        "active_kv_decode_quantize_total_us": 0,
+                        "active_kv_estimated_memory_savings_pct": 75,
+                    }
+                ],
+                "prefill": [],
+                "comparisons": {
+                    "turboquant_q4_vs_baseline": {
+                        "worker_tps_overhead_pct": 43.55,
+                        "active_kv_kernel_path": "fallback",
+                    }
+                },
+                "abort": {},
+            }
+        },
+    )
+    monkeypatch.setattr(phase2_metrics_report, "read_metrics_export", lambda path: {"path": str(path)})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--runtime-dir",
+            str(stack.runtime_dir),
+            "--active-kv-profiles",
+            "turboquant-q4",
+            "--output",
+            str(output_path),
+            "--json",
+            "--require-fused-turboquant",
+        ],
+    )
+
+    try:
+        phase2_metrics_report.main()
+    except SystemExit as exc:
+        assert exc.code != 0
+        assert "active_kv_kernel_path=fallback" in str(exc)
+    else:
+        raise AssertionError("expected fused TurboQuant gate to fail")
+
+    emitted = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert emitted["swift_worker_direct"]["active_kv_release_gates"]["turboquant_fused_decode"]["status"] == "fail"
+    assert written["swift_worker_direct"]["active_kv_release_gates"]["turboquant_fused_decode"]["status"] == "fail"
 
 
 def test_emit_report_writes_json_output(tmp_path: Path) -> None:

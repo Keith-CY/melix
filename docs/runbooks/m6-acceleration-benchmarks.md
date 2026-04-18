@@ -74,6 +74,25 @@ uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_me
   --output docs/metrics/phase2-active-kv-decode-guard-postopt.json
 ```
 
+After a fused TurboQuant candidate exists, run the same report with the explicit
+release gate enabled. The current fallback implementation is expected to fail
+this command.
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py \
+  --json \
+  --runtime-dir "$MELIX_RUNTIME_DIR" \
+  --http-prompt "Continue this sentence with five short words: Melix measures cache speed by" \
+  --model-path "$MELIX_DEV_TEXT_MODEL_PATH" \
+  --model-revision main \
+  --decode-repeats 5 \
+  --active-kv-profiles q4,turboquant-q4 \
+  --skip-abort \
+  --require-fused-turboquant \
+  --output docs/metrics/phase2-active-kv-fused-turboquant-candidate.json
+```
+
 ## Evidence To Inspect
 
 ### Active KV Quantization
@@ -99,6 +118,23 @@ Expected evidence fields:
 - `active_kv_estimated_memory_savings_pct`
 
 The active-KV row proves the acceleration mode can be requested and observed. Before any TurboQuant optimization work, preserve this affine q4 row as the pre-optimization baseline.
+
+Look in `swift_worker_direct.active_kv_release_gates` for:
+
+- `turboquant_fused_decode`
+
+Expected gate fields:
+
+- `status`
+- `observed_kernel_paths`
+- `fallback_count`
+- `decode_quantize_total_us`
+- `estimated_memory_savings_pct`
+- `worker_tps_overhead_pct`
+- `failures`
+
+The gate is the automation hook for preventing a fallback TurboQuant probe from
+being presented as a fused-kernel optimization.
 
 Look in `swift_worker_direct.comparisons` for:
 
@@ -126,6 +162,7 @@ For any future fused TurboQuant claim, `decode_turboquant_q4` must report:
 - `active_kv_backend = "turboquant"`
 - `active_kv_kernel_path != "fallback"`
 - `active_kv_fallback_count = 0`
+- `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode.status = "pass"`
 - measured throughput overhead improvement against the frozen affine q4 pre-run
 
 ### Sparse Prefill
@@ -151,3 +188,5 @@ The sparse-prefill row proves structured prompts can trigger sparse skipping whi
 - the report contains a `prefill_sparse` row with non-`N/A` sparse-prefill counters
 - baseline, accelerated-prefill, sparse-prefill, speculative-decode, and active-KV rows are emitted from one repository-owned command
 - TurboQuant optimization must not proceed until this pre-optimization report has been captured and attached to the implementation handoff
+- fused TurboQuant optimization must not be released while
+  `--require-fused-turboquant` fails

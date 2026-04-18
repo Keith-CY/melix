@@ -979,7 +979,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
         XCTAssertGreaterThan(activeKVProbe.estimatedFP16Bytes, activeKVProbe.estimatedQuantizedBytes)
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
-        XCTAssertEqual(activeKVProbe.fallbackCount, 0)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 1)
     }
 
     func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {

@@ -59,7 +59,8 @@ Swift MLX LM affine `QuantizedKVCache`. The post-optimization probe correctly
 reports:
 
 - `decode_affine_q4`: backend `affine`, kernel path `affine_quantized_sdpa`
-- `decode_turboquant_q4`: backend `turboquant`, kernel path `fallback`
+- `decode_turboquant_q4`: backend `turboquant`, kernel path `fallback`, with
+  `active_kv_fallback_count = 1`
 
 That means the profile is observable, but not yet backed by a fused TurboQuant
 cache or kernel. Treating it as a real TurboQuant fast path would be misleading
@@ -78,6 +79,17 @@ This slice adds a decode-side guard:
 This removes redundant Melix-side quantization maintenance during decode. It does
 not change the attention kernel, storage layout, or quantization algorithm.
 
+This slice also adds release-gate instrumentation for the next fused-kernel
+phase:
+
+- `turboquant-q4` fallback probes now report a non-zero fallback count
+- `scripts/phase2_metrics_report.py` writes
+  `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`
+- `--require-fused-turboquant` exits non-zero when the TurboQuant probe is
+  missing, reports a fallback or unknown kernel path, records fallback use,
+  records decode-side quantization maintenance, or lacks the expected memory
+  savings evidence
+
 ## Before And After Metrics
 
 Both runs used:
@@ -91,22 +103,26 @@ Both runs used:
 
 | Metric | Pre affine q4 | Post affine q4 | Post turboquant-q4 probe |
 | --- | ---: | ---: | ---: |
-| Baseline worker decode tok/s | 65.0 | 62.0 | 62.0 |
+| Baseline worker decode tok/s | 65.0 | 61.0 | 61.0 |
 | Active worker decode tok/s | 38.0 | 35.0 | 35.0 |
-| Worker TPS overhead | 41.54% | 43.55% | 43.55% |
-| Baseline wall tok/s | 65.75 | 62.68 | 62.68 |
-| Active wall tok/s | 38.35 | 35.31 | 35.44 |
-| Wall TPS overhead | 41.67% | 43.67% | 43.46% |
-| TTFT delta | 31.07 ms | 36.30 ms | 35.88 ms |
-| Total latency delta | 725.72 ms | 830.12 ms | 820.96 ms |
-| Active-KV decode model avg | 8910 us | 9453 us | 9432 us |
+| Worker TPS overhead | 41.54% | 42.62% | 42.62% |
+| Baseline wall tok/s | 65.75 | 61.59 | 61.59 |
+| Active wall tok/s | 38.35 | 35.23 | 35.07 |
+| Wall TPS overhead | 41.67% | 42.80% | 43.06% |
+| TTFT delta | 31.07 ms | 36.75 ms | 35.07 ms |
+| Total latency delta | 725.72 ms | 816.20 ms | 819.00 ms |
+| Active-KV decode model avg | 8910 us | 9520 us | 9507 us |
 | Active-KV decode quantize avg | 0 us | 0 us | 0 us |
 | Active-KV memory savings | 75% | 75% | 75% |
 | Kernel path | affine quantized SDPA | affine quantized SDPA | fallback |
+| Per-run fallback count | 0 | 0 | 1 |
 
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
+The fused TurboQuant release gate intentionally fails on the current post-run:
+`status = "fail"`, `observed_kernel_paths = ["fallback"]`, and
+`fallback_count = 5` across the five repeats.
 
 Interpretation: the guard did remove the redundant maintenance work, but that
 work was already too small to move end-to-end throughput. The remaining overhead
@@ -120,12 +136,16 @@ with a fused decode implementation. The recommended order is:
 1. Add an explicit capability gate.
    Keep `turboquant-q4` mapped to `fallback` unless a fused cache implementation
    is actually active. Metrics should fail the release gate if a TurboQuant
-   profile reports `active_kv_kernel_path = fallback`.
+   profile reports `active_kv_kernel_path = fallback`. This gate now exists as
+   `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode` and the
+   `--require-fused-turboquant` CLI flag.
 
 2. Prove custom Metal feasibility in Swift.
-   Confirm whether the pinned Swift MLX runtime exposes a stable custom Metal
-   kernel API equivalent to Python MLX `mx.fast.metal_kernel`. If not, either
-   add a narrow bridge or defer true fused TurboQuant until Swift MLX exposes it.
+   The pinned Swift MLX checkout exposes `MLXFast.metalKernel(...)` and
+   `MLXFastKernel.callAsFunction(...)`, which is the required custom Metal
+   dispatch surface. The next implementation should add the `MLXFast` product
+   dependency to the text worker target and prototype a minimal MSE q4
+   single-token decode kernel before changing the active runtime path.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -156,6 +176,7 @@ model class.
 
 Release-gate targets:
 
+- `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode.status = "pass"`
 - `active_kv_kernel_path` is not `fallback` for `decode_turboquant_q4`
 - `active_kv_fallback_count = 0`
 - `active_kv_decode_quantize_total_us = 0` for already-quantized decode
