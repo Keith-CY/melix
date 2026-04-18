@@ -931,7 +931,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(summary.tokensPerSecond)
     }
 
-    func testAutoSwiftMLXBackendDecodeReportsActiveKVProbeForLiveBridge() async throws {
+    func testAutoSwiftMLXBackendDecodeReportsTurboQuantFusedCandidatePathForLiveBridge() async throws {
         let backend = AutoSwiftMLXBackend()
         let promptTokens = [1, 2, 3, 4, 5]
         var sampling = Melix_Worker_V1_SamplingConfig()
@@ -973,13 +973,13 @@ final class WorkerScaffoldTests: XCTestCase {
         let summary = try XCTUnwrap(renderedSummary(from: events))
         let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
         XCTAssertEqual(activeKVProbe.backendCode, 2)
-        XCTAssertEqual(activeKVProbe.kernelPathCode, 90)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 20)
         XCTAssertGreaterThanOrEqual(activeKVProbe.prefillQuantizeMicros, 0)
         XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
         XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
         XCTAssertGreaterThan(activeKVProbe.estimatedFP16Bytes, activeKVProbe.estimatedQuantizedBytes)
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
-        XCTAssertEqual(activeKVProbe.fallbackCount, 1)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 0)
     }
 
     func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {

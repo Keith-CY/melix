@@ -36,6 +36,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - architecture notes for the fused-kernel route live in `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`
 - the Swift custom Metal feasibility slice is covered by `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(...)`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`, and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`; it proves `MLXFast.metalKernel(...)` can compile and dispatch identity, packed-q4 value decode, and one-dispatch packed-q4 score plus softmax plus value work in the text worker target before any TurboQuant runtime path is changed
 - `swift_worker_direct.active_kv_fused_candidate_probes.turboquant_q4` records smoke capability separately from runtime evidence and must remain `runtime_blocked` for fallback reports
+- the first runtime candidate dispatches the fused MSE q4 Metal kernel once from `turboquant-q4` decode and reports `active_kv_kernel_path = "tq_mse_single"` only after that dispatch runs; it is still not a success condition unless `worker_tps_overhead_pct <= 15`
 
 ## Verification
 
@@ -51,6 +52,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - inspect `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`; current fallback probes should report `status = "fail"`, while fused candidates must report `status = "pass"`
 - inspect `swift_worker_direct.active_kv_fused_candidate_probes.turboquant_q4`; current fallback probes should report `status = "runtime_blocked"`
 - inspect `swift_worker_direct.comparisons.affine_q4_vs_baseline` for throughput overhead, TTFT delta, quantization share, and estimated memory savings
+- inspect `swift_worker_direct.comparisons.turboquant_q4_vs_baseline.worker_tps_overhead_pct`; values above 15 percent must keep the fused gate failed
 - preserve the emitted JSON as the affine q4 pre-optimization baseline before making TurboQuant kernel changes
 - run `xcrun swift test --package-path services/mlx-text-worker-swift --filter WorkerScaffoldTests/testTurboQuantMetalCapabilityRuns` after custom Metal changes; the tests require a discoverable local MLX `mlx.metallib` and use the existing temporary `default.metallib` fixture
 

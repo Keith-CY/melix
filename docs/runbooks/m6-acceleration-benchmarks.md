@@ -155,7 +155,9 @@ Expected gate fields:
 - `failures`
 
 The gate is the automation hook for preventing a fallback TurboQuant probe from
-being presented as a fused-kernel optimization.
+being presented as a fused-kernel optimization. It also requires
+`worker_tps_overhead_pct <= 15` for the first fused milestone, so a non-fallback
+candidate path is still blocked until it shows measured throughput improvement.
 
 Look in `swift_worker_direct.active_kv_fused_candidate_probes` for:
 
@@ -174,7 +176,9 @@ Expected fused-candidate fields:
 
 This block separates smoke-proven custom Metal capability from runtime decode
 evidence. `runtime_blocked` is expected while `decode_turboquant_q4` still
-reports `active_kv_kernel_path = "fallback"` or the release gate fails.
+reports `active_kv_kernel_path = "fallback"` or the release gate fails. A
+runtime candidate that dispatches the fused Metal kernel but misses the
+throughput gate must also remain `runtime_blocked`.
 
 Look in `swift_worker_direct.comparisons` for:
 

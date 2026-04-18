@@ -117,6 +117,12 @@ final parallel layout, so it removes uncertainty around whether the current
 Swift package can host custom Metal kernels for packed-q4 score, softmax, and
 value work without claiming an optimized runtime path.
 
+The first runtime-candidate slice dispatches the same fused MSE q4 Metal kernel
+once from the `turboquant-q4` decode path and reports `active_kv_kernel_path =
+"tq_mse_single"` only when that dispatch runs. Model logits still come from the
+Swift MLX model path, so the release gate remains blocked unless the post-run
+JSON also shows `worker_tps_overhead_pct <= 15`.
+
 ## Before And After Metrics
 
 Both runs used:

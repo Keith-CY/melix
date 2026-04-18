@@ -172,6 +172,7 @@
           "active_kv_fallback_count == 0",
           "active_kv_decode_quantize_total_us == 0",
           "active_kv_estimated_memory_savings_pct >= 67",
+          "worker_tps_overhead_pct <= 15",
           "--require-fused-turboquant exits 0"
         ],
         "profile_label": "decode_turboquant_q4",
@@ -180,7 +181,8 @@
           "estimated_memory_savings_pct": 75.0,
           "failures": [
             "active_kv_kernel_path=fallback",
-            "active_kv_fallback_count=5"
+            "active_kv_fallback_count=5",
+            "worker_tps_overhead_pct=42.62"
           ],
           "fallback_count": 5,
           "observed_kernel_paths": [
@@ -198,7 +200,8 @@
         "estimated_memory_savings_pct": 75.0,
         "failures": [
           "active_kv_kernel_path=fallback",
-          "active_kv_fallback_count=5"
+          "active_kv_fallback_count=5",
+          "worker_tps_overhead_pct=42.62"
         ],
         "fallback_count": 5,
         "observed_kernel_paths": [

@@ -41,6 +41,7 @@ DEFAULT_QUEUE_PROMPT = "\n".join(
     ]
 )
 DEFAULT_ABORT_PROMPT = " ".join(f"decode-abort-{index}" for index in range(200))
+TURBOQUANT_FUSED_MAX_WORKER_TPS_OVERHEAD_PCT = 15.0
 TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
     "status": "smoke_proven",
     "runtime_path": "not_connected",
@@ -58,6 +59,7 @@ TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS = [
     "active_kv_fallback_count == 0",
     "active_kv_decode_quantize_total_us == 0",
     "active_kv_estimated_memory_savings_pct >= 67",
+    "worker_tps_overhead_pct <= 15",
     "--require-fused-turboquant exits 0",
 ]
 
@@ -1030,10 +1032,13 @@ def ensure_active_kv_release_gates(report: dict[str, Any]) -> None:
         return
     decode_rows = direct.get("decode", [])
     comparisons = direct.get("comparisons", {})
+    has_release_gates = "active_kv_release_gates" in direct
     if (
-        "active_kv_release_gates" not in direct
+        "decode" in direct
+        and "comparisons" in direct
         and isinstance(decode_rows, list)
         and isinstance(comparisons, dict)
+        and (not has_release_gates or bool(decode_rows) or bool(comparisons))
     ):
         direct["active_kv_release_gates"] = build_active_kv_release_gates(decode_rows, comparisons)
     gates = direct.get("active_kv_release_gates")
@@ -1069,6 +1074,7 @@ def build_active_kv_release_gates(
     fallback_count = sum(int_value(row.get("active_kv_fallback_count")) for row in turbo_rows)
     decode_quantize_total_us = sum(int_value(row.get("active_kv_decode_quantize_total_us")) for row in turbo_rows)
     memory_savings = median_numeric(turbo_rows, "active_kv_estimated_memory_savings_pct")
+    worker_tps_overhead = numeric_value(comparison.get("worker_tps_overhead_pct"))
     failures: list[str] = []
 
     if not observed_kernel_paths:
@@ -1083,6 +1089,8 @@ def build_active_kv_release_gates(
         failures.append(f"active_kv_decode_quantize_total_us={decode_quantize_total_us}")
     if memory_savings is None or memory_savings < 67:
         failures.append(f"active_kv_estimated_memory_savings_pct={stringify_gate_value(memory_savings)}")
+    if worker_tps_overhead is None or worker_tps_overhead > TURBOQUANT_FUSED_MAX_WORKER_TPS_OVERHEAD_PCT:
+        failures.append(f"worker_tps_overhead_pct={stringify_gate_value(worker_tps_overhead)}")
 
     return {
         "turboquant_fused_decode": {
@@ -1092,7 +1100,7 @@ def build_active_kv_release_gates(
             "fallback_count": fallback_count,
             "decode_quantize_total_us": decode_quantize_total_us,
             "estimated_memory_savings_pct": memory_savings,
-            "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
+            "worker_tps_overhead_pct": worker_tps_overhead,
             "failures": failures,
         }
     }
@@ -1112,15 +1120,19 @@ def build_active_kv_fused_candidate_probes(
     else:
         status = "runtime_blocked"
         next_required_evidence = list(TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS)
+    observed_kernel_paths = gate.get("observed_kernel_paths", [])
+    capability_evidence = dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE)
+    if any(path not in ("fallback", "") for path in observed_kernel_paths):
+        capability_evidence["runtime_path"] = "candidate_dispatch_connected"
 
     return {
         "turboquant_q4": {
             "status": status,
             "profile_label": "decode_turboquant_q4",
-            "capability_evidence": dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE),
+            "capability_evidence": capability_evidence,
             "runtime_evidence": {
                 "release_gate_status": gate_status,
-                "observed_kernel_paths": gate.get("observed_kernel_paths", []),
+                "observed_kernel_paths": observed_kernel_paths,
                 "fallback_count": gate.get("fallback_count"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
                 "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
@@ -1160,6 +1172,12 @@ def int_value(value: Any) -> int:
 
 def stringify_gate_value(value: Any) -> str:
     return "missing" if value is None else str(value)
+
+
+def numeric_value(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def median_numeric(rows: list[dict[str, Any]], key: str) -> float | None:

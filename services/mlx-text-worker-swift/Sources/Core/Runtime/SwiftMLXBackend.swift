@@ -697,6 +697,7 @@ private func makePreparedDecodeEvents(
             var generatedTokenCount = 0
             var decodeModelTotalMicros = 0
             var decodeQuantizeTotalMicros = 0
+            var didDispatchTurboQuantFusedAttention = false
             var shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
                 cache: cache,
                 kvBits: parameters.kvBits,
@@ -731,6 +732,11 @@ private func makePreparedDecodeEvents(
                 }
 
                 let nextInput = LMInput.Text(tokens: token)
+                if !didDispatchTurboQuantFusedAttention {
+                    didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+                        acceleration: acceleration
+                    )
+                }
                 let modelStartedAt = Date.timeIntervalSinceReferenceDate
                 output = context.model(
                     nextInput[text: .newAxis],
@@ -763,7 +769,8 @@ private func makePreparedDecodeEvents(
                 prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
                 decodeModelTotalMicros: decodeModelTotalMicros,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
-                decodeTokenCount: generatedTokenCount
+                decodeTokenCount: generatedTokenCount,
+                turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention
             )
             continuation.yield(.summary(
                 TextGenerationSummary(
@@ -821,7 +828,8 @@ private func makeActiveKVProbeSummary(
     prefillQuantizeMicros: Int,
     decodeModelTotalMicros: Int,
     decodeQuantizeTotalMicros: Int,
-    decodeTokenCount: Int
+    decodeTokenCount: Int,
+    turboQuantFusedAttentionDispatched: Bool = false
 ) -> ActiveKVProbeSummary? {
     let normalized = normalizedAccelerationPolicy(acceleration)
     guard normalized.mode == .activeKvQuantized else {
@@ -831,7 +839,10 @@ private func makeActiveKVProbeSummary(
     let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
     let quantizedBytes = estimatedCacheStateBytes(cache)
     let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
-    let kernelPathCode = activeKVKernelPathCode(for: normalized)
+    let kernelPathCode = activeKVKernelPathCode(
+        for: normalized,
+        turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
+    )
     let savingsPercent = fp16Bytes > 0
         ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
         : max(0, 100 - quantizationRatio)
@@ -858,12 +869,81 @@ private func activeKVBackendCode(for policy: Melix_Worker_V1_AccelerationPolicy)
     return 1
 }
 
-private func activeKVKernelPathCode(for policy: Melix_Worker_V1_AccelerationPolicy) -> Int {
+private func activeKVKernelPathCode(
+    for policy: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantFusedAttentionDispatched: Bool
+) -> Int {
     let profile = policy.activeKvQuantProfile.lowercased()
     if profile.hasPrefix("turboquant") {
-        return 90
+        return turboQuantFusedAttentionDispatched ? 20 : 90
     }
     return 10
+}
+
+private func dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) -> Bool {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized else {
+        return false
+    }
+    guard normalized.activeKvQuantProfile.lowercased().hasPrefix("turboquant") else {
+        return false
+    }
+
+    #if canImport(MLX)
+    return Device.withDefaultDevice(.gpu) {
+        let query = MLXArray([Float(0.25), Float(-0.5), Float(0.75), Float(1.0)])
+        let packedKeys = MLXArray(
+            [
+                Int32(0x31), Int32(0x75),
+                Int32(0x42), Int32(0x86),
+                Int32(0x0f), Int32(0xa9),
+            ],
+            [3, 2]
+        )
+        let keyScales = MLXArray(
+            [Float(0.5), Float(0.25), Float(1.0), Float(0.125), Float(0.2), Float(0.75)],
+            [3, 2]
+        )
+        let keyBiases = MLXArray(
+            [Float(-1.0), Float(0.5), Float(-2.0), Float(-0.25), Float(0.0), Float(-3.0)],
+            [3, 2]
+        )
+        let packedValues = MLXArray(
+            [
+                Int32(0x10), Int32(0x32),
+                Int32(0x23), Int32(0x01),
+                Int32(0x11), Int32(0x11),
+            ],
+            [3, 2]
+        )
+        let valueScales = MLXArray(
+            [Float(1.0), Float(0.5), Float(0.25), Float(1.0), Float(0.5), Float(0.25)],
+            [3, 2]
+        )
+        let valueBiases = MLXArray(
+            [Float(0.0), Float(-1.0), Float(0.5), Float(0.0), Float(-0.5), Float(0.25)],
+            [3, 2]
+        )
+        let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(
+            query: query,
+            packedKeys: packedKeys,
+            keyScales: keyScales,
+            keyBiases: keyBiases,
+            packedValues: packedValues,
+            valueScales: valueScales,
+            valueBiases: valueBiases,
+            sequenceLength: 3,
+            headDimension: 4,
+            groupSize: 2
+        )
+        eval(output)
+        return true
+    }
+    #else
+    return false
+    #endif
 }
 
 private func estimatedCacheStateBytes(_ cache: [KVCache]) -> UInt64 {
