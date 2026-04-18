@@ -119,6 +119,8 @@ struct DesktopChatSessionSidebar: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.plain)
+                .help("New Chat Session")
+                .accessibilityLabel("New Chat Session")
             }
 
             if viewModel.chatSessions.isEmpty {
@@ -186,15 +188,17 @@ struct DesktopChatSessionWorkspace: View {
                     }
                 }
                 Spacer()
-                DesktopChatPaneToggleButton(
-                    systemName: showsSidebar ? "sidebar.left" : "sidebar.left",
-                    helpText: showsSidebar ? "Hide Chat Sessions" : "Show Chat Sessions"
+                DesktopPaneToggleButton(
+                    role: .sidebar,
+                    isVisible: showsSidebar,
+                    shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
                 ) {
                     showsSidebar.toggle()
                 }
-                DesktopChatPaneToggleButton(
-                    systemName: showsInspector ? "sidebar.right" : "sidebar.right",
-                    helpText: showsInspector ? "Hide Inspector" : "Show Inspector"
+                DesktopPaneToggleButton(
+                    role: .inspector,
+                    isVisible: showsInspector,
+                    shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
                 ) {
                     showsInspector.toggle()
                 }
@@ -307,6 +311,7 @@ struct DesktopChatSessionWorkspace: View {
                         Task { await viewModel.submitChatPrompt() }
                     }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(
                         viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || viewModel.isChatStreaming
@@ -448,24 +453,6 @@ private struct DesktopChatSessionRowActions: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
-private struct DesktopChatPaneToggleButton: View {
-    let systemName: String
-    let helpText: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.caption.weight(.semibold))
-                .frame(width: 26, height: 24)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(helpText)
-        .accessibilityLabel(helpText)
     }
 }
 

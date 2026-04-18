@@ -141,6 +141,9 @@ public struct DesktopAPISurfaceRow: Identifiable, Equatable, Sendable {
 
 public struct DesktopFoundationState: Equatable, Sendable {
     public let title: String
+    public let serverStateText: String
+    public let connectionStateText: String
+    public let connectionDetailText: String
     public let dashboardCards: [DesktopDashboardCard]
     public let queueLanes: [DesktopQueueLaneRow]
     public let models: [RuntimeModelRow]
@@ -408,6 +411,9 @@ public struct DesktopFoundationState: Equatable, Sendable {
 
         return DesktopFoundationState(
             title: statusTitle,
+            serverStateText: serverStateText,
+            connectionStateText: connectionStateText,
+            connectionDetailText: connectionDetailText,
             dashboardCards: dashboardCards,
             queueLanes: queueLanes,
             models: snapshot.models

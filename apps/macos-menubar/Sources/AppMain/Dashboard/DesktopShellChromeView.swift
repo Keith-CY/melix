@@ -5,6 +5,8 @@ enum DesktopShellChromeMetrics {
     static let titleBarTabHorizontalPadding: CGFloat = 9
     static let titleBarTabVerticalPadding: CGFloat = 4
     static let titleBarTabContainerInset: CGFloat = 3
+    static let paneToggleButtonWidth: CGFloat = 28
+    static let paneToggleButtonHeight: CGFloat = 24
 }
 
 struct DesktopWorkspaceTitleBarTabsView: View {
@@ -31,7 +33,81 @@ struct DesktopWorkspaceTitleBarCommandCenterButton: View {
         .buttonStyle(.plain)
         .help("Open Command Center")
         .accessibilityLabel("Open Command Center")
+        .keyboardShortcut("k", modifiers: .command)
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct DesktopWorkspaceHeader<Trailing: View>: View {
+    let title: String
+    let subtitle: String?
+    @ViewBuilder let trailing: () -> Trailing
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.largeTitle.weight(.semibold))
+                if let subtitle, subtitle.isEmpty == false {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 12)
+            trailing()
+        }
+    }
+}
+
+struct DesktopPaneToggleButton: View {
+    let role: DesktopPaneRole
+    let isVisible: Bool
+    let action: () -> Void
+    var shortcut: KeyboardShortcut?
+
+    init(
+        role: DesktopPaneRole,
+        isVisible: Bool,
+        shortcut: KeyboardShortcut? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.role = role
+        self.isVisible = isVisible
+        self.shortcut = shortcut
+        self.action = action
+    }
+
+    var body: some View {
+        let label = role.accessibilityLabel(isVisible: isVisible)
+        let button = Button(action: action) {
+            Image(systemName: role.symbolName)
+                .font(.caption.weight(.semibold))
+                .frame(
+                    width: DesktopShellChromeMetrics.paneToggleButtonWidth,
+                    height: DesktopShellChromeMetrics.paneToggleButtonHeight
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+
+        if let shortcut {
+            button.keyboardShortcut(shortcut)
+        } else {
+            button
+        }
     }
 }
 
@@ -58,6 +134,7 @@ struct DesktopShellTabStripView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(shortcutKey(for: surface), modifiers: .command)
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
@@ -68,5 +145,20 @@ struct DesktopShellTabStripView: View {
             Capsule()
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
+    }
+
+    private func shortcutKey(for surface: DesktopSurface) -> KeyEquivalent {
+        switch surface {
+        case .chat:
+            return "1"
+        case .image:
+            return "2"
+        case .server:
+            return "3"
+        case .tools:
+            return "4"
+        case .api:
+            return "5"
+        }
     }
 }

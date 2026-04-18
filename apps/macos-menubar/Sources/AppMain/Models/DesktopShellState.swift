@@ -57,6 +57,75 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
     }
 }
 
+public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Sendable {
+    case models = "Models"
+    case build = "Build"
+    case validate = "Validate"
+    case system = "System"
+
+    public var id: String { rawValue }
+
+    public var sections: [DesktopToolSection] {
+        switch self {
+        case .models:
+            return [.modelsLibrary, .downloads]
+        case .build:
+            return [.training]
+        case .validate:
+            return [.diagnostics]
+        case .system:
+            return [.logs, .settings]
+        }
+    }
+}
+
+public enum DesktopPaneRole: String, CaseIterable, Identifiable, Sendable {
+    case sidebar
+    case inspector
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .sidebar:
+            return "Sidebar"
+        case .inspector:
+            return "Inspector"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .sidebar:
+            return "sidebar.left"
+        case .inspector:
+            return "sidebar.right"
+        }
+    }
+
+    public func accessibilityLabel(isVisible: Bool) -> String {
+        "\(isVisible ? "Hide" : "Show") \(title)"
+    }
+}
+
+@MainActor
+public enum DesktopWorkspaceCommand: Equatable, Sendable {
+    case selectSurface(DesktopSurface)
+    case selectToolSection(DesktopToolSection)
+    case openCommandCenter
+
+    public func perform(on viewModel: RuntimeViewModel) {
+        switch self {
+        case .selectSurface(let surface):
+            viewModel.selectSurface(surface)
+        case .selectToolSection(let section):
+            viewModel.selectToolSection(section)
+        case .openCommandCenter:
+            viewModel.openCommandCenter()
+        }
+    }
+}
+
 public enum DesktopServerAuthMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case none = "None"
     case bearerToken = "Bearer Token"
@@ -634,25 +703,39 @@ public enum DesktopBannerSeverity: Sendable {
     case critical
 }
 
+public enum DesktopSignalPriority: Int, Comparable, Sendable {
+    case info = 0
+    case recovery = 10
+    case warning = 20
+    case critical = 30
+
+    public static func < (lhs: DesktopSignalPriority, rhs: DesktopSignalPriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 public struct DesktopBannerState: Equatable, Sendable {
     public let id: String
     public let title: String
     public let detail: String
     public let severity: DesktopBannerSeverity
     public let isDismissible: Bool
+    public let isRecoverable: Bool
 
     public init(
         id: String = "",
         title: String,
         detail: String,
         severity: DesktopBannerSeverity,
-        isDismissible: Bool = false
+        isDismissible: Bool = false,
+        isRecoverable: Bool = false
     ) {
         self.id = id.isEmpty ? Self.defaultID(title: title, detail: detail, severity: severity) : id
         self.title = title
         self.detail = detail
         self.severity = severity
         self.isDismissible = isDismissible
+        self.isRecoverable = isRecoverable
     }
 
     private static func defaultID(
@@ -669,6 +752,17 @@ public struct DesktopBannerState: Equatable, Sendable {
             "critical"
         }
         return "\(severityKey)-\(title)-\(detail)"
+    }
+
+    public var priority: DesktopSignalPriority {
+        switch severity {
+        case .critical:
+            return .critical
+        case .warning:
+            return isRecoverable ? .recovery : .warning
+        case .info:
+            return .info
+        }
     }
 }
 

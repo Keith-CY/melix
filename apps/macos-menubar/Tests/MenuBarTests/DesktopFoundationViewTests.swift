@@ -34,6 +34,108 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .chat)
     }
 
+    @Test("shared pane chrome exposes labeled icon controls")
+    @MainActor
+    func sharedPaneChromeExposesLabeledIconControls() {
+        let hideSidebar = hostView(
+            DesktopPaneToggleButton(role: .sidebar, isVisible: true, action: {})
+        )
+        let showInspector = hostView(
+            DesktopPaneToggleButton(role: .inspector, isVisible: false, action: {})
+        )
+
+        #expect(hideSidebar.fittingSize.width <= DesktopShellChromeMetrics.paneToggleButtonWidth + 8)
+        #expect(showInspector.fittingSize.width <= DesktopShellChromeMetrics.paneToggleButtonWidth + 8)
+        #expect(DesktopPaneRole.sidebar.symbolName == "sidebar.left")
+        #expect(DesktopPaneRole.inspector.symbolName == "sidebar.right")
+        #expect(DesktopPaneRole.sidebar.accessibilityLabel(isVisible: true) == "Hide Sidebar")
+        #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: false) == "Show Inspector")
+    }
+
+    @Test("desktop banner recovery priority is explicit")
+    func desktopBannerRecoveryPriorityIsExplicit() {
+        let recoverableWarning = DesktopBannerState(
+            id: "arbitrary-recovery-id",
+            title: "Recoverable",
+            detail: "Can resume",
+            severity: .warning,
+            isRecoverable: true
+        )
+        let regularWarning = DesktopBannerState(
+            id: "download-recovery",
+            title: "Regular Warning",
+            detail: "Not recoverable",
+            severity: .warning
+        )
+
+        #expect(recoverableWarning.priority == .recovery)
+        #expect(regularWarning.priority == .warning)
+    }
+
+    @Test("workspace commands update surface selection and command center")
+    @MainActor
+    func workspaceCommandsUpdateSurfaceSelectionAndCommandCenter() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let commandCenter = CommandCenterOpenRecorder()
+        viewModel.openCommandCenterAction = { commandCenter.open() }
+        await viewModel.start()
+
+        DesktopWorkspaceCommand.selectSurface(.image).perform(on: viewModel)
+        #expect(viewModel.selectedSurface == .image)
+
+        DesktopWorkspaceCommand.selectToolSection(.downloads).perform(on: viewModel)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .downloads)
+
+        DesktopWorkspaceCommand.openCommandCenter.perform(on: viewModel)
+        #expect(commandCenter.wasOpened)
+    }
+
+    @Test("tools categories map sections into staged workflow groups")
+    @MainActor
+    func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
+        #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
+        #expect(DesktopToolCategory.build.sections == [.training])
+        #expect(DesktopToolCategory.validate.sections == [.diagnostics])
+        #expect(DesktopToolCategory.system.sections == [.logs, .settings])
+    }
+
+    @Test("tool categories cover every tool section exactly once")
+    @MainActor
+    func toolCategoriesCoverEveryToolSectionExactlyOnce() {
+        let categorizedSections = DesktopToolCategory.allCases.flatMap(\.sections)
+        let missingSections = DesktopToolSection.allCases.filter { section in
+            categorizedSections.contains(section) == false
+        }
+        let duplicateSections = DesktopToolSection.allCases.filter { section in
+            categorizedSections.filter { $0 == section }.count > 1
+        }
+
+        #expect(missingSections.isEmpty)
+        #expect(duplicateSections.isEmpty)
+        #expect(categorizedSections.count == DesktopToolSection.allCases.count)
+    }
+
+    @Test("workspace surfaces use shared icon pane controls")
+    @MainActor
+    func workspaceSurfacesUseSharedIconPaneControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        for surface in [DesktopSurface.server, .image, .tools, .api] {
+            viewModel.selectSurface(surface)
+            let hosted = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+            let renderedTexts = renderedTextValues(in: hosted)
+
+            #expect(hosted.subviews.isEmpty == false)
+            #expect(renderedTexts.contains("Hide List") == false)
+            #expect(renderedTexts.contains("Hide Inspector") == false)
+            #expect(DesktopPaneRole.sidebar.accessibilityLabel(isVisible: true) == "Hide Sidebar")
+            #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: true) == "Hide Inspector")
+        }
+    }
+
     @Test("root view renders workspace content without in-content shell chrome")
     @MainActor
     func rootViewRendersWorkspaceContentWithoutInContentShellChrome() async throws {
@@ -157,14 +259,38 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.server)
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedServerSession?.servingDefaults.temperature == 0.44)
+        #expect(viewModel.selectedServerSession?.servingDefaults.topP == 0.91)
+        #expect(viewModel.selectedServerSession?.servingDefaults.maxTokens == 320)
+        #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 2)
+        #expect(viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests == 6)
+        #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
+    }
+
+    @Test("server workspace folds advanced serving defaults by default")
+    @MainActor
+    func serverWorkspaceFoldsAdvancedServingDefaultsByDefault() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
 
-        #expect(renderedTexts.contains("0.44"))
-        #expect(renderedTexts.contains("0.91"))
-        #expect(renderedTexts.contains("320"))
-        #expect(renderedTexts.contains("2"))
-        #expect(renderedTexts.contains("6"))
-        #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopServerWorkspaceDefaults.showsAdvancedServingDefaults == false)
+        #expect(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle == "Advanced Serving Defaults")
+        #expect(renderedTexts.contains("Apply Serving Defaults") == false)
+        #expect(renderedTexts.contains("Temperature") == false)
+        #expect(renderedTexts.contains("Top P") == false)
     }
 
     @Test("command center view renders global operator summaries")
@@ -185,9 +311,85 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
-    @Test("workspace shell renders dismissible update banners from shared signal state")
+    @Test("command center renders state-first recovery and workflow summaries")
     @MainActor
-    func workspaceShellRendersDismissibleUpdateBanner() async throws {
+    func commandCenterRendersStateFirstRecoveryAndWorkflowSummaries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-command-center",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.5,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/command-center",
+                            downloadedBytes: 1024,
+                            totalBytes: 2048,
+                            resumeReady: true
+                        ),
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-command-center-2",
+                            sourceModel: "melix-dev-vision",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.25,
+                            outputDir: "/tmp/melix-downloads/melix-dev-vision",
+                            outputPath: "/tmp/melix-downloads/melix-dev-vision/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-vision/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-vision/download.state.json",
+                            selectedMirror: "https://mirror.example/command-center-2",
+                            downloadedBytes: 512,
+                            totalBytes: 2048,
+                            resumeReady: true
+                        ),
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-command-center-3",
+                            sourceModel: "melix-dev-audio",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.75,
+                            outputDir: "/tmp/melix-downloads/melix-dev-audio",
+                            outputPath: "/tmp/melix-downloads/melix-dev-audio/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-audio/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-audio/download.state.json",
+                            selectedMirror: "https://mirror.example/command-center-3",
+                            downloadedBytes: 1536,
+                            totalBytes: 2048,
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+
+        let view = hostView(DesktopCommandCenterView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.desktopFoundationState.models.isEmpty == false)
+        #expect(viewModel.recoverableDownloads.count == 3)
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Download Recovery Available" })
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 2) == nil)
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 3) == "+1 more stalled download")
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
+    }
+
+    @Test("workspace shell keeps dismissible update signals out of the top banner")
+    @MainActor
+    func workspaceShellKeepsDismissibleUpdateSignalsOutOfTopBanner() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(
             client: client,
@@ -205,17 +407,20 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
 
         let initialView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
-        let banner = try #require(viewModel.desktopBannerState)
+        let signal = try #require(viewModel.desktopSignalStates.first { $0.title == "Update available: 0.2.0" })
+        let initialTexts = renderedTextValues(in: initialView)
 
         #expect(initialView.subviews.isEmpty == false)
-        #expect(banner.isDismissible)
-        #expect(banner.title == "Update available: 0.2.0")
-        #expect(banner.detail == "Current 0.1.0 on stable")
+        #expect(viewModel.desktopBannerState == nil)
+        #expect(signal.isDismissible)
+        #expect(signal.detail == "Current 0.1.0 on stable")
+        #expect(initialTexts.contains("Update available: 0.2.0") == false)
 
-        viewModel.dismissDesktopBanner(id: banner.id)
+        viewModel.dismissDesktopBanner(id: signal.id)
 
         let dismissedView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let dismissedTexts = renderedTextValues(in: dismissedView)
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" } == false)
         #expect(dismissedTexts.contains("Update available: 0.2.0") == false)
     }
 
@@ -797,8 +1002,51 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Hugging Face"))
         #expect(renderedTexts.contains("QLoRA"))
         #expect(renderedTexts.contains("LoRA"))
-        #expect(renderedTexts.contains("Adapter-backed Runtime"))
-        #expect(renderedTexts.contains("Fused Derived Model"))
+        #expect(DesktopTrainingWorkspaceDefaults.showsAdvancedParameters == false)
+        #expect(DesktopTrainingWorkspaceDefaults.advancedParametersTitle == "Advanced Training Parameters")
+    }
+
+    @Test("tools workspace renders category-first navigation")
+    @MainActor
+    func toolsWorkspaceRendersCategoryFirstNavigation() async throws {
+        let view = hostView(
+            DesktopToolsCategorySidebarView(
+                selectedToolSection: .training,
+                selectToolSection: { _ in }
+            )
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        for category in DesktopToolCategory.allCases {
+            for section in category.sections {
+                #expect(
+                    DesktopToolsCategorySidebarView.accessibilityLabel(category: category, section: section)
+                        == "\(category.rawValue) \(section.rawValue)"
+                )
+            }
+        }
+    }
+
+    @Test("training defaults to preset-first primary fields with advanced folded")
+    @MainActor
+    func trainingDefaultsToPresetFirstPrimaryFieldsWithAdvancedFolded() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopTrainingWorkspaceDefaults.showsAdvancedParameters == false)
+        #expect(DesktopTrainingWorkspaceDefaults.advancedParametersTitle == "Advanced Training Parameters")
+        #expect(renderedTexts.contains(viewModel.selectedLoraModelID))
+        #expect(renderedTexts.contains(viewModel.loraAdapterName))
+        #expect(renderedTexts.contains(viewModel.loraTargetRepo))
+        #expect(renderedTexts.contains("Rank") == false)
+        #expect(renderedTexts.contains("Alpha") == false)
+        #expect(renderedTexts.contains("Dropout") == false)
+        #expect(renderedTexts.contains(RuntimeLoraActivationMode.adapterBackedRuntime.title))
     }
 
     @Test("training tool section renders populated adapter activation state and dispatches actions")
@@ -1015,6 +1263,9 @@ struct DesktopFoundationViewTests {
     func apiQuickStartPanelCoversEmptySurfaceAndMissingSessionStates() throws {
         let emptyFoundation = DesktopFoundationState(
             title: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
             dashboardCards: [],
             queueLanes: [],
             models: [],
@@ -2871,6 +3122,36 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.imageEditMaskURL == "file:///tmp/mask.png")
     }
 
+    @Test("image workspace folds advanced defaults by default")
+    @MainActor
+    func imageWorkspaceFoldsAdvancedDefaultsByDefault() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarImageModelSummary()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopImageWorkspace(
+                viewModel: viewModel,
+                selectedMode: .constant(.generate),
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopImageWorkspaceDefaults.showsAdvancedDefaults == false)
+        #expect(DesktopImageWorkspaceDefaults.advancedDefaultsTitle == "Advanced Image Defaults")
+        #expect(renderedTexts.contains(viewModel.imageSize))
+        #expect(renderedTexts.contains("Steps") == false)
+        #expect(renderedTexts.contains("Guidance") == false)
+        #expect(renderedTexts.contains("Negative prompt") == false)
+    }
+
     @Test("image inspector renders timeout redo and reiterate branches")
     @MainActor
     func imageInspectorRendersTimeoutRedoAndReiterateBranches() async throws {
@@ -4213,6 +4494,15 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
 
     visit(rootView)
     return values
+}
+
+@MainActor
+private final class CommandCenterOpenRecorder {
+    private(set) var wasOpened = false
+
+    func open() {
+        wasOpened = true
+    }
 }
 
 private func waitForDesktopFoundationCondition(

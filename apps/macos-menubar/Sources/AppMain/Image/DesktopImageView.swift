@@ -105,6 +105,7 @@ struct DesktopImageWorkspace: View {
     @Binding var selectedMode: DesktopImageWorkspaceMode
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
+    @State private var showsAdvancedDefaults = DesktopImageWorkspaceDefaults.showsAdvancedDefaults
 
     private var workflowRole: RuntimeImageWorkflowRole {
         selectedMode == .generate ? .generate : .edit
@@ -121,14 +122,19 @@ struct DesktopImageWorkspace: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Image")
-                        .font(.largeTitle.weight(.semibold))
-                    Spacer()
-                    Button(showsSidebar ? "Hide List" : "Show List") {
+                DesktopWorkspaceHeader(title: "Image") {
+                    DesktopPaneToggleButton(
+                        role: .sidebar,
+                        isVisible: showsSidebar,
+                        shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
+                    ) {
                         showsSidebar.toggle()
                     }
-                    Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                    DesktopPaneToggleButton(
+                        role: .inspector,
+                        isVisible: showsInspector,
+                        shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
+                    ) {
                         showsInspector.toggle()
                     }
                 }
@@ -223,45 +229,58 @@ struct DesktopImageWorkspace: View {
                             )
                         }
 
-                        HStack {
-                            TextField(
-                                "Steps",
-                                text: Binding(
-                                    get: { viewModel.imageSteps },
-                                    set: { viewModel.imageSteps = $0 }
-                                )
-                            )
-                            .textFieldStyle(.roundedBorder)
+                        DisclosureGroup(DesktopImageWorkspaceDefaults.advancedDefaultsTitle, isExpanded: $showsAdvancedDefaults) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    TextField(
+                                        "Steps",
+                                        text: Binding(
+                                            get: { viewModel.imageSteps },
+                                            set: { viewModel.imageSteps = $0 }
+                                        )
+                                    )
+                                    .textFieldStyle(.roundedBorder)
 
-                            TextField(
-                                "Guidance",
-                                text: Binding(
-                                    get: { viewModel.imageGuidance },
-                                    set: { viewModel.imageGuidance = $0 }
-                                )
-                            )
-                            .textFieldStyle(.roundedBorder)
+                                    TextField(
+                                        "Guidance",
+                                        text: Binding(
+                                            get: { viewModel.imageGuidance },
+                                            set: { viewModel.imageGuidance = $0 }
+                                        )
+                                    )
+                                    .textFieldStyle(.roundedBorder)
 
-                            if selectedMode == .edit {
+                                    if selectedMode == .edit {
+                                        TextField(
+                                            "Strength",
+                                            text: Binding(
+                                                get: { viewModel.imageStrength },
+                                                set: { viewModel.imageStrength = $0 }
+                                            )
+                                        )
+                                        .textFieldStyle(.roundedBorder)
+                                    }
+                                }
+
                                 TextField(
-                                    "Strength",
+                                    "Negative prompt",
                                     text: Binding(
-                                        get: { viewModel.imageStrength },
-                                        set: { viewModel.imageStrength = $0 }
+                                        get: { viewModel.imageNegativePrompt },
+                                        set: { viewModel.imageNegativePrompt = $0 }
                                     )
                                 )
                                 .textFieldStyle(.roundedBorder)
-                            }
-                        }
 
-                        TextField(
-                            "Negative prompt",
-                            text: Binding(
-                                get: { viewModel.imageNegativePrompt },
-                                set: { viewModel.imageNegativePrompt = $0 }
-                            )
-                        )
-                        .textFieldStyle(.roundedBorder)
+                                HStack {
+                                    Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
+                                        .buttonStyle(.bordered)
+                                    Text(effectiveDefaultsSummary)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
 
                         if selectedMode == .edit {
                             Picker(
@@ -307,8 +326,6 @@ struct DesktopImageWorkspace: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
-                                .buttonStyle(.bordered)
                             Button("Run") {
                                 Task {
                                     if selectedMode == .generate {
@@ -319,6 +336,7 @@ struct DesktopImageWorkspace: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.return, modifiers: .command)
                             .disabled(isActionDisabled)
                         }
                     }
@@ -405,6 +423,11 @@ struct DesktopImageWorkspace: View {
         negative \(negativePrompt)
         """
     }
+}
+
+enum DesktopImageWorkspaceDefaults {
+    static let showsAdvancedDefaults = false
+    static let advancedDefaultsTitle = "Advanced Image Defaults"
 }
 
 struct DesktopImageInspector: View {

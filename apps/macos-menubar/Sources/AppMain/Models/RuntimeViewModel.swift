@@ -2377,12 +2377,17 @@ public final class RuntimeViewModel {
     }
 
     public var desktopBannerState: DesktopBannerState? {
-        desktopSignalStates.first
+        desktopSignalStates.first { $0.priority >= .recovery }
     }
 
     public var desktopSignalStates: [DesktopBannerState] {
         resolvedDesktopSignals().filter { banner in
             banner.isDismissible == false || dismissedBannerIDs.contains(banner.id) == false
+        }.sorted { lhs, rhs in
+            if lhs.priority == rhs.priority {
+                return lhs.title < rhs.title
+            }
+            return lhs.priority > rhs.priority
         }
     }
 
@@ -2464,7 +2469,8 @@ public final class RuntimeViewModel {
                     id: "download-recovery",
                     title: "Download Recovery Available",
                     detail: detail,
-                    severity: .warning
+                    severity: .warning,
+                    isRecoverable: true
                 )
             )
         } else if let activeDownload = activeDownloads.first {

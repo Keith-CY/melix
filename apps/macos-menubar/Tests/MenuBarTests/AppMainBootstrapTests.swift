@@ -498,6 +498,27 @@ struct AppMainBootstrapTests {
         #expect(commandCenterPresenter.showCount == 1)
     }
 
+    @Test("bootstrap wires command center action before creating the status menu")
+    @MainActor
+    func bootstrapWiresCommandCenterActionBeforeCreatingStatusMenu() {
+        let menu = RecordingInstallStatusMenu()
+        let commandCenterPresenter = RecordingDesktopFoundationPresenter()
+        var actionWasPresentWhenStatusMenuWasCreated = false
+
+        _ = MelixMenuBarBootstrap(
+            client: FakeControlPlaneXPCClient(),
+            commandCenterPresenterFactory: { _, _ in commandCenterPresenter },
+            statusMenuFactory: { viewModel, _, _ in
+                actionWasPresentWhenStatusMenuWasCreated = viewModel.openCommandCenterAction != nil
+                viewModel.openCommandCenter()
+                return menu
+            }
+        )
+
+        #expect(actionWasPresentWhenStatusMenuWasCreated)
+        #expect(commandCenterPresenter.showCount == 1)
+    }
+
     @Test("bootstrap environment honors explicit overrides")
     @MainActor
     func bootstrapEnvironmentHonorsExplicitOverrides() {
