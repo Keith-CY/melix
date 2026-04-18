@@ -132,30 +132,34 @@ Both runs used:
 - prompt: `Continue this sentence with five short words: Melix measures cache speed by`
 - decode repeats: `5`
 - abort probe: skipped
-- Swift worker metallib: MLX 0.24.2 `mlx.metallib`
+- Swift worker metallib: MLX 0.24.2 `mlx.metallib` for the original pre/post
+  guard evidence; MLX 0.29.1 `mlx.metallib` for the fused candidate rerun,
+  matching `mlx-swift` 0.29.1 in `Package.resolved`
 
-| Metric | Pre affine q4 | Post affine q4 | Post turboquant-q4 probe |
+| Metric | Pre affine q4 | Post affine q4 | Post turboquant-q4 candidate |
 | --- | ---: | ---: | ---: |
-| Baseline worker decode tok/s | 65.0 | 61.0 | 61.0 |
-| Active worker decode tok/s | 38.0 | 35.0 | 35.0 |
-| Worker TPS overhead | 41.54% | 42.62% | 42.62% |
-| Baseline wall tok/s | 65.75 | 61.59 | 61.59 |
-| Active wall tok/s | 38.35 | 35.23 | 35.07 |
-| Wall TPS overhead | 41.67% | 42.80% | 43.06% |
-| TTFT delta | 31.07 ms | 36.75 ms | 35.07 ms |
-| Total latency delta | 725.72 ms | 816.20 ms | 819.00 ms |
-| Active-KV decode model avg | 8910 us | 9520 us | 9507 us |
+| Baseline worker decode tok/s | 65.0 | 61.0 | 60.0 |
+| Active worker decode tok/s | 38.0 | 35.0 | 34.0 |
+| Worker TPS overhead | 41.54% | 42.62% | 43.33% |
+| Baseline wall tok/s | 65.75 | 61.59 | 60.92 |
+| Active wall tok/s | 38.35 | 35.23 | 34.71 |
+| Wall TPS overhead | 41.67% | 42.80% | 43.02% |
+| TTFT delta | 31.07 ms | 36.75 ms | 38.23 ms |
+| Total latency delta | 725.72 ms | 816.20 ms | 828.91 ms |
+| Active-KV decode model avg | 8910 us | 9520 us | 9586 us |
 | Active-KV decode quantize avg | 0 us | 0 us | 0 us |
 | Active-KV memory savings | 75% | 75% | 75% |
-| Kernel path | affine quantized SDPA | affine quantized SDPA | fallback |
-| Per-run fallback count | 0 | 0 | 1 |
+| Kernel path | affine quantized SDPA | affine quantized SDPA | tq_mse_single |
+| Per-run fallback count | 0 | 0 | 0 |
 
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
-The fused TurboQuant release gate intentionally fails on the current post-run:
-`status = "fail"`, `observed_kernel_paths = ["fallback"]`, and
-`fallback_count = 5` across the five repeats.
+The fused TurboQuant release gate still intentionally fails on the current
+candidate post-run: `status = "fail"`, `observed_kernel_paths =
+["tq_mse_single"]`, `fallback_count = 0`, and `worker_tps_overhead_pct = 43.33`.
+This proves the candidate dispatch is connected without claiming an optimized
+decode path.
 
 Interpretation: the guard did remove the redundant maintenance work, but that
 work was already too small to move end-to-end throughput. The remaining overhead
