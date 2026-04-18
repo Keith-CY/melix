@@ -7,20 +7,39 @@ from functools import lru_cache
 from pathlib import Path
 
 from tests.integration.helpers import LiveMelixStack
+from tests.integration.helpers import resolve_scoped_swift_product_binary
+from tests.integration.helpers import swift_package_command
+from tests.integration.helpers import swift_package_environment
 from tests.integration.test_phase8_cli_acceptance import build_cli_binary
 from tests.integration.test_phase8_cli_acceptance import write_local_model_fixture
 
 
 @lru_cache(maxsize=1)
 def build_menubar_binary(repo_root: Path) -> Path:
+    environment = swift_package_environment(
+        repo_root,
+        "macos-menubar",
+        base_env=os.environ.copy(),
+    )
     subprocess.run(
-        ["swift", "build", "--package-path", "apps/macos-menubar", "--product", "melix-menubar"],
+        swift_package_command(
+            repo_root / "apps" / "macos-menubar",
+            repo_root,
+            "macos-menubar",
+            "build",
+            ["--product", "melix-menubar"],
+        ),
         cwd=repo_root,
         check=True,
         capture_output=True,
         text=True,
+        env=environment,
     )
-    return repo_root / "apps/macos-menubar/.build/arm64-apple-macosx/debug/melix-menubar"
+    return resolve_scoped_swift_product_binary(
+        repo_root,
+        scope="macos-menubar",
+        product_name="melix-menubar",
+    )
 
 
 def run_window_ui_acceptance(

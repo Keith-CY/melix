@@ -2,7 +2,13 @@ import AppKit
 import Foundation
 
 public enum StatusMenuAction: String, Equatable, Sendable {
+    case openCommandCenter
     case openConsole
+    case openDownloads
+    case openServer
+    case resumeFirstDownload
+    case startSelectedServer
+    case wakeSelectedServer
     case loadPrimaryModel
     case unloadPrimaryModel
     case quit
@@ -148,7 +154,14 @@ public final class StatusMenu: NSObject {
         var items: [StatusMenuContentItem] = [
             .info("Server: \(viewModel.serverStateText)")
         ]
-        if let banner = viewModel.desktopBannerState {
+
+        let prioritizedSignals = viewModel.desktopSignalStates.sorted { lhs, rhs in
+            if lhs.priority == rhs.priority {
+                return lhs.title < rhs.title
+            }
+            return lhs.priority > rhs.priority
+        }
+        for banner in prioritizedSignals.prefix(3) {
             switch banner.severity {
             case .critical:
                 items.append(.error(banner.title))
@@ -156,6 +169,8 @@ public final class StatusMenu: NSObject {
                 items.append(.info(banner.title))
             }
         }
+
+        appendRecoveryActions(to: &items)
 
         if let model = viewModel.primaryModel {
             items.append(.info("\(model.modelID): \(model.stateText)"))
@@ -167,6 +182,7 @@ public final class StatusMenu: NSObject {
             )
         }
 
+        items.append(.action("Open Command Center", .openCommandCenter))
         items.append(.action("Open Melix Console", .openConsole))
 
         if let lastError = viewModel.lastError {
@@ -181,8 +197,28 @@ public final class StatusMenu: NSObject {
 
     func perform(_ action: StatusMenuAction) {
         switch action {
+        case .openCommandCenter:
+            viewModel.openCommandCenter()
         case .openConsole:
             openConsoleHandler()
+        case .openDownloads:
+            viewModel.selectToolSection(.downloads)
+        case .openServer:
+            viewModel.selectSurface(.server)
+        case .resumeFirstDownload:
+            Task { @MainActor in
+                if let download = viewModel.recoverableDownloads.first {
+                    await viewModel.resumeDownload(jobID: download.jobID)
+                }
+            }
+        case .startSelectedServer:
+            Task { @MainActor in
+                await viewModel.startSelectedServerSession()
+            }
+        case .wakeSelectedServer:
+            Task { @MainActor in
+                await viewModel.wakeSelectedServerSession()
+            }
         case .loadPrimaryModel:
             Task { @MainActor in
                 await viewModel.loadPrimaryModel()
@@ -198,6 +234,31 @@ public final class StatusMenu: NSObject {
 
     private func render() {
         renderer.render(content: content(), target: self, action: #selector(handleMenuAction(_:)))
+    }
+
+    private func appendRecoveryActions(to items: inout [StatusMenuContentItem]) {
+        if viewModel.recoverableDownloads.isEmpty == false {
+            items.append(.action("Resume Download", .resumeFirstDownload))
+            items.append(.action("Open Downloads", .openDownloads))
+        } else if viewModel.activeDownloads.isEmpty == false {
+            items.append(.action("Open Downloads", .openDownloads))
+        }
+
+        guard let session = viewModel.selectedServerSession else {
+            return
+        }
+        switch session.lifecycle {
+        case .sleeping:
+            items.append(.action("Wake Server", .wakeSelectedServer))
+            items.append(.action("Open Server", .openServer))
+        case .stopped, .error, .unavailable:
+            items.append(.action("Start Server", .startSelectedServer))
+            items.append(.action("Open Server", .openServer))
+        case .paused:
+            items.append(.action("Open Server", .openServer))
+        case .draft, .starting, .running, .stopping:
+            break
+        }
     }
 
     @objc func handleMenuAction(_ sender: NSMenuItem) {

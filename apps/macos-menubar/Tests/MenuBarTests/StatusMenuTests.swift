@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
 @Suite("Status Menu", .serialized)
@@ -25,6 +26,7 @@ struct StatusMenuTests {
                 .info("Server: Ready"),
                 .info("melix-dev-text: Discovered"),
                 .action("Load", .loadPrimaryModel),
+                .action("Open Command Center", .openCommandCenter),
                 .action("Open Melix Console", .openConsole),
                 .separator,
                 .action("Quit Melix", .quit),
@@ -147,6 +149,95 @@ struct StatusMenuTests {
 
         let content = try #require(renderer.lastContent)
         #expect(content.items.contains(.info("Download Recovery Available")))
+    }
+
+    @Test("download recovery menu actions are prioritized before model actions")
+    @MainActor
+    func downloadRecoveryMenuActionsArePrioritizedBeforeModelActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeStatusMenuNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0200",
+                            sourceModel: "melix-dev-text",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.5,
+                            outputDir: "/tmp/melix-downloads/melix-dev-text",
+                            outputPath: "/tmp/melix-downloads/melix-dev-text/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-text/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-text/download.state.json",
+                            selectedMirror: "https://mirror.example/status-menu",
+                            downloadedBytes: 1024,
+                            totalBytes: 2048,
+                            resumeReady: true
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        menu.install()
+
+        let content = try #require(renderer.lastContent)
+        let recoveryIndex = try #require(content.items.firstIndex(of: .info("Download Recovery Available")))
+        let modelIndex = try #require(content.items.firstIndex(of: .info("melix-dev-text: Discovered")))
+
+        #expect(recoveryIndex < modelIndex)
+        #expect(content.items.contains(.action("Resume Download", .resumeFirstDownload)))
+        #expect(content.items.contains(.action("Open Downloads", .openDownloads)))
+    }
+
+    @Test("perform routes state-first navigation and recovery actions")
+    @MainActor
+    func performRoutesStateFirstNavigationAndRecoveryActions() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
+        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.lifecycleState = .sleeping
+        runtimeSession.powerState = .deepSleep
+        runtimeSession.wakeReason = .policyApply
+        snapshot.runtimeSessions = [runtimeSession]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        let commandCenter = OpenConsoleRecorder()
+        viewModel.openCommandCenterAction = { commandCenter.open() }
+        let menu = StatusMenu(
+            viewModel: viewModel,
+            renderer: RecordingStatusMenuRenderer()
+        )
+
+        await viewModel.start()
+        menu.perform(.openDownloads)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .downloads)
+
+        menu.perform(.openServer)
+        #expect(viewModel.selectedSurface == .server)
+
+        menu.perform(.openCommandCenter)
+        #expect(commandCenter.wasCalled)
+
+        menu.perform(.wakeSelectedServer)
+        try await eventually("wake action should reach the selected server", timeout: .seconds(2)) {
+            viewModel.selectedServerSession?.lifecycle == .running
+        }
+        #expect(await client.recordedActions.contains("server.wake:server-session-1"))
     }
 
     @Test("perform routes primary model actions to the view model")

@@ -59,6 +59,8 @@ private struct DesktopShellBannerView: View {
                         .foregroundStyle(.white.opacity(0.9))
                 }
                 .buttonStyle(.plain)
+                .help("Dismiss Banner")
+                .accessibilityLabel("Dismiss Banner")
             }
         }
         .padding(.horizontal, 20)
@@ -169,6 +171,93 @@ struct DesktopCommandCenterView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Command Center")
                     .font(.largeTitle.weight(.semibold))
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+                    GroupBox("Runtime Health") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(foundation.serverStateText)
+                                .font(.headline)
+                            Text(foundation.connectionStateText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(foundation.connectionDetailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    GroupBox("Primary Model") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let model = foundation.models.first {
+                                Text(model.modelID)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                Text("\(model.stateText) • \(model.memoryPolicyText)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(model.memoryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            } else {
+                                Text("No model discovered.")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if let viewModel, viewModel.recoverableDownloads.isEmpty == false {
+                        GroupBox("Download Recovery") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(viewModel.recoverableDownloads.prefix(2)) { entry in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(entry.sourceModel)
+                                            .font(.headline)
+                                            .lineLimit(1)
+                                        Text(entry.progressText)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                        Button("Resume Download") {
+                                            Task { await viewModel.resumeDownload(jobID: entry.jobID) }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if let operation = viewModel?.lastModelOperation {
+                        GroupBox("Last Operation") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(operation.operation)
+                                    .font(.headline)
+                                Text(operation.modelID)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(operation.outputPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if let lastError = viewModel?.lastError {
+                        GroupBox("Latest Error") {
+                            Text(lastError)
+                                .foregroundStyle(.red)
+                                .lineLimit(3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
                     ForEach(foundation.dashboardCards.filter { ["server", "connection", "backpressure", "memory"].contains($0.id) }) { card in
@@ -313,7 +402,7 @@ private struct DesktopServerWorkspaceView: View {
     let viewModel: RuntimeViewModel
     @State private var showsSidebar = true
     @State private var showsInspector = true
-    @State private var showsAdvanced = true
+    @State private var showsAdvanced = DesktopServerWorkspaceDefaults.showsAdvancedServingDefaults
 
     var body: some View {
         HSplitView {
@@ -337,6 +426,11 @@ private struct DesktopServerWorkspaceView: View {
     }
 }
 
+enum DesktopServerWorkspaceDefaults {
+    static let showsAdvancedServingDefaults = false
+    static let advancedServingDefaultsTitle = "Advanced Serving Defaults"
+}
+
 private struct DesktopServerSessionSidebar: View {
     let viewModel: RuntimeViewModel
 
@@ -352,6 +446,8 @@ private struct DesktopServerSessionSidebar: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.plain)
+                .help("New Server Session")
+                .accessibilityLabel("New Server Session")
             }
 
             if viewModel.serverSessions.isEmpty {
@@ -415,22 +511,27 @@ private struct DesktopServerSessionEditor: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("Server")
-                        .font(.largeTitle.weight(.semibold))
-                    Spacer()
-                    Button(showsSidebar ? "Hide List" : "Show List") {
+                DesktopWorkspaceHeader(
+                    title: "Server",
+                    subtitle: "Choose model, configure listener, then start the server session."
+                ) {
+                    DesktopPaneToggleButton(
+                        role: .sidebar,
+                        isVisible: showsSidebar,
+                        shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
+                    ) {
                         showsSidebar.toggle()
                     }
-                    Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                    DesktopPaneToggleButton(
+                        role: .inspector,
+                        isVisible: showsInspector,
+                        shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
+                    ) {
                         showsInspector.toggle()
                     }
                 }
 
                 if let session = viewModel.selectedServerSession {
-                    Text("Choose model, configure listener, then start the server session.")
-                        .foregroundStyle(.secondary)
-
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
@@ -514,9 +615,119 @@ private struct DesktopServerSessionEditor: View {
                     }
 
                     GroupBox {
-                        DisclosureGroup("Advanced Defaults", isExpanded: $showsAdvanced) {
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(servingDefaultsCompactSummary(for: session))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            DisclosureGroup(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle, isExpanded: $showsAdvanced) {
+                                advancedServingDefaultsForm(for: session)
+                                    .padding(.top, 12)
+                            }
+                        }
+                    }
+
+                    GroupBox("Lifecycle Controls") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(session.runtimeDetailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            HStack {
+                                Button("Start") {
+                                    Task { await viewModel.startSelectedServerSession() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(session.canStart == false)
+
+                                Button("Pause") {
+                                    Task { await viewModel.pauseSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canPause == false)
+
+                                Button("Resume") {
+                                    Task { await viewModel.resumeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canResume == false)
+
+                                Button("Wake") {
+                                    Task { await viewModel.wakeSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canWake == false)
+
+                                Button("Stop") {
+                                    Task { await viewModel.stopSelectedServerSession() }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(session.canStop == false)
+                            }
+
+                            Toggle(
+                                "Auto Sleep",
+                                isOn: Binding(
+                                    get: { viewModel.selectedServerSession?.autoSleepEnabled ?? false },
+                                    set: { viewModel.updateSelectedServerSessionAutoSleepEnabled($0) }
+                                )
+                            )
+
+                            HStack {
+                                TextField(
+                                    "Light sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.lightSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionLightSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                TextField(
+                                    "Deep sleep after (s)",
+                                    value: Binding(
+                                        get: { viewModel.selectedServerSession?.deepSleepAfterSeconds ?? 0 },
+                                        set: { viewModel.updateSelectedServerSessionDeepSleepAfterSeconds($0) }
+                                    ),
+                                    format: .number
+                                )
+                                .textFieldStyle(.roundedBorder)
+
+                                Button("Apply Idle Policy") {
+                                    Task { await viewModel.applySelectedServerIdlePolicy() }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Text(session.idlePolicySummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "No Server Session Selected",
+                        systemImage: "server.rack",
+                        description: Text("Choose a server session from the list or create a new one.")
+                    )
+                }
+
+                Spacer()
+            }
+            .padding(20)
+        }
+    }
+
+    private func servingDefaultsCompactSummary(for session: DesktopServerSessionState) -> String {
+        let servingDefaults = session.servingDefaults
+        return "Source: \(servingDefaults.sourceText) • requested temp \(String(format: "%.2f", servingDefaults.temperature)) • top_p \(String(format: "%.2f", servingDefaults.topP)) • max \(servingDefaults.maxTokens) • stream \(servingDefaults.streamIntervalTokens) • sequences \(servingDefaults.maxConcurrentRequests)"
+    }
+
+    @ViewBuilder
+    private func advancedServingDefaultsForm(for session: DesktopServerSessionState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
                                     TextField(
                                         "Temperature",
                                         value: Binding(
@@ -647,101 +858,6 @@ private struct DesktopServerSessionEditor: View {
                                     .foregroundStyle(.secondary)
                                 }
                             }
-                            .padding(.top, 12)
-                        }
-                    }
-
-                    GroupBox("Lifecycle Controls") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(session.runtimeDetailText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            HStack {
-                                Button("Start") {
-                                    Task { await viewModel.startSelectedServerSession() }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(session.canStart == false)
-
-                                Button("Pause") {
-                                    Task { await viewModel.pauseSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canPause == false)
-
-                                Button("Resume") {
-                                    Task { await viewModel.resumeSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canResume == false)
-
-                                Button("Wake") {
-                                    Task { await viewModel.wakeSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canWake == false)
-
-                                Button("Stop") {
-                                    Task { await viewModel.stopSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canStop == false)
-                            }
-
-                            Toggle(
-                                "Auto Sleep",
-                                isOn: Binding(
-                                    get: { viewModel.selectedServerSession?.autoSleepEnabled ?? false },
-                                    set: { viewModel.updateSelectedServerSessionAutoSleepEnabled($0) }
-                                )
-                            )
-
-                            HStack {
-                                TextField(
-                                    "Light sleep after (s)",
-                                    value: Binding(
-                                        get: { viewModel.selectedServerSession?.lightSleepAfterSeconds ?? 0 },
-                                        set: { viewModel.updateSelectedServerSessionLightSleepAfterSeconds($0) }
-                                    ),
-                                    format: .number
-                                )
-                                .textFieldStyle(.roundedBorder)
-
-                                TextField(
-                                    "Deep sleep after (s)",
-                                    value: Binding(
-                                        get: { viewModel.selectedServerSession?.deepSleepAfterSeconds ?? 0 },
-                                        set: { viewModel.updateSelectedServerSessionDeepSleepAfterSeconds($0) }
-                                    ),
-                                    format: .number
-                                )
-                                .textFieldStyle(.roundedBorder)
-
-                                Button("Apply Idle Policy") {
-                                    Task { await viewModel.applySelectedServerIdlePolicy() }
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            Text(session.idlePolicySummaryText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else {
-                    ContentUnavailableView(
-                        "No Server Session Selected",
-                        systemImage: "server.rack",
-                        description: Text("Choose a server session from the list or create a new one.")
-                    )
-                }
-
-                Spacer()
-            }
-            .padding(20)
-        }
     }
 }
 
@@ -831,42 +947,29 @@ private struct DesktopToolsWorkspaceView: View {
     var body: some View {
         HSplitView {
             if showsSidebar {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Tools")
-                        .font(.headline)
-                    ForEach(DesktopToolSection.allCases) { section in
-                        Button {
-                            viewModel.selectToolSection(section)
-                        } label: {
-                            Label(section.rawValue, systemImage: section.symbolName)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(
-                                    viewModel.selectedToolSection == section
-                                    ? Color.accentColor.opacity(0.14)
-                                    : Color.secondary.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer()
-                }
+                DesktopToolsCategorySidebarView(
+                    selectedToolSection: viewModel.selectedToolSection,
+                    selectToolSection: viewModel.selectToolSection
+                )
                 .padding(20)
                 .frame(minWidth: 240, idealWidth: 250)
             }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack {
-                        Text(viewModel.selectedToolSection.rawValue)
-                            .font(.largeTitle.weight(.semibold))
-                        Spacer()
-                        Button(showsSidebar ? "Hide List" : "Show List") {
+                    DesktopWorkspaceHeader(title: viewModel.selectedToolSection.rawValue) {
+                        DesktopPaneToggleButton(
+                            role: .sidebar,
+                            isVisible: showsSidebar,
+                            shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
+                        ) {
                             showsSidebar.toggle()
                         }
-                        Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                        DesktopPaneToggleButton(
+                            role: .inspector,
+                            isVisible: showsInspector,
+                            shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
+                        ) {
                             showsInspector.toggle()
                         }
                     }
@@ -927,6 +1030,50 @@ private struct DesktopToolsWorkspaceView: View {
                 .padding(20)
                 .frame(minWidth: 280, idealWidth: 300)
             }
+        }
+    }
+}
+
+struct DesktopToolsCategorySidebarView: View {
+    let selectedToolSection: DesktopToolSection
+    let selectToolSection: (DesktopToolSection) -> Void
+
+    static func accessibilityLabel(category: DesktopToolCategory, section: DesktopToolSection) -> String {
+        "\(category.rawValue) \(section.rawValue)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Tools")
+                .font(.headline)
+            ForEach(DesktopToolCategory.allCases) { category in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(category.rawValue)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                    ForEach(category.sections) { section in
+                        Button {
+                            selectToolSection(section)
+                        } label: {
+                            Label(section.rawValue, systemImage: section.symbolName)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background(
+                                    selectedToolSection == section
+                                    ? Color.accentColor.opacity(0.14)
+                                    : Color.secondary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 12)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(section.rawValue)
+                        .accessibilityLabel(Self.accessibilityLabel(category: category, section: section))
+                    }
+                }
+            }
+            Spacer()
         }
     }
 }
@@ -1097,6 +1244,7 @@ struct DesktopAudioSetupNoticeRow: View {
 
 struct DesktopTrainingToolSectionView: View {
     let viewModel: RuntimeViewModel
+    @State private var showsAdvanced = DesktopTrainingWorkspaceDefaults.showsAdvancedParameters
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1201,36 +1349,6 @@ struct DesktopTrainingToolSectionView: View {
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    HStack {
-                        TextField("Rank", text: stringBinding(\.loraRank))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Alpha", text: stringBinding(\.loraAlpha))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Dropout", text: stringBinding(\.loraDropout))
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        TextField("Batch Size", text: stringBinding(\.loraBatchSize))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Epochs", text: stringBinding(\.loraEpochs))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        TextField("Target Modules", text: stringBinding(\.loraTargetModules))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Num Layers", text: stringBinding(\.loraNumLayers))
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
-                        .textFieldStyle(.roundedBorder)
-
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Activation Mode")
                             .font(.caption.weight(.semibold))
@@ -1243,10 +1361,45 @@ struct DesktopTrainingToolSectionView: View {
                         .pickerStyle(.segmented)
                     }
 
-                    HStack {
-                        Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
-                        Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
-                        Toggle("Gradient Checkpointing", isOn: boolBinding(\.loraGradientCheckpointing))
+                    DisclosureGroup(DesktopTrainingWorkspaceDefaults.advancedParametersTitle, isExpanded: $showsAdvanced) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                TextField("Rank", text: stringBinding(\.loraRank))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Alpha", text: stringBinding(\.loraAlpha))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Dropout", text: stringBinding(\.loraDropout))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack {
+                                TextField("Batch Size", text: stringBinding(\.loraBatchSize))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Epochs", text: stringBinding(\.loraEpochs))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack {
+                                TextField("Target Modules", text: stringBinding(\.loraTargetModules))
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Num Layers", text: stringBinding(\.loraNumLayers))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
+                                .textFieldStyle(.roundedBorder)
+
+                            HStack {
+                                Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
+                                Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
+                                Toggle("Gradient Checkpointing", isOn: boolBinding(\.loraGradientCheckpointing))
+                            }
+                        }
+                        .padding(.top, 8)
                     }
 
                     HStack {
@@ -1478,6 +1631,11 @@ struct DesktopTrainingToolSectionView: View {
     private func startRemoveDerivedModelTask() {
         Task { await removeDerivedModel() }
     }
+}
+
+enum DesktopTrainingWorkspaceDefaults {
+    static let showsAdvancedParameters = false
+    static let advancedParametersTitle = "Advanced Training Parameters"
 }
 
 struct DesktopDiagnosticsToolSectionView: View {
@@ -3659,14 +3817,19 @@ struct DesktopAPIWorkspaceView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack {
-                        Text("API")
-                            .font(.largeTitle.weight(.semibold))
-                        Spacer()
-                        Button(showsSidebar ? "Hide List" : "Show List") {
+                    DesktopWorkspaceHeader(title: "API") {
+                        DesktopPaneToggleButton(
+                            role: .sidebar,
+                            isVisible: showsSidebar,
+                            shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
+                        ) {
                             showsSidebar.toggle()
                         }
-                        Button(showsInspector ? "Hide Inspector" : "Show Inspector") {
+                        DesktopPaneToggleButton(
+                            role: .inspector,
+                            isVisible: showsInspector,
+                            shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
+                        ) {
                             showsInspector.toggle()
                         }
                     }

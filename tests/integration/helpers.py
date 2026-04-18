@@ -387,12 +387,65 @@ def root_package_swift_environment(
     return swift_root_package.root_package_swift_environment(repo_root, base_env=base_env)
 
 
+def swift_package_environment(
+    repo_root: Path,
+    scope: str,
+    *,
+    base_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    return swift_root_package.swift_package_environment(
+        repo_root,
+        scope,
+        base_env=base_env,
+    )
+
+
 def root_package_swift_command(
     repo_root: Path,
     subcommand: str,
     arguments: list[str],
 ) -> list[str]:
     return swift_root_package.root_package_swift_command(repo_root, subcommand, arguments)
+
+
+def swift_package_command(
+    package_root: Path,
+    repo_root: Path,
+    scope: str,
+    subcommand: str,
+    arguments: list[str],
+) -> list[str]:
+    return swift_root_package.swift_package_command(
+        package_root,
+        repo_root,
+        scope,
+        subcommand,
+        arguments,
+    )
+
+
+def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_name: str) -> Path:
+    layout = swift_root_package.swift_package_layout(repo_root, scope)
+    build_root = layout.scratch_path
+    candidates = [build_root / "debug" / product_name]
+    candidates.extend(sorted(build_root.glob(f"*/debug/{product_name}")))
+
+    executable_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.is_file() and os.access(candidate, os.X_OK)
+    ]
+    if executable_candidates:
+        return max(
+            executable_candidates,
+            key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)),
+        )
+
+    raise AssertionError(
+        "Required Swift product binary is missing. "
+        f"Expected a built executable for {product_name!r} under {build_root}. "
+        "Run `make swift-test` or the scoped Swift package command before integration tests."
+    )
 
 
 def resolve_swift_product_binary(repo_root: Path, *, package_path: Path, product_name: str) -> Path:

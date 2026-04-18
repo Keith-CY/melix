@@ -12,6 +12,9 @@ import sys
 import uuid
 
 from tests.integration.helpers import LiveMelixStack
+from tests.integration.helpers import resolve_scoped_swift_product_binary
+from tests.integration.helpers import root_package_swift_command
+from tests.integration.helpers import root_package_swift_environment
 from tests.integration.helpers import wait_for_worker_handshake
 
 
@@ -22,14 +25,20 @@ _REAL_SMALL_MODEL_E2E_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_E2E"
 
 @lru_cache(maxsize=1)
 def build_cli_binary(repo_root: Path) -> Path:
+    environment = root_package_swift_environment(repo_root, base_env=os.environ.copy())
     subprocess.run(
-        ["swift", "build", "--product", "melix"],
+        root_package_swift_command(repo_root, "build", ["--product", "melix"]),
         cwd=repo_root,
         check=True,
         capture_output=True,
         text=True,
+        env=environment,
     )
-    return repo_root / ".build" / "arm64-apple-macosx" / "debug" / "melix"
+    return resolve_scoped_swift_product_binary(
+        repo_root,
+        scope="root-package",
+        product_name="melix",
+    )
 
 
 def run_cli(

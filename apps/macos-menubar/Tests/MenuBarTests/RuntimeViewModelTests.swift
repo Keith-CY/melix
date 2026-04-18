@@ -2830,12 +2830,13 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        let initialBanner = try #require(viewModel.desktopBannerState)
-        #expect(initialBanner.isDismissible)
-        #expect(initialBanner.title == "Update available: 0.2.0")
-
-        viewModel.dismissDesktopBanner()
+        let initialSignal = try #require(viewModel.desktopSignalStates.first { $0.title == "Update available: 0.2.0" })
+        #expect(initialSignal.isDismissible)
         #expect(viewModel.desktopBannerState == nil)
+
+        viewModel.dismissDesktopBanner(id: initialSignal.id)
+        #expect(viewModel.desktopBannerState == nil)
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" } == false)
 
         let restoredViewModel = RuntimeViewModel(
             client: FakeControlPlaneXPCClient(),
@@ -2844,6 +2845,7 @@ struct RuntimeViewModelTests {
         )
         await restoredViewModel.start()
         #expect(restoredViewModel.desktopBannerState == nil)
+        #expect(restoredViewModel.desktopSignalStates.contains { $0.title == "Update available: 0.2.0" } == false)
 
         let upgradedProvider = StubProductInstallStateProvider(
             updateStatusResponse: ProductUpdateStatus(
@@ -2861,7 +2863,8 @@ struct RuntimeViewModelTests {
         )
         await upgradedViewModel.start()
 
-        #expect(upgradedViewModel.desktopBannerState?.title == "Update available: 0.3.0")
+        #expect(upgradedViewModel.desktopBannerState == nil)
+        #expect(upgradedViewModel.desktopSignalStates.contains { $0.title == "Update available: 0.3.0" })
     }
 
     @Test("critical runtime banners ignore dismiss requests")
