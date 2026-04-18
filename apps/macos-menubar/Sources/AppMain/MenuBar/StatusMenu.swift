@@ -155,13 +155,7 @@ public final class StatusMenu: NSObject {
             .info("Server: \(viewModel.serverStateText)")
         ]
 
-        let prioritizedSignals = viewModel.desktopSignalStates.sorted { lhs, rhs in
-            if lhs.priority == rhs.priority {
-                return lhs.title < rhs.title
-            }
-            return lhs.priority > rhs.priority
-        }
-        for banner in prioritizedSignals.prefix(3) {
+        for banner in viewModel.desktopSignalStates.prefix(3) {
             switch banner.severity {
             case .critical:
                 items.append(.error(banner.title))

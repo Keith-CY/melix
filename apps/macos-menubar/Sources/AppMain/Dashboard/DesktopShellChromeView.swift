@@ -91,7 +91,7 @@ struct DesktopPaneToggleButton: View {
     var body: some View {
         let label = role.accessibilityLabel(isVisible: isVisible)
         let button = Button(action: action) {
-            Image(systemName: isVisible ? role.visibleSymbolName : role.hiddenSymbolName)
+            Image(systemName: role.symbolName)
                 .font(.caption.weight(.semibold))
                 .frame(
                     width: DesktopShellChromeMetrics.paneToggleButtonWidth,

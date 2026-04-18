@@ -46,8 +46,30 @@ struct DesktopFoundationViewTests {
 
         #expect(hideSidebar.fittingSize.width <= DesktopShellChromeMetrics.paneToggleButtonWidth + 8)
         #expect(showInspector.fittingSize.width <= DesktopShellChromeMetrics.paneToggleButtonWidth + 8)
+        #expect(DesktopPaneRole.sidebar.symbolName == "sidebar.left")
+        #expect(DesktopPaneRole.inspector.symbolName == "sidebar.right")
         #expect(DesktopPaneRole.sidebar.accessibilityLabel(isVisible: true) == "Hide Sidebar")
         #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: false) == "Show Inspector")
+    }
+
+    @Test("desktop banner recovery priority is explicit")
+    func desktopBannerRecoveryPriorityIsExplicit() {
+        let recoverableWarning = DesktopBannerState(
+            id: "arbitrary-recovery-id",
+            title: "Recoverable",
+            detail: "Can resume",
+            severity: .warning,
+            isRecoverable: true
+        )
+        let regularWarning = DesktopBannerState(
+            id: "download-recovery",
+            title: "Regular Warning",
+            detail: "Not recoverable",
+            severity: .warning
+        )
+
+        #expect(recoverableWarning.priority == .recovery)
+        #expect(regularWarning.priority == .warning)
     }
 
     @Test("workspace commands update surface selection and command center")
@@ -298,6 +320,36 @@ struct DesktopFoundationViewTests {
                             downloadedBytes: 1024,
                             totalBytes: 2048,
                             resumeReady: true
+                        ),
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-command-center-2",
+                            sourceModel: "melix-dev-vision",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.25,
+                            outputDir: "/tmp/melix-downloads/melix-dev-vision",
+                            outputPath: "/tmp/melix-downloads/melix-dev-vision/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-vision/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-vision/download.state.json",
+                            selectedMirror: "https://mirror.example/command-center-2",
+                            downloadedBytes: 512,
+                            totalBytes: 2048,
+                            resumeReady: true
+                        ),
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-command-center-3",
+                            sourceModel: "melix-dev-audio",
+                            status: "stalled",
+                            stage: "download",
+                            pct: 0.75,
+                            outputDir: "/tmp/melix-downloads/melix-dev-audio",
+                            outputPath: "/tmp/melix-downloads/melix-dev-audio/download.artifact",
+                            partialPath: "/tmp/melix-downloads/melix-dev-audio/download.artifact.partial",
+                            statePath: "/tmp/melix-downloads/melix-dev-audio/download.state.json",
+                            selectedMirror: "https://mirror.example/command-center-3",
+                            downloadedBytes: 1536,
+                            totalBytes: 2048,
+                            resumeReady: true
                         )
                     ]
                 )
@@ -312,8 +364,11 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.desktopFoundationState.models.isEmpty == false)
-        #expect(viewModel.recoverableDownloads.isEmpty == false)
+        #expect(viewModel.recoverableDownloads.count == 3)
         #expect(viewModel.desktopSignalStates.contains { $0.title == "Download Recovery Available" })
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 2) == nil)
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowText(totalCount: 3) == "+1 more stalled download")
+        #expect(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle == "View All Downloads")
     }
 
     @Test("workspace shell keeps dismissible update signals out of the top banner")

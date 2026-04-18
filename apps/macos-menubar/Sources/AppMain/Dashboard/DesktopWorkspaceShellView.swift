@@ -139,6 +139,14 @@ struct DesktopInlineNoticeCardView: View {
 }
 
 struct DesktopCommandCenterView: View {
+    static let downloadRecoveryOverflowActionTitle = "View All Downloads"
+
+    static func downloadRecoveryOverflowText(totalCount: Int) -> String? {
+        let hiddenRecoveryCount = max(0, totalCount - 2)
+        guard hiddenRecoveryCount > 0 else { return nil }
+        return "+\(hiddenRecoveryCount) more stalled \(hiddenRecoveryCount == 1 ? "download" : "downloads")"
+    }
+
     let foundation: DesktopFoundationState
     let chatSessions: [DesktopChatSessionState]
     let serverSessions: [DesktopServerSessionState]
@@ -224,6 +232,22 @@ struct DesktopCommandCenterView: View {
                                             Task { await viewModel.resumeDownload(jobID: entry.jobID) }
                                         }
                                         .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                    }
+                                }
+                                if let overflowText = Self.downloadRecoveryOverflowText(
+                                    totalCount: viewModel.recoverableDownloads.count
+                                ) {
+                                    HStack {
+                                        Text(overflowText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Button(Self.downloadRecoveryOverflowActionTitle) {
+                                            viewModel.selectSurface(.tools)
+                                            viewModel.selectToolSection(.downloads)
+                                        }
+                                        .buttonStyle(.bordered)
                                         .controlSize(.small)
                                     }
                                 }

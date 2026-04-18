@@ -94,17 +94,13 @@ public enum DesktopPaneRole: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    public var visibleSymbolName: String {
+    public var symbolName: String {
         switch self {
         case .sidebar:
             return "sidebar.left"
         case .inspector:
             return "sidebar.right"
         }
-    }
-
-    public var hiddenSymbolName: String {
-        visibleSymbolName
     }
 
     public func accessibilityLabel(isVisible: Bool) -> String {
@@ -724,19 +720,22 @@ public struct DesktopBannerState: Equatable, Sendable {
     public let detail: String
     public let severity: DesktopBannerSeverity
     public let isDismissible: Bool
+    public let isRecoverable: Bool
 
     public init(
         id: String = "",
         title: String,
         detail: String,
         severity: DesktopBannerSeverity,
-        isDismissible: Bool = false
+        isDismissible: Bool = false,
+        isRecoverable: Bool = false
     ) {
         self.id = id.isEmpty ? Self.defaultID(title: title, detail: detail, severity: severity) : id
         self.title = title
         self.detail = detail
         self.severity = severity
         self.isDismissible = isDismissible
+        self.isRecoverable = isRecoverable
     }
 
     private static func defaultID(
@@ -760,7 +759,7 @@ public struct DesktopBannerState: Equatable, Sendable {
         case .critical:
             return .critical
         case .warning:
-            return id == "download-recovery" ? .recovery : .warning
+            return isRecoverable ? .recovery : .warning
         case .info:
             return .info
         }

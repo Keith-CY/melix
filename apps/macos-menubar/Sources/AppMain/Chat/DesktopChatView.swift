@@ -456,24 +456,6 @@ private struct DesktopChatSessionRowActions: View {
     }
 }
 
-private struct DesktopChatPaneToggleButton: View {
-    let systemName: String
-    let helpText: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.caption.weight(.semibold))
-                .frame(width: 26, height: 24)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(helpText)
-        .accessibilityLabel(helpText)
-    }
-}
-
 private struct DesktopChatTranscriptRowView: View {
     let entry: DesktopChatTranscriptEntry
 

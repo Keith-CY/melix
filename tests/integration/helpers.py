@@ -436,6 +436,7 @@ def resolve_scoped_swift_product_binary(repo_root: Path, *, scope: str, product_
         if candidate.is_file() and os.access(candidate, os.X_OK)
     ]
     if executable_candidates:
+        # Prefer architecture-specific SwiftPM outputs over flat debug outputs when mtimes tie.
         return max(
             executable_candidates,
             key=lambda candidate: (candidate.stat().st_mtime, len(candidate.parts)),

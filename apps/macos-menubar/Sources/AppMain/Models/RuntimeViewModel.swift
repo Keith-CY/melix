@@ -2469,7 +2469,8 @@ public final class RuntimeViewModel {
                     id: "download-recovery",
                     title: "Download Recovery Available",
                     detail: detail,
-                    severity: .warning
+                    severity: .warning,
+                    isRecoverable: true
                 )
             )
         } else if let activeDownload = activeDownloads.first {
