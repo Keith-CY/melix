@@ -56,7 +56,9 @@ and a worktree-local `MELIX_HOME`.
 
 Do not run a bare `bash scripts/dev_up.sh` when another Melix worktree may be
 running or when the task expects a long-lived local stack. Each concurrently
-running worktree must use a different `MELIX_HTTP_PORT`.
+running worktree must use a different `MELIX_HTTP_PORT`. The bare
+`scripts/dev_up.sh` default HTTP port is `11434`; named instances should use
+different explicit ports, for example `12434` and `12435`.
 
 Use this shell helper pattern for starting a development instance:
 
@@ -70,6 +72,11 @@ melix-dev-instance() {
     return 2
   fi
 
+  if ! [[ "${http_port}" =~ ^[1-9][0-9]*$ ]] || (( http_port < 1024 || http_port > 65535 )); then
+    printf 'http-port must be a number between 1024 and 65535\n' >&2
+    return 2
+  fi
+
   if [[ "${instance_name}" == *[^A-Za-z0-9_-]* ]]; then
     printf 'instance-name may only contain letters, numbers, underscores, and hyphens\n' >&2
     return 2
@@ -78,7 +85,10 @@ melix-dev-instance() {
   local repo_root
   local runtime_dir
   local melix_home
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf 'fatal: not inside a git worktree\n' >&2
+    return 1
+  fi
   runtime_dir="${repo_root}/.runtime/sidecars/${instance_name}"
   melix_home="${repo_root}/.runtime/home-${instance_name}"
 
@@ -108,13 +118,20 @@ melix-dev-stop-instance() {
   fi
 
   local repo_root
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf 'fatal: not inside a git worktree\n' >&2
+    return 1
+  fi
 
   export MELIX_RUNTIME_DIR="${repo_root}/.runtime/sidecars/${instance_name}"
 
   bash "${repo_root}/scripts/dev_down.sh"
 }
 ```
+
+The stop helper only exports `MELIX_RUNTIME_DIR` because `scripts/dev_down.sh`
+stops processes by pid files and runtime artifacts under that directory; it does
+not use `MELIX_HTTP_PORT` or `MELIX_HOME`.
 
 Example concurrent worktree ports:
 
@@ -134,6 +151,10 @@ worktree-local as shown above. The start helper exports `MELIX_HOME` in the
 current shell session so later CLI commands use the same isolated state. Do not
 share the default `~/.melix` state across parallel worktrees unless shared
 operator state is intentional.
+
+The repository-local `.runtime` tree is ignored by git. Never stage or commit
+runtime pid files, sockets, logs, managed models, or worktree-local Melix home
+state from `.runtime`.
 
 ## Source of Truth Rules
 
