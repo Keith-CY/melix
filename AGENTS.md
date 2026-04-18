@@ -45,6 +45,87 @@ make integration-test
 
 For local JavaScript or TypeScript package operations, prefer Bun and `bunx`.
 
+## Local Multi-Worktree Runtime Rules
+
+Agents may work from multiple Melix worktrees on the same MacBook Pro. Code,
+build products, and repository-local caches are worktree-scoped, but running
+Melix stacks can still interfere through shared ports, process metadata, and
+operator state. When starting a local Melix development stack from any worktree,
+use a named instance, an explicit HTTP port, a worktree-local runtime directory,
+and a worktree-local `MELIX_HOME`.
+
+Do not run a bare `bash scripts/dev_up.sh` when another Melix worktree may be
+running or when the task expects a long-lived local stack. Each concurrently
+running worktree must use a different `MELIX_HTTP_PORT`.
+
+Use this shell helper pattern for starting a development instance:
+
+```bash
+melix-dev-instance() {
+  local instance_name="${1:-}"
+  local http_port="${2:-}"
+
+  if [[ -z "${instance_name}" || -z "${http_port}" ]]; then
+    printf 'usage: melix-dev-instance <instance-name> <http-port>\n' >&2
+    return 2
+  fi
+
+  if [[ "${instance_name}" == *[^A-Za-z0-9_-]* ]]; then
+    printf 'instance-name may only contain letters, numbers, underscores, and hyphens\n' >&2
+    return 2
+  fi
+
+  local runtime_dir
+  local melix_home
+  runtime_dir="$(pwd)/.runtime/sidecars/${instance_name}"
+  melix_home="$(pwd)/.runtime/home-${instance_name}"
+
+  MELIX_SERVICE_INSTANCE_NAME="${instance_name}" \
+  MELIX_HTTP_PORT="${http_port}" \
+  MELIX_RUNTIME_DIR="${runtime_dir}" \
+  MELIX_HOME="${melix_home}" \
+  bash scripts/dev_up.sh
+}
+```
+
+Use the matching runtime directory when stopping that instance:
+
+```bash
+melix-dev-stop-instance() {
+  local instance_name="${1:-}"
+
+  if [[ -z "${instance_name}" ]]; then
+    printf 'usage: melix-dev-stop-instance <instance-name>\n' >&2
+    return 2
+  fi
+
+  if [[ "${instance_name}" == *[^A-Za-z0-9_-]* ]]; then
+    printf 'instance-name may only contain letters, numbers, underscores, and hyphens\n' >&2
+    return 2
+  fi
+
+  MELIX_RUNTIME_DIR="$(pwd)/.runtime/sidecars/${instance_name}" \
+  bash scripts/dev_down.sh
+}
+```
+
+Example concurrent worktree ports:
+
+```bash
+melix-dev-instance wt-main 12434
+melix-dev-instance wt-lora 12435
+```
+
+Stopping a named instance must use the same instance name:
+
+```bash
+melix-dev-stop-instance wt-main
+```
+
+If CLI or menu bar persisted state must be isolated, keep `MELIX_HOME`
+worktree-local as shown above. Do not share the default `~/.melix` state across
+parallel worktrees unless shared operator state is intentional.
+
 ## Source of Truth Rules
 
 - Protobuf schemas under `packages/protocol/schema` are the authoritative interface definitions.
