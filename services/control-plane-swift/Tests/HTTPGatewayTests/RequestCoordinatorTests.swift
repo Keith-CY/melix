@@ -174,7 +174,25 @@ struct RequestCoordinatorTests {
         initialConsumer.cancel()
         _ = await initialConsumer.result
 
-        try? await Task.sleep(nanoseconds: 80_000_000)
+        for _ in 0..<100 {
+            let metrics = await metricsStore.snapshot()
+            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let terminalProgress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-resume-timeout",
+            phase: .requestFailed
+        ))
+
+        var metrics = await metricsStore.snapshot()
+        for _ in 0..<100 where metrics.values["disconnect.terminal_failure_count", default: 0] < 1 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            metrics = await metricsStore.snapshot()
+        }
 
         do {
             _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
@@ -183,21 +201,10 @@ struct RequestCoordinatorTests {
             #expect(error == .requestNotResumable)
         }
 
-        var metrics = await metricsStore.snapshot()
-        for _ in 0..<100 where metrics.values["disconnect.terminal_failure_count", default: 0] < 1 {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-            metrics = await metricsStore.snapshot()
-        }
-        let terminalProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-resume-timeout",
-            phase: .requestFailed
-        )
-
         #expect(await workerClient.abortedRequestIDs == ["req-resume-timeout"])
         #expect(metrics.values["disconnect.terminal_failure_count", default: 0] == 1)
         #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 0)
-        #expect(terminalProgress?.phase == .requestFailed)
+        #expect(terminalProgress.phase == .requestFailed)
     }
 
     @Test("queued request cancellation succeeds before a worker is bound")
@@ -1167,14 +1174,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-hot",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.hot")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-hot")
+        #expect(laneProgress?.lane == "text.prefill.hot")
         await workerClient.emitDecodeStarted(requestID: "req-hot", decodeHandle: "decode-hot")
         await workerClient.emitToken(requestID: "req-hot", text: "hot")
         await workerClient.finishDecode(requestID: "req-hot")
@@ -1248,14 +1250,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-partial-restore",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.hot")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-partial-restore")
+        #expect(laneProgress?.lane == "text.prefill.hot")
         await workerClient.emitDecodeStarted(requestID: "req-partial-restore", decodeHandle: "decode-req-partial-restore")
         await workerClient.emitToken(requestID: "req-partial-restore", text: "partial")
         await workerClient.finishDecode(requestID: "req-partial-restore")
@@ -1680,14 +1677,9 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
-        let admittedProgress = await waitForProgress(
-            schedulerReadModel: schedulerReadModel,
-            requestID: "req-cold-prefill",
-            phase: .requestAdmitted
-        )
-        #expect(admittedProgress?.lane == "text.prefill.background")
-
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let laneProgress = await schedulerReadModel.progressSnapshot(for: "req-cold-prefill")
+        #expect(laneProgress?.lane == "text.prefill.background")
         await workerClient.emitDecodeStarted(requestID: "req-cold-prefill", decodeHandle: "decode-cold")
         await workerClient.finishDecode(requestID: "req-cold-prefill")
         _ = await consumer.result

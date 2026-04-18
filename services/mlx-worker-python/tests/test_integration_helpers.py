@@ -257,3 +257,56 @@ def test_read_metrics_export_parses_json_payload(tmp_path: Path) -> None:
     metrics_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert helpers.read_metrics_export(metrics_path) == payload
+
+
+def test_wait_for_metric_value_returns_payload_once_threshold_is_reached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics_path = tmp_path / "metrics.json"
+    metrics_path.write_text("{}", encoding="utf-8")
+    payloads = iter(
+        [
+            {"values": {"scheduler.multimodal_active_requests": 0}},
+            {"values": {"scheduler.multimodal_active_requests": 1}},
+        ]
+    )
+    perf_times = iter([0.0, 0.01, 0.02, 0.03])
+
+    monkeypatch.setattr(helpers, "read_metrics_export", lambda path: next(payloads))
+    monkeypatch.setattr(helpers.time, "time", lambda: next(perf_times))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+
+    payload = helpers.wait_for_metric_value(
+        metrics_path,
+        "scheduler.multimodal_active_requests",
+        minimum=1,
+        timeout_seconds=0.05,
+    )
+
+    assert payload == {"values": {"scheduler.multimodal_active_requests": 1}}
+
+
+def test_wait_for_metric_value_raises_when_threshold_is_never_reached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics_path = tmp_path / "metrics.json"
+    metrics_path.write_text("{}", encoding="utf-8")
+    perf_times = iter([0.0, 0.02, 0.04, 0.06])
+
+    monkeypatch.setattr(
+        helpers,
+        "read_metrics_export",
+        lambda path: {"values": {"scheduler.multimodal_active_requests": 0}},
+    )
+    monkeypatch.setattr(helpers.time, "time", lambda: next(perf_times))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(AssertionError, match="scheduler.multimodal_active_requests"):
+        helpers.wait_for_metric_value(
+            metrics_path,
+            "scheduler.multimodal_active_requests",
+            minimum=1,
+            timeout_seconds=0.05,
+        )

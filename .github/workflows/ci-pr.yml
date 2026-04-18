@@ -1,0 +1,138 @@
+name: ci-pr
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint-and-diffcheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: rhysd/actionlint@v1.7.12
+
+      - name: Diff check
+        run: git diff --check HEAD^1 HEAD
+
+  proto-drift:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Check generated protocol outputs
+        run: make proto-check
+
+  swift-tests:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Swift tests
+        run: make swift-test
+
+  python-tests:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Python tests
+        run: make py-test
+
+  integration-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.scope.outputs.should_run }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether integration tests are affected
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          should_run=false
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/ci-pr.yml|Makefile|Package.swift|Package.resolved|pyproject.toml|uv.lock|buf.yaml|buf.gen.yaml|packages/protocol/*|scripts/*|services/control-plane-swift/*|services/mlx-text-worker-swift/*|services/mlx-worker-python/*|tests/integration/*)
+                should_run=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+  integration-tests:
+    if: github.event_name == 'merge_group' || needs.integration-scope.outputs.should_run == 'true'
+    needs:
+      - integration-scope
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Build Swift integration prerequisites
+        run: make swift-build-integration-prereqs
+
+      - name: Integration tests
+        run: make integration-test

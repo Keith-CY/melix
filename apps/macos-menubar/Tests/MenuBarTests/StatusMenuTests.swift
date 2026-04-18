@@ -407,6 +407,36 @@ struct StatusMenuTests {
         #expect(menu.items[0].title == "Error: Operator session persistence failed")
         #expect(menu.items[0].toolTip == "Error: \(message)")
     }
+
+    @Test("branding workspace logo loads the packaged asset")
+    @MainActor
+    func brandingWorkspaceLogoLoadsPackagedAsset() async throws {
+        let image = MelixBranding.workspaceLogo()
+
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 0)
+    }
+
+    @Test("branding helpers return the original image when no bitmap representation is available")
+    @MainActor
+    func brandingHelpersReturnOriginalImageWithoutBitmapRepresentation() async throws {
+        let image = NSImage(size: .zero)
+
+        #expect(MelixBranding._testAlphaBounds(for: image) == nil)
+        #expect(MelixBranding._testTrimTransparentPadding(from: image) === image)
+    }
+
+    @Test("branding alpha bounds return nil for fully transparent images")
+    @MainActor
+    func brandingAlphaBoundsReturnNilForTransparentImages() async throws {
+        let image = NSImage(size: NSSize(width: 6, height: 6))
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 6, height: 6)).fill()
+        image.unlockFocus()
+
+        #expect(MelixBranding._testAlphaBounds(for: image) == nil)
+    }
 }
 
 private func makeStatusMenuNamedModelOperationResult(

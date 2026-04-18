@@ -25,6 +25,22 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
         )
     }
 
+    @Test("lora publish exposes a stable workflow command id")
+    func loraPublishExposesAStableWorkflowCommandID() {
+        #expect(
+            MelixCLICommand.loraPublish(
+                    .init(
+                        modelID: "melix-dev-qwen-local",
+                        targetRepo: "melix/adapters/melix-dev-adapter",
+                        exportKind: .adapterExport,
+                        artifactPath: "/tmp/melix-dev-adapter",
+                        artifactManifestPath: "/tmp/melix-dev-adapter/manifest.json",
+                        json: true
+                    )
+            ).workflowCommandID == "lora.publish"
+        )
+    }
+
     @Test("download hub model shells out through the melix cli and decodes a managed receipt")
     func downloadHubModelShellsOutThroughTheMelixCLIAndDecodesAManagedReceipt() async throws {
         let processExecutor = RecordingCLIProcessExecutor()

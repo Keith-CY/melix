@@ -1041,6 +1041,7 @@ def test_evaluate_release_gate_fails_closed_for_missing_real_workload_evidence()
 
     failures = evaluate_release_gate(report, policy)
 
+    assert "eval.mmlu.typed_score_mean is missing" not in failures
     assert "real_workload evidence is missing" in failures
 
 
@@ -1557,8 +1558,8 @@ def test_default_policy_includes_audio_section() -> None:
 
 def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
-    assert "eval.mmlu.accuracy" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
-    assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert "eval.mmlu.typed_score_mean" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation"]["eval.mmlu.typed_score_mean"]["min"] == 0.5
     assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
@@ -1572,7 +1573,7 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert "audio" in policy
     assert policy["audio"]["slim.audio_runtime_pack_recovery_success_rate"]["min"] == 100.0
     assert "evaluation" in policy
-    assert policy["evaluation"]["eval.mmlu.accuracy"]["min"] == 0.5
+    assert policy["evaluation"]["eval.mmlu.typed_score_mean"]["min"] == 0.5
     assert "evaluation_compare" in policy
     assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
     assert "m9" in policy
@@ -1584,7 +1585,7 @@ def test_collect_evaluation_evidence_returns_metrics(tmp_path: Path) -> None:
     evidence = collect_evaluation_evidence(tmp_path / "jobs")
 
     assert "metrics" in evidence
-    assert evidence["metrics"]["eval.mmlu.accuracy"] == 1.0
+    assert evidence["metrics"]["eval.mmlu.typed_score_mean"] == 1.0
     assert evidence["job"]["suite_id"] == "mmlu"
     assert evidence["result"]["suite_id"] == "mmlu"
 
@@ -1596,6 +1597,63 @@ def test_release_gate_evaluation_backend_covers_cancel_and_non_arithmetic_prompt
 
     assert list(backend.generate_tokens({}, "2 + 2 ?", None, canceled)) == []
     assert list(backend.generate_tokens({}, "hello world", None, active)) == ["Answer: 0"]
+
+
+def test_evaluation_metric_alias_helper_backfills_canonical_and_legacy_names() -> None:
+    metrics = {"eval.mmlu.accuracy": 0.75}
+
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        metrics,
+        suite_id="mmlu",
+        primary_score_value=0.5,
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.75
+    assert normalized["eval.mmlu.accuracy"] == 0.75
+
+
+def test_evaluation_metric_alias_helper_uses_primary_score_when_metrics_are_missing() -> None:
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        {},
+        suite_id="mmlu",
+        primary_score_value=0.5,
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.5
+    assert normalized["eval.mmlu.accuracy"] == 0.5
+
+
+def test_evaluation_metric_alias_helper_leaves_metrics_unchanged_without_numeric_source() -> None:
+    metrics = {"eval.mmlu.label": "n/a"}
+
+    normalized = release_gates_module._with_evaluation_metric_aliases(
+        metrics,
+        suite_id="mmlu",
+        primary_score_value="unknown",
+    )
+
+    assert normalized == metrics
+
+
+def test_normalize_evaluation_metrics_for_policy_handles_non_dict_inputs() -> None:
+    assert release_gates_module._normalize_evaluation_metrics_for_policy([], {}) == {}
+    assert release_gates_module._normalize_evaluation_metrics_for_policy(
+        {"eval.mmlu.accuracy": 0.75},
+        [],
+    ) == {"eval.mmlu.accuracy": 0.75}
+
+
+def test_normalize_evaluation_metrics_for_policy_ignores_non_metric_rules() -> None:
+    normalized = release_gates_module._normalize_evaluation_metrics_for_policy(
+        {"eval.mmlu.accuracy": 0.75},
+        {
+            "eval.mmlu.typed_score_mean": {"min": 0.5},
+            "non_metric_rule": {"min": 1.0},
+        },
+    )
+
+    assert normalized["eval.mmlu.typed_score_mean"] == 0.75
+    assert normalized["eval.mmlu.accuracy"] == 0.75
 
 
 def test_collect_evaluation_compare_evidence_returns_release_summary(tmp_path: Path) -> None:
@@ -1795,7 +1853,7 @@ def test_evaluate_evaluation_compare_evidence_checks_each_target_summary() -> No
     )
 
 
-def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
+def test_evaluate_release_gate_fails_on_low_eval_primary_score() -> None:
     policy = load_release_gate_policy()
     report = {
         "install": {
@@ -1866,7 +1924,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.3,
+                "eval.mmlu.typed_score_mean": 0.3,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),
@@ -1876,7 +1934,7 @@ def test_evaluate_release_gate_fails_on_low_eval_accuracy() -> None:
 
     failures = evaluate_release_gate(report, policy)
 
-    assert "eval.mmlu.accuracy=0.30 fell below minimum 0.50" in failures
+    assert "eval.mmlu.typed_score_mean=0.30 fell below minimum 0.50" in failures
 
 
 def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
@@ -1950,7 +2008,7 @@ def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.75,
+                "eval.mmlu.typed_score_mean": 0.75,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(verdict="regression"),
@@ -1963,7 +2021,7 @@ def test_evaluate_release_gate_fails_on_compare_regression_verdict() -> None:
     assert "evaluation_compare.mmlu verdict=regression did not satisfy required verdict improvement" in failures
 
 
-def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
+def test_evaluate_release_gate_passes_with_sufficient_eval_primary_score() -> None:
     policy = load_release_gate_policy()
     report = {
         "install": {
@@ -2012,7 +2070,7 @@ def test_evaluate_release_gate_passes_with_sufficient_eval_accuracy() -> None:
         },
         "evaluation": {
             "metrics": {
-                "eval.mmlu.accuracy": 0.75,
+                "eval.mmlu.typed_score_mean": 0.75,
             },
         },
         "evaluation_compare": _passing_evaluation_compare_evidence(),

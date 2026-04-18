@@ -204,7 +204,7 @@
     }
   },
   "evaluation": {
-    "eval.mmlu.accuracy": {
+    "eval.mmlu.typed_score_mean": {
       "min": 0.5
     }
   },

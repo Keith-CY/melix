@@ -191,7 +191,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
     },
     "quantization": copy.deepcopy(DEFAULT_QUANTIZATION_GATE_POLICY),
     "evaluation": {
-        "eval.mmlu.accuracy": {"min": 0.5},
+        "eval.mmlu.typed_score_mean": {"min": 0.5},
     },
     "evaluation_compare": {
         "mmlu": {
@@ -486,10 +486,11 @@ def collect_evaluation_evidence(jobs_root: str | Path) -> dict[str, Any]:
     metrics: dict[str, float] = {}
     for metric in run.result.metrics:
         metrics[metric.name] = metric.value
-    suite_metric_alias = f"eval.{run.result.suite_id}.accuracy"
-    if suite_metric_alias not in metrics:
-        if isinstance(run.result.primary_score_value, (int, float)):
-            metrics[suite_metric_alias] = float(run.result.primary_score_value)
+    metrics = _with_evaluation_metric_aliases(
+        metrics,
+        suite_id=run.result.suite_id,
+        primary_score_value=run.result.primary_score_value,
+    )
     return {
         "job": run.job.to_dict(),
         "result": run.result.to_dict(),
@@ -784,8 +785,12 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
 
     evaluation = report.get("evaluation")
     if isinstance(evaluation, dict):
+        evaluation_metrics = _normalize_evaluation_metrics_for_policy(
+            evaluation.get("metrics", {}),
+            policy.get("evaluation", {}),
+        )
         failures.extend(
-            _evaluate_section_metrics(evaluation.get("metrics", {}), policy.get("evaluation", {}))
+            _evaluate_section_metrics(evaluation_metrics, policy.get("evaluation", {}))
         )
 
     evaluation_compare = report.get("evaluation_compare")
@@ -1445,6 +1450,56 @@ def _evaluate_section_metrics(
                 f"{display_name}={numeric:.2f} exceeded maximum {float(maximum):.2f}"
             )
     return failures
+
+
+def _with_evaluation_metric_aliases(
+    metrics: dict[str, float],
+    *,
+    suite_id: str,
+    primary_score_value: Any | None = None,
+) -> dict[str, float]:
+    normalized = dict(metrics)
+    typed_metric_name = f"eval.{suite_id}.typed_score_mean"
+    legacy_metric_name = f"eval.{suite_id}.accuracy"
+
+    candidate_value: float | None = None
+    for metric_name in (typed_metric_name, legacy_metric_name):
+        metric_value = normalized.get(metric_name)
+        if isinstance(metric_value, (int, float)):
+            candidate_value = float(metric_value)
+            break
+
+    if candidate_value is None and isinstance(primary_score_value, (int, float)):
+        candidate_value = float(primary_score_value)
+
+    if candidate_value is None:
+        return normalized
+
+    normalized.setdefault(typed_metric_name, candidate_value)
+    normalized.setdefault(legacy_metric_name, candidate_value)
+    return normalized
+
+
+def _normalize_evaluation_metrics_for_policy(
+    values: Any,
+    rules: Any,
+) -> dict[str, Any]:
+    if not isinstance(values, dict):
+        return {}
+    if not isinstance(rules, dict):
+        return dict(values)
+
+    normalized = dict(values)
+    for metric_name in rules:
+        if not (
+            isinstance(metric_name, str)
+            and metric_name.startswith("eval.")
+            and metric_name.endswith(".typed_score_mean")
+        ):
+            continue
+        suite_id = metric_name[len("eval.") : -len(".typed_score_mean")]
+        normalized = _with_evaluation_metric_aliases(normalized, suite_id=suite_id)
+    return normalized
 
 
 def _require_true(payload: dict[str, Any], dotted_key: str) -> list[str]:

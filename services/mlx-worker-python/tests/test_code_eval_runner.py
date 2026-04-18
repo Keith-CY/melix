@@ -10,6 +10,24 @@ from worker.engine import code_eval_runner
 from worker.engine.code_eval_runner import run_python_code_evaluation
 
 
+def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> None:
+    assert code_eval_runner.extract_candidate_code("   ") == ("", "empty_prediction")
+    assert code_eval_runner.extract_candidate_code("print('hi')") == ("print('hi')", "parsed_code")
+    assert code_eval_runner.extract_candidate_code("```python\nprint('hi')\n```") == (
+        "print('hi')",
+        "parsed_code_block",
+    )
+
+
+def test_is_code_execution_policy_supported_requires_sandboxed_policy_and_binary(monkeypatch) -> None:
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
+    assert code_eval_runner.is_code_execution_policy_supported(" sandboxed ") is True
+    assert code_eval_runner.is_code_execution_policy_supported("host") is False
+
+    monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: None)
+    assert code_eval_runner.is_code_execution_policy_supported("sandboxed") is False
+
+
 def test_run_python_code_evaluation_ignores_candidate_stdout_before_payload() -> None:
     result = run_python_code_evaluation(
         candidate_code=textwrap.dedent(
@@ -258,6 +276,97 @@ def test_run_python_code_evaluation_uses_stderr_when_payload_is_missing(monkeypa
 
 def test_count_tests_falls_back_for_syntax_error_input() -> None:
     assert code_eval_runner._count_tests("assert True\n  assert False") == 2
+
+
+def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.txt"
+    assert code_eval_runner._read_limited_text(missing_path, 8) == ""
+
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    assert code_eval_runner._read_limited_text(output_path, 4) == "cdef"
+
+
+def test_timeout_and_output_limit_failure_details_include_stdio_when_present() -> None:
+    assert code_eval_runner._timeout_failure_detail(
+        timeout_seconds=2,
+        stdout_tail="out",
+        stderr_tail="err",
+    ) == "Timed out after 2s. stdout tail: out | stderr tail: err"
+    assert code_eval_runner._output_limit_failure_detail(
+        stdio_limit_bytes=128,
+        stdout_tail="",
+        stderr_tail="",
+    ) == "Code execution exceeded the 128-byte stdio limit."
+
+
+def test_sandbox_python_executable_prefers_python_app_launcher_when_present(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resolved = tmp_path / "Frameworks" / "Python.framework" / "Versions" / "3.12" / "bin" / "python3.12"
+    resolved.parent.mkdir(parents=True)
+    resolved.write_text("", encoding="utf-8")
+    launcher = (
+        resolved.parent.parent
+        / "Resources"
+        / "Python.app"
+        / "Contents"
+        / "MacOS"
+        / "Python"
+    )
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(resolved))
+
+    assert code_eval_runner._sandbox_python_executable() == launcher.resolve()
+
+
+def test_sandbox_executable_paths_keep_wrapper_allowed_when_launcher_is_preferred(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resolved = tmp_path / "Frameworks" / "Python.framework" / "Versions" / "3.12" / "bin" / "python3.12"
+    resolved.parent.mkdir(parents=True)
+    resolved.write_text("", encoding="utf-8")
+    launcher = (
+        resolved.parent.parent
+        / "Resources"
+        / "Python.app"
+        / "Contents"
+        / "MacOS"
+        / "Python"
+    )
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(code_eval_runner.sys, "executable", str(resolved))
+
+    paths = code_eval_runner._sandbox_executable_paths()
+
+    assert paths[0] == launcher.resolve()
+    assert resolved.resolve() in paths
+
+
+def test_sandbox_allow_path_variants_falls_back_when_resolve_raises() -> None:
+    class BrokenPath:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def resolve(self):
+            raise OSError("broken resolve")
+
+        def __hash__(self) -> int:
+            return hash(self.label)
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, BrokenPath) and self.label == other.label
+
+    broken = BrokenPath("broken")
+
+    assert code_eval_runner._sandbox_allow_path_variants((broken,)) == (broken,)
 
 
 def test_count_tests_falls_back_when_no_asserts_are_present() -> None:

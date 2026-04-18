@@ -2,6 +2,8 @@ name: release-gates
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * *"
   push:
     branches:
       - main
@@ -15,6 +17,13 @@ on:
       - "services/mlx-text-worker-swift/**"
       - "services/mlx-worker-python/**"
       - "tests/integration/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gates-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   release-gates:
@@ -42,4 +51,24 @@ jobs:
         run: make integration-test
 
       - name: Phase 8 release gate
-        run: make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json"
+        id: phase8-release-gate
+        continue-on-error: true
+        run: |
+          if ! make phase8-release-gate PHASE8_RELEASE_GATE_ARGS="--json" > "$RUNNER_TEMP/phase8-release-gate.json"; then
+            if [ ! -s "$RUNNER_TEMP/phase8-release-gate.json" ]; then
+              printf '{\n  "passed": false,\n  "failures": ["phase8-release-gate failed before emitting JSON"],\n  "runner_failure": true\n}\n' > "$RUNNER_TEMP/phase8-release-gate.json"
+            fi
+            exit 1
+          fi
+
+      - name: Upload release-gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase8-release-gate-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase8-release-gate.json
+          if-no-files-found: error
+
+      - name: Fail if release gate failed
+        if: steps.phase8-release-gate.outcome == 'failure'
+        run: exit 1

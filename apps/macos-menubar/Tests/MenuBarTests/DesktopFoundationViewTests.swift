@@ -3567,6 +3567,15 @@ struct Phase8WindowUIAcceptanceRunnerTests {
             if case .evalRun = $0 { return true }
             return false
         }))
+        let evaluationCommand = try #require(recordedCommands.first(where: {
+            if case .evalRun = $0 { return true }
+            return false
+        }))
+        guard case .evalRun(let evaluationOptions) = evaluationCommand else {
+            Issue.record("Expected the phase 8 acceptance runner to record an evalRun command.")
+            return
+        }
+        #expect(evaluationOptions.parameters["scoring_mode"] == "multiple_choice_accuracy")
     }
 
     @Test("phase 8 window ui acceptance runner routes lora workflows through the materialized model id")

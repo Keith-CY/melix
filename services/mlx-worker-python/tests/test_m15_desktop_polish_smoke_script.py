@@ -28,6 +28,7 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
     captured: dict[str, object] = {}
 
     class _Completed:
+        returncode = 0
         stdout = (
             'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2},'
             '"signals":{"top_banner_title":"Download Recovery Available","download_recovery_visible":1,'
@@ -109,6 +110,7 @@ def test_run_swift_smoke_requires_marker(
     module = _load_module()
 
     class _Completed:
+        returncode = 0
         stdout = "ok"
         stderr = ""
 
@@ -116,3 +118,50 @@ def test_run_swift_smoke_requires_marker(
 
     with pytest.raises(RuntimeError, match="M15_DESKTOP_POLISH_SMOKE"):
         module.run_swift_smoke(tmp_path)
+
+
+def test_run_swift_smoke_retries_transient_swiftpm_lock_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    calls: list[list[str]] = []
+    sleep_calls: list[float] = []
+
+    class _Completed:
+        def __init__(self, *, returncode: int, stdout: str = "", stderr: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    responses = [
+        _Completed(
+            returncode=1,
+            stderr="Another instance of SwiftPM (PID: 12345) is already running using '/tmp/melix/apps/macos-menubar'",
+        ),
+        _Completed(
+            returncode=0,
+            stdout=(
+                'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2},'
+                '"signals":{"top_banner_title":"Download Recovery Available","download_recovery_visible":1,'
+                '"update_signal_visible":1,"update_signal_dismissible":1},'
+                '"persistence":{"operator_session_restore_ms":3,"operator_session_persist_write_ms":4,'
+                '"persisted_download_queue_count":1,"restored_download_queue_count":1,'
+                '"restored_selected_tool_section":"downloads"},'
+                '"navigation":{"grounded_surface_count":5,"grounded_tool_section_count":6}}\n'
+            ),
+        ),
+    ]
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return responses.pop(0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.time, "sleep", sleep_calls.append)
+
+    payload = module.run_swift_smoke(tmp_path)
+
+    assert payload["navigation"]["grounded_surface_count"] == 5
+    assert len(calls) == 2
+    assert sleep_calls == [module._SWIFTPM_LOCK_BACKOFF_SECONDS]

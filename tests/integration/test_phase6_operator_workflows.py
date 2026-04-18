@@ -8,8 +8,10 @@ import threading
 import time
 import urllib.request
 
-from tests.integration.helpers import LiveMelixStack, read_metrics_export
+from tests.integration.helpers import LiveMelixStack, read_metrics_export, wait_for_metric_value
 from worker.productization.acceptance_metrics import build_phase6_vision_metrics_report
+
+INTERFERENCE_TRANSCRIPTION_DELAY_MS = "500"
 
 
 def _post_json(url: str, payload: dict[str, object], *, timeout: float = 10.0) -> tuple[int, object]:
@@ -61,7 +63,7 @@ def _start_image_fixture_server(payload: bytes, *, content_type: str = "image/pn
 def test_text_requests_record_interference_metrics_during_multimodal_load() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
-        environment_overrides={"MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150"},
+        environment_overrides={"MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": INTERFERENCE_TRANSCRIPTION_DELAY_MS},
     )
 
     transcription_response: dict[str, object] = {}
@@ -84,7 +86,12 @@ def test_text_requests_record_interference_metrics_during_multimodal_load() -> N
 
         worker = threading.Thread(target=run_transcription, daemon=True)
         worker.start()
-        time.sleep(0.05)
+        wait_for_metric_value(
+            stack.control_plane_metrics_path,
+            "scheduler.multimodal_active_requests",
+            minimum=1,
+            timeout_seconds=5.0,
+        )
 
         chat_status, chat_payload = _post_json(
             stack.chat_url(),

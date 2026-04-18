@@ -33,6 +33,11 @@ make py-test
 make integration-test
 ```
 
+Repository pull requests are expected to keep the same baseline green in GitHub Actions. The PR
+template is also part of the review contract: include the governing plan or spec, the commands you
+ran, the coverage or metrics result (or explicit `N/A` reason), and any known gaps or deferred
+checks.
+
 If you are working in a specific subsystem, add the relevant focused commands, smoke scripts, or
 runbook verification steps to your handoff note as well.
 

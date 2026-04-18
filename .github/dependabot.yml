@@ -1,0 +1,51 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "pip"
+    directory: "/services/mlx-worker-python"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      worker-python:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  - package-ecosystem: "swift"
+    directory: "/packages/protocol/swift"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  - package-ecosystem: "swift"
+    directory: "/services/mlx-text-worker-swift"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  - package-ecosystem: "swift"
+    directory: "/services/control-plane-swift"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  - package-ecosystem: "swift"
+    directory: "/apps/macos-menubar"
+    schedule:
+      interval: "weekly"
+      day: "monday"

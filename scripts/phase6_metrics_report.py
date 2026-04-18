@@ -7,7 +7,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from tests.integration.helpers import LiveMelixStack, read_metrics_export
+from tests.integration.helpers import LiveMelixStack, read_metrics_export, wait_for_metric_value
+
+INTERFERENCE_TRANSCRIPTION_DELAY_MS = "500"
 
 
 def timed_request(url: str, payload: dict[str, object], *, timeout: float = 15.0) -> tuple[float, bytes, str]:
@@ -43,7 +45,7 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     stack = LiveMelixStack(
         repo_root,
-        environment_overrides={"MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150"},
+        environment_overrides={"MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": INTERFERENCE_TRANSCRIPTION_DELAY_MS},
     )
     stack.start()
 
@@ -161,7 +163,12 @@ def main() -> None:
 
         worker = threading.Thread(target=run_transcription_load, daemon=True)
         worker.start()
-        time.sleep(0.05)
+        wait_for_metric_value(
+            stack.control_plane_metrics_path,
+            "scheduler.multimodal_active_requests",
+            minimum=1,
+            timeout_seconds=5.0,
+        )
         text_ms, text_body, _ = timed_request(
             stack.chat_url(),
             {

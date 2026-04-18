@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -14,6 +15,11 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import swift_root_package
+
+
+_SWIFTPM_LOCK_MARKER = "Another instance of SwiftPM"
+_SWIFTPM_LOCK_RETRIES = 3
+_SWIFTPM_LOCK_BACKOFF_SECONDS = 2.0
 
 
 def run_swift_smoke(repo_root: Path) -> dict[str, object]:
@@ -37,14 +43,32 @@ def run_swift_smoke(repo_root: Path) -> dict[str, object]:
             "DesktopPolishSmokeTests",
         ],
     )
-    completed = subprocess.run(
-        command,
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    completed = None
+    for attempt in range(_SWIFTPM_LOCK_RETRIES + 1):
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if completed.returncode == 0:
+            break
+        if (
+            attempt < _SWIFTPM_LOCK_RETRIES
+            and _SWIFTPM_LOCK_MARKER in "\n".join(
+                part for part in [completed.stdout, completed.stderr] if part
+            )
+        ):
+            time.sleep(_SWIFTPM_LOCK_BACKOFF_SECONDS * (attempt + 1))
+            continue
+        raise subprocess.CalledProcessError(
+            completed.returncode,
+            command,
+            output=completed.stdout,
+            stderr=completed.stderr,
+        )
 
     for stream in (completed.stdout, completed.stderr):
         if not stream:

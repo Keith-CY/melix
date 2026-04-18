@@ -403,6 +403,8 @@ extension MelixCLICommand {
             return "lora.activate"
         case .loraRemoveDerived:
             return "lora.remove-derived"
+        case .loraPublish:
+            return "lora.publish"
         case .loraDatasetInspect:
             return "lora.dataset.inspect"
         case .loraDatasetBuild:
