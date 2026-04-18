@@ -5771,6 +5771,67 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertTrue(allClose(output, expected).all().item())
         }
     }
+
+    func testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let query = MLXArray([Float(0.25), Float(-0.5), Float(0.75), Float(1.0)])
+            let packedKeys = MLXArray(
+                [
+                    Int32(0x31), Int32(0x75),
+                    Int32(0x42), Int32(0x86),
+                    Int32(0x0f), Int32(0xa9),
+                ],
+                [3, 2]
+            )
+            let keyScales = MLXArray(
+                [Float(0.5), Float(0.25), Float(1.0), Float(0.125), Float(0.2), Float(0.75)],
+                [3, 2]
+            )
+            let keyBiases = MLXArray(
+                [Float(-1.0), Float(0.5), Float(-2.0), Float(-0.25), Float(0.0), Float(-3.0)],
+                [3, 2]
+            )
+            let packedValues = MLXArray(
+                [
+                    Int32(0x10), Int32(0x32),
+                    Int32(0x23), Int32(0x01),
+                    Int32(0x11), Int32(0x11),
+                ],
+                [3, 2]
+            )
+            let valueScales = MLXArray(
+                [Float(1.0), Float(0.5), Float(0.25), Float(1.0), Float(0.5), Float(0.25)],
+                [3, 2]
+            )
+            let valueBiases = MLXArray(
+                [Float(0.0), Float(-1.0), Float(0.5), Float(0.0), Float(-0.5), Float(0.25)],
+                [3, 2]
+            )
+
+            let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(
+                query: query,
+                packedKeys: packedKeys,
+                keyScales: keyScales,
+                keyBiases: keyBiases,
+                packedValues: packedValues,
+                valueScales: valueScales,
+                valueBiases: valueBiases,
+                sequenceLength: 3,
+                headDimension: 4,
+                groupSize: 2
+            )
+
+            let expected = MLXArray([
+                Float(0.021352084),
+                Float(0.096066497),
+                Float(0.469048419),
+                Float(0.491459166),
+            ])
+            XCTAssertEqual(output.shape, [4])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected).all().item())
+        }
+    }
     #endif
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {

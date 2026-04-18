@@ -101,14 +101,20 @@ and dispatch a custom `MLXFast.metalKernel(...)` kernel:
 - `TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(...)`
   dispatches an isolated packed-q4 value decode plus attention-weight
   accumulation kernel for a single query token
+- `TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(...)`
+  dispatches an isolated packed-q4 key score, stable softmax, and value
+  accumulation kernel for a single query token in one custom Metal dispatch
 - `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`
-  and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`
+  `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`,
+  and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`
   run the kernels under the existing temporary `default.metallib` fixture and
   skip only when no local MLX metallib is available
 
-This does not implement TurboQuant attention or route runtime decode through a
-new cache. It only removes the uncertainty around whether the current Swift
-package can host custom Metal kernels for packed-q4 decode work.
+This does not route runtime decode through a new TurboQuant cache. The fused
+attention smoke kernel intentionally favors capability and correctness over the
+final parallel layout, so it removes uncertainty around whether the current
+Swift package can host custom Metal kernels for packed-q4 score, softmax, and
+value work without claiming an optimized runtime path.
 
 ## Before And After Metrics
 
@@ -166,8 +172,9 @@ with a fused decode implementation. The recommended order is:
    dispatch surface. The text worker target now has the `MLXFast` product
    dependency, a runtime smoke test that dispatches an identity custom kernel,
    and an isolated MSE q4 value decode plus attention-weight accumulation
-   kernel. The next implementation should extend this isolated kernel toward
-   score plus softmax plus value before changing the active runtime path.
+   kernel, and an isolated MSE q4 score plus softmax plus value kernel. The
+   next implementation should turn this proof into a feature-gated cache path
+   with release-gated metrics before changing the default active runtime path.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state

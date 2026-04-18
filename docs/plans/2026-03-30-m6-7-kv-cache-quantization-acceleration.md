@@ -34,7 +34,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - fallback `turboquant-q4` probes must fail the explicit fused release gate in `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`
 - the report CLI supports `--require-fused-turboquant`; use it for fused-kernel candidates, not for the current fallback post-run
 - architecture notes for the fused-kernel route live in `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`
-- the Swift custom Metal feasibility slice is covered by `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(...)`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`, and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`; it proves `MLXFast.metalKernel(...)` can compile and dispatch identity plus packed-q4 value decode work in the text worker target before any TurboQuant runtime path is changed
+- the Swift custom Metal feasibility slice is covered by `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(...)`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`, and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`; it proves `MLXFast.metalKernel(...)` can compile and dispatch identity, packed-q4 value decode, and one-dispatch packed-q4 score plus softmax plus value work in the text worker target before any TurboQuant runtime path is changed
 
 ## Verification
 

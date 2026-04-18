@@ -38,8 +38,8 @@ Swift custom Metal smoke tests use the same runtime requirement. The
 `WorkerScaffoldTests/testTurboQuantMetalCapabilityRuns...` tests create a
 temporary `default.metallib` symlink from a discoverable local MLX
 `mlx.metallib`; they skip when no local metallib is available and dispatch the
-custom `MLXFast.metalKernel(...)` identity and packed-q4 value decode kernels
-when one is present.
+custom `MLXFast.metalKernel(...)` identity, packed-q4 value decode, and
+packed-q4 score plus softmax plus value kernels when one is present.
 
 ## Command
 
