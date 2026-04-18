@@ -25,7 +25,7 @@ one family update.
 ## Planned Change
 
 Use Dependabot's `directories` key to cover all Swift package manifests from one Swift ecosystem
-entry. Add a single-ecosystem `swift-grpc` group with the pattern `github.com/grpc/*`.
+entry. Add a single-ecosystem `swift-grpc` group with the pattern `*github.com/grpc/*`.
 
 This keeps non-gRPC Swift dependencies outside the group so unrelated Apple, Swift Server, or other
 Swift package updates can still surface separately. It also avoids a broad all-Swift dependency
@@ -44,12 +44,12 @@ rollup, which would make failures harder to isolate.
 Local verification for this slice:
 
 ```bash
-ruby -ryaml -e 'data = YAML.load_file(".github/dependabot.yml"); raise "bad version" unless data["version"] == 2; swift = data["updates"].select { |entry| entry["package-ecosystem"] == "swift" }; raise "expected one swift updater, got #{swift.length}" unless swift.length == 1; expected_dirs = ["/", "/packages/protocol/swift", "/services/mlx-text-worker-swift", "/services/control-plane-swift", "/apps/macos-menubar"]; raise "bad directories" unless swift[0]["directories"] == expected_dirs; raise "bad swift-grpc patterns" unless swift[0].dig("groups", "swift-grpc", "patterns") == ["github.com/grpc/*"]; puts "dependabot swift grouping config ok"'
+ruby -ryaml -e 'data = YAML.load_file(".github/dependabot.yml"); raise "bad version" unless data["version"] == 2; swift = data["updates"].select { |entry| entry["package-ecosystem"] == "swift" }; raise "expected one swift updater, got #{swift.length}" unless swift.length == 1; expected_dirs = ["/", "/packages/protocol/swift", "/services/mlx-text-worker-swift", "/services/control-plane-swift", "/apps/macos-menubar"]; raise "bad directories" unless swift[0]["directories"] == expected_dirs; raise "bad swift-grpc patterns" unless swift[0].dig("groups", "swift-grpc", "patterns") == ["*github.com/grpc/*"]; puts "dependabot swift grouping config ok"'
 git diff --check
 ```
 
 GitHub-side verification happens on the next scheduled Dependabot run. The expected observable
-outcome is a consolidated `swift-grpc` pull request when a dependency matching `github.com/grpc/*`
+outcome is a consolidated `swift-grpc` pull request when a dependency matching `*github.com/grpc/*`
 has updates in more than one Swift package directory.
 
 ## Known Gaps

@@ -33,4 +33,4 @@ updates:
     groups:
       swift-grpc:
         patterns:
-          - "github.com/grpc/*"
+          - "*github.com/grpc/*"
