@@ -28,7 +28,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - real-model helper code must reuse the repository's Phase 8 small-text-model convention instead of duplicating Qwen3.5 fixture resolution
 - the shared real-model helper should keep deterministic test fixtures local, while allowing benchmark commands to resolve an existing local Hugging Face cache or managed model path before falling back to the Hub id
 - Phase 8 real-model E2E uses `mlx-community/Qwen3.5-0.8B-OptiQ-4bit`; the Swift active-KV pre-optimization baseline currently uses `mlx-community/Qwen3-0.6B-4bit` because the pinned Swift MLXLLM registry does not support `model_type = qwen3_5`
-- live Swift MLX model probes must run with a metallib matching the Swift MLX dependency; `MELIX_SWIFT_MLX_METALLIB_PATH` should point at an MLX 0.24.2 `mlx.metallib` when the Python worker environment carries a newer MLX wheel
+- live Swift MLX model probes must run with a metallib matching the Swift MLX dependency; `MELIX_SWIFT_MLX_METALLIB_PATH` should point at an `mlx_metal` 0.29.1 `mlx.metallib` matching `mlx-swift` 0.29.1 when the Python worker environment carries a newer MLX wheel
 - the first post-baseline optimization removes redundant decode-side quantization maintenance calls once the cache is already quantized; the post-run evidence is `docs/metrics/phase2-active-kv-decode-guard-postopt.json`
 - `turboquant-q4` must be treated as a measured fallback profile until the kernel path is no longer `fallback`; true TurboQuant optimization requires a fused decode kernel path
 - fallback `turboquant-q4` probes must fail the explicit fused release gate in `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode`

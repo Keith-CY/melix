@@ -32,7 +32,8 @@ When the Python worker environment contains a newer MLX wheel, start the Swift
 text worker with a metallib matching the pinned Swift MLX runtime:
 
 - env: `MELIX_SWIFT_MLX_METALLIB_PATH`
-- expected version for this baseline: MLX `0.24.2` `mlx.metallib`
+- expected version for this baseline: `mlx_metal` `0.29.1` `mlx.metallib`
+  matching `mlx-swift` `0.29.1`
 
 Swift custom Metal smoke tests use the same runtime requirement. The
 `WorkerScaffoldTests/testTurboQuantMetalCapabilityRuns...` tests create a
@@ -47,7 +48,7 @@ packed-q4 score plus softmax plus value kernels when one is present.
 export MELIX_RUNTIME_DIR="${MELIX_RUNTIME_DIR:-/tmp/melix-phase2-qwen3-preopt}"
 export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-11438}"
 export MELIX_DEV_TEXT_MODEL_PATH="/path/to/mlx-community/Qwen3-0.6B-4bit"
-export MELIX_SWIFT_MLX_METALLIB_PATH="/path/to/mlx-0.24.2/mlx.metallib"
+export MELIX_SWIFT_MLX_METALLIB_PATH="/path/to/mlx_metal-0.29.1/mlx.metallib"
 
 bash scripts/dev_up.sh --prefer-built
 
@@ -201,9 +202,12 @@ The comparison block is the release-gate evidence for before/after active-KV opt
 
 For the current decode-guard post-run, `decode_affine_q4` and
 `decode_turboquant_q4` both report `active_kv_decode_quantize_total_us = 0`
-across all five repeats. The end-to-end throughput overhead remains about 43
-percent, so the remaining optimization target is the quantized attention model
-call and fused kernel path, not decode-loop quantization maintenance.
+across all five repeats. The fused TurboQuant candidate still reports
+`active_kv_kernel_path = "fallback"`, `active_kv_runtime_route = "blocked"`,
+and `active_kv_runtime_block_reason = "attention_hook_unavailable"`. The
+end-to-end throughput overhead remains about 46 percent, so the remaining
+optimization target is the quantized attention model call and fused kernel path,
+not decode-loop quantization maintenance.
 
 For any future fused TurboQuant claim, `decode_turboquant_q4` must report:
 
