@@ -394,6 +394,7 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
                 "active_kv_runtime_route": "blocked",
                 "active_kv_runtime_block_reason": "attention_hook_unavailable",
                 "active_kv_fallback_count": 1,
+                "active_kv_candidate_eligibility_check_count": 64,
                 "active_kv_decode_quantize_total_us": 0,
                 "active_kv_estimated_memory_savings_pct": 75,
             }
@@ -434,6 +435,7 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
+    assert probe["runtime_evidence"]["candidate_eligibility_check_count"] == 64
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert probe["runtime_evidence"]["observed_runtime_routes"] == ["blocked"]
     assert probe["runtime_evidence"]["observed_runtime_block_reasons"] == [
@@ -456,6 +458,7 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
                 "active_kv_kernel_path": "fallback",
                 "active_kv_fallback_count": 1,
                 "active_kv_candidate_dispatch_code": 1,
+                "active_kv_candidate_eligibility_check_count": 1,
                 "active_kv_decode_quantize_total_us": 0,
                 "active_kv_estimated_memory_savings_pct": 75,
             }
@@ -474,6 +477,7 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
     assert probe["status"] == "runtime_blocked"
     assert probe["capability_evidence"]["runtime_path"] == "candidate_dispatch_connected"
     assert probe["runtime_evidence"]["candidate_dispatch_count"] == 1
+    assert probe["runtime_evidence"]["candidate_eligibility_check_count"] == 1
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert "worker_tps_overhead_pct=42.62" in probe["runtime_evidence"]["failures"]
 
@@ -594,6 +598,8 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_estimated_quantized_bytes": 100,
                     "swift_text.active_kv_estimated_memory_savings_pct": 75,
                     "swift_text.active_kv_fallback_count": 0,
+                    "swift_text.active_kv_candidate_dispatch_code": 0,
+                    "swift_text.active_kv_candidate_eligibility_check_count": 7,
                 }
             }
         ),
@@ -635,6 +641,7 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_runtime_route"] is None
     assert active["active_kv_runtime_block_reason"] is None
     assert active["active_kv_estimated_memory_savings_pct"] == 75
+    assert active["active_kv_candidate_eligibility_check_count"] == 7
 
 
 def test_active_kv_helper_edges_return_stable_defaults() -> None:
@@ -656,6 +663,7 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert inactive_metrics["active_kv_runtime_route"] is None
     assert inactive_metrics["active_kv_runtime_block_reason"] is None
     assert inactive_metrics["active_kv_estimated_memory_savings_pct"] == 0
+    assert inactive_metrics["active_kv_candidate_eligibility_check_count"] == 0
 
     assert phase2_metrics_report.active_kv_backend_name("not-an-int") is None
     assert phase2_metrics_report.active_kv_backend_name(7) == "unknown_7"

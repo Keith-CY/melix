@@ -56,6 +56,7 @@ struct ActiveKVProbeSummary: Sendable {
     let estimatedMemorySavingsPercent: Int
     let fallbackCount: Int
     let candidateDispatchCode: Int
+    let candidateEligibilityCheckCount: Int
 
     init(
         backendCode: Int,
@@ -70,7 +71,8 @@ struct ActiveKVProbeSummary: Sendable {
         estimatedQuantizedBytes: Int,
         estimatedMemorySavingsPercent: Int,
         fallbackCount: Int,
-        candidateDispatchCode: Int = 0
+        candidateDispatchCode: Int = 0,
+        candidateEligibilityCheckCount: Int = 0
     ) {
         self.backendCode = backendCode
         self.kernelPathCode = kernelPathCode
@@ -85,6 +87,7 @@ struct ActiveKVProbeSummary: Sendable {
         self.estimatedMemorySavingsPercent = estimatedMemorySavingsPercent
         self.fallbackCount = fallbackCount
         self.candidateDispatchCode = candidateDispatchCode
+        self.candidateEligibilityCheckCount = candidateEligibilityCheckCount
     }
 
     var decodeModelAverageMicros: Int {

@@ -317,6 +317,10 @@ struct TextDecodeEngine: Sendable {
             "swift_text.active_kv_candidate_dispatch_code",
             value: probe.candidateDispatchCode
         )
+        metrics.set(
+            "swift_text.active_kv_candidate_eligibility_check_count",
+            value: probe.candidateEligibilityCheckCount
+        )
     }
 }
 

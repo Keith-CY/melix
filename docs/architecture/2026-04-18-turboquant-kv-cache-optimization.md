@@ -144,6 +144,12 @@ and `active_kv_runtime_block_reason`. Current fallback reports should show the
 route blocked by the missing attention hook, which makes the release evidence
 auditable without treating candidate dispatch as runtime success.
 
+The default runtime keeps candidate dispatch disabled while the route is
+blocked. `active_kv_candidate_eligibility_check_count` measures the remaining
+candidate-check work in the decode loop; the current optimized default path
+precomputes whether a candidate probe can run and reports zero checks unless
+`MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` is set before worker startup.
+
 This still deliberately keeps `active_kv_kernel_path = "fallback"` until model
 attention is actually routed through a fused TurboQuant cache. Model logits
 still come from the Swift MLX model path, so the release gate remains blocked

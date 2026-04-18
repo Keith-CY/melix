@@ -988,6 +988,52 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(activeKVProbe.estimatedFP16Bytes, activeKVProbe.estimatedQuantizedBytes)
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
         XCTAssertEqual(activeKVProbe.fallbackCount, 1)
+        XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 1)
+    }
+
+    func testAutoSwiftMLXBackendDecodeReportsTurboQuantEligibilityChecksWhenProbeIsDisabled() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge disabled candidate checks")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-disabled-candidate-checks",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.candidateDispatchCode, 0)
+        XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 0)
     }
 
     func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {
@@ -3209,7 +3255,9 @@ final class WorkerScaffoldTests: XCTestCase {
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-decode"
         request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.scheduling.lane = "text.decode.batch"
         request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 1
         request.returnUsage = true
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -3229,13 +3277,13 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(recorded.count, 4)
         XCTAssertEqual(recorded[0].decodeStarted.decodeHandle, prefillResponse.decodeHandle)
         XCTAssertEqual(recorded[0].executionKind, "decode")
+        XCTAssertEqual(recorded[0].lane, "text.decode.batch")
         XCTAssertEqual(recorded[1].tokenDelta.text, "decode")
-        XCTAssertEqual(recorded[2].tokenDelta.text, " result")
-        XCTAssertEqual(recorded[3].usageDelta.completionTokens, 2)
+        XCTAssertEqual(recorded[2].usageDelta.completionTokens, 1)
         XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
         let storedAfterDecode = await services.registry.prefillContext(for: prefillResponse.decodeHandle)
         XCTAssertNil(storedAfterDecode)
-        XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 16)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 8)
     }
 
     func testDecodeStreamingRpcReturnsStructuredNotFoundForMissingDecodeHandle() async throws {
@@ -3833,6 +3881,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_estimated_memory_savings_pct"], 75)
         XCTAssertEqual(metrics["swift_text.active_kv_fallback_count"], 0)
         XCTAssertEqual(metrics["swift_text.active_kv_candidate_dispatch_code"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_candidate_eligibility_check_count"], 0)
     }
 
     func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {

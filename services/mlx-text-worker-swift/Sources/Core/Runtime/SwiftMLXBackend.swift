@@ -716,6 +716,12 @@ private func makePreparedDecodeEvents(
             var decodeModelTotalMicros = 0
             var decodeQuantizeTotalMicros = 0
             var didDispatchTurboQuantFusedAttention = false
+            var turboQuantCandidateEligibilityCheckCount = 0
+            let shouldEvaluateTurboQuantFusedAttentionCandidate = shouldDispatchTurboQuantFusedAttentionCandidate(
+                cache: cache,
+                acceleration: acceleration,
+                candidateProbeEnabled: turboQuantCandidateProbeEnabled
+            )
             var shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
                 cache: cache,
                 kvBits: parameters.kvBits,
@@ -750,7 +756,8 @@ private func makePreparedDecodeEvents(
                 }
 
                 let nextInput = LMInput.Text(tokens: token)
-                if !didDispatchTurboQuantFusedAttention {
+                if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
+                    turboQuantCandidateEligibilityCheckCount += 1
                     didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
                         cache: cache,
                         acceleration: acceleration,
@@ -790,7 +797,8 @@ private func makePreparedDecodeEvents(
                 decodeModelTotalMicros: decodeModelTotalMicros,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
                 decodeTokenCount: generatedTokenCount,
-                turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention
+                turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention,
+                turboQuantCandidateEligibilityCheckCount: turboQuantCandidateEligibilityCheckCount
             )
             continuation.yield(.summary(
                 TextGenerationSummary(
@@ -849,7 +857,8 @@ private func makeActiveKVProbeSummary(
     decodeModelTotalMicros: Int,
     decodeQuantizeTotalMicros: Int,
     decodeTokenCount: Int,
-    turboQuantFusedAttentionDispatched: Bool = false
+    turboQuantFusedAttentionDispatched: Bool = false,
+    turboQuantCandidateEligibilityCheckCount: Int = 0
 ) -> ActiveKVProbeSummary? {
     let normalized = normalizedAccelerationPolicy(acceleration)
     guard normalized.mode == .activeKvQuantized else {
@@ -890,7 +899,8 @@ private func makeActiveKVProbeSummary(
         candidateDispatchCode: activeKVCandidateDispatchCode(
             for: normalized,
             turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
-        )
+        ),
+        candidateEligibilityCheckCount: turboQuantCandidateEligibilityCheckCount
     )
 }
 

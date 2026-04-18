@@ -45,6 +45,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.active_kv_estimated_quantized_bytes": 0,
         "swift_text.active_kv_estimated_memory_savings_pct": 0,
         "swift_text.active_kv_fallback_count": 0,
+        "swift_text.active_kv_candidate_dispatch_code": 0,
+        "swift_text.active_kv_candidate_eligibility_check_count": 0,
         "swift_text.cache_l1_bytes": 0,
         "swift_text.cache_l2_bytes": 0,
         "swift_text.cache_block_count": 0,
