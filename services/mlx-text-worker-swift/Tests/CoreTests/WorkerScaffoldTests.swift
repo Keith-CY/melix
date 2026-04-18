@@ -5734,6 +5734,43 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertTrue(allClose(output, input).all().item())
         }
     }
+
+    func testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let packedValues = MLXArray(
+                [
+                    Int32(0x31), Int32(0x75),
+                    Int32(0x42), Int32(0x86),
+                    Int32(0x0f), Int32(0xa9),
+                ],
+                [3, 2]
+            )
+            let weights = MLXArray([Float(0.2), Float(0.3), Float(0.5)])
+            let scales = MLXArray(
+                [Float(0.5), Float(0.25), Float(1.0), Float(0.125), Float(0.2), Float(0.75)],
+                [3, 2]
+            )
+            let biases = MLXArray(
+                [Float(-1.0), Float(0.5), Float(-2.0), Float(-0.25), Float(0.0), Float(-3.0)],
+                [3, 2]
+            )
+
+            let output = TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(
+                packedValues: packedValues,
+                weights: weights,
+                scales: scales,
+                biases: biases,
+                sequenceLength: 3,
+                headDimension: 4,
+                groupSize: 2
+            )
+
+            let expected = MLXArray([Float(1.4), Float(0.7), Float(2.375), Float(2.925)])
+            XCTAssertEqual(output.shape, [4])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected).all().item())
+        }
+    }
     #endif
 
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
