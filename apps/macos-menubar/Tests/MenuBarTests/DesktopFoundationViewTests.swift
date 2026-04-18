@@ -100,6 +100,22 @@ struct DesktopFoundationViewTests {
         #expect(DesktopToolCategory.system.sections == [.logs, .settings])
     }
 
+    @Test("tool categories cover every tool section exactly once")
+    @MainActor
+    func toolCategoriesCoverEveryToolSectionExactlyOnce() {
+        let categorizedSections = DesktopToolCategory.allCases.flatMap(\.sections)
+        let missingSections = DesktopToolSection.allCases.filter { section in
+            categorizedSections.contains(section) == false
+        }
+        let duplicateSections = DesktopToolSection.allCases.filter { section in
+            categorizedSections.filter { $0 == section }.count > 1
+        }
+
+        #expect(missingSections.isEmpty)
+        #expect(duplicateSections.isEmpty)
+        #expect(categorizedSections.count == DesktopToolSection.allCases.count)
+    }
+
     @Test("workspace surfaces use shared icon pane controls")
     @MainActor
     func workspaceSurfacesUseSharedIconPaneControls() async throws {
