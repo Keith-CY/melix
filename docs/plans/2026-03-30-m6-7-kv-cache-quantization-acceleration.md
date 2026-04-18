@@ -38,6 +38,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - `swift_worker_direct.active_kv_fused_candidate_probes.turboquant_q4` records smoke capability separately from runtime evidence and must remain `runtime_blocked` for fallback reports
 - the second runtime candidate dispatches a fused MSE q4 Metal kernel from live MLXLM `QuantizedKVCache` state when available, falls back to the fixed smoke arrays otherwise, and reports `active_kv_candidate_dispatch_code = 1` after either candidate dispatch runs; `active_kv_kernel_path` must remain `fallback` until model attention is actually routed through a fused TurboQuant cache, and it is not a success condition unless `worker_tps_overhead_pct <= 15`
 - `WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable` records the current integration limit: MLXLM model attention still calls dependency-owned `MLXLMCommon.attentionWithCacheUpdate(...)`, so Melix must keep the runtime route blocked even when the live q4 candidate dispatch succeeds
+- GitHub issue [#35](https://github.com/Keith-CY/melix/issues/35) tracks the deferred TurboQuant runtime hook work; do not unblock the fused active-KV release gate until a real-model metrics JSON shows both `worker_tps_overhead_pct <= 15` and `active_kv_kernel_path != fallback`
 
 ## Verification
 
