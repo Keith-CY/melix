@@ -35,6 +35,7 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - the report CLI supports `--require-fused-turboquant`; use it for fused-kernel candidates, not for the current fallback post-run
 - architecture notes for the fused-kernel route live in `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`
 - the Swift custom Metal feasibility slice is covered by `TurboQuantMetalKernelCapability.runIdentitySmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(...)`, `TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(...)`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel`, `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel`, and `WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel`; it proves `MLXFast.metalKernel(...)` can compile and dispatch identity, packed-q4 value decode, and one-dispatch packed-q4 score plus softmax plus value work in the text worker target before any TurboQuant runtime path is changed
+- `swift_worker_direct.active_kv_fused_candidate_probes.turboquant_q4` records smoke capability separately from runtime evidence and must remain `runtime_blocked` for fallback reports
 
 ## Verification
 

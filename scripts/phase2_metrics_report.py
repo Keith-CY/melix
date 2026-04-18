@@ -41,6 +41,25 @@ DEFAULT_QUEUE_PROMPT = "\n".join(
     ]
 )
 DEFAULT_ABORT_PROMPT = " ".join(f"decode-abort-{index}" for index in range(200))
+TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
+    "status": "smoke_proven",
+    "runtime_path": "not_connected",
+    "dispatch": "single_custom_metal_dispatch",
+    "quantization": "mse_q4",
+    "operations": ["key_score", "stable_softmax", "value_accumulate"],
+    "smoke_tests": [
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsCustomIdentityKernel",
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel",
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel",
+    ],
+}
+TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS = [
+    "active_kv_kernel_path != fallback",
+    "active_kv_fallback_count == 0",
+    "active_kv_decode_quantize_total_us == 0",
+    "active_kv_estimated_memory_savings_pct >= 67",
+    "--require-fused-turboquant exits 0",
+]
 
 
 @dataclass
@@ -400,6 +419,7 @@ def collect_direct_phase_two_metrics(
             raise RuntimeError(f"UnloadModel failed for phase 2 metrics: {unload.error}")
 
     active_kv_release_gates = build_active_kv_release_gates(decode_rows, comparisons)
+    active_kv_fused_candidate_probes = build_active_kv_fused_candidate_probes(active_kv_release_gates)
     return {
         "swift_worker_direct": {
             "load_model_ms": load_model_ms,
@@ -408,6 +428,7 @@ def collect_direct_phase_two_metrics(
             "decode": decode_rows,
             "comparisons": comparisons,
             "active_kv_release_gates": active_kv_release_gates,
+            "active_kv_fused_candidate_probes": active_kv_fused_candidate_probes,
             "abort": abort_probe,
         }
     }
@@ -980,12 +1001,17 @@ def ensure_active_kv_release_gates(report: dict[str, Any]) -> None:
     direct = report.get("swift_worker_direct")
     if not isinstance(direct, dict):
         return
-    if "active_kv_release_gates" in direct:
-        return
     decode_rows = direct.get("decode", [])
     comparisons = direct.get("comparisons", {})
-    if isinstance(decode_rows, list) and isinstance(comparisons, dict):
+    if (
+        "active_kv_release_gates" not in direct
+        and isinstance(decode_rows, list)
+        and isinstance(comparisons, dict)
+    ):
         direct["active_kv_release_gates"] = build_active_kv_release_gates(decode_rows, comparisons)
+    gates = direct.get("active_kv_release_gates")
+    if "active_kv_fused_candidate_probes" not in direct and isinstance(gates, dict):
+        direct["active_kv_fused_candidate_probes"] = build_active_kv_fused_candidate_probes(gates)
 
 
 def build_active_kv_release_gates(
@@ -1041,6 +1067,40 @@ def build_active_kv_release_gates(
             "estimated_memory_savings_pct": memory_savings,
             "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
             "failures": failures,
+        }
+    }
+
+
+def build_active_kv_fused_candidate_probes(
+    release_gates: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    gate = release_gates.get("turboquant_fused_decode", {})
+    gate_status = str(gate.get("status", "missing"))
+    if gate_status == "pass":
+        status = "runtime_candidate_pass"
+        next_required_evidence: list[str] = []
+    elif gate_status == "not_requested":
+        status = "not_requested"
+        next_required_evidence = ["decode_turboquant_q4 profile requested"]
+    else:
+        status = "runtime_blocked"
+        next_required_evidence = list(TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS)
+
+    return {
+        "turboquant_q4": {
+            "status": status,
+            "profile_label": "decode_turboquant_q4",
+            "capability_evidence": dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE),
+            "runtime_evidence": {
+                "release_gate_status": gate_status,
+                "observed_kernel_paths": gate.get("observed_kernel_paths", []),
+                "fallback_count": gate.get("fallback_count"),
+                "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
+                "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
+                "worker_tps_overhead_pct": gate.get("worker_tps_overhead_pct"),
+                "failures": gate.get("failures", []),
+            },
+            "next_required_evidence": next_required_evidence,
         }
     }
 
@@ -1226,6 +1286,34 @@ def render_report(report: dict[str, Any]) -> str:
                 "estimated_memory_savings_pct",
                 "worker_tps_overhead_pct",
                 "failures",
+            ],
+        ),
+        "",
+        "Active-KV Fused Candidate Probes",
+        format_table(
+            [
+                {
+                    "candidate": name,
+                    "capability_status": values.get("capability_evidence", {}).get("status"),
+                    "runtime_path": values.get("capability_evidence", {}).get("runtime_path"),
+                    "release_gate_status": values.get("runtime_evidence", {}).get("release_gate_status"),
+                    "observed_kernel_paths": values.get("runtime_evidence", {}).get("observed_kernel_paths"),
+                    "next_required_evidence": values.get("next_required_evidence"),
+                    **values,
+                }
+                for name, values in report["swift_worker_direct"]
+                .get("active_kv_fused_candidate_probes", {})
+                .items()
+            ],
+            [
+                "candidate",
+                "status",
+                "profile_label",
+                "capability_status",
+                "runtime_path",
+                "release_gate_status",
+                "observed_kernel_paths",
+                "next_required_evidence",
             ],
         ),
         "",

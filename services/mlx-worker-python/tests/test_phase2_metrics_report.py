@@ -359,6 +359,68 @@ def test_active_kv_release_gates_pass_nonfallback_turboquant_probe() -> None:
     assert gate["failures"] == []
 
 
+def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_evidence() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": "fallback",
+                "active_kv_fallback_count": 1,
+                "active_kv_decode_quantize_total_us": 0,
+                "active_kv_estimated_memory_savings_pct": 75,
+            }
+        ],
+        {
+            "turboquant_q4_vs_baseline": {
+                "worker_tps_overhead_pct": 43.55,
+                "active_kv_kernel_path": "fallback",
+            }
+        },
+    )
+
+    probes = phase2_metrics_report.build_active_kv_fused_candidate_probes(gates)
+
+    probe = probes["turboquant_q4"]
+    assert probe["status"] == "runtime_blocked"
+    assert probe["profile_label"] == "decode_turboquant_q4"
+    assert probe["capability_evidence"]["status"] == "smoke_proven"
+    assert probe["capability_evidence"]["runtime_path"] == "not_connected"
+    assert (
+        "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert probe["runtime_evidence"]["release_gate_status"] == "fail"
+    assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
+    assert "active_kv_kernel_path != fallback" in probe["next_required_evidence"]
+
+
+def test_ensure_active_kv_release_gates_backfills_fused_candidate_from_existing_gate() -> None:
+    report = {
+        "swift_worker_direct": {
+            "active_kv_release_gates": {
+                "turboquant_fused_decode": {
+                    "status": "pass",
+                    "observed_kernel_paths": ["tq_mse_single"],
+                    "fallback_count": 0,
+                    "decode_quantize_total_us": 0,
+                    "estimated_memory_savings_pct": 75,
+                    "worker_tps_overhead_pct": 12.5,
+                    "failures": [],
+                }
+            }
+        }
+    }
+
+    phase2_metrics_report.ensure_active_kv_release_gates(report)
+
+    probe = report["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]
+    assert probe["status"] == "runtime_candidate_pass"
+    assert probe["runtime_evidence"]["release_gate_status"] == "pass"
+    assert probe["runtime_evidence"]["observed_kernel_paths"] == ["tq_mse_single"]
+    assert probe["next_required_evidence"] == []
+
+
 def test_fused_turboquant_gate_failure_reporting_handles_malformed_reports() -> None:
     assert phase2_metrics_report.fused_turboquant_gate_failures({}) == ["swift_worker_direct=missing"]
     assert phase2_metrics_report.fused_turboquant_gate_failures(
@@ -825,6 +887,12 @@ def test_main_can_require_fused_turboquant_after_writing_report(
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert emitted["swift_worker_direct"]["active_kv_release_gates"]["turboquant_fused_decode"]["status"] == "fail"
     assert written["swift_worker_direct"]["active_kv_release_gates"]["turboquant_fused_decode"]["status"] == "fail"
+    assert emitted["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["status"] == (
+        "runtime_blocked"
+    )
+    assert written["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["runtime_evidence"][
+        "release_gate_status"
+    ] == "fail"
 
 
 def test_emit_report_writes_json_output(tmp_path: Path) -> None:

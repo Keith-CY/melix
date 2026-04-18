@@ -206,6 +206,7 @@ model class.
 Release-gate targets:
 
 - `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode.status = "pass"`
+- `swift_worker_direct.active_kv_fused_candidate_probes.turboquant_q4.status = "runtime_candidate_pass"` as supporting evidence; it does not replace the release gate
 - `active_kv_kernel_path` is not `fallback` for `decode_turboquant_q4`
 - `active_kv_fallback_count = 0`
 - `active_kv_decode_quantize_total_us = 0` for already-quantized decode
