@@ -100,6 +100,20 @@ uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_me
   --output docs/metrics/phase2-active-kv-fused-turboquant-candidate.json
 ```
 
+To backfill the fused-candidate probe block from an already captured real-model
+post-run, use `--input-json`. This mode does not require a running stack and
+writes the output before applying `--require-fused-turboquant`, so the current
+fallback evidence is still preserved even though the command exits non-zero.
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py \
+  --input-json docs/metrics/phase2-active-kv-decode-guard-postopt.json \
+  --json \
+  --require-fused-turboquant \
+  --output docs/metrics/phase2-active-kv-fused-turboquant-candidate.json
+```
+
 ## Evidence To Inspect
 
 ### Active KV Quantization

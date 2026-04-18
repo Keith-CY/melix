@@ -895,6 +895,128 @@ def test_main_can_require_fused_turboquant_after_writing_report(
     ] == "fail"
 
 
+def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    input_path = tmp_path / "postopt.json"
+    output_path = tmp_path / "candidate.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "model_path": "/models/qwen-real-small",
+                "swift_worker_direct": {
+                    "active_kv_release_gates": {
+                        "turboquant_fused_decode": {
+                            "status": "fail",
+                            "profile_label": "decode_turboquant_q4",
+                            "observed_kernel_paths": ["fallback"],
+                            "fallback_count": 5,
+                            "decode_quantize_total_us": 0,
+                            "estimated_memory_savings_pct": 75,
+                            "worker_tps_overhead_pct": 42.62,
+                            "failures": ["active_kv_kernel_path=fallback"],
+                        }
+                    },
+                    "decode": [],
+                    "prefill": [],
+                    "comparisons": {},
+                    "abort": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "resolve_stack_configuration",
+        Mock(side_effect=AssertionError("input JSON mode must not require a running stack")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--input-json",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--json",
+            "--require-fused-turboquant",
+        ],
+    )
+
+    try:
+        phase2_metrics_report.main()
+    except SystemExit as exc:
+        assert exc.code != 0
+        assert "active_kv_kernel_path=fallback" in str(exc)
+    else:
+        raise AssertionError("expected fused TurboQuant gate to fail")
+
+    emitted = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert emitted["model_path"] == "/models/qwen-real-small"
+    assert written["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["status"] == (
+        "runtime_blocked"
+    )
+    assert written["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["runtime_evidence"][
+        "observed_kernel_paths"
+    ] == ["fallback"]
+
+
+def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "postopt.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "swift_worker_direct": {
+                    "decode": [],
+                    "prefill": [],
+                    "comparisons": {},
+                    "abort": {},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "resolve_stack_configuration",
+        Mock(side_effect=AssertionError("input JSON mode must not require a running stack")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--input-json",
+            str(input_path),
+            "--json",
+        ],
+    )
+
+    phase2_metrics_report.main()
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["swift_worker_direct"]["active_kv_fused_candidate_probes"]["turboquant_q4"]["status"] == (
+        "not_requested"
+    )
+
+
+def test_load_report_json_rejects_non_object(tmp_path: Path) -> None:
+    input_path = tmp_path / "postopt.json"
+    input_path.write_text("[]", encoding="utf-8")
+
+    try:
+        phase2_metrics_report.load_report_json(input_path)
+    except RuntimeError as exc:
+        assert "must be a JSON object" in str(exc)
+    else:
+        raise AssertionError("expected non-object input report to fail")
+
+
 def test_emit_report_writes_json_output(tmp_path: Path) -> None:
     output_path = tmp_path / "metrics" / "phase2-affine-q4-preopt.json"
     report = {

@@ -127,11 +127,31 @@ def main() -> None:
     parser.add_argument("--output", default="", help="Optional path to write the rendered report.")
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
+        "--input-json",
+        default="",
+        help="Read an existing Phase 2 report JSON, backfill derived gates, and emit it without probing a live stack.",
+    )
+    parser.add_argument(
         "--require-fused-turboquant",
         action="store_true",
         help="Exit non-zero unless the turboquant-q4 probe reports a non-fallback fused decode kernel.",
     )
     args = parser.parse_args()
+
+    if args.input_json:
+        report = load_report_json(Path(args.input_json))
+        ensure_active_kv_release_gates(report)
+        rendered = emit_report(
+            report,
+            json_output=bool(args.json),
+            output_path=Path(args.output) if args.output else None,
+        )
+        print(rendered)
+        if args.require_fused_turboquant:
+            failures = fused_turboquant_gate_failures(report)
+            if failures:
+                raise SystemExit(f"Phase 2 fused TurboQuant gate failed: {'; '.join(failures)}")
+        return
 
     stack = resolve_stack_configuration(Path(args.runtime_dir))
     model = resolve_model_configuration(
@@ -232,6 +252,13 @@ def parse_env_file(path: Path) -> dict[str, str]:
         key, _, raw_value = line.removeprefix("export ").partition("=")
         values[key] = raw_value.strip().strip('"')
     return values
+
+
+def load_report_json(path: Path) -> dict[str, Any]:
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        raise RuntimeError(f"Phase 2 input report must be a JSON object: {path}")
+    return report
 
 
 def resolve_model_configuration(

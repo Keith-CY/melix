@@ -12,6 +12,7 @@ The current benchmark evidence is:
 | --- | --- | --- | --- |
 | Pre-optimization baseline | `docs/metrics/phase2-affine-q4-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4` |
 | Decode-guard post-optimization | `docs/metrics/phase2-active-kv-decode-guard-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Fused TurboQuant candidate audit | `docs/metrics/phase2-active-kv-fused-turboquant-candidate.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
