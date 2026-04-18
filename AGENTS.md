@@ -75,16 +75,19 @@ melix-dev-instance() {
     return 2
   fi
 
+  local repo_root
   local runtime_dir
   local melix_home
-  runtime_dir="$(pwd)/.runtime/sidecars/${instance_name}"
-  melix_home="$(pwd)/.runtime/home-${instance_name}"
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  runtime_dir="${repo_root}/.runtime/sidecars/${instance_name}"
+  melix_home="${repo_root}/.runtime/home-${instance_name}"
 
-  MELIX_SERVICE_INSTANCE_NAME="${instance_name}" \
-  MELIX_HTTP_PORT="${http_port}" \
-  MELIX_RUNTIME_DIR="${runtime_dir}" \
-  MELIX_HOME="${melix_home}" \
-  bash scripts/dev_up.sh
+  export MELIX_SERVICE_INSTANCE_NAME="${instance_name}"
+  export MELIX_HTTP_PORT="${http_port}"
+  export MELIX_RUNTIME_DIR="${runtime_dir}"
+  export MELIX_HOME="${melix_home}"
+
+  bash "${repo_root}/scripts/dev_up.sh"
 }
 ```
 
@@ -104,8 +107,12 @@ melix-dev-stop-instance() {
     return 2
   fi
 
-  MELIX_RUNTIME_DIR="$(pwd)/.runtime/sidecars/${instance_name}" \
-  bash scripts/dev_down.sh
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+  export MELIX_RUNTIME_DIR="${repo_root}/.runtime/sidecars/${instance_name}"
+
+  bash "${repo_root}/scripts/dev_down.sh"
 }
 ```
 
@@ -123,8 +130,10 @@ melix-dev-stop-instance wt-main
 ```
 
 If CLI or menu bar persisted state must be isolated, keep `MELIX_HOME`
-worktree-local as shown above. Do not share the default `~/.melix` state across
-parallel worktrees unless shared operator state is intentional.
+worktree-local as shown above. The start helper exports `MELIX_HOME` in the
+current shell session so later CLI commands use the same isolated state. Do not
+share the default `~/.melix` state across parallel worktrees unless shared
+operator state is intentional.
 
 ## Source of Truth Rules
 
