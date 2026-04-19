@@ -9,10 +9,10 @@ enum MelixDesignTokens {
 
     // MARK: - Accent
 
-    /// Brand teal. Used for places where the Melix identity must be fixed
-    /// regardless of the user's system accent (app icon, workspace badge,
-    /// printed/exported artifacts).
-    static let brandAccent = Color(red: 0x0F / 255, green: 0x76 / 255, blue: 0x6E / 255)
+    /// Brand teal (`#0F766E`). Used for places where the Melix identity
+    /// must be fixed regardless of the user's system accent (app icon,
+    /// workspace badge, printed/exported artifacts).
+    static let brandAccent = Color(red: 0x0F / 255.0, green: 0x76 / 255.0, blue: 0x6E / 255.0)
 
     /// System accent. Prefer this for interaction signals (focus, selection,
     /// active tab, one primary CTA per screen) so macOS users' accent
@@ -104,6 +104,10 @@ enum MelixDesignTokens {
         static let xs: CGFloat = 4
         static let sm: CGFloat = 8
         static let md: CGFloat = 12
+        /// Sanctioned half-step between `md` and `lg` for panel insets
+        /// where 12 reads tight and 16 reads loose. Documented exception
+        /// to the 4px base unit — see `docs/design-system/README.md`.
+        static let panelInset: CGFloat = 14
         static let lg: CGFloat = 16
         static let xl: CGFloat = 20
         static let xxl: CGFloat = 24

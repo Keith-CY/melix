@@ -44,11 +44,15 @@ The design system covers the **macOS operator app** UI kit.
 - **ALL CAPS** never used in the UI.
 
 ### Examples
-> `No Chat Sessions` — section empty state headline  
-> `Create a new chat after starting a Server Session.` — description  
-> `queued 2  active 1  bp 0.14` — scheduler lane status  
-> `smoke validation passed` — operation status  
-> `Train LoRA` — action button  
+> `No Chat Sessions` — section empty state headline
+>
+> `Create a new chat after starting a Server Session.` — description
+>
+> `queued 2  active 1  bp 0.14` — scheduler lane status
+>
+> `smoke validation passed` — operation status
+>
+> `Train LoRA` — action button
 
 ---
 
@@ -72,8 +76,8 @@ Typography is structure. Whitespace is hierarchy. Color is ink — reserved only
 - **No decorative or editorial typefaces.** Pure system type.
 
 ### Spacing
-- **Base unit: 4px.** All spacing is multiples: 4, 8, 12, 14, 16, 20, 24.
-- **Generous internal padding**: panels use 14–20px insets.
+- **Base unit: 4px.** Primary scale: 4, 8, 12, 16, 20, 24.
+- **14px is a sanctioned half-step** between 12 and 16, used for panel insets where 12 reads tight and 16 reads loose. Treat it as the one intentional exception to the 4px rule, not a precedent for further half-steps.
 - **Row spacing**: 6–12px between list items.
 - **Maximum whitespace**: always err toward more space, not less.
 
