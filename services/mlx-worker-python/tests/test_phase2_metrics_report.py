@@ -442,7 +442,7 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert (
-        "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanSharesScoresAcrossValueLanes"
+        "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes"
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert (
@@ -1208,7 +1208,7 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
     )
     assert "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState" in smoke_tests
     assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA" in smoke_tests
-    assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanSharesScoresAcrossValueLanes" in smoke_tests
+    assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes" in smoke_tests
     assert "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled" in smoke_tests
     assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch" in smoke_tests
     assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence" in smoke_tests

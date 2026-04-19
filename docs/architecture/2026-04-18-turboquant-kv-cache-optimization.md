@@ -22,14 +22,16 @@ The current benchmark evidence is:
 | Blocked fallback speedup post-optimization | `docs/metrics/phase2-active-kv-blocked-fallback-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Vendored TurboQuant runtime probe | `docs/metrics/phase2-active-kv-vendored-turboquant-runtime.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored shared-score speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-shared-scores.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Vendored online-softmax speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-online-softmax.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
-E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
-Swift MLXLLM registry does not yet support `model_type = qwen3_5`.
-The vendored-runtime probe attempted the Phase 8 Qwen3.5 model first, but direct
-Swift MLX load failed with `Unsupported model type: qwen3_5`; Qwen3-0.6B remains
-the supported real-model benchmark until the Swift registry gains Qwen3.5
-support.
+E2E convention. Melix now vendors Qwen3.5 model support from
+`mlx-swift-lm` 2.31.3, so the real Qwen3.5 stack can load and decode. Active-KV
+fused routing is still blocked for Qwen3.5 because the hybrid cache contains
+unsupported state for the current fused q4 attention route; Qwen3-0.6B remains
+the supported non-fallback fused-kernel benchmark until hybrid cache handling is
+implemented.
 
 ## External Reference Findings
 
@@ -89,6 +91,9 @@ The remaining gap is performance, not route availability. The first real-model
 vendored JSON reports `worker_tps_overhead_pct = 68.63`. A follow-up
 shared-score kernel layout reduces that to `60.87`, but the fused TurboQuant
 release gate remains failed because the required threshold is `<= 15`.
+The online-softmax follow-up keeps the non-fallback route and removes the
+threadgroup score-vector materialization, but its real-model JSON still reports
+`worker_tps_overhead_pct = 60.0`, so the release gate remains failed.
 
 ## Implemented Optimization
 
@@ -361,6 +366,14 @@ reports `candidate_dispatch_count = 0`, `fallback_count = 0`,
 `active_kv_estimated_memory_savings_pct = 75.0`, and
 `worker_tps_overhead_pct = 60.87`. This improves the vendored route by 7.76
 percentage points but still does not unblock the release gate.
+The online-softmax post-run keeps `candidate_dispatch_count = 0`,
+`fallback_count = 0`, `observed_kernel_paths = ["tq_mse_single"]`,
+`observed_runtime_routes = ["routed"]`,
+`active_kv_decode_quantize_total_us = 0`,
+`active_kv_decode_token_eval_total_us = 6601404`,
+`active_kv_estimated_memory_savings_pct = 75.0`, and
+`worker_tps_overhead_pct = 60.0`. This confirms the single-simdgroup online
+softmax route executes, but it still does not unblock the release gate.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -380,9 +393,12 @@ output dimension. The shared-score follow-up now launches one threadgroup per
 batch/query-head, reduces key scores across head-dimension lanes with simdgroup
 partial reductions, stores one score vector in threadgroup memory, and shares
 per-token softmax weights across value lanes. That removes the largest repeated
-score pass, but the real-model data shows the remaining synchronization and
-materialized-score
-layout is still too slow for the release target.
+score pass. The online-softmax follow-up removes the materialized score vector
+and uses one simdgroup per batch/query-head so each value lane rescales its
+accumulator as scores arrive. The real-model data shows the route is still too
+slow for the release target, so the next optimization must address remaining
+per-token dispatch and quantized decode overhead rather than only score-vector
+sharing.
 
 ## Next Optimization Architecture
 
@@ -398,10 +414,11 @@ efficiency. The recommended order is:
    `--require-fused-turboquant` CLI flag.
 
 2. Optimize the vendored fused kernel layout.
-   The current shared-score kernel is a route-plus-layout proof. The next kernel
-   should go beyond the current simdgroup partial reduction with tiled
-   score/value work and online softmax that avoids materializing and
-   synchronizing a full score vector for every decode step.
+   The current online-softmax kernel is a route-plus-layout proof. It goes beyond
+   the shared-score vector with a single-pass online softmax recurrence, but the
+   real-model gate still fails at `worker_tps_overhead_pct = 60.0`. The next
+   kernel slice should reduce remaining per-token dispatch and quantized decode
+   overhead before rerunning the release gate.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -428,9 +445,11 @@ efficiency. The recommended order is:
 
 Do not claim TurboQuant optimization success without a post-run JSON produced by
 the same `scripts/phase2_metrics_report.py` command family and the same real
-model class. Until Swift MLXLLM supports Qwen3.5, the supported active-KV
-real-model class is `mlx-community/Qwen3-0.6B-4bit`; if Qwen3.5 support lands,
-freeze a new pre-optimization JSON before comparing.
+model class. Qwen3.5 now has Swift model support, but the current Qwen3.5
+active-KV JSON reports `active_kv_runtime_block_reason = unsupported_cache_state`.
+Do not use it as fused-release evidence until a same-model JSON reports a
+non-fallback kernel path. Qwen3-0.6B remains the current supported
+non-fallback fused-kernel benchmark.
 
 Release-gate targets:
 
@@ -442,6 +461,17 @@ Release-gate targets:
 - `active_kv_estimated_memory_savings_pct >= 67`
 - `worker_tps_overhead_pct <= 15` for the first fused milestone
 - `worker_tps_overhead_pct <= 10` for oMLX parity
+
+The online-softmax probe does not change the release rule: the gate remains
+blocked unless the same real-model JSON reports both `active_kv_kernel_path !=
+fallback` and `worker_tps_overhead_pct <= 15`. The current online-softmax JSON
+meets the non-fallback requirement but fails the throughput requirement with
+`worker_tps_overhead_pct = 60.0`.
+The Qwen3.5 support smoke also keeps the release gate blocked: it proves the
+Swift stack can load and decode `model_type = qwen3_5`, but `turboquant-q4`
+reports `active_kv_kernel_path = fallback`, `active_kv_runtime_route = blocked`,
+`active_kv_runtime_block_reason = unsupported_cache_state`,
+`active_kv_fallback_count = 1`, and `active_kv_estimated_memory_savings_pct = 0.0`.
 
 Quality and correctness gates:
 

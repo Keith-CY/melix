@@ -23,6 +23,11 @@ public actor ModelTypeRegistry {
         creators[type] = creator
     }
 
+    /// Returns whether the registry can create a model for the given type.
+    public func supportsModelType(_ type: String) -> Bool {
+        creators[type] != nil
+    }
+
     /// Given a `modelType` and configuration file instantiate a new `LanguageModel`.
     public func createModel(configuration: URL, modelType: String) throws -> sending LanguageModel {
         guard let creator = creators[modelType] else {

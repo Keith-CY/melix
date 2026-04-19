@@ -6073,7 +6073,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
-    func testVendoredFusedQ4AttentionLaunchPlanSharesScoresAcrossValueLanes() throws {
+    func testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes() throws {
         let plan = try XCTUnwrap(turboQuantFusedAttentionLaunchPlan(
             batchCount: 2,
             queryHeadCount: 4,
@@ -6083,17 +6083,17 @@ final class WorkerScaffoldTests: XCTestCase {
             groupSize: 64
         ))
 
-        XCTAssertEqual(plan.gridX, 128)
+        XCTAssertEqual(plan.gridX, 32)
         XCTAssertEqual(plan.gridY, 4)
         XCTAssertEqual(plan.gridZ, 2)
-        XCTAssertEqual(plan.threadGroupX, 128)
-        XCTAssertEqual(plan.sharedScoreCount, 64)
+        XCTAssertEqual(plan.threadGroupX, 32)
+        XCTAssertEqual(plan.sharedScoreCount, 0)
         XCTAssertEqual(plan.scoreDotProductsPerQueryHead, 64)
-        XCTAssertEqual(plan.scoreReductionLaneCount, 128)
-        XCTAssertEqual(plan.scoreReductionSimdgroupCount, 4)
-        XCTAssertTrue(plan.usesThreadgroupSharedScores)
+        XCTAssertEqual(plan.scoreReductionLaneCount, 32)
+        XCTAssertEqual(plan.scoreReductionSimdgroupCount, 1)
+        XCTAssertFalse(plan.usesThreadgroupSharedScores)
         XCTAssertTrue(plan.usesThreadgroupParallelScoreReduction)
-        XCTAssertFalse(plan.usesOnlineSoftmax)
+        XCTAssertTrue(plan.usesOnlineSoftmax)
     }
 
     func testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs() async throws {
