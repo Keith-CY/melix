@@ -124,6 +124,19 @@ struct MelixCLIParserTests {
         #expect(options.dryRun)
     }
 
+    @Test("invalid format requests still route parse failures to json v1 error handling")
+    func invalidFormatRequestsStillRouteParseFailuresToJSONV1ErrorHandling() {
+        #expect(MelixCLIParser.requestedOutputFormat([
+            "doctor",
+            "--format", "not-json-v1",
+        ]) == .jsonV1)
+        #expect(MelixCLIParser.requestedOutputFormat([
+            "doctor",
+            "--format", "json-v1",
+        ]) == .jsonV1)
+        #expect(MelixCLIParser.requestedOutputFormat(["doctor"]) == .legacy)
+    }
+
     @Test("command codec round trips typed command arguments")
     func commandCodecRoundTripsTypedCommandArguments() throws {
         let command = MelixCLICommand.chatRun(

@@ -86,10 +86,12 @@ melix pipeline run \
 ```
 
 Use `--dry-run --format json-v1` first to validate command planning and receipt paths without
-executing model operations. Use `--receipt-dir PATH` when CI needs receipts in a workspace-owned
-artifact directory. Use `--resume` only when the prior summary manifest has matching pipeline and
-input hashes and the step receipts still match the current step metadata. Use `--from-step STEP_ID`
-to reload earlier step receipts and rerun a downstream section after fixing local state.
+executing model operations. Dry-run resolves input references and any step references backed by
+already loaded receipts; references to future steps remain literal `${steps...}` strings in planned
+arguments. Use `--receipt-dir PATH` when CI needs receipts in a workspace-owned artifact directory.
+Use `--resume` only when the prior summary manifest has matching pipeline and input hashes and the
+step receipts still match the current step metadata. Use `--from-step STEP_ID` to reload earlier
+step receipts and rerun a downstream section after fixing local state.
 
 Each pipeline run writes:
 

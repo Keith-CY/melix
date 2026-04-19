@@ -2,21 +2,33 @@ import Dispatch
 import Foundation
 import MelixControlPlaneCore
 
-private func melixPipelineIsBoolean(_ value: Any) -> Bool {
-    guard let number = value as? NSNumber else {
-        return value is Bool
+private enum MelixPipelineArgumentValue {
+    static func isBoolean(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else {
+            return value is Bool
+        }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
-    return CFGetTypeID(number) == CFBooleanGetTypeID()
-}
 
-private func melixPipelineBooleanString(_ value: Any) -> String? {
-    guard melixPipelineIsBoolean(value) else {
-        return nil
+    static func booleanString(_ value: Any) -> String? {
+        guard isBoolean(value) else {
+            return nil
+        }
+        if let bool = value as? Bool {
+            return bool ? "true" : "false"
+        }
+        return (value as? NSNumber)?.boolValue == true ? "true" : "false"
     }
-    if let bool = value as? Bool {
-        return bool ? "true" : "false"
+
+    static func booleanValue(_ value: Any) -> Bool? {
+        guard isBoolean(value) else {
+            return nil
+        }
+        if let bool = value as? Bool {
+            return bool
+        }
+        return (value as? NSNumber)?.boolValue
     }
-    return (value as? NSNumber)?.boolValue == true ? "true" : "false"
 }
 
 extension MelixCLIRunner {
@@ -499,13 +511,16 @@ extension MelixCLIRunner {
         metrics: inout [String: Double]
     ) throws -> [String: Any] {
         let receiptWriteMS = metrics["melix.pipeline.receipt_write_ms", default: 0]
-        var provisionalMetrics = metrics
-        provisionalMetrics["melix.pipeline.receipt_write_ms"] = MelixCLIJSONMetricPatch.placeholderValue
+        let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.pipeline.receipt_write_ms")
+        var provisionalMetrics = metrics.reduce(into: [String: Any]()) { partial, item in
+            partial[item.key] = item.value
+        }
+        provisionalMetrics["melix.pipeline.receipt_write_ms"] = placeholder.token
         var provisional = summary
         provisional["metrics"] = provisionalMetrics
         let start = DispatchTime.now()
         let data = try JSONSerialization.data(withJSONObject: provisional, options: [.prettyPrinted, .sortedKeys])
-        let placeholderRange = try MelixCLIJSONMetricPatch.placeholderRange(in: data)
+        let placeholderRange = try MelixCLIJSONMetricPatch.placeholderRange(in: data, placeholder: placeholder)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -513,10 +528,9 @@ extension MelixCLIRunner {
         try data.write(to: url, options: .atomic)
         metrics["melix.pipeline.receipt_write_ms"] = receiptWriteMS + elapsedMilliseconds(since: start)
 
-        let replacementData = Data(
-            MelixCLIJSONMetricPatch.literal(
-                for: metrics["melix.pipeline.receipt_write_ms", default: 0]
-            ).utf8
+        let replacementData = try MelixCLIJSONMetricPatch.paddedLiteralData(
+            for: metrics["melix.pipeline.receipt_write_ms", default: 0],
+            byteCount: placeholderRange.count
         )
         let handle = try FileHandle(forUpdating: url)
         defer { try? handle.close() }
@@ -771,7 +785,7 @@ private struct MelixPipelineContext {
         if let string = value as? String {
             return string
         }
-        if let bool = melixPipelineBooleanString(value) {
+        if let bool = MelixPipelineArgumentValue.booleanString(value) {
             return bool
         }
         if let number = value as? NSNumber {
@@ -1010,7 +1024,7 @@ private enum MelixPipelineCommandBuilder {
         if let string = value as? String {
             return string
         }
-        if let bool = melixPipelineBooleanString(value) {
+        if let bool = MelixPipelineArgumentValue.booleanString(value) {
             return bool
         }
         if let number = value as? NSNumber {
@@ -1023,7 +1037,7 @@ private enum MelixPipelineCommandBuilder {
         guard let value = args[key] else {
             return nil
         }
-        if melixPipelineIsBoolean(value) {
+        if MelixPipelineArgumentValue.isBoolean(value) {
             throw MelixCLIError.usage("Pipeline command argument \(key) must be an integer.")
         }
         if let int = value as? Int {
@@ -1133,7 +1147,7 @@ private enum MelixPipelineCommandBuilder {
             throw MelixCLIError.usage("Pipeline command argument \(key) must be an array of unsigned integers.")
         }
         return try rawItems.map { item in
-            if melixPipelineIsBoolean(item) {
+            if MelixPipelineArgumentValue.isBoolean(item) {
                 throw MelixCLIError.usage("Pipeline command argument \(key) must be an array of unsigned integers.")
             }
             if let int = item as? Int,
@@ -1163,7 +1177,7 @@ private enum MelixPipelineCommandBuilder {
         for (key, value) in args where excluded.contains(key) == false {
             if let string = value as? String {
                 result[key] = string
-            } else if let bool = melixPipelineBooleanString(value) {
+            } else if let bool = MelixPipelineArgumentValue.booleanString(value) {
                 result[key] = bool
             } else if let number = value as? NSNumber {
                 result[key] = number.stringValue
@@ -1343,14 +1357,42 @@ private enum MelixPipelineJSON {
 
     static func valuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
         switch (lhs, rhs) {
+        case (_ as NSNull, _ as NSNull):
+            return true
         case let (left as String, right as String):
             return left == right
-        case let (left as Bool, right as Bool):
-            return left == right
-        case let (left as NSNumber, right as NSNumber):
-            return left == right
+        case let (left as [Any], right as [Any]):
+            guard left.count == right.count else {
+                return false
+            }
+            return zip(left, right).allSatisfy { valuesEqual($0, $1) }
+        case let (left as [String: Any], right as [String: Any]):
+            guard left.count == right.count else {
+                return false
+            }
+            for (key, leftValue) in left {
+                guard right.keys.contains(key),
+                      valuesEqual(leftValue, right[key])
+                else {
+                    return false
+                }
+            }
+            return true
         case let (left?, right?):
-            return String(describing: left) == String(describing: right)
+            if let leftBool = MelixPipelineArgumentValue.booleanValue(left),
+               let rightBool = MelixPipelineArgumentValue.booleanValue(right)
+            {
+                return leftBool == rightBool
+            }
+            if MelixPipelineArgumentValue.isBoolean(left) || MelixPipelineArgumentValue.isBoolean(right) {
+                return false
+            }
+            guard let leftNumber = left as? NSNumber,
+                  let rightNumber = right as? NSNumber
+            else {
+                return false
+            }
+            return leftNumber == rightNumber
         case (nil, nil):
             return true
         default:

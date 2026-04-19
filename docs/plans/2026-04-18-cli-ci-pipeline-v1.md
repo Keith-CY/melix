@@ -47,6 +47,10 @@ Each step has:
 References use `${inputs.name}` and `${steps.step_id.result.field}`. Array indices are addressed
 as path components, for example `${steps.run_evaluation.result.0.job.job_id}`.
 
+Dry-run planning resolves input references and any step references whose receipts have already been
+loaded. References to future steps remain literal `${steps...}` strings in planned command
+arguments so CI can inspect the intended argv without executing upstream commands.
+
 Pipeline documents are strict JSON objects in v1. If present, `inputs`, step `args`, `when`, and
 `checks` must be JSON objects. Typed command arguments fail fast when booleans, integers, unsigned
 integer arrays, or string arrays have incompatible JSON types or invalid string values.
@@ -79,4 +83,5 @@ The v1 CLI/pipeline contracts expose these metric keys:
 - `melix.pipeline.reference_resolve_ms`
 - `melix.pipeline.receipt_write_ms`
 - `melix.pipeline.resume_skipped_count`
-- `melix.pipeline.failed_step_count`
+- `melix.pipeline.failed_step_count` (fail-fast v1 semantics: `0` for no failure, `1` after the
+  first failed step or preflight validation failure)

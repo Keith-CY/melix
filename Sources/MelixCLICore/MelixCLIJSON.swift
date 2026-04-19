@@ -8,23 +8,50 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
 }
 
 enum MelixCLIJSONMetricPatch {
-    static let placeholderValue = 9.999999999999e99
-    static let placeholderLiteral = "9.9999999999989997e+99"
+    struct Placeholder {
+        let token: String
+
+        var jsonLiteral: String {
+            "\"\(token)\""
+        }
+    }
+
+    static func makePlaceholder(metricName: String) -> Placeholder {
+        let safeMetricName = metricName
+            .map { character in
+                character.isLetter || character.isNumber ? character : "_"
+            }
+        return Placeholder(token: "__MELIX_METRIC_\(String(safeMetricName))_\(UUID().uuidString)__")
+    }
 
     static func literal(for value: Double) -> String {
         let finiteValue = value.isFinite ? max(value, 0) : 0
-        let boundedValue = min(finiteValue, placeholderValue)
-        let literal = String(
+        return String(
             format: "%.16e",
             locale: Locale(identifier: "en_US_POSIX"),
-            boundedValue
+            finiteValue
         )
-        return literal
     }
 
     static func replacePlaceholder(in text: String, with value: Double) throws -> String {
-        guard let range = text.range(of: placeholderLiteral) else {
+        try replacePlaceholder(
+            in: text,
+            placeholder: Placeholder(token: "__MELIX_METRIC_PLACEHOLDER__"),
+            with: value
+        )
+    }
+
+    static func replacePlaceholder(
+        in text: String,
+        placeholder: Placeholder,
+        with value: Double
+    ) throws -> String {
+        let markerLiteral = placeholder.jsonLiteral
+        guard let range = text.range(of: markerLiteral) else {
             throw MelixCLIError.runtime("Failed to encode CLI metrics placeholder.")
+        }
+        guard text.range(of: markerLiteral, range: range.upperBound..<text.endIndex) == nil else {
+            throw MelixCLIError.runtime("Found duplicate CLI metrics placeholders.")
         }
         var patched = text
         patched.replaceSubrange(range, with: literal(for: value))
@@ -32,11 +59,34 @@ enum MelixCLIJSONMetricPatch {
     }
 
     static func placeholderRange(in data: Data) throws -> Range<Data.Index> {
-        let placeholderData = Data(placeholderLiteral.utf8)
+        try placeholderRange(
+            in: data,
+            placeholder: Placeholder(token: "__MELIX_METRIC_PLACEHOLDER__")
+        )
+    }
+
+    static func placeholderRange(
+        in data: Data,
+        placeholder: Placeholder
+    ) throws -> Range<Data.Index> {
+        let placeholderData = Data(placeholder.jsonLiteral.utf8)
         guard let range = data.range(of: placeholderData) else {
             throw MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")
         }
+        if data.range(of: placeholderData, options: [], in: range.upperBound..<data.endIndex) != nil {
+            throw MelixCLIError.runtime("Found duplicate pipeline metrics placeholders.")
+        }
         return range
+    }
+
+    static func paddedLiteralData(for value: Double, byteCount: Int) throws -> Data {
+        let literalData = Data(literal(for: value).utf8)
+        guard literalData.count <= byteCount else {
+            throw MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")
+        }
+        var data = literalData
+        data.append(contentsOf: repeatElement(UInt8(ascii: " "), count: byteCount - literalData.count))
+        return data
     }
 }
 
@@ -70,8 +120,11 @@ public enum MelixCLIJSONEnvelope {
         metrics: [String: Double] = [:],
         status: String = "succeeded"
     ) throws -> String {
-        var finalMetrics = metrics
-        finalMetrics["melix.cli.json_encode_ms"] = MelixCLIJSONMetricPatch.placeholderValue
+        let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
+        var finalMetrics = metrics.reduce(into: [String: Any]()) { partial, item in
+            partial[item.key] = item.value
+        }
+        finalMetrics["melix.cli.json_encode_ms"] = placeholder.token
         let payload: [String: Any] = [
             "schema_version": "melix.cli.output.v1",
             "command_id": commandID,
@@ -86,6 +139,7 @@ public enum MelixCLIJSONEnvelope {
         let text = try MelixCLIJSON.prettyString(payload)
         return try MelixCLIJSONMetricPatch.replacePlaceholder(
             in: text,
+            placeholder: placeholder,
             with: elapsedMilliseconds(since: encodeStart)
         )
     }
@@ -112,8 +166,11 @@ public enum MelixCLIJSONEnvelope {
         message: String,
         metrics: [String: Double] = [:]
     ) throws -> String {
-        var finalMetrics = metrics
-        finalMetrics["melix.cli.json_encode_ms"] = MelixCLIJSONMetricPatch.placeholderValue
+        let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
+        var finalMetrics = metrics.reduce(into: [String: Any]()) { partial, item in
+            partial[item.key] = item.value
+        }
+        finalMetrics["melix.cli.json_encode_ms"] = placeholder.token
         let payload: [String: Any] = [
             "schema_version": "melix.cli.error.v1",
             "command_id": commandID,
@@ -131,6 +188,7 @@ public enum MelixCLIJSONEnvelope {
         let text = try MelixCLIJSON.prettyString(payload)
         return try MelixCLIJSONMetricPatch.replacePlaceholder(
             in: text,
+            placeholder: placeholder,
             with: elapsedMilliseconds(since: encodeStart)
         )
     }

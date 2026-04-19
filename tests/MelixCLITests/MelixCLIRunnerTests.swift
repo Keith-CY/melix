@@ -167,6 +167,41 @@ struct MelixCLIRunnerTests {
         #expect(throws: MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")) {
             try MelixCLIJSONMetricPatch.placeholderRange(in: Data("{}".utf8))
         }
+        let duplicatePlaceholder = MelixCLIJSONMetricPatch.Placeholder(token: "__DUPLICATE__")
+        #expect(throws: MelixCLIError.runtime("Found duplicate CLI metrics placeholders.")) {
+            try MelixCLIJSONMetricPatch.replacePlaceholder(
+                in: "\(duplicatePlaceholder.jsonLiteral) \(duplicatePlaceholder.jsonLiteral)",
+                placeholder: duplicatePlaceholder,
+                with: 1
+            )
+        }
+        #expect(throws: MelixCLIError.runtime("Found duplicate pipeline metrics placeholders.")) {
+            try MelixCLIJSONMetricPatch.placeholderRange(
+                in: Data("\(duplicatePlaceholder.jsonLiteral) \(duplicatePlaceholder.jsonLiteral)".utf8),
+                placeholder: duplicatePlaceholder
+            )
+        }
+        #expect(throws: MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")) {
+            try MelixCLIJSONMetricPatch.paddedLiteralData(for: 1, byteCount: 1)
+        }
+    }
+
+    @Test("json metric patching preserves user artifact strings that look like the old sentinel")
+    func jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel() throws {
+        let sentinel = "9.9999999999989997e+99"
+        let output = try MelixCLIJSONEnvelope.outputEnvelopeString(
+            commandID: "doctor",
+            traceID: "trace-sentinel",
+            result: ["health_status": "healthy"],
+            artifacts: [["path": sentinel]]
+        )
+        let envelope = try #require(parseJSONObject(output))
+        let artifacts = try #require(envelope["artifacts"] as? [[String: Any]])
+        let metrics = try #require(envelope["metrics"] as? [String: Any])
+
+        #expect(artifacts.first?["path"] as? String == sentinel)
+        #expect((metrics["melix.cli.json_encode_ms"] as? Double) != nil)
+        #expect(metrics["melix.cli.json_encode_ms"] as? Double != 9.999999999999e99)
     }
 
     @Test("pipeline dry run writes planned step receipts and a summary")
@@ -1458,6 +1493,160 @@ struct MelixCLIRunnerTests {
         } catch let error as MelixCLIError {
             #expect(error == .usage("Unsupported pipeline command unsupported.command."))
         }
+    }
+
+    @Test("pipeline when equality compares nested JSON values structurally")
+    func pipelineWhenEqualityComparesNestedJSONValuesStructurally() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("nested-when.pipeline.json")
+        let receiptURL = root.appendingPathComponent("nested-when-receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "nested-when",
+          "inputs": {
+            "gate": {
+              "enabled": true,
+              "labels": ["base", "derived"],
+              "profile": {
+                "name": "acceptance",
+                "limits": [1, 2, 3]
+              }
+            }
+          },
+          "steps": [
+            {
+              "id": "rescan",
+              "command": "model.roots.rescan",
+              "when": {
+                "input": "gate",
+                "equals": {
+                  "profile": {
+                    "limits": [1, 2, 3],
+                    "name": "acceptance"
+                  },
+                  "labels": ["base", "derived"],
+                  "enabled": true
+                }
+              },
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let summaryText = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient()
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-nested-when",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(summaryText))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+
+        #expect(steps.first?["status"] as? String == "planned")
+    }
+
+    @Test("pipeline when equality rejects structurally different JSON values")
+    func pipelineWhenEqualityRejectsStructurallyDifferentJSONValues() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("mismatched-when.pipeline.json")
+        let receiptURL = root.appendingPathComponent("mismatched-when-receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "mismatched-when",
+          "inputs": {
+            "null_gate": null,
+            "array_gate": ["base"],
+            "object_gate": {"name": "acceptance", "limit": 1},
+            "bool_gate": true,
+            "mixed_gate": ["base"]
+          },
+          "steps": [
+            {
+              "id": "null_match",
+              "command": "model.roots.rescan",
+              "when": {"input": "null_gate", "equals": null},
+              "args": {}
+            },
+            {
+              "id": "array_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "array_gate", "equals": ["base", "derived"]},
+              "args": {}
+            },
+            {
+              "id": "object_count_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "object_gate", "equals": {"name": "acceptance"}},
+              "args": {}
+            },
+            {
+              "id": "object_value_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "object_gate", "equals": {"name": "acceptance", "limit": 2}},
+              "args": {}
+            },
+            {
+              "id": "bool_type_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "bool_gate", "equals": "true"},
+              "args": {}
+            },
+            {
+              "id": "mixed_type_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "mixed_gate", "equals": {"0": "base"}},
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let summaryText = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient()
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-mismatched-when",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(summaryText))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let statuses = Dictionary(uniqueKeysWithValues: steps.compactMap { step -> (String, String)? in
+            guard let id = step["id"] as? String,
+                  let status = step["status"] as? String
+            else {
+                return nil
+            }
+            return (id, status)
+        })
+
+        #expect(statuses["null_match"] == "planned")
+        #expect(statuses["array_mismatch"] == "skipped")
+        #expect(statuses["object_count_mismatch"] == "skipped")
+        #expect(statuses["object_value_mismatch"] == "skipped")
+        #expect(statuses["bool_type_mismatch"] == "skipped")
+        #expect(statuses["mixed_type_mismatch"] == "skipped")
     }
 
     @Test("pipeline rejects invalid check field types")

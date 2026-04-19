@@ -965,7 +965,10 @@ public enum MelixCLIParser {
     }
 
     public static func requestedOutputFormat(_ arguments: [String]) -> MelixCLIOutputFormat {
-        (try? extractOutputFormat(arguments).0) ?? .legacy
+        if let format = try? extractOutputFormat(arguments).0 {
+            return format
+        }
+        return arguments.contains("--format") ? .jsonV1 : .legacy
     }
 
     public static func parse(_ arguments: [String]) throws -> MelixCLICommand {
@@ -2326,6 +2329,7 @@ public struct MelixCLIProcessExecutor: Sendable {
 public actor MelixCLIRunner {
     private let client: any ControlPlaneXPCClient
     private let operatorSessionStore: any MelixOperatorSessionStoring
+    /// Package-visible so the pipeline extension can derive MELIX_HOME-compatible receipt roots.
     let environment: [String: String]
     private let commandExecutor: MelixCLICommandExecutor?
 
