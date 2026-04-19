@@ -947,6 +947,16 @@ private func sampleNextToken(
     return token
 }
 
+private struct QuantizedKVCacheTimingTotals {
+    var updateTotalMicros = 0
+    var updateCallCount = 0
+    var expandTotalMicros = 0
+    var quantizeTotalMicros = 0
+    var appendTotalMicros = 0
+    var materializeTotalMicros = 0
+    var materializeCallCount = 0
+}
+
 private func makeActiveKVProbeSummary(
     cache: [KVCache],
     acceleration: Melix_Worker_V1_AccelerationPolicy,
@@ -991,6 +1001,7 @@ private func makeActiveKVProbeSummary(
     } else {
         savingsPercent = 0
     }
+    let cacheTiming = quantizedKVCacheTimingTotals(cache: cache)
 
     return ActiveKVProbeSummary(
         backendCode: activeKVBackendCode(for: normalized),
@@ -1013,12 +1024,36 @@ private func makeActiveKVProbeSummary(
             for: normalized,
             turboQuantRuntimeRoute: turboQuantRuntimeRoute
         ),
+        cacheUpdateTotalMicros: cacheTiming.updateTotalMicros,
+        cacheUpdateCallCount: cacheTiming.updateCallCount,
+        cacheExpandTotalMicros: cacheTiming.expandTotalMicros,
+        cacheQuantizeTotalMicros: cacheTiming.quantizeTotalMicros,
+        cacheAppendTotalMicros: cacheTiming.appendTotalMicros,
+        cacheMaterializeTotalMicros: cacheTiming.materializeTotalMicros,
+        cacheMaterializeCallCount: cacheTiming.materializeCallCount,
         candidateDispatchCode: activeKVCandidateDispatchCode(
             for: normalized,
             turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
         ),
         candidateEligibilityCheckCount: turboQuantCandidateEligibilityCheckCount
     )
+}
+
+private func quantizedKVCacheTimingTotals(cache: [KVCache]) -> QuantizedKVCacheTimingTotals {
+    var totals = QuantizedKVCacheTimingTotals()
+    for layer in cache {
+        guard let quantizedCache = layer as? QuantizedKVCacheProtocol else {
+            continue
+        }
+        totals.updateTotalMicros += quantizedCache.quantizedCacheUpdateTotalMicros
+        totals.updateCallCount += quantizedCache.quantizedCacheUpdateCallCount
+        totals.expandTotalMicros += quantizedCache.quantizedCacheExpandTotalMicros
+        totals.quantizeTotalMicros += quantizedCache.quantizedCacheQuantizeTotalMicros
+        totals.appendTotalMicros += quantizedCache.quantizedCacheAppendTotalMicros
+        totals.materializeTotalMicros += quantizedCache.quantizedCacheMaterializeTotalMicros
+        totals.materializeCallCount += quantizedCache.quantizedCacheMaterializeCallCount
+    }
+    return totals
 }
 
 private func activeKVBackendCode(for policy: Melix_Worker_V1_AccelerationPolicy) -> Int {

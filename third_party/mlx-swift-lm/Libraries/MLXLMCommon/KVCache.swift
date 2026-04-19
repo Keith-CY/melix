@@ -101,6 +101,27 @@ public protocol QuantizedKVCacheProtocol: KVCache {
     /// Number of decode attention calls completed by the Melix fused q4 kernel route.
     var fusedAttentionDispatchCount: Int { get }
 
+    /// Total time spent inside quantized cache updates, in microseconds.
+    var quantizedCacheUpdateTotalMicros: Int { get }
+
+    /// Number of quantized cache update calls.
+    var quantizedCacheUpdateCallCount: Int { get }
+
+    /// Total time spent expanding or initializing quantized cache storage, in microseconds.
+    var quantizedCacheExpandTotalMicros: Int { get }
+
+    /// Total time spent quantizing incoming key/value tensors, in microseconds.
+    var quantizedCacheQuantizeTotalMicros: Int { get }
+
+    /// Total time spent appending quantized key/value tensors to cache storage, in microseconds.
+    var quantizedCacheAppendTotalMicros: Int { get }
+
+    /// Total time spent materializing trimmed quantized cache state, in microseconds.
+    var quantizedCacheMaterializeTotalMicros: Int { get }
+
+    /// Number of trimmed quantized cache materialization calls.
+    var quantizedCacheMaterializeCallCount: Int { get }
+
     /// Record one fused q4 attention dispatch for runtime metrics.
     func recordFusedAttentionDispatch()
 
@@ -700,6 +721,13 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     public let bits: Int
     public let mode: QuantizationMode
     public private(set) var fusedAttentionDispatchCount: Int = 0
+    public private(set) var quantizedCacheUpdateTotalMicros: Int = 0
+    public private(set) var quantizedCacheUpdateCallCount: Int = 0
+    public private(set) var quantizedCacheExpandTotalMicros: Int = 0
+    public private(set) var quantizedCacheQuantizeTotalMicros: Int = 0
+    public private(set) var quantizedCacheAppendTotalMicros: Int = 0
+    public private(set) var quantizedCacheMaterializeTotalMicros: Int = 0
+    public private(set) var quantizedCacheMaterializeCallCount: Int = 0
 
     public init(groupSize: Int = 64, bits: Int = 8, mode: QuantizationMode = .affine) {
         self.groupSize = groupSize
@@ -772,8 +800,11 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     )? {
         guard let keys = keys, let values = values else { return nil }
 
+        let materializeStartedAt = Date.timeIntervalSinceReferenceDate
         let trimmedKeys = treeMap({ $0[.ellipsis, ..<offset, 0...] }, keys)
         let trimmedValues = treeMap({ $0[.ellipsis, ..<offset, 0...] }, values)
+        quantizedCacheMaterializeCallCount += 1
+        quantizedCacheMaterializeTotalMicros += quantizedKVElapsedMicros(since: materializeStartedAt)
 
         return (trimmedKeys, trimmedValues)
     }
@@ -788,6 +819,12 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     public func updateQuantized(keys: MLXArray, values: MLXArray) -> (
         (MLXArray, MLXArray, MLXArray?), (MLXArray, MLXArray, MLXArray?)
     ) {
+        let updateStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            quantizedCacheUpdateCallCount += 1
+            quantizedCacheUpdateTotalMicros += quantizedKVElapsedMicros(since: updateStartedAt)
+        }
+
         let B = keys.dim(0)
         let nKVHeads = keys.dim(1)
         let numSteps = keys.dim(2)
@@ -797,6 +834,7 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
 
         // Check if we need to expand the cache
         if self.keys == nil || (prev + numSteps) > self.keys!.0.dim(-2) {
+            let expandStartedAt = Date.timeIntervalSinceReferenceDate
             let newSteps = ((step + numSteps - 1) / step) * step
             let shape = [B, nKVHeads, newSteps]
 
@@ -821,12 +859,15 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
                 self.keys = initQuant(dim: kHeadDim, shape: shape, dtype: keys.dtype)
                 self.values = initQuant(dim: vHeadDim, shape: shape, dtype: keys.dtype)
             }
+            quantizedCacheExpandTotalMicros += quantizedKVElapsedMicros(since: expandStartedAt)
         }
 
         offset += numSteps
 
+        let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
         let quantizedKeys = quantized(keys, groupSize: groupSize, bits: bits)
         let quantizedValues = quantized(values, groupSize: groupSize, bits: bits)
+        quantizedCacheQuantizeTotalMicros += quantizedKVElapsedMicros(since: quantizeStartedAt)
 
         // Convert named tuples to positional tuples
         let qKeys = (quantizedKeys.wq, quantizedKeys.scales, quantizedKeys.biases)
@@ -838,6 +879,7 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         }
 
         // Update each component of the quantized tuples
+        let appendStartedAt = Date.timeIntervalSinceReferenceDate
         currentKeys.0[.ellipsis, prev ..< offset, 0...] = qKeys.0
         currentKeys.1[.ellipsis, prev ..< offset, 0...] = qKeys.1
         if let qKeysBiases = qKeys.2 {
@@ -852,10 +894,14 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
 
         self.keys = currentKeys
         self.values = currentValues
+        quantizedCacheAppendTotalMicros += quantizedKVElapsedMicros(since: appendStartedAt)
 
         // Return quantized tuples
+        let materializeStartedAt = Date.timeIntervalSinceReferenceDate
         let trimmedKeys = treeMap({ $0[.ellipsis, ..<offset, 0...] }, currentKeys)
         let trimmedValues = treeMap({ $0[.ellipsis, ..<offset, 0...] }, currentValues)
+        quantizedCacheMaterializeCallCount += 1
+        quantizedCacheMaterializeTotalMicros += quantizedKVElapsedMicros(since: materializeStartedAt)
 
         return (trimmedKeys, trimmedValues)
     }
@@ -1529,6 +1575,10 @@ public func quantizedScaledDotProductAttention(
     }
 
     return output
+}
+
+private func quantizedKVElapsedMicros(since startedAt: TimeInterval) -> Int {
+    max(0, Int(((Date.timeIntervalSinceReferenceDate - startedAt) * 1_000_000).rounded()))
 }
 
 // MARK: - Dynamic Cache Quantization

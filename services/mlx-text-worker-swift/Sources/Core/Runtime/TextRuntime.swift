@@ -60,6 +60,13 @@ struct ActiveKVProbeSummary: Sendable {
     let estimatedQuantizedBytes: Int
     let estimatedMemorySavingsPercent: Int
     let fallbackCount: Int
+    let cacheUpdateTotalMicros: Int
+    let cacheUpdateCallCount: Int
+    let cacheExpandTotalMicros: Int
+    let cacheQuantizeTotalMicros: Int
+    let cacheAppendTotalMicros: Int
+    let cacheMaterializeTotalMicros: Int
+    let cacheMaterializeCallCount: Int
     let candidateDispatchCode: Int
     let candidateEligibilityCheckCount: Int
 
@@ -81,6 +88,13 @@ struct ActiveKVProbeSummary: Sendable {
         estimatedQuantizedBytes: Int,
         estimatedMemorySavingsPercent: Int,
         fallbackCount: Int,
+        cacheUpdateTotalMicros: Int = 0,
+        cacheUpdateCallCount: Int = 0,
+        cacheExpandTotalMicros: Int = 0,
+        cacheQuantizeTotalMicros: Int = 0,
+        cacheAppendTotalMicros: Int = 0,
+        cacheMaterializeTotalMicros: Int = 0,
+        cacheMaterializeCallCount: Int = 0,
         candidateDispatchCode: Int = 0,
         candidateEligibilityCheckCount: Int = 0
     ) {
@@ -101,6 +115,13 @@ struct ActiveKVProbeSummary: Sendable {
         self.estimatedQuantizedBytes = estimatedQuantizedBytes
         self.estimatedMemorySavingsPercent = estimatedMemorySavingsPercent
         self.fallbackCount = fallbackCount
+        self.cacheUpdateTotalMicros = cacheUpdateTotalMicros
+        self.cacheUpdateCallCount = cacheUpdateCallCount
+        self.cacheExpandTotalMicros = cacheExpandTotalMicros
+        self.cacheQuantizeTotalMicros = cacheQuantizeTotalMicros
+        self.cacheAppendTotalMicros = cacheAppendTotalMicros
+        self.cacheMaterializeTotalMicros = cacheMaterializeTotalMicros
+        self.cacheMaterializeCallCount = cacheMaterializeCallCount
         self.candidateDispatchCode = candidateDispatchCode
         self.candidateEligibilityCheckCount = candidateEligibilityCheckCount
     }
@@ -115,6 +136,14 @@ struct ActiveKVProbeSummary: Sendable {
 
     var decodeQuantizeAverageMicros: Int {
         averageMicros(total: decodeQuantizeTotalMicros)
+    }
+
+    var cacheUpdateAverageMicros: Int {
+        averageMicros(total: cacheUpdateTotalMicros, count: cacheUpdateCallCount)
+    }
+
+    var cacheMaterializeAverageMicros: Int {
+        averageMicros(total: cacheMaterializeTotalMicros, count: cacheMaterializeCallCount)
     }
 
     private func averageMicros(total: Int) -> Int {

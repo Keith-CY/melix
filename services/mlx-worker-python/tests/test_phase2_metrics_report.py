@@ -225,6 +225,8 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
             "active_kv_decode_token_eval_avg_us": 0 if is_baseline else 650,
             "active_kv_decode_loop_total_us": 0 if is_baseline else 2_100,
             "active_kv_decode_quantize_avg_us": 0 if is_baseline else 40,
+            "active_kv_cache_update_avg_us": 0 if is_baseline else 400,
+            "active_kv_cache_materialize_avg_us": 0 if is_baseline else 70,
             "active_kv_estimated_memory_savings_pct": 0 if is_baseline else 75,
         }
 
@@ -251,6 +253,8 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
     assert comparisons["affine_q4_vs_baseline"]["ttft_delta_ms"] == 2.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_token_eval_avg_us"] == 650.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_loop_total_us"] == 2100.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_cache_update_avg_us"] == 400.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_cache_materialize_avg_us"] == 70.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_estimated_memory_savings_pct"] == 75.0
 
 
@@ -658,6 +662,15 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_decode_quantize_avg_us": 3,
                     "swift_text.active_kv_decode_loop_total_us": 900,
                     "swift_text.active_kv_decode_token_count": 10,
+                    "swift_text.active_kv_cache_update_total_us": 120,
+                    "swift_text.active_kv_cache_update_call_count": 4,
+                    "swift_text.active_kv_cache_update_avg_us": 30,
+                    "swift_text.active_kv_cache_expand_total_us": 5,
+                    "swift_text.active_kv_cache_quantize_total_us": 70,
+                    "swift_text.active_kv_cache_append_total_us": 30,
+                    "swift_text.active_kv_cache_materialize_total_us": 15,
+                    "swift_text.active_kv_cache_materialize_call_count": 3,
+                    "swift_text.active_kv_cache_materialize_avg_us": 5,
                     "swift_text.active_kv_estimated_fp16_bytes": 400,
                     "swift_text.active_kv_estimated_quantized_bytes": 100,
                     "swift_text.active_kv_estimated_memory_savings_pct": 75,
@@ -709,6 +722,15 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_decode_token_eval_call_count"] == 10
     assert active["active_kv_decode_token_eval_avg_us"] == 50
     assert active["active_kv_decode_loop_total_us"] == 900
+    assert active["active_kv_cache_update_total_us"] == 120
+    assert active["active_kv_cache_update_call_count"] == 4
+    assert active["active_kv_cache_update_avg_us"] == 30
+    assert active["active_kv_cache_expand_total_us"] == 5
+    assert active["active_kv_cache_quantize_total_us"] == 70
+    assert active["active_kv_cache_append_total_us"] == 30
+    assert active["active_kv_cache_materialize_total_us"] == 15
+    assert active["active_kv_cache_materialize_call_count"] == 3
+    assert active["active_kv_cache_materialize_avg_us"] == 5
     assert active["active_kv_candidate_eligibility_check_count"] == 7
 
 
@@ -735,6 +757,12 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert inactive_metrics["active_kv_decode_token_eval_call_count"] == 0
     assert inactive_metrics["active_kv_decode_token_eval_avg_us"] == 0
     assert inactive_metrics["active_kv_decode_loop_total_us"] == 0
+    assert inactive_metrics["active_kv_cache_update_total_us"] == 0
+    assert inactive_metrics["active_kv_cache_update_call_count"] == 0
+    assert inactive_metrics["active_kv_cache_update_avg_us"] == 0
+    assert inactive_metrics["active_kv_cache_materialize_total_us"] == 0
+    assert inactive_metrics["active_kv_cache_materialize_call_count"] == 0
+    assert inactive_metrics["active_kv_cache_materialize_avg_us"] == 0
     assert inactive_metrics["active_kv_candidate_eligibility_check_count"] == 0
 
     assert phase2_metrics_report.active_kv_backend_name("not-an-int") is None

@@ -312,6 +312,18 @@ struct TextDecodeEngine: Sendable {
         metrics.set("swift_text.active_kv_decode_quantize_avg_us", value: probe.decodeQuantizeAverageMicros)
         metrics.set("swift_text.active_kv_decode_loop_total_us", value: probe.decodeLoopTotalMicros)
         metrics.set("swift_text.active_kv_decode_token_count", value: probe.decodeTokenCount)
+        metrics.set("swift_text.active_kv_cache_update_total_us", value: probe.cacheUpdateTotalMicros)
+        metrics.set("swift_text.active_kv_cache_update_call_count", value: probe.cacheUpdateCallCount)
+        metrics.set("swift_text.active_kv_cache_update_avg_us", value: probe.cacheUpdateAverageMicros)
+        metrics.set("swift_text.active_kv_cache_expand_total_us", value: probe.cacheExpandTotalMicros)
+        metrics.set("swift_text.active_kv_cache_quantize_total_us", value: probe.cacheQuantizeTotalMicros)
+        metrics.set("swift_text.active_kv_cache_append_total_us", value: probe.cacheAppendTotalMicros)
+        metrics.set("swift_text.active_kv_cache_materialize_total_us", value: probe.cacheMaterializeTotalMicros)
+        metrics.set(
+            "swift_text.active_kv_cache_materialize_call_count",
+            value: probe.cacheMaterializeCallCount
+        )
+        metrics.set("swift_text.active_kv_cache_materialize_avg_us", value: probe.cacheMaterializeAverageMicros)
         metrics.set("swift_text.active_kv_estimated_fp16_bytes", value: probe.estimatedFP16Bytes)
         metrics.set("swift_text.active_kv_estimated_quantized_bytes", value: probe.estimatedQuantizedBytes)
         metrics.set(

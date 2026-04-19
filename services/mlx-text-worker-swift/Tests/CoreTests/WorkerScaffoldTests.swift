@@ -129,6 +129,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_loop_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_update_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_update_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
     }
 
@@ -3881,7 +3885,14 @@ final class WorkerScaffoldTests: XCTestCase {
                     estimatedFP16Bytes: 4_000,
                     estimatedQuantizedBytes: 1_000,
                     estimatedMemorySavingsPercent: 75,
-                    fallbackCount: 0
+                    fallbackCount: 0,
+                    cacheUpdateTotalMicros: 1_200,
+                    cacheUpdateCallCount: 3,
+                    cacheExpandTotalMicros: 90,
+                    cacheQuantizeTotalMicros: 540,
+                    cacheAppendTotalMicros: 360,
+                    cacheMaterializeTotalMicros: 210,
+                    cacheMaterializeCallCount: 3
                 )
             )
         )
@@ -3961,6 +3972,15 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_fallback_count"], 0)
         XCTAssertEqual(metrics["swift_text.active_kv_candidate_dispatch_code"], 0)
         XCTAssertEqual(metrics["swift_text.active_kv_candidate_eligibility_check_count"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_total_us"], 1_200)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_avg_us"], 400)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_expand_total_us"], 90)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_quantize_total_us"], 540)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_append_total_us"], 360)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_total_us"], 210)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_avg_us"], 70)
     }
 
     func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {
@@ -3983,6 +4003,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.decodeModelAverageMicros, 0)
         XCTAssertEqual(summary.decodeTokenEvalAverageMicros, 0)
         XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
+        XCTAssertEqual(summary.cacheUpdateAverageMicros, 0)
+        XCTAssertEqual(summary.cacheMaterializeAverageMicros, 0)
     }
 
     func testCacheManagementRpcsExposeHotAndDiskTierMetadata() async throws {
@@ -5864,6 +5886,48 @@ final class WorkerScaffoldTests: XCTestCase {
                 acceleration: baselineAcceleration
             )
         )
+    }
+    #endif
+
+    #if canImport(MLX) && canImport(MLXLMCommon)
+    func testQuantizedKVCacheRecordsUpdateAndMaterializeProbeTimings() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 2
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { Float(($0 % 13) - 6) / 8.0 }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { Float(($0 % 17) - 8) / 10.0 }
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 0)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 0)
+
+            _ = cache.updateQuantized(keys: keys, values: values)
+            let updateTotalAfterFirstAppend = cache.quantizedCacheUpdateTotalMicros
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 1)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheUpdateTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheExpandTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheQuantizeTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheAppendTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheMaterializeTotalMicros, 0)
+
+            let state = try XCTUnwrap(cache.getQuantizedState())
+            XCTAssertEqual(state.0.0.dtype, DType.uint32)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 2)
+
+            _ = cache.updateQuantized(
+                keys: MLXArray(Array(repeating: Float(0.25), count: headDimension), [1, 1, 1, headDimension]),
+                values: MLXArray(Array(repeating: Float(-0.25), count: headDimension), [1, 1, 1, headDimension])
+            )
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 2)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheUpdateTotalMicros, updateTotalAfterFirstAppend)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 3)
+        }
     }
     #endif
 

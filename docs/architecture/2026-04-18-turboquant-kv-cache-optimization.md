@@ -23,6 +23,7 @@ The current benchmark evidence is:
 | Vendored TurboQuant runtime probe | `docs/metrics/phase2-active-kv-vendored-turboquant-runtime.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored shared-score speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-shared-scores.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored online-softmax speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-online-softmax.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Cache-internal timing probe | `docs/metrics/phase2-active-kv-vendored-turboquant-cache-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
@@ -384,6 +385,16 @@ reports `candidate_dispatch_count = 0`, `fallback_count = 0`,
 `worker_tps_overhead_pct = 73.97`. It improves absolute TurboQuant decode token
 evaluation from 6,601,404 us to 2,554,186 us versus the online-softmax run, but
 the same-run baseline was much faster, so the release gate remains failed.
+The cache-internal timing probe keeps the same non-fallback runtime evidence and
+adds per-cache breakdown. Across three 64-token `turboquant-q4` decode repeats
+it reports `cache_update_total_us = 1081676`,
+`cache_update_call_count = 5376`, `cache_append_total_us = 621474`,
+`cache_quantize_total_us = 93119`,
+`cache_materialize_total_us = 348621`,
+`cache_materialize_call_count = 5379`, median
+`active_kv_cache_update_avg_us = 200.0`, and median
+`active_kv_cache_materialize_avg_us = 64.0`. The routed fused path remains
+release-blocked because `worker_tps_overhead_pct = 73.61`.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -411,6 +422,27 @@ packed load. The absolute TurboQuant path is faster, but the real-model data
 shows the route is still too slow for the release target, so the next
 optimization must address remaining per-token dispatch, cache update, and
 quantized decode overhead rather than only score-vector sharing.
+
+The cache-internal timing probe now separates the remaining runtime cost inside
+Swift MLX LM's `QuantizedKVCache`. Each active-KV decode row can include:
+
+- `active_kv_cache_update_total_us`, `active_kv_cache_update_call_count`, and
+  `active_kv_cache_update_avg_us`
+- `active_kv_cache_expand_total_us` for storage initialization or growth
+- `active_kv_cache_quantize_total_us` for incoming key/value tensor
+  quantization
+- `active_kv_cache_append_total_us` for writing packed key/value tuples into
+  cache storage
+- `active_kv_cache_materialize_total_us`,
+  `active_kv_cache_materialize_call_count`, and
+  `active_kv_cache_materialize_avg_us` for trimmed quantized state returned by
+  `updateQuantized(...)` or read through `getQuantizedState()`
+
+The phase 2 report propagates those fields into decode comparisons, release-gate
+runtime evidence, and fused-candidate runtime evidence. They do not change the
+release rule: a real-model JSON must still show `active_kv_kernel_path !=
+fallback` and `worker_tps_overhead_pct <= 15` in the same run before the fused
+TurboQuant gate can pass.
 
 ## Next Optimization Architecture
 
