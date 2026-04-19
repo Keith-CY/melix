@@ -438,7 +438,19 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert (
-        "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable"
+        "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
+        "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence"
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
@@ -490,6 +502,39 @@ def test_active_kv_fused_candidate_probe_marks_connected_candidate_dispatch() ->
     assert probe["runtime_evidence"]["candidate_eligibility_check_count"] == 1
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert "worker_tps_overhead_pct=42.62" in probe["runtime_evidence"]["failures"]
+
+
+def test_active_kv_fused_candidate_probe_marks_vendored_runtime_route() -> None:
+    gates = phase2_metrics_report.build_active_kv_release_gates(
+        [
+            {
+                "label": "decode_turboquant_q4",
+                "active_kv_backend": "turboquant",
+                "active_kv_kernel_path": "tq_mse_single",
+                "active_kv_runtime_route": "routed",
+                "active_kv_fallback_count": 0,
+                "active_kv_candidate_dispatch_code": 0,
+                "active_kv_decode_quantize_total_us": 0,
+                "active_kv_estimated_memory_savings_pct": 75,
+            }
+        ],
+        {
+            "turboquant_q4_vs_baseline": {
+                "worker_tps_overhead_pct": 68.63,
+                "active_kv_kernel_path": "tq_mse_single",
+            }
+        },
+    )
+
+    probes = phase2_metrics_report.build_active_kv_fused_candidate_probes(gates)
+
+    probe = probes["turboquant_q4"]
+    assert probe["status"] == "runtime_blocked"
+    assert probe["capability_evidence"]["runtime_path"] == "vendored_attention_route_connected"
+    assert probe["runtime_evidence"]["candidate_dispatch_count"] == 0
+    assert probe["runtime_evidence"]["observed_kernel_paths"] == ["tq_mse_single"]
+    assert probe["runtime_evidence"]["observed_runtime_routes"] == ["routed"]
+    assert probe["runtime_evidence"]["failures"] == ["worker_tps_overhead_pct=68.63"]
 
 
 def test_ensure_active_kv_release_gates_backfills_fused_candidate_from_existing_gate() -> None:
@@ -1158,7 +1203,10 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
         in smoke_tests
     )
     assert "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState" in smoke_tests
-    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable" in smoke_tests
+    assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA" in smoke_tests
+    assert "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled" in smoke_tests
+    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch" in smoke_tests
+    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence" in smoke_tests
 
 
 def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monkeypatch, capsys) -> None:

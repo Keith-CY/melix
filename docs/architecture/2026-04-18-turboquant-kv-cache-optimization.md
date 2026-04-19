@@ -2,9 +2,11 @@
 
 ## Context
 
-Melix active-KV quantization is opt-in and currently runs through Swift MLX LM's
-`QuantizedKVCache` path. That path gives measurable KV memory reduction, but it
-does not implement the oMLX TurboQuant fused decode architecture.
+Melix active-KV quantization is opt-in and currently stores KV state through
+Swift MLX LM's `QuantizedKVCache` path. That path gives measurable KV memory
+reduction, and the vendored runtime now routes supported one-token affine-q4
+decode through a fused Metal dispatch. It is still not the full oMLX
+TurboQuant cache architecture.
 
 The current benchmark evidence is:
 
@@ -18,10 +20,15 @@ The current benchmark evidence is:
 | Terminal model-call post-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Lazy-eval timing probe | `docs/metrics/phase2-active-kv-lazy-eval-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Blocked fallback speedup post-optimization | `docs/metrics/phase2-active-kv-blocked-fallback-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Vendored TurboQuant runtime probe | `docs/metrics/phase2-active-kv-vendored-turboquant-runtime.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
 Swift MLXLLM registry does not yet support `model_type = qwen3_5`.
+The vendored-runtime probe attempted the Phase 8 Qwen3.5 model first, but direct
+Swift MLX load failed with `Unsupported model type: qwen3_5`; Qwen3-0.6B remains
+the supported real-model benchmark until the Swift registry gains Qwen3.5
+support.
 
 ## External Reference Findings
 
@@ -58,19 +65,28 @@ Sources:
 - https://github.com/jundot/omlx/blob/main/omlx/patches/turboquant_attention.py
 - https://github.com/Blaizzy/mlx-vlm/blob/main/mlx_vlm/turboquant.py
 
-## Current Melix Gap
+## Current Melix State
 
-Melix exposes a `turboquant-q4` profile for probes, but the runtime still uses
-Swift MLX LM affine `QuantizedKVCache`. The post-optimization probe correctly
-reports:
+Melix exposes a `turboquant-q4` profile for probes. Before the vendored runtime
+patch, the profile used Swift MLX LM affine `QuantizedKVCache` through upstream
+quantized attention. The historical post-optimization probe correctly reported:
 
 - `decode_affine_q4`: backend `affine`, kernel path `affine_quantized_sdpa`
 - `decode_turboquant_q4`: backend `turboquant`, kernel path `fallback`, with
   `active_kv_fallback_count = 1`
 
-That means the profile is observable, but not yet backed by a fused TurboQuant
-cache or kernel. Treating it as a real TurboQuant fast path would be misleading
-until the kernel path is no longer `fallback`.
+That meant the profile was observable, but not backed by a fused TurboQuant
+runtime path. The vendored-runtime slice changes that routing state:
+
+- `decode_turboquant_q4` now reports `active_kv_kernel_path = "tq_mse_single"`
+- `active_kv_runtime_route = "routed"`
+- `active_kv_fallback_count = 0`
+- `active_kv_decode_quantize_total_us = 0`
+- `active_kv_estimated_memory_savings_pct = 75`
+
+The remaining gap is performance, not route availability. The same real-model
+JSON reports `worker_tps_overhead_pct = 68.63`, so the fused TurboQuant release
+gate remains failed.
 
 ## Implemented Optimization
 
@@ -120,11 +136,10 @@ and dispatch a custom `MLXFast.metalKernel(...)` kernel:
   keeps the affine-q4 guard rails explicit before runtime routing is promoted.
   These tests skip only when no local MLX metallib is available.
 
-This does not route runtime decode through a new TurboQuant cache. The fused
-attention smoke kernel intentionally favors capability and correctness over the
-final parallel layout, so it removes uncertainty around whether the current
-Swift package can host custom Metal kernels for packed-q4 score, softmax, and
-value work without claiming an optimized runtime path.
+The first fused attention smoke kernel intentionally favored capability and
+correctness over the final parallel layout, so it removed uncertainty around
+whether the Swift package can host custom Metal kernels for packed-q4 score,
+softmax, and value work without claiming an optimized runtime path.
 
 The second runtime-candidate slice keeps
 `active_kv_candidate_dispatch_code = 1` as "a candidate dispatch ran", but now
@@ -134,53 +149,62 @@ and decodes MLX's `uint32` bit-packed q4 layout in one Metal dispatch for
 score, softmax, and value. If no supported cache state is available, the decode
 probe falls back to the original fixed smoke arrays.
 
-The runtime route decision is now explicit. Even when a live q4 cache can feed
-the fused candidate kernel, Melix reports the TurboQuant runtime route as
-blocked with `attentionHookUnavailable`. The reason is structural: Qwen/Llama
-model attention in the pinned `mlx-swift-lm` package calls dependency-owned
-`MLXLMCommon.attentionWithCacheUpdate(...)`, and Melix currently can only pass a
-cache object into that function. It cannot replace the dependency's quantized
-attention call from this target without a vendored dependency patch, upstream
-hook, or Melix-owned model implementation.
+The runtime route decision is explicit and is separate from candidate dispatch.
+Melix now vendors `mlx-swift-lm` under `third_party/mlx-swift-lm` at upstream
+commit `5064b8c5d8ed3b0bbb71385c4124f0fc102e74a2`, patches
+`MLXLMCommon.attentionWithCacheUpdate(...)`, and tries
+`fusedQ4ScaledDotProductAttention(...)` before the upstream affine q4 quantized
+SDPA fallback. The fused route supports one-token decode for MLX's affine q4
+`QuantizedKVCache` layout and handles grouped-query attention by mapping query
+heads to KV heads inside one Metal dispatch.
 
-The same route decision is exported into metrics as `active_kv_runtime_route`
-and `active_kv_runtime_block_reason`. Current fallback reports should show the
-route blocked by the missing attention hook, which makes the release evidence
-auditable without treating candidate dispatch as runtime success.
+The route is promoted only after model attention actually dispatches the fused
+kernel. `QuantizedKVCache` records a per-cache fused attention dispatch count,
+and Melix exports `active_kv_runtime_route`,
+`active_kv_runtime_block_reason`, `active_kv_kernel_path`, and
+`active_kv_fallback_count` from that evidence. Candidate smoke dispatch alone
+does not set `active_kv_kernel_path` to fused.
 
-The default runtime keeps candidate dispatch disabled while the route is
-blocked. `active_kv_candidate_eligibility_check_count` measures the remaining
-candidate-check work in the decode loop; the current optimized default path
-precomputes whether a candidate probe can run and reports zero checks unless
+The runtime no longer requires `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` to
+enable the vendored route. That environment flag now controls only the
+supporting candidate/smoke dispatch path used for audits.
+
+Unsupported runtime states still fall back. The vendored helper returns nil for
+non-affine, non-q4, non-decode, or array-mask attention shapes, then the
+existing upstream quantized attention path runs. The custom Metal kernel is
+scoped to the GPU stream for the fused op so CPU-hosted test/model execution can
+still exercise the route without switching the entire model graph to GPU.
+
+The default runtime keeps candidate dispatch disabled.
+`active_kv_candidate_eligibility_check_count` measures supporting candidate
+probe work in the decode loop; the current optimized default path precomputes
+whether a candidate probe can run and reports zero checks unless
 `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` is set before worker startup.
 
-This still deliberately keeps `active_kv_kernel_path = "fallback"` until model
-attention is actually routed through a fused TurboQuant cache. Model logits
-still come from the Swift MLX model path, so the release gate remains blocked
-until the post-run JSON shows both a non-fallback kernel path and
-`worker_tps_overhead_pct <= 15`.
+The vendored runtime has now produced a real-model JSON with a non-fallback
+kernel path, but the release gate remains blocked until the same JSON also
+shows `worker_tps_overhead_pct <= 15`.
 
-The first runtime-speedup slice removes the candidate dispatch from the default
-blocked route. `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` now explicitly opts
-into the live fused-candidate probe; without that flag, `turboquant-q4` still
-reports the blocked route and fallback kernel path, but it does not pay for a
-custom Metal dispatch that cannot affect model logits. `scripts/dev_up.py`
-passes the probe flag through to the Swift worker and writes it into `env.sh`
-only when the parent environment sets it, so normal runtime paths stay
-measurement-clean while candidate-audit runs remain reproducible.
+The first runtime-speedup slice removed the candidate dispatch from the default
+pre-vendored blocked route. `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` explicitly
+opts into the live fused-candidate probe. `scripts/dev_up.py` passes the probe
+flag through to the Swift worker and writes it into `env.sh` only when the
+parent environment sets it, so normal runtime paths stay measurement-clean
+while candidate-audit runs remain reproducible.
 
-This is a small runtime cleanup, not the real TurboQuant decode architecture.
-The new default real-model run confirms candidate dispatch count drops from
-five to zero, but the worker throughput overhead remains 45.76 percent because
-the dependency-owned quantized attention model call is still the hot path.
+That was a small runtime cleanup, not the real TurboQuant decode architecture.
+The default real-model run from that stage confirmed candidate dispatch count
+dropped from five to zero, but the worker throughput overhead remained 45.76
+percent because the dependency-owned quantized attention model call was still
+the hot path.
 
 The second runtime-speedup slice adds `active_kv_decode_model_call_count` and
 stops prepared decode before a terminal next-token model call once
 `maxOutputTokens` has already been emitted. This removes one unused model call
-per 64-token active-KV decode run in the current benchmark shape. The real-model
-probe confirms the release gate remains blocked because the TurboQuant kernel
-path is still `fallback` and worker throughput overhead is still above 15
-percent.
+per 64-token active-KV decode run in the historical fallback benchmark shape.
+That real-model probe kept the release gate blocked because the TurboQuant
+kernel path was still `fallback` and worker throughput overhead was still above
+15 percent.
 
 The lazy-eval timing probe adds `active_kv_decode_token_eval_*` and
 `active_kv_decode_loop_total_us`. Swift MLX model calls build lazy graphs, so
@@ -189,20 +213,19 @@ execution forced by sampling and `token.item(Int.self)`. The probe shows the
 remaining time is dominated by token evaluation, which is where the dependency
 owned quantized attention path executes.
 
-The blocked-fallback speedup prevents default `turboquant-q4` from silently
-using affine q4 cache while the attention hook is unavailable. Explicit `q4`
-still provides affine KV compression, and candidate audits can still set
-`MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` to exercise the old quantized
-candidate path. A compatibility opt-in,
-`MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK=1`, keeps the affine fallback available
-for developer probes. The default `turboquant-q4` probe remains visible as a
-blocked TurboQuant route with `active_kv_kernel_path = "fallback"`, but its
-actual quantization ratio and memory savings are now zero when no fused runtime
-hook is connected.
+The blocked-fallback speedup was the last pre-vendored guard: it prevented
+default `turboquant-q4` from silently using affine q4 cache while the attention
+hook was unavailable. The vendored route supersedes that blocked default by
+running fused affine q4 decode when `attentionWithCacheUpdate(...)` sees a
+supported decode cache. Explicit `q4` still provides affine KV compression, and
+candidate audits can still set `MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` to
+exercise the smoke/candidate path. A compatibility opt-in,
+`MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK=1`, remains available for developer
+probes.
 
 ## Before And After Metrics
 
-The current runs used:
+The historical pre-vendored runs used:
 
 - model path: `/Users/ChenYu/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/73e3e38d981303bc594367cd910ea6eb48349da8`
 - model revision: `main`
@@ -282,6 +305,27 @@ Blocked fallback speedup evidence:
 | TurboQuant block reason | attention hook unavailable | attention hook unavailable |
 | TurboQuant release gate | fail | fail |
 
+Vendored runtime evidence:
+
+| Metric | Vendored runtime |
+| --- | ---: |
+| Decode repeats | 3 |
+| Baseline worker decode tok/s | 51.0 |
+| TurboQuant worker decode tok/s | 16.0 |
+| TurboQuant worker TPS overhead | 68.63% |
+| TurboQuant wall TPS overhead | 69.47% |
+| TurboQuant decode loop total, 3 runs | 19,315,210 us |
+| TurboQuant decode token eval total, 3 runs | 15,894,621 us |
+| TurboQuant median token eval avg | 45,268 us |
+| TurboQuant median model construction avg | 18,761 us |
+| TurboQuant memory savings | 75% |
+| TurboQuant quantization ratio | 25% |
+| TurboQuant candidate dispatch count | 0 |
+| TurboQuant fallback count | 0 |
+| TurboQuant kernel path | tq_mse_single |
+| TurboQuant runtime route | routed |
+| TurboQuant release gate | fail |
+
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
@@ -301,6 +345,13 @@ The blocked-fallback post-run reports `status = "fail"`,
 `observed_runtime_block_reasons = ["attention_hook_unavailable"]`,
 `worker_tps_overhead_pct = -3.39`, and
 `active_kv_estimated_memory_savings_pct = 0.0`.
+The vendored runtime post-run reports `status = "fail"`,
+`candidate_dispatch_count = 0`, `fallback_count = 0`,
+`observed_kernel_paths = ["tq_mse_single"]`,
+`observed_runtime_routes = ["routed"]`,
+`active_kv_estimated_memory_savings_pct = 75.0`, and
+`worker_tps_overhead_pct = 68.63`. This proves runtime routing without
+unblocking the release gate.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -310,12 +361,20 @@ where Swift MLX executes the dependency-owned quantized attention graph. That
 keeps affine-q4 fallback below the release target. The blocked-fallback speedup
 removes that user-visible overhead for default `turboquant-q4`, but it is not a
 TurboQuant success: it trades away KV compression while the runtime hook remains
-blocked, so the fused release gate must remain failed.
+blocked, so the fused release gate must remain failed. The vendored runtime
+restores KV compression and removes fallback, but the first fused kernel is still
+slower than the release target.
+
+Implementation inference: the current Swift fused kernel dispatches one output
+element per thread and recomputes the key score plus softmax pass for every
+output dimension. That validates the route, but it does not match the oMLX
+near-zero-overhead layout where score/softmax work is shared across value lanes.
 
 ## Next Optimization Architecture
 
-The next real TurboQuant optimization must replace the current fallback profile
-with a fused decode implementation. The recommended order is:
+The next real TurboQuant optimization must speed up the vendored fused route.
+Routing is now proven; the remaining work is kernel layout and dispatch
+efficiency. The recommended order is:
 
 1. Add an explicit capability gate.
    Keep `turboquant-q4` mapped to `fallback` unless a fused cache implementation
@@ -324,15 +383,11 @@ with a fused decode implementation. The recommended order is:
    `swift_worker_direct.active_kv_release_gates.turboquant_fused_decode` and the
    `--require-fused-turboquant` CLI flag.
 
-2. Prove custom Metal feasibility in Swift.
-   The pinned Swift MLX checkout exposes `MLXFast.metalKernel(...)` and
-   `MLXFastKernel.callAsFunction(...)`, which is the required custom Metal
-   dispatch surface. The text worker target now has the `MLXFast` product
-   dependency, a runtime smoke test that dispatches an identity custom kernel,
-   and an isolated MSE q4 value decode plus attention-weight accumulation
-   kernel, and an isolated MSE q4 score plus softmax plus value kernel. The
-   next implementation should turn this proof into a feature-gated cache path
-   with release-gated metrics before changing the default active runtime path.
+2. Optimize the vendored fused kernel layout.
+   The current kernel is a correctness-first route proof. The next kernel should
+   compute score and online softmax once per batch/head/token block, then share
+   those weights across value lanes instead of recomputing the full score pass
+   for each output dimension.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -359,7 +414,9 @@ with a fused decode implementation. The recommended order is:
 
 Do not claim TurboQuant optimization success without a post-run JSON produced by
 the same `scripts/phase2_metrics_report.py` command family and the same real
-model class.
+model class. Until Swift MLXLLM supports Qwen3.5, the supported active-KV
+real-model class is `mlx-community/Qwen3-0.6B-4bit`; if Qwen3.5 support lands,
+freeze a new pre-optimization JSON before comparing.
 
 Release-gate targets:
 

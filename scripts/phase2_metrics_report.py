@@ -55,7 +55,10 @@ TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState",
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs",
         "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState",
-        "WorkerScaffoldTests.testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable",
+        "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA",
+        "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled",
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch",
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence",
     ],
 }
 TURBOQUANT_FUSED_RUNTIME_REQUIREMENTS = [
@@ -1240,7 +1243,13 @@ def build_active_kv_fused_candidate_probes(
     observed_runtime_routes = gate.get("observed_runtime_routes", [])
     observed_runtime_block_reasons = gate.get("observed_runtime_block_reasons", [])
     capability_evidence = dict(TURBOQUANT_FUSED_CAPABILITY_EVIDENCE)
-    if int_value(gate.get("candidate_dispatch_count")) > 0:
+    has_vendored_runtime_route = "routed" in observed_runtime_routes or any(
+        path not in ("fallback", None, "") and not str(path).startswith("unknown_")
+        for path in observed_kernel_paths
+    )
+    if has_vendored_runtime_route:
+        capability_evidence["runtime_path"] = "vendored_attention_route_connected"
+    elif int_value(gate.get("candidate_dispatch_count")) > 0:
         capability_evidence["runtime_path"] = "candidate_dispatch_connected"
 
     return {

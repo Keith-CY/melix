@@ -621,10 +621,10 @@ func shouldUseActiveKVQuantization(
     guard normalized.mode == .activeKvQuantized else {
         return false
     }
-    guard isTurboQuantProfile(normalized.activeKvQuantProfile) else {
-        return true
-    }
-    return turboQuantCandidateProbeEnabled || turboQuantAffineFallbackEnabled()
+    // TurboQuant now has a vendored q4 fused attention route. The candidate probe flag
+    // only controls the synthetic capability smoke dispatch, not runtime enablement.
+    _ = turboQuantCandidateProbeEnabled
+    return true
 }
 
 #if canImport(MLXLMCommon)
@@ -768,6 +768,12 @@ private func makePreparedDecodeEvents(
             var processor = parameters.processor()
             let sampler = parameters.sampler()
             processor?.prompt(decodeState.input.text.tokens)
+            var decodeModelTotalMicros = 0
+            var decodeModelCallCount = 0
+            var decodeTokenEvalTotalMicros = 0
+            var decodeTokenEvalCallCount = 0
+            var decodeQuantizeTotalMicros = 0
+            var prefillQuantizeMicros = decodeState.prefillQuantizeMicros
 
             let additionalEOSTokenIds = Set(
                 context.configuration.extraEOSTokens.compactMap {
@@ -781,11 +787,16 @@ private func makePreparedDecodeEvents(
                 cache: cache
             )
             var generatedTokenCount = 0
-            var decodeModelTotalMicros = 0
-            var decodeModelCallCount = 0
-            var decodeTokenEvalTotalMicros = 0
-            var decodeTokenEvalCallCount = 0
-            var decodeQuantizeTotalMicros = 0
+            if parameters.kvBits != nil {
+                let initialQuantizeStartedAt = Date.timeIntervalSinceReferenceDate
+                maybeQuantizeKVCache(
+                    cache: &cache,
+                    kvBits: parameters.kvBits,
+                    kvGroupSize: parameters.kvGroupSize,
+                    quantizedKVStart: parameters.quantizedKVStart
+                )
+                prefillQuantizeMicros += elapsedMicros(since: initialQuantizeStartedAt)
+            }
             var didDispatchTurboQuantFusedAttention = false
             var turboQuantCandidateEligibilityCheckCount = 0
             let shouldEvaluateTurboQuantFusedAttentionCandidate = shouldDispatchTurboQuantFusedAttentionCandidate(
@@ -875,7 +886,7 @@ private func makePreparedDecodeEvents(
             let activeKVProbe = makeActiveKVProbeSummary(
                 cache: cache,
                 acceleration: acceleration,
-                prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
+                prefillQuantizeMicros: prefillQuantizeMicros,
                 decodeModelTotalMicros: decodeModelTotalMicros,
                 decodeModelCallCount: decodeModelCallCount,
                 decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
@@ -1183,6 +1194,13 @@ func turboQuantRuntimeFusedAttentionRoute(
         return .disabled
     }
 
+    if turboQuantFusedAttentionDispatchCount(cache: cache) > 0 {
+        guard firstSupportedTurboQuantQ4QuantizedCacheState(cache: cache) != nil else {
+            return .blocked(.unsupportedCacheState)
+        }
+        return .routed
+    }
+
     guard shouldUseActiveKVQuantization(for: normalized) else {
         return .blocked(.attentionHookUnavailable)
     }
@@ -1192,6 +1210,15 @@ func turboQuantRuntimeFusedAttentionRoute(
     }
 
     return .blocked(.attentionHookUnavailable)
+}
+
+private func turboQuantFusedAttentionDispatchCount(cache: [KVCache]) -> Int {
+    cache.reduce(0) { partial, layer in
+        guard let quantizedCache = layer as? QuantizedKVCacheProtocol else {
+            return partial
+        }
+        return partial + quantizedCache.fusedAttentionDispatchCount
+    }
 }
 
 func dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [KVCache]) -> Bool {
