@@ -143,7 +143,7 @@ struct DesktopShellTabStripView: View {
         .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
         .overlay(
             Capsule()
-                .stroke(Color.primary.opacity(MelixDesignTokens.SurfaceOpacity.hairline), lineWidth: 1)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
         )
     }
 

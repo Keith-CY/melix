@@ -41,20 +41,48 @@ enum MelixDesignTokens {
         static let elevated: Double = 0.08
         /// Standard card fill when painting `.quaternary` — see `melixCard()`.
         static let quaternaryCard: Double = 0.6
-        /// Hairline divider or near-invisible outline on interactive containers.
-        static let hairline: Double = 0.06
+    }
+
+    enum StrokeOpacity {
+        /// Near-invisible hairline on structural containers. Aliased to
+        /// `SurfaceOpacity.card` so the "6%" constant has a single source.
+        static let hairline: Double = SurfaceOpacity.card
+        /// Slightly stronger hairline on interactive containers — composer
+        /// boxes, tab strips. Spec permits 0.06–0.08 on these surfaces.
+        static let interactive: Double = 0.08
     }
 
     // MARK: - Status tints
 
-    /// Chat transcript bubble tints. Keep opacities low (≈ 10–14%) so the
-    /// bubble reads as ink-on-paper rather than a colored card.
+    /// Base hues for chat transcript bubble backgrounds. Paired with
+    /// `BubbleOpacity` to stay consistent with the `AccentOpacity` pattern.
+    enum BubbleTint {
+        static let user = Color.blue
+        static let assistant = Color.green
+        static let reasoning = Color.orange
+        static let tool = Color.purple
+        static let error = Color.red
+    }
+
+    /// Per-role opacities for chat bubble backgrounds. The user bubble sits
+    /// slightly stronger (0.14) because blue reads softer than the warm
+    /// tones on a near-white canvas; the rest match spec at 0.12.
+    enum BubbleOpacity {
+        static let user: Double = 0.14
+        static let assistant: Double = 0.12
+        static let reasoning: Double = 0.12
+        static let tool: Double = 0.12
+        static let error: Double = 0.12
+    }
+
+    /// Pre-composed chat bubble fills — convenience wrappers that keep
+    /// callers short while exposing the underlying hue and opacity above.
     enum Bubble {
-        static let user = Color.blue.opacity(0.14)
-        static let assistant = Color.green.opacity(0.12)
-        static let reasoning = Color.orange.opacity(0.12)
-        static let tool = Color.purple.opacity(0.12)
-        static let error = Color.red.opacity(0.12)
+        static let user = BubbleTint.user.opacity(BubbleOpacity.user)
+        static let assistant = BubbleTint.assistant.opacity(BubbleOpacity.assistant)
+        static let reasoning = BubbleTint.reasoning.opacity(BubbleOpacity.reasoning)
+        static let tool = BubbleTint.tool.opacity(BubbleOpacity.tool)
+        static let error = BubbleTint.error.opacity(BubbleOpacity.error)
     }
 
     // MARK: - Corner radii
@@ -119,11 +147,21 @@ extension View {
     }
 
     /// Apply the standard selected-row accent fill.
-    func melixSelection(_ isSelected: Bool, radius: CGFloat = MelixDesignTokens.Radius.lg) -> some View {
+    ///
+    /// The unselected branch paints a near-invisible secondary wash (6%)
+    /// so rows read as tiles even when inactive — matches the session-row
+    /// treatment in the design mock (`ChatView.jsx`: `rgba(0,0,0,0.03)`).
+    /// Pass `unselectedFill: .clear` for contexts where the tile fill
+    /// would double-up with an outer surface.
+    func melixSelection(
+        _ isSelected: Bool,
+        radius: CGFloat = MelixDesignTokens.Radius.lg,
+        unselectedFill: Color = Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card)
+    ) -> some View {
         background(
             isSelected
                 ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
-                : Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
+                : unselectedFill,
             in: RoundedRectangle(cornerRadius: radius, style: .continuous)
         )
     }

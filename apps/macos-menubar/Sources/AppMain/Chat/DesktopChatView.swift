@@ -290,7 +290,7 @@ struct DesktopChatSessionWorkspace: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
-                        .stroke(Color.primary.opacity(MelixDesignTokens.SurfaceOpacity.elevated), lineWidth: 1)
+                        .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive), lineWidth: 1)
                 )
 
                 HStack {
@@ -475,7 +475,7 @@ private struct DesktopChatTranscriptRowView: View {
         .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
     }
 
-    private var backgroundStyle: Color {
+    private var backgroundStyle: some ShapeStyle {
         switch entry.kind {
         case .user:
             return MelixDesignTokens.Bubble.user
