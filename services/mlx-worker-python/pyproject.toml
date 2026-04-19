@@ -19,13 +19,13 @@ mlx = [
   "mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git@43b9b2078b7027e7622f34a434b2d94aada7eaad",
 ]
 audio-stt = [
-  "mlx-audio==0.2.6",
+  "mlx-audio==0.4.2",
 ]
 audio-tts = [
-  "mlx-audio==0.2.6",
+  "mlx-audio==0.4.2",
 ]
 audio = [
-  "mlx-audio==0.2.6",
+  "mlx-audio==0.4.2",
 ]
 
 [tool.pytest.ini_options]
