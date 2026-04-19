@@ -1,0 +1,146 @@
+{
+  "model": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+  "committed_summary_path": "docs/metrics/phase2-active-kv-qwen35-hybrid-stability-summary.json",
+  "runtime_dir": "/tmp/melix-phase2-qwen35-hybrid-stability-runtime",
+  "output_dir": "/tmp/melix-phase2-qwen35-hybrid-stability",
+  "raw_run_artifact_policy": "Raw run JSON and gate logs were generated under output_dir during measurement; this committed summary preserves the extracted per-run gate metrics.",
+  "thresholds": {
+    "worker_tps_overhead_pct_max_allowed": 15.0,
+    "active_kv_kernel_path_must_not_be": "fallback"
+  },
+  "pass_count": 5,
+  "run_count": 5,
+  "all_gate_passed": true,
+  "all_non_fallback": true,
+  "all_routed": true,
+  "all_worker_overhead_within_threshold": true,
+  "worker_tps_overhead_pct": {
+    "min": 5.71,
+    "median": 10.26,
+    "mean": 9.722,
+    "max": 12.82
+  },
+  "wall_tps_overhead_pct": {
+    "min": 7.97,
+    "median": 10.51,
+    "mean": 10.92,
+    "max": 12.89
+  },
+  "runs": [
+    {
+      "run": 1,
+      "gate": "pass",
+      "worker_tps_overhead_pct": 12.5,
+      "wall_tps_overhead_pct": 12.89,
+      "active_worker_decode_tokens_per_second": 35.0,
+      "baseline_worker_decode_tokens_per_second": 40.0,
+      "kernel_paths": [
+        "tq_mse_single"
+      ],
+      "runtime_routes": [
+        "routed"
+      ],
+      "fallback_count": 0,
+      "fused_attention_call_count": 1134,
+      "fused_attention_total_us": 217859,
+      "decode_model_eval_sync_total_us": 3861899,
+      "cache_update_total_us": 138526,
+      "cache_quantize_total_us": 20959,
+      "estimated_memory_savings_pct": 75.0,
+      "json_path": "/tmp/melix-phase2-qwen35-hybrid-stability/run-1.json",
+      "gate_log_path": "/tmp/melix-phase2-qwen35-hybrid-stability/gate-1.log"
+    },
+    {
+      "run": 2,
+      "gate": "pass",
+      "worker_tps_overhead_pct": 7.32,
+      "wall_tps_overhead_pct": 10.34,
+      "active_worker_decode_tokens_per_second": 38.0,
+      "baseline_worker_decode_tokens_per_second": 41.0,
+      "kernel_paths": [
+        "tq_mse_single"
+      ],
+      "runtime_routes": [
+        "routed"
+      ],
+      "fallback_count": 0,
+      "fused_attention_call_count": 1134,
+      "fused_attention_total_us": 215888,
+      "decode_model_eval_sync_total_us": 3569660,
+      "cache_update_total_us": 138083,
+      "cache_quantize_total_us": 20589,
+      "estimated_memory_savings_pct": 75.0,
+      "json_path": "/tmp/melix-phase2-qwen35-hybrid-stability/run-2.json",
+      "gate_log_path": "/tmp/melix-phase2-qwen35-hybrid-stability/gate-2.log"
+    },
+    {
+      "run": 3,
+      "gate": "pass",
+      "worker_tps_overhead_pct": 5.71,
+      "wall_tps_overhead_pct": 7.97,
+      "active_worker_decode_tokens_per_second": 33.0,
+      "baseline_worker_decode_tokens_per_second": 35.0,
+      "kernel_paths": [
+        "tq_mse_single"
+      ],
+      "runtime_routes": [
+        "routed"
+      ],
+      "fallback_count": 0,
+      "fused_attention_call_count": 1134,
+      "fused_attention_total_us": 229260,
+      "decode_model_eval_sync_total_us": 4125145,
+      "cache_update_total_us": 145894,
+      "cache_quantize_total_us": 21576,
+      "estimated_memory_savings_pct": 75.0,
+      "json_path": "/tmp/melix-phase2-qwen35-hybrid-stability/run-3.json",
+      "gate_log_path": "/tmp/melix-phase2-qwen35-hybrid-stability/gate-3.log"
+    },
+    {
+      "run": 4,
+      "gate": "pass",
+      "worker_tps_overhead_pct": 10.26,
+      "wall_tps_overhead_pct": 10.51,
+      "active_worker_decode_tokens_per_second": 35.0,
+      "baseline_worker_decode_tokens_per_second": 39.0,
+      "kernel_paths": [
+        "tq_mse_single"
+      ],
+      "runtime_routes": [
+        "routed"
+      ],
+      "fallback_count": 0,
+      "fused_attention_call_count": 1134,
+      "fused_attention_total_us": 221002,
+      "decode_model_eval_sync_total_us": 3792543,
+      "cache_update_total_us": 140525,
+      "cache_quantize_total_us": 21259,
+      "estimated_memory_savings_pct": 75.0,
+      "json_path": "/tmp/melix-phase2-qwen35-hybrid-stability/run-4.json",
+      "gate_log_path": "/tmp/melix-phase2-qwen35-hybrid-stability/gate-4.log"
+    },
+    {
+      "run": 5,
+      "gate": "pass",
+      "worker_tps_overhead_pct": 12.82,
+      "wall_tps_overhead_pct": 12.89,
+      "active_worker_decode_tokens_per_second": 34.0,
+      "baseline_worker_decode_tokens_per_second": 39.0,
+      "kernel_paths": [
+        "tq_mse_single"
+      ],
+      "runtime_routes": [
+        "routed"
+      ],
+      "fallback_count": 0,
+      "fused_attention_call_count": 1134,
+      "fused_attention_total_us": 219739,
+      "decode_model_eval_sync_total_us": 3975414,
+      "cache_update_total_us": 141045,
+      "cache_quantize_total_us": 21518,
+      "estimated_memory_savings_pct": 75.0,
+      "json_path": "/tmp/melix-phase2-qwen35-hybrid-stability/run-5.json",
+      "gate_log_path": "/tmp/melix-phase2-qwen35-hybrid-stability/gate-5.log"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ The current benchmark evidence is:
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 | Fused eval-sync probe | `docs/metrics/phase2-active-kv-vendored-turboquant-eval-probe.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 | Qwen3.5 hybrid-cache routed probe | `docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
+| Qwen3.5 hybrid-cache stability summary | `docs/metrics/phase2-active-kv-qwen35-hybrid-stability-summary.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. Melix now vendors Qwen3.5 model support from
@@ -131,6 +132,13 @@ quantized states. The real Qwen3.5 routed JSON reports release gate `status =
 `fused_attention_call_count = 1134`, and
 `worker_tps_overhead_pct = 12.82`, so it satisfies the first fused milestone's
 `<= 15` worker overhead threshold.
+
+The follow-up Qwen3.5 hybrid-cache stability summary records five sequential
+real-model runs against the same routed profile. All five runs pass the explicit
+fused release gate, keep `active_kv_kernel_path = "tq_mse_single"`, keep
+`active_kv_runtime_route = "routed"`, keep `active_kv_fallback_count = 0`, and
+report `worker_tps_overhead_pct` min/median/mean/max of
+`5.71 / 10.26 / 9.722 / 12.82`.
 
 ## Implemented Optimization
 
@@ -570,7 +578,8 @@ model class. The current Qwen3.5 hybrid-cache routed JSON is valid fused-release
 evidence because it reports a non-fallback kernel path and worker overhead below
 the first fused milestone threshold. Older Qwen3.5 support-smoke and eval-sync
 JSON files remain historical blocked evidence and should not be used as pass
-evidence.
+evidence. The Qwen3.5 hybrid-cache stability summary adds repeated-run evidence:
+5/5 runs pass the same gate, with maximum `worker_tps_overhead_pct = 12.82`.
 
 Release-gate targets:
 
@@ -609,6 +618,9 @@ release gate: it reports `active_kv_kernel_path = tq_mse_single`,
 `active_kv_runtime_route = routed`, `active_kv_fallback_count = 0`,
 `active_kv_estimated_memory_savings_pct = 75.0`, and
 `worker_tps_overhead_pct = 12.82`.
+The stability summary preserves repeated-run evidence for the same model and
+profile: 5/5 release-gate passes, `active_kv_fallback_count = 0` in every run,
+and maximum `worker_tps_overhead_pct = 12.82`.
 
 Quality and correctness gates:
 
