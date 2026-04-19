@@ -127,4 +127,39 @@ extension View {
             in: RoundedRectangle(cornerRadius: radius, style: .continuous)
         )
     }
+
+    /// Render text as a section microhead: 10pt, semibold, tertiary,
+    /// uppercase with tight tracking. The "Digital Broadsheet" pattern for
+    /// GroupBox-style labels ("SESSION", "CHAT SESSIONS", etc.).
+    func melixSectionLabel() -> some View {
+        self
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .textCase(.uppercase)
+            .tracking(0.6)
+    }
+}
+
+/// Card container with a microhead section label. Replaces SwiftUI's
+/// default `GroupBox` for inspector/sidebar sections where the spec calls
+/// for the "Digital Broadsheet" header treatment.
+struct MelixSectionCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+            Text(title).melixSectionLabel()
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(MelixDesignTokens.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixCard()
+    }
 }

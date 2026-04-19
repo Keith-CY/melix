@@ -43,20 +43,20 @@ private struct DesktopShellBannerView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: bannerSymbolName)
-                .foregroundStyle(.white)
+                .foregroundStyle(bannerSeverityColor)
             VStack(alignment: .leading, spacing: 4) {
                 Text(banner.title)
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                 Text(banner.detail)
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             if banner.isDismissible {
                 Button(action: dismiss) {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss Banner")
@@ -65,7 +65,7 @@ private struct DesktopShellBannerView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(bannerBackgroundColor)
+        .background(bannerSeverityColor.opacity(MelixDesignTokens.AccentOpacity.weak))
     }
 
     private var bannerSymbolName: String {
@@ -79,7 +79,7 @@ private struct DesktopShellBannerView: View {
         }
     }
 
-    private var bannerBackgroundColor: Color {
+    private var bannerSeverityColor: Color {
         switch banner.severity {
         case .info:
             return Color.blue

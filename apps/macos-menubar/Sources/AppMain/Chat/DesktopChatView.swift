@@ -111,7 +111,7 @@ struct DesktopChatSessionSidebar: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Chat Sessions")
-                    .font(.headline)
+                    .melixSectionLabel()
                 Spacer()
                 Button {
                     viewModel.createChatSession()
@@ -307,7 +307,7 @@ struct DesktopChatSessionWorkspace: View {
                         viewModel.clearChatTranscript()
                     }
                     .buttonStyle(.bordered)
-                    Button("Send") {
+                    Button("Send \u{2318}\u{21A9}") {
                         Task { await viewModel.submitChatPrompt() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -329,7 +329,7 @@ struct DesktopChatSessionInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Session") {
+            MelixSectionCard("Session") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(viewModel.selectedChatSession?.statusText ?? "Idle")
                         .font(.headline)
@@ -344,10 +344,9 @@ struct DesktopChatSessionInspector: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Analysis Routes") {
+            MelixSectionCard("Analysis Routes") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(viewModel.chatCapabilities) { capability in
                         HStack(alignment: .top) {
@@ -363,11 +362,10 @@ struct DesktopChatSessionInspector: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !viewModel.lastChatRequestID.isEmpty || !viewModel.lastChatUsageText.isEmpty {
-                GroupBox("Runtime") {
+                MelixSectionCard("Runtime") {
                     VStack(alignment: .leading, spacing: 6) {
                         if !viewModel.lastChatRequestID.isEmpty {
                             Text("request \(viewModel.lastChatRequestID)")
@@ -380,7 +378,6 @@ struct DesktopChatSessionInspector: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
