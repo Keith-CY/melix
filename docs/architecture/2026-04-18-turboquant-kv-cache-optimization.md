@@ -17,6 +17,7 @@ The current benchmark evidence is:
 | Terminal model-call pre-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Terminal model-call post-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Lazy-eval timing probe | `docs/metrics/phase2-active-kv-lazy-eval-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Blocked fallback speedup post-optimization | `docs/metrics/phase2-active-kv-blocked-fallback-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
@@ -188,6 +189,17 @@ execution forced by sampling and `token.item(Int.self)`. The probe shows the
 remaining time is dominated by token evaluation, which is where the dependency
 owned quantized attention path executes.
 
+The blocked-fallback speedup prevents default `turboquant-q4` from silently
+using affine q4 cache while the attention hook is unavailable. Explicit `q4`
+still provides affine KV compression, and candidate audits can still set
+`MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE=1` to exercise the old quantized
+candidate path. A compatibility opt-in,
+`MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK=1`, keeps the affine fallback available
+for developer probes. The default `turboquant-q4` probe remains visible as a
+blocked TurboQuant route with `active_kv_kernel_path = "fallback"`, but its
+actual quantization ratio and memory savings are now zero when no fused runtime
+hook is connected.
+
 ## Before And After Metrics
 
 The current runs used:
@@ -251,6 +263,25 @@ Lazy-eval timing evidence:
 | TurboQuant kernel path | fallback |
 | TurboQuant release gate | fail |
 
+Blocked fallback speedup evidence:
+
+| Metric | Lazy-eval fallback | Blocked fallback speedup |
+| --- | ---: | ---: |
+| Baseline worker decode tok/s | 59.0 | 59.0 |
+| TurboQuant worker decode tok/s | 34.0 | 61.0 |
+| TurboQuant worker TPS overhead | 42.37% | -3.39% |
+| TurboQuant wall TPS overhead | 42.31% | -1.64% |
+| TurboQuant decode loop total, 5 runs | 9,497,000 us | 5,473,976 us |
+| TurboQuant decode token eval total, 5 runs | 6,438,631 us | 4,009,440 us |
+| TurboQuant median token eval avg | 19,945 us | 11,987 us |
+| TurboQuant median model construction avg | 9,303 us | 4,387 us |
+| TurboQuant memory savings | 75% | 0% |
+| TurboQuant quantization ratio | 25% | 0% |
+| TurboQuant kernel path | fallback | fallback |
+| TurboQuant runtime route | blocked | blocked |
+| TurboQuant block reason | attention hook unavailable | attention hook unavailable |
+| TurboQuant release gate | fail | fail |
+
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
@@ -264,13 +295,22 @@ reports `status = "fail"`, `candidate_dispatch_count = 5`,
 `observed_runtime_block_reasons = ["attention_hook_unavailable"]`, and
 `worker_tps_overhead_pct = 44.83`. This preserves candidate-dispatch evidence
 without treating it as runtime success.
+The blocked-fallback post-run reports `status = "fail"`,
+`candidate_dispatch_count = 0`, `fallback_count = 5`,
+`observed_runtime_routes = ["blocked"]`,
+`observed_runtime_block_reasons = ["attention_hook_unavailable"]`,
+`worker_tps_overhead_pct = -3.39`, and
+`active_kv_estimated_memory_savings_pct = 0.0`.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
 too small to move end-to-end throughput. The lazy-eval probe shows about 68
 percent of the TurboQuant fallback decode loop is spent in token evaluation,
 where Swift MLX executes the dependency-owned quantized attention graph. That
-keeps non-hook wrapper optimizations below the release target.
+keeps affine-q4 fallback below the release target. The blocked-fallback speedup
+removes that user-visible overhead for default `turboquant-q4`, but it is not a
+TurboQuant success: it trades away KV compression while the runtime hook remains
+blocked, so the fused release gate must remain failed.
 
 ## Next Optimization Architecture
 

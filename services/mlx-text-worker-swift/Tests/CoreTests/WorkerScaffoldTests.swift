@@ -988,6 +988,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(activeKVProbe.kernelPathCode, 90)
         XCTAssertEqual(activeKVProbe.runtimeRouteCode, 1)
         XCTAssertEqual(activeKVProbe.runtimeBlockReasonCode, 2)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 25)
         XCTAssertEqual(activeKVProbe.candidateDispatchCode, 1)
         XCTAssertGreaterThanOrEqual(activeKVProbe.prefillQuantizeMicros, 0)
         XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
@@ -1010,7 +1011,7 @@ final class WorkerScaffoldTests: XCTestCase {
         acceleration.mode = .activeKvQuantized
         acceleration.activeKvQuantProfile = "turboquant-q4"
 
-        let events = try await withTemporaryDefaultMetallib {
+        let result = try await withTemporaryDefaultMetallib {
             try await Device.withDefaultDevice(.cpu) {
                 let model = LoadedTextModel(
                     storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
@@ -1033,12 +1034,24 @@ final class WorkerScaffoldTests: XCTestCase {
                     acceleration: acceleration,
                     shouldAbort: { false }
                 )
-                return try await collectTextGenerationEvents(from: stream)
+                return (
+                    activeKVQuantizationRatio: prefill.activeKVQuantizationRatio,
+                    events: try await collectTextGenerationEvents(from: stream)
+                )
             }
         }
 
-        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(result.activeKVQuantizationRatio, 0)
+        let summary = try XCTUnwrap(renderedSummary(from: result.events))
         let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 2)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 90)
+        XCTAssertEqual(activeKVProbe.runtimeRouteCode, 1)
+        XCTAssertEqual(activeKVProbe.runtimeBlockReasonCode, 2)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 0)
+        XCTAssertEqual(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 0)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 1)
         XCTAssertEqual(activeKVProbe.candidateDispatchCode, 0)
         XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 0)
     }
@@ -1132,6 +1145,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
         XCTAssertEqual(activeKVProbe.backendCode, 1)
         XCTAssertEqual(activeKVProbe.kernelPathCode, 10)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 25)
         XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
         XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
@@ -3854,6 +3868,7 @@ final class WorkerScaffoldTests: XCTestCase {
                     kernelPathCode: 10,
                     runtimeRouteCode: 1,
                     runtimeBlockReasonCode: 2,
+                    quantizationRatioPercent: 25,
                     prefillQuantizeMicros: 150,
                     decodeModelTotalMicros: 900,
                     decodeModelCallCount: 3,
@@ -3923,6 +3938,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 25)
         XCTAssertEqual(metrics["swift_text.active_kv_backend_code"], 1)
         XCTAssertEqual(metrics["swift_text.active_kv_kernel_path_code"], 10)
         XCTAssertEqual(metrics["swift_text.active_kv_runtime_route_code"], 1)
@@ -6197,6 +6213,26 @@ final class WorkerScaffoldTests: XCTestCase {
                 candidateProbeEnabled: true
             ))
         }
+    }
+
+    func testTurboQuantAffineFallbackRequiresExplicitRuntimeOptIn() {
+        var q4Acceleration = Melix_Worker_V1_AccelerationPolicy()
+        q4Acceleration.mode = .activeKvQuantized
+        q4Acceleration.activeKvQuantProfile = "q4"
+        XCTAssertTrue(shouldUseActiveKVQuantization(for: q4Acceleration))
+
+        var turboQuantAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        turboQuantAcceleration.mode = .activeKvQuantized
+        turboQuantAcceleration.activeKvQuantProfile = "turboquant-q4"
+        XCTAssertFalse(shouldUseActiveKVQuantization(for: turboQuantAcceleration))
+        XCTAssertTrue(shouldUseActiveKVQuantization(
+            for: turboQuantAcceleration,
+            turboQuantCandidateProbeEnabled: true
+        ))
+        XCTAssertFalse(turboQuantAffineFallbackEnabled(environment: [:]))
+        XCTAssertTrue(turboQuantAffineFallbackEnabled(
+            environment: ["MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK": "true"]
+        ))
     }
 
     func testTurboQuantRuntimeRouteStaysBlockedUntilAttentionHookIsAvailable() async throws {

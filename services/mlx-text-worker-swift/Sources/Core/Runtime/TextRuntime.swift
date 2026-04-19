@@ -47,6 +47,7 @@ struct ActiveKVProbeSummary: Sendable {
     let kernelPathCode: Int
     let runtimeRouteCode: Int
     let runtimeBlockReasonCode: Int
+    let quantizationRatioPercent: Int
     let prefillQuantizeMicros: Int
     let decodeModelTotalMicros: Int
     let decodeModelCallCount: Int
@@ -67,6 +68,7 @@ struct ActiveKVProbeSummary: Sendable {
         kernelPathCode: Int,
         runtimeRouteCode: Int = 0,
         runtimeBlockReasonCode: Int = 0,
+        quantizationRatioPercent: Int = 0,
         prefillQuantizeMicros: Int,
         decodeModelTotalMicros: Int,
         decodeModelCallCount: Int = 0,
@@ -86,6 +88,7 @@ struct ActiveKVProbeSummary: Sendable {
         self.kernelPathCode = kernelPathCode
         self.runtimeRouteCode = runtimeRouteCode
         self.runtimeBlockReasonCode = runtimeBlockReasonCode
+        self.quantizationRatioPercent = quantizationRatioPercent
         self.prefillQuantizeMicros = prefillQuantizeMicros
         self.decodeModelTotalMicros = decodeModelTotalMicros
         self.decodeModelCallCount = decodeModelCallCount

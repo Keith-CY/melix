@@ -293,6 +293,7 @@ struct TextDecodeEngine: Sendable {
             return
         }
 
+        metrics.set("swift_text.active_kv_quantization_ratio", value: probe.quantizationRatioPercent)
         metrics.set("swift_text.active_kv_backend_code", value: probe.backendCode)
         metrics.set("swift_text.active_kv_kernel_path_code", value: probe.kernelPathCode)
         metrics.set("swift_text.active_kv_runtime_route_code", value: probe.runtimeRouteCode)

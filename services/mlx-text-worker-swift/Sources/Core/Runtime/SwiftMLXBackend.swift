@@ -27,6 +27,7 @@ struct PreparedTextGeneration: Sendable {
 struct PreparedPrefillContext: @unchecked Sendable {
     let preparedInput: Any
     let promptTokens: Int
+    let activeKVQuantizationRatio: Int
 }
 
 #if canImport(MLXLMCommon)
@@ -36,6 +37,7 @@ struct PreparedDecodeState: @unchecked Sendable {
     let cache: [KVCache]
     let promptPrefillTime: TimeInterval
     let prefillQuantizeMicros: Int
+    let activeKVQuantizationRatio: Int
 }
 #endif
 
@@ -170,7 +172,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             model: model,
             messages: messages,
             prefillStepSize: prefillStepSize,
-            acceleration: appliedAcceleration
+            acceleration: appliedAcceleration,
+            turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
         )
         return RuntimePrefillResult(
             context: TextPrefillContext(
@@ -183,7 +186,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 baselineWindowSize: baseWindowSize,
                 effectiveWindowSize: effectiveWindowSize
             ),
-            activeKVQuantizationRatio: activeKVQuantizationRatioPercent(for: appliedAcceleration)
+            activeKVQuantizationRatio: prepared.activeKVQuantizationRatio
         )
     }
 
@@ -425,7 +428,8 @@ private func makePreparedPromptContext(
     model: LoadedTextModel,
     messages: [Melix_Worker_V1_ChatMessage],
     prefillStepSize: UInt32,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) async throws -> PreparedPrefillContext {
     #if canImport(MLXLMCommon)
     guard let container = model.storage as? ModelContainer else {
@@ -453,7 +457,8 @@ private func makePreparedPromptContext(
         let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
         applyActiveKVQuantizationIfNeeded(
             cache: &cache,
-            acceleration: acceleration
+            acceleration: acceleration,
+            turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
         )
         let prefillQuantizeMicros = elapsedMicros(since: quantizeStartedAt)
         let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
@@ -462,12 +467,17 @@ private func makePreparedPromptContext(
             prepared: prepared,
             cache: cache,
             promptPrefillTime: promptPrefillTime,
-            prefillQuantizeMicros: prefillQuantizeMicros
+            prefillQuantizeMicros: prefillQuantizeMicros,
+            activeKVQuantizationRatio: activeKVRuntimeQuantizationRatioPercent(
+                for: acceleration,
+                cache: cache
+            )
         )
     }
     return PreparedPrefillContext(
         preparedInput: preparedState,
-        promptTokens: preparedState.input.text.tokens.size
+        promptTokens: preparedState.input.text.tokens.size,
+        activeKVQuantizationRatio: preparedState.activeKVQuantizationRatio
     )
     #else
     throw RuntimeUnavailableError(
@@ -551,7 +561,8 @@ private func makeDecodeParameters(
     from sampling: Melix_Worker_V1_SamplingConfig,
     maxOutputTokens: UInt32,
     decodeStepSize: UInt32,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) -> GenerateParameters {
     var parameters = makeGenerateParameters(from: sampling)
 
@@ -562,7 +573,10 @@ private func makeDecodeParameters(
         parameters.prefillStepSize = Int(decodeStepSize)
     }
 
-    if acceleration.mode == .activeKvQuantized {
+    if shouldUseActiveKVQuantization(
+        for: acceleration,
+        turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
+    ) {
         applyActiveKVQuantizationProfile(
             to: &parameters,
             profile: acceleration.activeKvQuantProfile
@@ -581,6 +595,38 @@ private func applyActiveKVQuantizationProfile(
     parameters.quantizedKVStart = 0
 }
 
+private func isTurboQuantProfile(_ profile: String) -> Bool {
+    profile.lowercased().hasPrefix("turboquant")
+}
+
+func turboQuantAffineFallbackEnabled(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> Bool {
+    guard let rawValue = environment["MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK"] else {
+        return false
+    }
+    switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "true", "yes", "on":
+        return true
+    default:
+        return false
+    }
+}
+
+func shouldUseActiveKVQuantization(
+    for acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
+) -> Bool {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized else {
+        return false
+    }
+    guard isTurboQuantProfile(normalized.activeKvQuantProfile) else {
+        return true
+    }
+    return turboQuantCandidateProbeEnabled || turboQuantAffineFallbackEnabled()
+}
+
 #if canImport(MLXLMCommon)
 enum TurboQuantRuntimeFusedAttentionBlockReason: Equatable {
     case unsupportedCacheState
@@ -595,10 +641,14 @@ enum TurboQuantRuntimeFusedAttentionRoute: Equatable {
 
 private func applyActiveKVQuantizationIfNeeded(
     cache: inout [KVCache],
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) {
     let normalized = normalizedAccelerationPolicy(acceleration)
-    guard normalized.mode == .activeKvQuantized else {
+    guard shouldUseActiveKVQuantization(
+        for: normalized,
+        turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
+    ) else {
         return
     }
 
@@ -619,16 +669,33 @@ func shouldAttemptActiveKVDecodeQuantization(
     cache: [KVCache],
     kvBits: Int?,
     quantizedKVStart: Int,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    turboQuantCandidateProbeEnabled: Bool = false
 ) -> Bool {
     let normalized = normalizedAccelerationPolicy(acceleration)
-    guard normalized.mode == .activeKvQuantized, kvBits != nil else {
+    guard shouldUseActiveKVQuantization(
+        for: normalized,
+        turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
+    ), kvBits != nil else {
         return false
     }
     guard let firstCache = cache.first, firstCache.offset > quantizedKVStart else {
         return false
     }
     return !(firstCache is QuantizedKVCacheProtocol)
+}
+
+private func activeKVRuntimeQuantizationRatioPercent(
+    for acceleration: Melix_Worker_V1_AccelerationPolicy,
+    cache: [KVCache]
+) -> Int {
+    let normalized = normalizedAccelerationPolicy(acceleration)
+    guard normalized.mode == .activeKvQuantized,
+          cache.contains(where: { $0 is QuantizedKVCacheProtocol })
+    else {
+        return 0
+    }
+    return activeKVQuantizationRatioPercent(for: normalized)
 }
 #endif
 
@@ -660,7 +727,8 @@ private func makePreparedDecodeGeneration(
         from: sampling,
         maxOutputTokens: maxOutputTokens,
         decodeStepSize: decodeStepSize,
-        acceleration: acceleration
+        acceleration: acceleration,
+        turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
     )
 
     let runtimeEvents = try await container.perform(values: decodeState) { modelContext, decodeState in
@@ -729,7 +797,8 @@ private func makePreparedDecodeEvents(
                 cache: cache,
                 kvBits: parameters.kvBits,
                 quantizedKVStart: parameters.quantizedKVStart,
-                acceleration: acceleration
+                acceleration: acceleration,
+                turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
             )
             let startedAt = Date.timeIntervalSinceReferenceDate
 
@@ -795,7 +864,8 @@ private func makePreparedDecodeEvents(
                         cache: cache,
                         kvBits: parameters.kvBits,
                         quantizedKVStart: parameters.quantizedKVStart,
-                        acceleration: acceleration
+                        acceleration: acceleration,
+                        turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
                     )
                 }
             }
@@ -885,9 +955,15 @@ private func makeActiveKVProbeSummary(
         return nil
     }
 
-    let quantizationRatio = activeKVQuantizationRatioPercent(for: normalized)
-    let quantizedBytes = estimatedCacheStateBytes(cache)
-    let fp16Bytes = estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
+    let quantizationRatio = activeKVRuntimeQuantizationRatioPercent(
+        for: normalized,
+        cache: cache
+    )
+    let cacheBytes = estimatedCacheStateBytes(cache)
+    let quantizedBytes = quantizationRatio > 0 ? cacheBytes : 0
+    let fp16Bytes = quantizationRatio > 0
+        ? estimatedFP16Bytes(quantizedBytes: quantizedBytes, quantizationRatio: quantizationRatio)
+        : cacheBytes
     let turboQuantRuntimeRoute = turboQuantRuntimeFusedAttentionRoute(
         cache: cache,
         acceleration: normalized
@@ -896,15 +972,21 @@ private func makeActiveKVProbeSummary(
         for: normalized,
         turboQuantRuntimeRoute: turboQuantRuntimeRoute
     )
-    let savingsPercent = fp16Bytes > 0
-        ? max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
-        : max(0, 100 - quantizationRatio)
+    let savingsPercent: Int
+    if fp16Bytes > 0, quantizedBytes > 0 {
+        savingsPercent = max(0, min(100, Int(((fp16Bytes - quantizedBytes) * 100) / fp16Bytes)))
+    } else if quantizationRatio > 0 {
+        savingsPercent = max(0, 100 - quantizationRatio)
+    } else {
+        savingsPercent = 0
+    }
 
     return ActiveKVProbeSummary(
         backendCode: activeKVBackendCode(for: normalized),
         kernelPathCode: kernelPathCode,
         runtimeRouteCode: activeKVRuntimeRouteCode(for: turboQuantRuntimeRoute),
         runtimeBlockReasonCode: activeKVRuntimeBlockReasonCode(for: turboQuantRuntimeRoute),
+        quantizationRatioPercent: quantizationRatio,
         prefillQuantizeMicros: prefillQuantizeMicros,
         decodeModelTotalMicros: decodeModelTotalMicros,
         decodeModelCallCount: decodeModelCallCount,
@@ -1099,6 +1181,10 @@ func turboQuantRuntimeFusedAttentionRoute(
           normalized.activeKvQuantProfile.lowercased().hasPrefix("turboquant")
     else {
         return .disabled
+    }
+
+    guard shouldUseActiveKVQuantization(for: normalized) else {
+        return .blocked(.attentionHookUnavailable)
     }
 
     guard firstSupportedTurboQuantQ4QuantizedCacheState(cache: cache) != nil else {
