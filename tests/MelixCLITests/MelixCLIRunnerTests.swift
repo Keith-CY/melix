@@ -480,13 +480,19 @@ struct MelixCLIRunnerTests {
         let chatReceipt = try #require(try parseJSONFile(chatReceiptPath))
         let chatResult = try #require(chatReceipt["result"] as? [String: Any])
         let chatArguments = try #require(chatResult["arguments"] as? [String])
+        let trainStep = try #require(steps.first { $0["id"] as? String == "train" })
+        let trainReceiptPath = try #require(trainStep["receipt_path"] as? String)
+        let trainReceipt = try #require(try parseJSONFile(trainReceiptPath))
+        let trainResult = try #require(trainReceipt["result"] as? [String: Any])
+        let trainArguments = try #require(trainResult["arguments"] as? [String])
 
         #expect(summary["receipt_dir"] as? String == expectedReceiptDir)
         #expect(summary["status"] as? String == "planned")
         #expect(steps.count == 19)
         #expect(steps.allSatisfy { $0["status"] as? String == "planned" })
         #expect(chatArguments.contains("override-model"))
-        #expect(chatArguments.contains(#"number 7 flag 1 object {"suite":"smoke"}"#))
+        #expect(chatArguments.contains(#"number 7 flag true object {"suite":"smoke"}"#))
+        #expect(trainArguments.contains("--response-only"))
     }
 
     @Test("successful fake phase 8 pipeline writes receipts summary and artifact paths")
@@ -830,6 +836,64 @@ struct MelixCLIRunnerTests {
         #expect(steps.first?["status"] as? String == "failed")
         #expect(errorReceipt["schema_version"] as? String == "melix.cli.error.v1")
         #expect(receiptError["code"] as? String == "usage")
+    }
+
+    @Test("pipeline writes an error receipt and summary when a step throws a non Melix error")
+    func pipelineWritesErrorReceiptAndSummaryForNonMelixStepErrors() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("generic-failing.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "generic-failing-pipeline",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "/tmp/melix-dev-text",
+                "model_id": "melix-dev-text",
+                "model_kind": "text"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationError(NonMelixPipelineTestError(message: "transport disconnected"))
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-generic-failing-pipeline"
+                    )
+                )
+            )
+            Issue.record("Expected generic pipeline step error to fail.")
+        } catch {
+            #expect(String(describing: error).contains("transport disconnected"))
+        }
+
+        let summary = try #require(try parseJSONFile(receiptURL.appendingPathComponent("run.json").path))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let errorReceiptPath = try #require(steps.first?["receipt_path"] as? String)
+        let errorReceipt = try #require(try parseJSONFile(errorReceiptPath))
+        let receiptError = try #require(errorReceipt["error"] as? [String: Any])
+
+        #expect(summary["status"] as? String == "failed")
+        #expect(steps.first?["status"] as? String == "failed")
+        #expect(errorReceipt["schema_version"] as? String == "melix.cli.error.v1")
+        #expect(receiptError["code"] as? String == "runtime")
+        #expect((receiptError["message"] as? String)?.contains("transport disconnected") == true)
     }
 
     @Test("pipeline resume skips successful receipts and rejects changed hashes")
@@ -4753,6 +4817,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
+    private var modelOperationError: Error?
     private var chatRequestID = "stub-chat"
     private var chatModelID = "melix-dev-text"
     private var chatEvents: [ControlPlaneChatStreamEvent] = []
@@ -4763,6 +4828,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setModelOperationResult(_ result: Melix_Controlplane_V1_ModelOperationResult) {
         self.modelOperationResult = result
+    }
+
+    func setModelOperationError(_ error: Error?) {
+        self.modelOperationError = error
     }
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
@@ -4940,6 +5009,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         kvQuant: String,
         ext: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        if let modelOperationError {
+            throw modelOperationError
+        }
         lastModelOperationCall = ModelOperationCall(
             modelID: modelID,
             operation: operation,
@@ -5185,6 +5257,14 @@ private func parseJSONArray(_ text: String) -> [Any]? {
 private func parseJSONFile(_ path: String) throws -> [String: Any]? {
     let data = try Data(contentsOf: URL(fileURLWithPath: path))
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+private struct NonMelixPipelineTestError: Error, CustomStringConvertible {
+    let message: String
+
+    var description: String {
+        message
+    }
 }
 
 private func makeBenchmarkExportBundleJSON() -> String {

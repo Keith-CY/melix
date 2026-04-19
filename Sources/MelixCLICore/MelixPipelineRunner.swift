@@ -2,6 +2,23 @@ import Dispatch
 import Foundation
 import MelixControlPlaneCore
 
+private func melixPipelineIsBoolean(_ value: Any) -> Bool {
+    guard let number = value as? NSNumber else {
+        return value is Bool
+    }
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
+}
+
+private func melixPipelineBooleanString(_ value: Any) -> String? {
+    guard melixPipelineIsBoolean(value) else {
+        return nil
+    }
+    if let bool = value as? Bool {
+        return bool ? "true" : "false"
+    }
+    return (value as? NSNumber)?.boolValue == true ? "true" : "false"
+}
+
 extension MelixCLIRunner {
     public func runPipeline(_ options: PipelineRunOptions) async throws -> String {
         let totalStart = DispatchTime.now()
@@ -220,7 +237,8 @@ extension MelixCLIRunner {
                     )
                 )
             }
-        } catch let error as MelixCLIError {
+        } catch {
+            let error = melixPipelineError(from: error)
             failedStepCount = 1
             metrics["melix.pipeline.failed_step_count"] = Double(failedStepCount)
             pipelineStatus = "failed"
@@ -280,6 +298,19 @@ extension MelixCLIRunner {
             metrics: &metrics
         )
         return try MelixCLIJSON.prettyString(summary)
+    }
+
+    private func melixPipelineError(from error: Error) -> MelixCLIError {
+        if let error = error as? MelixCLIError {
+            return error
+        }
+        if let localized = error as? LocalizedError,
+           let description = localized.errorDescription,
+           description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        {
+            return .runtime(description)
+        }
+        return .runtime(String(describing: error))
     }
 
     private func receiptRootURL(
@@ -728,11 +759,11 @@ private struct MelixPipelineContext {
         if let string = value as? String {
             return string
         }
+        if let bool = melixPipelineBooleanString(value) {
+            return bool
+        }
         if let number = value as? NSNumber {
             return number.stringValue
-        }
-        if let bool = value as? Bool {
-            return bool ? "true" : "false"
         }
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
@@ -967,11 +998,11 @@ private enum MelixPipelineCommandBuilder {
         if let string = value as? String {
             return string
         }
+        if let bool = melixPipelineBooleanString(value) {
+            return bool
+        }
         if let number = value as? NSNumber {
             return number.stringValue
-        }
-        if let bool = value as? Bool {
-            return bool ? "true" : "false"
         }
         return nil
     }
@@ -980,7 +1011,7 @@ private enum MelixPipelineCommandBuilder {
         guard let value = args[key] else {
             return nil
         }
-        if isBoolean(value) {
+        if melixPipelineIsBoolean(value) {
             throw MelixCLIError.usage("Pipeline command argument \(key) must be an integer.")
         }
         if let int = value as? Int {
@@ -1090,7 +1121,7 @@ private enum MelixPipelineCommandBuilder {
             throw MelixCLIError.usage("Pipeline command argument \(key) must be an array of unsigned integers.")
         }
         return try rawItems.map { item in
-            if isBoolean(item) {
+            if melixPipelineIsBoolean(item) {
                 throw MelixCLIError.usage("Pipeline command argument \(key) must be an array of unsigned integers.")
             }
             if let int = item as? Int,
@@ -1120,20 +1151,13 @@ private enum MelixPipelineCommandBuilder {
         for (key, value) in args where excluded.contains(key) == false {
             if let string = value as? String {
                 result[key] = string
+            } else if let bool = melixPipelineBooleanString(value) {
+                result[key] = bool
             } else if let number = value as? NSNumber {
                 result[key] = number.stringValue
-            } else if let bool = value as? Bool {
-                result[key] = bool ? "true" : "false"
             }
         }
         return result
-    }
-
-    private static func isBoolean(_ value: Any) -> Bool {
-        guard let number = value as? NSNumber else {
-            return value is Bool
-        }
-        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
     private static func datasetSourceKind(_ args: [String: Any]) -> String {

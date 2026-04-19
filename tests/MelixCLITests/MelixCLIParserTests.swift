@@ -148,6 +148,52 @@ struct MelixCLIParserTests {
             "--json",
         ])
         #expect(try MelixCLIParser.parse(arguments) == command)
+
+        let mergedManifestArguments = try MelixCLICommandCodec.arguments(
+            for: .loraPublish(
+                .init(
+                    modelID: "model",
+                    targetRepo: "melix/model-merged",
+                    exportKind: .mergedExport,
+                    artifactPath: "/tmp/merged/manifest.json",
+                    artifactManifestPath: "/tmp/merged/manifest.json",
+                    json: true
+                )
+            )
+        )
+        #expect(mergedManifestArguments.contains("--manifest-path"))
+        #expect(try MelixCLIParser.parse(mergedManifestArguments) == .loraPublish(
+            .init(
+                modelID: "model",
+                targetRepo: "melix/model-merged",
+                exportKind: .mergedExport,
+                artifactPath: "/tmp/merged/manifest.json",
+                artifactManifestPath: "/tmp/merged/manifest.json",
+                json: true
+            )
+        ))
+
+        let mergedModelArguments = try MelixCLICommandCodec.arguments(
+            for: .loraPublish(
+                .init(
+                    modelID: "model",
+                    targetRepo: "melix/model-merged",
+                    exportKind: .mergedExport,
+                    artifactPath: "/tmp/merged-model",
+                    json: true
+                )
+            )
+        )
+        #expect(mergedModelArguments.contains("--merged-model-path"))
+        #expect(try MelixCLIParser.parse(mergedModelArguments) == .loraPublish(
+            .init(
+                modelID: "model",
+                targetRepo: "melix/model-merged",
+                exportKind: .mergedExport,
+                artifactPath: "/tmp/merged-model",
+                json: true
+            )
+        ))
     }
 
     @Test("command codec exposes stable ids and supported argv mappings")
@@ -239,6 +285,7 @@ struct MelixCLIParserTests {
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
             .loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)),
+            .loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter/manifest.json", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)),
             .benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)),
             .benchMatrixRun(.init(modelID: "model", taskKind: "text-generation", suites: ["smoke"], contextLengths: [1024], generationLengths: [128], batchSizes: [1], cacheProfiles: ["cold"], reasoningModes: ["disabled"], structuredOutputModes: ["disabled"], concurrencyLevels: [1], repeats: 2, requests: 4, allowLargeMatrix: true, json: true)),
             .benchExportCSV(.init(jobID: "bench-1", outputPath: "/tmp/bench.csv", json: true)),

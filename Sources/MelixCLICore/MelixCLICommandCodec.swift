@@ -270,6 +270,21 @@ public enum MelixCLICommandCodec {
             appendOption("--alias", value: options.derivedModelAlias, into: &arguments)
             appendOption("--activation-mode", value: options.activationMode, into: &arguments)
             json = options.json
+        case .loraPublish(let options):
+            arguments = ["lora", "publish"]
+            appendOption("--model-id", value: options.modelID, into: &arguments)
+            appendOption("--target-repo", value: options.targetRepo, into: &arguments)
+            switch options.exportKind {
+            case .adapterExport:
+                appendOption("--adapter-path", value: options.artifactPath, into: &arguments)
+            case .mergedExport:
+                if options.artifactManifestPath.isEmpty == false {
+                    appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
+                } else {
+                    appendOption("--merged-model-path", value: options.artifactPath, into: &arguments)
+                }
+            }
+            json = options.json
         case .benchRun(let options):
             arguments = ["bench", "run"]
             appendTarget(modelID: options.modelID, hfRepoID: options.hfRepoID, into: &arguments)

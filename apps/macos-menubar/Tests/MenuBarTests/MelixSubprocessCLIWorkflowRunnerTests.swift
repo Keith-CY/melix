@@ -41,6 +41,52 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
         )
     }
 
+    @Test("lora publish shells out with parser-compatible arguments")
+    func loraPublishShellsOutWithParserCompatibleArguments() async throws {
+        let processExecutor = RecordingCLIProcessExecutor()
+        await processExecutor.enqueueOutput(
+            """
+            {
+              "operation": "upload",
+              "job_id": "model-ops-0003",
+              "output_path": "/tmp/melix-upload-adapter/model-ops-0003/upload.receipt.json"
+            }
+            """
+        )
+        let runner = MelixSubprocessCLIWorkflowRunner(
+            cliExecutablePath: "/tmp/melix",
+            processExecutor: processExecutor
+        )
+
+        _ = try await runner.run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-qwen-local",
+                    targetRepo: "melix/adapters/melix-dev-adapter",
+                    exportKind: .adapterExport,
+                    artifactPath: "/tmp/melix-dev-adapter/manifest.json",
+                    artifactManifestPath: "/tmp/melix-dev-adapter/manifest.json",
+                    json: true
+                )
+            )
+        )
+        let invocation = try #require(await processExecutor.recordedInvocations.first)
+
+        #expect(
+            invocation.arguments == [
+                "lora",
+                "publish",
+                "--model-id",
+                "melix-dev-qwen-local",
+                "--target-repo",
+                "melix/adapters/melix-dev-adapter",
+                "--adapter-path",
+                "/tmp/melix-dev-adapter/manifest.json",
+                "--json",
+            ]
+        )
+    }
+
     @Test("download hub model shells out through the melix cli and decodes a managed receipt")
     func downloadHubModelShellsOutThroughTheMelixCLIAndDecodesAManagedReceipt() async throws {
         let processExecutor = RecordingCLIProcessExecutor()
