@@ -6250,6 +6250,54 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testVendoredFusedQ4AttentionPreservesQueryDTypeForDecodeGQA() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 32
+            let groupSize = 32
+            let queryHeadCount = 2
+            let kvHeadCount = 1
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 31) - 15) / 17.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension]).asType(.bfloat16)
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let fused = try XCTUnwrap(fusedQ4ScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            ))
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fused.dtype, queries.dtype)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-2, atol: 1e-2).all().item())
+        }
+    }
+
     func testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode()
         async throws
     {
@@ -6433,6 +6481,16 @@ final class WorkerScaffoldTests: XCTestCase {
                 atol: 1e-2
             )
         }
+    }
+
+    func testFusedDecodeQuantizerDefaultReadsInjectedEnvironment() {
+        XCTAssertFalse(melixDefaultFusedDecodeQuantizeEnabled(environment: [:]))
+        XCTAssertFalse(melixDefaultFusedDecodeQuantizeEnabled(
+            environment: ["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE": "true"]
+        ))
+        XCTAssertTrue(melixDefaultFusedDecodeQuantizeEnabled(
+            environment: ["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE": "1"]
+        ))
     }
 
     func testQuantizedKVCacheUsesFusedDecodeQuantizerWhenExplicitlyEnabledForSingleTokenAffineQ4()
@@ -6779,14 +6837,6 @@ final class WorkerScaffoldTests: XCTestCase {
         turboQuantAcceleration.mode = .activeKvQuantized
         turboQuantAcceleration.activeKvQuantProfile = "turboquant-q4"
         XCTAssertTrue(shouldUseActiveKVQuantization(for: turboQuantAcceleration))
-        XCTAssertTrue(shouldUseActiveKVQuantization(
-            for: turboQuantAcceleration,
-            turboQuantCandidateProbeEnabled: true
-        ))
-        XCTAssertFalse(turboQuantAffineFallbackEnabled(environment: [:]))
-        XCTAssertTrue(turboQuantAffineFallbackEnabled(
-            environment: ["MELIX_SWIFT_TURBOQUANT_AFFINE_FALLBACK": "true"]
-        ))
     }
 
     func testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch() async throws {
@@ -6823,7 +6873,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
-    func testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence() {
+    func testTurboQuantRuntimeRouteReportsRoutedFromDispatchEvidenceBeforeStateRecheck() {
         let cache = QuantizedKVCache(groupSize: 32, bits: 4)
         cache.recordFusedAttentionDispatch()
 
@@ -6836,11 +6886,11 @@ final class WorkerScaffoldTests: XCTestCase {
             acceleration: acceleration
         )
 
-        XCTAssertEqual(route, .blocked(.unsupportedCacheState))
-        XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 90)
-        XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 1)
-        XCTAssertEqual(activeKVRuntimeRouteCode(for: route), 1)
-        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: route), 1)
+        XCTAssertEqual(route, .routed)
+        XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 20)
+        XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 0)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: route), 2)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: route), 0)
     }
 
     func testTurboQuantRuntimeRouteCodeMappingsCoverInactiveUnsupportedAndRoutedStates() {

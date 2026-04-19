@@ -463,6 +463,10 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert (
+        "WorkerScaffoldTests.testVendoredFusedQ4AttentionPreservesQueryDTypeForDecodeGQA"
+        in probe["capability_evidence"]["smoke_tests"]
+    )
+    assert (
         "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes"
         in probe["capability_evidence"]["smoke_tests"]
     )
@@ -475,7 +479,7 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert (
-        "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence"
+        "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedFromDispatchEvidenceBeforeStateRecheck"
         in probe["capability_evidence"]["smoke_tests"]
     )
     assert probe["runtime_evidence"]["release_gate_status"] == "fail"
@@ -878,6 +882,34 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
     assert model.revision == "main"
     assert model.source_resolution_mode == "hf_cache_snapshot"
     assert model.warnings == ()
+
+
+def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot_fallback(
+    tmp_path: Path,
+) -> None:
+    hf_home = tmp_path / "hf"
+    snapshot = (
+        hf_home
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+        / "def456"
+    )
+    snapshot.mkdir(parents=True)
+
+    model = phase2_metrics_report.resolve_model_configuration(
+        real_small_model=True,
+        model_id="",
+        model_path="",
+        model_revision="",
+        environment={"HF_HOME": str(hf_home)},
+    )
+
+    assert model.model_path == str(snapshot.resolve())
+    assert model.source_resolution_mode == "hf_cache_snapshot"
+    assert len(model.warnings) == 1
+    assert "refs/main" in model.warnings[0]
+    assert "def456" in model.warnings[0]
 
 
 def test_collect_direct_phase_two_metrics_loads_configured_model_revision(
@@ -1311,6 +1343,7 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
     assert "WorkerScaffoldTests.testFusedDecodeQuantizerMatchesReferenceForSingleTokenAffineQ4" in smoke_tests
     assert "WorkerScaffoldTests.testFusedDecodeQuantizerMatchesReferenceForSingleTokenBFloat16AffineQ4" in smoke_tests
     assert "WorkerScaffoldTests.testFusedDecodeQuantizerRejectsUnsupportedInputs" in smoke_tests
+    assert "WorkerScaffoldTests.testFusedDecodeQuantizerDefaultReadsInjectedEnvironment" in smoke_tests
     assert (
         "WorkerScaffoldTests.testQuantizedKVCacheUsesNativeDecodeQuantizerByDefaultForSingleTokenAffineQ4"
         in smoke_tests
@@ -1322,7 +1355,7 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
     assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes" in smoke_tests
     assert "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled" in smoke_tests
     assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch" in smoke_tests
-    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteBlocksUnsupportedStateAfterDispatchEvidence" in smoke_tests
+    assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedFromDispatchEvidenceBeforeStateRecheck" in smoke_tests
 
 
 def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monkeypatch, capsys) -> None:

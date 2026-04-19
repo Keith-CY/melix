@@ -25,6 +25,12 @@ class RealSmallTextModelSource:
         return self.local_model_path or self.model_id
 
 
+@dataclass(frozen=True, slots=True)
+class _HuggingFaceCacheModelPath:
+    path: Path
+    warnings: tuple[str, ...] = ()
+
+
 def resolve_real_small_text_model_source(
     *,
     model_id: str = "",
@@ -82,10 +88,11 @@ def resolve_real_small_text_model_source(
     if allow_hf_cache:
         cached_path = _huggingface_cache_model_path(resolved_model_id, env)
         if cached_path is not None:
+            warnings.extend(cached_path.warnings)
             return RealSmallTextModelSource(
                 model_id=resolved_model_id,
                 live=False,
-                local_model_path=str(cached_path),
+                local_model_path=str(cached_path.path),
                 source_resolution_mode="hf_cache_snapshot",
                 warnings=tuple(warnings),
             )
@@ -125,7 +132,10 @@ def _managed_huggingface_model_path(model_id: str, environment: Mapping[str, str
     return None
 
 
-def _huggingface_cache_model_path(model_id: str, environment: Mapping[str, str]) -> Path | None:
+def _huggingface_cache_model_path(
+    model_id: str,
+    environment: Mapping[str, str],
+) -> _HuggingFaceCacheModelPath | None:
     cache_root = _huggingface_cache_root(environment)
     repo_cache = cache_root / f"models--{model_id.replace('/', '--')}"
     ref_path = repo_cache / "refs" / "main"
@@ -133,7 +143,7 @@ def _huggingface_cache_model_path(model_id: str, environment: Mapping[str, str])
         revision = ref_path.read_text(encoding="utf-8").strip()
         snapshot = repo_cache / "snapshots" / revision
         if snapshot.is_dir():
-            return snapshot.resolve()
+            return _HuggingFaceCacheModelPath(path=snapshot.resolve())
 
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
@@ -141,7 +151,14 @@ def _huggingface_cache_model_path(model_id: str, environment: Mapping[str, str])
     snapshots = sorted(path for path in snapshots_root.iterdir() if path.is_dir())
     if not snapshots:
         return None
-    return snapshots[-1].resolve()
+    fallback = snapshots[-1].resolve()
+    return _HuggingFaceCacheModelPath(
+        path=fallback,
+        warnings=(
+            "Hugging Face cache refs/main was unavailable for "
+            f"{model_id}; using lexicographically last snapshot directory {fallback}.",
+        ),
+    )
 
 
 def _huggingface_cache_root(environment: Mapping[str, str]) -> Path:

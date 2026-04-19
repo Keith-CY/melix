@@ -75,8 +75,11 @@ public protocol KVCache: Evaluatable {
 
 public typealias QuantizedKVCacheTuple = (MLXArray, MLXArray, MLXArray?)
 
-private let melixFusedDecodeQuantizeEnabled =
-    ProcessInfo.processInfo.environment["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE"] == "1"
+public func melixDefaultFusedDecodeQuantizeEnabled(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> Bool {
+    environment["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE"] == "1"
+}
 
 /// Full quantized KV-cache storage plus the currently valid sequence length.
 ///
@@ -960,7 +963,7 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
 
         let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
         let (qKeys, qValues): (QuantizedKVCacheTuple, QuantizedKVCacheTuple)
-        if (fusedDecodeQuantizeEnabled ?? melixFusedDecodeQuantizeEnabled),
+        if (fusedDecodeQuantizeEnabled ?? melixDefaultFusedDecodeQuantizeEnabled()),
             let fusedQuantized = fusedQ4AffineKeyValueQuantizedForDecode(
             keys: newKeys,
             values: newValues,

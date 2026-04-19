@@ -10,6 +10,8 @@ public struct TurboQuantFusedAttentionLaunchPlan: Equatable {
     public let scoreDotProductsPerQueryHead: Int
     public let scoreReductionLaneCount: Int
     public let scoreReductionSimdgroupCount: Int
+    /// Lane 0 owns the online softmax state; raising the sequence limit will
+    /// require a two-pass or parallel softmax reduction plan.
     public let softmaxLaneCount: Int
     public let usesThreadgroupSharedScores: Bool
     public let usesThreadgroupParallelScoreReduction: Bool
@@ -58,10 +60,14 @@ public func turboQuantFusedAttentionLaunchPlan(
     )
 }
 
-/// Quantize one decode key/value token into MLX's q4 affine tuple layout.
+/// Quantize one decode key/value token into Melix's fused q4 affine tuple layout.
 ///
 /// The cache append path still owns storage writes, but this combines key and
 /// value quantization for single-token decode into one custom Metal dispatch.
+/// The kernel emits the same packed/scales/biases tuple contract consumed by
+/// the fused attention path and the MLX affine q4 reference tests. It is not a
+/// general-purpose q4 quantizer: the scale formula is locked to this fused
+/// decode contract and must be revalidated before any new consumer reuses it.
 /// Unsupported shapes return nil so callers can preserve MLX's native
 /// quantization fallback.
 public func fusedQ4AffineKeyValueQuantizedForDecode(
@@ -389,7 +395,8 @@ public func fusedQ4ScaledDotProductAttention(
                 if (activeLane) {
                     float reciprocalNormalizer = 1.0f / max(normalizer, 1.0e-20f);
                     for (uint slot = 0; slot < 8; slot++) {
-                        output[outputBase + dimBase + slot] = accumulators[slot] * reciprocalNormalizer;
+                        output[outputBase + dimBase + slot] =
+                            static_cast<T>(accumulators[slot] * reciprocalNormalizer);
                     }
                 }
                 """,
@@ -408,6 +415,7 @@ public func fusedQ4ScaledDotProductAttention(
                 sequenceLengthScalar,
             ],
             template: [
+                ("T", queries.dtype),
                 ("HEAD_DIMENSION", headDimension),
                 ("QUERY_HEAD_COUNT", queryHeadCount),
                 ("KV_HEAD_COUNT", kvHeadCount),
@@ -420,7 +428,7 @@ public func fusedQ4ScaledDotProductAttention(
             grid: (launchPlan.gridX, launchPlan.gridY, launchPlan.gridZ),
             threadGroup: (launchPlan.threadGroupX, 1, 1),
             outputShapes: [[batchCount, queryHeadCount, 1, headDimension]],
-            outputDTypes: [.float32]
+            outputDTypes: [queries.dtype]
         )
     }
     return output[0]
