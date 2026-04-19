@@ -56,6 +56,8 @@ enum MelixDesignTokens {
 
     /// Base hues for chat transcript bubble backgrounds. Paired with
     /// `BubbleOpacity` to stay consistent with the `AccentOpacity` pattern.
+    /// These are intentionally flat `Color` values; transcript bubbles do not
+    /// use gradients or materials in the Digital Broadsheet system.
     enum BubbleTint {
         static let user = Color.blue
         static let assistant = Color.green
@@ -73,16 +75,6 @@ enum MelixDesignTokens {
         static let reasoning: Double = 0.12
         static let tool: Double = 0.12
         static let error: Double = 0.12
-    }
-
-    /// Pre-composed chat bubble fills — convenience wrappers that keep
-    /// callers short while exposing the underlying hue and opacity above.
-    enum Bubble {
-        static let user = BubbleTint.user.opacity(BubbleOpacity.user)
-        static let assistant = BubbleTint.assistant.opacity(BubbleOpacity.assistant)
-        static let reasoning = BubbleTint.reasoning.opacity(BubbleOpacity.reasoning)
-        static let tool = BubbleTint.tool.opacity(BubbleOpacity.tool)
-        static let error = BubbleTint.error.opacity(BubbleOpacity.error)
     }
 
     // MARK: - Corner radii

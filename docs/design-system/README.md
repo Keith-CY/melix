@@ -76,8 +76,9 @@ Typography is structure. Whitespace is hierarchy. Color is ink — reserved only
 - **No decorative or editorial typefaces.** Pure system type.
 
 ### Spacing
-- **Base unit: 4px.** Primary scale: 4, 8, 12, 16, 20, 24.
-- **14px is a sanctioned half-step** between 12 and 16, used for panel insets where 12 reads tight and 16 reads loose. Treat it as the one intentional exception to the 4px rule, not a precedent for further half-steps.
+- **Base unit: 4px.** Primary scale: 4, 8, 12, 16, 20, 24. Larger static preview blocks may use 32, 40, 48, and 64.
+- **14px is a sanctioned half-step** between 12 and 16, used for panel insets and print/static previews where 12 reads tight and 16 reads loose. Treat it as the one intentional exception to the 4px rule, not a precedent for further half-steps.
+- **Generous internal padding**: panels use 14–20px insets.
 - **Row spacing**: 6–12px between list items.
 - **Maximum whitespace**: always err toward more space, not less.
 

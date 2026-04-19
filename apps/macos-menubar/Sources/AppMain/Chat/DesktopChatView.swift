@@ -475,18 +475,18 @@ private struct DesktopChatTranscriptRowView: View {
         .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
     }
 
-    private var backgroundStyle: some ShapeStyle {
+    private var backgroundStyle: Color {
         switch entry.kind {
         case .user:
-            return MelixDesignTokens.Bubble.user
+            return MelixDesignTokens.BubbleTint.user.opacity(MelixDesignTokens.BubbleOpacity.user)
         case .assistant:
-            return MelixDesignTokens.Bubble.assistant
+            return MelixDesignTokens.BubbleTint.assistant.opacity(MelixDesignTokens.BubbleOpacity.assistant)
         case .reasoning:
-            return MelixDesignTokens.Bubble.reasoning
+            return MelixDesignTokens.BubbleTint.reasoning.opacity(MelixDesignTokens.BubbleOpacity.reasoning)
         case .tool:
-            return MelixDesignTokens.Bubble.tool
+            return MelixDesignTokens.BubbleTint.tool.opacity(MelixDesignTokens.BubbleOpacity.tool)
         case .error:
-            return MelixDesignTokens.Bubble.error
+            return MelixDesignTokens.BubbleTint.error.opacity(MelixDesignTokens.BubbleOpacity.error)
         }
     }
 }
