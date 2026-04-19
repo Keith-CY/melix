@@ -33,12 +33,14 @@ public func turboQuantFusedAttentionLaunchPlan(
         headDimension % 8 == 0,
         headDimension % 32 == 0,
         groupSize > 0,
+        groupSize % 8 == 0,
         headDimension % groupSize == 0,
         queryHeadCount % kvHeadCount == 0
     else {
         return nil
     }
 
+    let packedWordsPerToken = headDimension / 8
     return TurboQuantFusedAttentionLaunchPlan(
         gridX: 32,
         gridY: queryHeadCount,
@@ -46,7 +48,7 @@ public func turboQuantFusedAttentionLaunchPlan(
         threadGroupX: 32,
         sharedScoreCount: 0,
         scoreDotProductsPerQueryHead: sequenceLength,
-        scoreReductionLaneCount: min(32, headDimension),
+        scoreReductionLaneCount: min(32, packedWordsPerToken),
         scoreReductionSimdgroupCount: 1,
         usesThreadgroupSharedScores: false,
         usesThreadgroupParallelScoreReduction: true,
@@ -118,6 +120,7 @@ public func fusedQ4ScaledDotProductAttention(
         headDimension > 0,
         headDimension % 8 == 0,
         groupSize > 0,
+        groupSize % 8 == 0,
         headDimension % groupSize == 0,
         queryHeadCount % kvHeadCount == 0
     else {
@@ -135,8 +138,6 @@ public func fusedQ4ScaledDotProductAttention(
     }
 
     let queryRepeats = queryHeadCount / kvHeadCount
-    let scoreSimdgroupCount = launchPlan.scoreReductionSimdgroupCount
-    let dimensionsPerLane = (headDimension + 31) / 32
     let attentionScale = MLXArray([scale])
     let sequenceLengthScalar = MLXArray([Int32(sequenceLength)])
     let output = Device.withDefaultDevice(.gpu) {
@@ -155,39 +156,47 @@ public func fusedQ4ScaledDotProductAttention(
             ],
             outputNames: ["output"],
             source: """
-                uint dim = thread_position_in_threadgroup.x;
+                uint packedWordLane = thread_position_in_threadgroup.x;
                 uint queryHead = thread_position_in_grid.y;
                 uint batch = thread_position_in_grid.z;
                 uint kvHead = queryHead / QUERY_REPEATS;
                 uint outputBase = (batch * QUERY_HEAD_COUNT + queryHead) * HEAD_DIMENSION;
                 uint sequenceLength = uint(sequenceLengthInput[0]);
+                bool activeLane = packedWordLane < PACKED_WORDS_PER_TOKEN;
+                uint dimBase = packedWordLane << 3;
 
-                float accumulators[DIMS_PER_LANE];
-                for (uint slot = 0; slot < DIMS_PER_LANE; slot++) {
+                float accumulators[8];
+                for (uint slot = 0; slot < 8; slot++) {
                     accumulators[slot] = 0.0f;
                 }
                 float maxScore = -3.402823466e+38f;
                 float normalizer = 0.0f;
                 for (uint token = 0; token < sequenceLength; token++) {
                     float partialScore = 0.0f;
-                    for (uint slot = 0; slot < DIMS_PER_LANE; slot++) {
-                        uint valueDim = dim + slot * 32;
-                        if (valueDim >= HEAD_DIMENSION) {
-                            continue;
-                        }
-                        uint queryIndex = outputBase + valueDim;
+                    if (activeLane) {
                         uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
-                            * PACKED_WORDS_PER_TOKEN + (valueDim >> 3);
+                            * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint keyWord = packedKeys[keyWordIndex];
-                        uint keyByteShift = ((valueDim >> 1) & 0x3) << 3;
-                        uint keyPackedByte = (keyWord >> keyByteShift) & 0xff;
-                        uint keyQuantized = ((valueDim & 1) == 0)
-                            ? (keyPackedByte & 0x0f)
-                            : ((keyPackedByte >> 4) & 0x0f);
                         uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
-                            * GROUP_COUNT + (valueDim / GROUP_SIZE);
-                        float keyValue = float(keyQuantized) * keyScales[keyScaleIndex] + keyBiases[keyScaleIndex];
-                        partialScore += queries[queryIndex] * keyValue;
+                            * GROUP_COUNT + (dimBase / GROUP_SIZE);
+                        float keyScale = keyScales[keyScaleIndex];
+                        float keyBias = keyBiases[keyScaleIndex];
+                        partialScore += queries[outputBase + dimBase + 0]
+                            * (float((keyWord >> 0) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 1]
+                            * (float((keyWord >> 4) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 2]
+                            * (float((keyWord >> 8) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 3]
+                            * (float((keyWord >> 12) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 4]
+                            * (float((keyWord >> 16) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 5]
+                            * (float((keyWord >> 20) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 6]
+                            * (float((keyWord >> 24) & 0x0f) * keyScale + keyBias);
+                        partialScore += queries[outputBase + dimBase + 7]
+                            * (float((keyWord >> 28) & 0x0f) * keyScale + keyBias);
                     }
 
                     float score = simd_sum(partialScore) * attentionScale[0];
@@ -197,30 +206,37 @@ public func fusedQ4ScaledDotProductAttention(
                     normalizer = normalizer * rescale + weight;
                     maxScore = newMaxScore;
 
-                    for (uint slot = 0; slot < DIMS_PER_LANE; slot++) {
-                        uint valueDim = dim + slot * 32;
-                        if (valueDim >= HEAD_DIMENSION) {
-                            continue;
-                        }
+                    if (activeLane) {
                         uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
-                            * PACKED_WORDS_PER_TOKEN + (valueDim >> 3);
+                            * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint valueWord = packedValues[valueWordIndex];
-                        uint valueByteShift = ((valueDim >> 1) & 0x3) << 3;
-                        uint valuePackedByte = (valueWord >> valueByteShift) & 0xff;
-                        uint valueQuantized = ((valueDim & 1) == 0)
-                            ? (valuePackedByte & 0x0f)
-                            : ((valuePackedByte >> 4) & 0x0f);
                         uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
-                            * GROUP_COUNT + (valueDim / GROUP_SIZE);
-                        float value = float(valueQuantized) * valueScales[valueScaleIndex] + valueBiases[valueScaleIndex];
-                        accumulators[slot] = accumulators[slot] * rescale + weight * value;
+                            * GROUP_COUNT + (dimBase / GROUP_SIZE);
+                        float valueScale = valueScales[valueScaleIndex];
+                        float valueBias = valueBiases[valueScaleIndex];
+                        accumulators[0] = accumulators[0] * rescale
+                            + weight * (float((valueWord >> 0) & 0x0f) * valueScale + valueBias);
+                        accumulators[1] = accumulators[1] * rescale
+                            + weight * (float((valueWord >> 4) & 0x0f) * valueScale + valueBias);
+                        accumulators[2] = accumulators[2] * rescale
+                            + weight * (float((valueWord >> 8) & 0x0f) * valueScale + valueBias);
+                        accumulators[3] = accumulators[3] * rescale
+                            + weight * (float((valueWord >> 12) & 0x0f) * valueScale + valueBias);
+                        accumulators[4] = accumulators[4] * rescale
+                            + weight * (float((valueWord >> 16) & 0x0f) * valueScale + valueBias);
+                        accumulators[5] = accumulators[5] * rescale
+                            + weight * (float((valueWord >> 20) & 0x0f) * valueScale + valueBias);
+                        accumulators[6] = accumulators[6] * rescale
+                            + weight * (float((valueWord >> 24) & 0x0f) * valueScale + valueBias);
+                        accumulators[7] = accumulators[7] * rescale
+                            + weight * (float((valueWord >> 28) & 0x0f) * valueScale + valueBias);
                     }
                 }
 
-                for (uint slot = 0; slot < DIMS_PER_LANE; slot++) {
-                    uint valueDim = dim + slot * 32;
-                    if (valueDim < HEAD_DIMENSION) {
-                        output[outputBase + valueDim] = accumulators[slot] / max(normalizer, 1.0e-20f);
+                if (activeLane) {
+                    float reciprocalNormalizer = 1.0f / max(normalizer, 1.0e-20f);
+                    for (uint slot = 0; slot < 8; slot++) {
+                        output[outputBase + dimBase + slot] = accumulators[slot] * reciprocalNormalizer;
                     }
                 }
                 """,
@@ -246,8 +262,6 @@ public func fusedQ4ScaledDotProductAttention(
                 ("PACKED_WORDS_PER_TOKEN", packedWordsPerToken),
                 ("GROUP_SIZE", groupSize),
                 ("GROUP_COUNT", groupCount),
-                ("SCORE_SIMDGROUP_COUNT", scoreSimdgroupCount),
-                ("DIMS_PER_LANE", dimensionsPerLane),
             ],
             grid: (launchPlan.gridX, launchPlan.gridY, launchPlan.gridZ),
             threadGroup: (launchPlan.threadGroupX, 1, 1),

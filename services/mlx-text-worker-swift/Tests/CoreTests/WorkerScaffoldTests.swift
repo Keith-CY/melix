@@ -6089,7 +6089,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(plan.threadGroupX, 32)
         XCTAssertEqual(plan.sharedScoreCount, 0)
         XCTAssertEqual(plan.scoreDotProductsPerQueryHead, 64)
-        XCTAssertEqual(plan.scoreReductionLaneCount, 32)
+        XCTAssertEqual(plan.scoreReductionLaneCount, 16)
         XCTAssertEqual(plan.scoreReductionSimdgroupCount, 1)
         XCTAssertFalse(plan.usesThreadgroupSharedScores)
         XCTAssertTrue(plan.usesThreadgroupParallelScoreReduction)

@@ -374,6 +374,16 @@ The online-softmax post-run keeps `candidate_dispatch_count = 0`,
 `active_kv_estimated_memory_savings_pct = 75.0`, and
 `worker_tps_overhead_pct = 60.0`. This confirms the single-simdgroup online
 softmax route executes, but it still does not unblock the release gate.
+The packed-word-lane post-run keeps the same non-fallback runtime evidence and
+reports `candidate_dispatch_count = 0`, `fallback_count = 0`,
+`observed_kernel_paths = ["tq_mse_single"]`,
+`observed_runtime_routes = ["routed"]`,
+`active_kv_decode_quantize_total_us = 0`,
+`active_kv_decode_token_eval_total_us = 2554186`,
+`active_kv_estimated_memory_savings_pct = 75.0`, and
+`worker_tps_overhead_pct = 73.97`. It improves absolute TurboQuant decode token
+evaluation from 6,601,404 us to 2,554,186 us versus the online-softmax run, but
+the same-run baseline was much faster, so the release gate remains failed.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -395,10 +405,12 @@ partial reductions, stores one score vector in threadgroup memory, and shares
 per-token softmax weights across value lanes. That removes the largest repeated
 score pass. The online-softmax follow-up removes the materialized score vector
 and uses one simdgroup per batch/query-head so each value lane rescales its
-accumulator as scores arrive. The real-model data shows the route is still too
-slow for the release target, so the next optimization must address remaining
-per-token dispatch and quantized decode overhead rather than only score-vector
-sharing.
+accumulator as scores arrive. The packed-word-lane follow-up maps each active
+lane to one q4 `uint32` word and accumulates eight output dimensions from that
+packed load. The absolute TurboQuant path is faster, but the real-model data
+shows the route is still too slow for the release target, so the next
+optimization must address remaining per-token dispatch, cache update, and
+quantized decode overhead rather than only score-vector sharing.
 
 ## Next Optimization Architecture
 
@@ -414,11 +426,13 @@ efficiency. The recommended order is:
    `--require-fused-turboquant` CLI flag.
 
 2. Optimize the vendored fused kernel layout.
-   The current online-softmax kernel is a route-plus-layout proof. It goes beyond
-   the shared-score vector with a single-pass online softmax recurrence, but the
-   real-model gate still fails at `worker_tps_overhead_pct = 60.0`. The next
-   kernel slice should reduce remaining per-token dispatch and quantized decode
-   overhead before rerunning the release gate.
+   The current packed-word-lane kernel is a route-plus-layout proof. It goes
+   beyond the online-softmax vector lane layout by dequantizing one q4 `uint32`
+   word per active lane and accumulating eight value dimensions from that load,
+   but the real-model gate still fails at `worker_tps_overhead_pct = 73.97` in
+   the same-model run. The next kernel slice should reduce remaining per-token
+   dispatch, cache update, and quantized decode overhead before rerunning the
+   release gate.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -462,11 +476,11 @@ Release-gate targets:
 - `worker_tps_overhead_pct <= 15` for the first fused milestone
 - `worker_tps_overhead_pct <= 10` for oMLX parity
 
-The online-softmax probe does not change the release rule: the gate remains
+The packed-word-lane probe does not change the release rule: the gate remains
 blocked unless the same real-model JSON reports both `active_kv_kernel_path !=
-fallback` and `worker_tps_overhead_pct <= 15`. The current online-softmax JSON
+fallback` and `worker_tps_overhead_pct <= 15`. The current packed-word-lane JSON
 meets the non-fallback requirement but fails the throughput requirement with
-`worker_tps_overhead_pct = 60.0`.
+`worker_tps_overhead_pct = 73.97`.
 The Qwen3.5 support smoke also keeps the release gate blocked: it proves the
 Swift stack can load and decode `model_type = qwen3_5`, but `turboquant-q4`
 reports `active_kv_kernel_path = fallback`, `active_kv_runtime_route = blocked`,
