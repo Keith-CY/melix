@@ -73,6 +73,46 @@ This verifies:
 
 For the manual LoRA operator workflow, use `docs/runbooks/phase-8-lora-adapter-workflow.md`.
 
+## CLI Pipeline v1
+
+The preferred machine-oriented acceptance entry point is now the typed CLI pipeline runner:
+
+```bash
+melix pipeline run \
+  --file docs/examples/pipelines/phase8-acceptance.pipeline.json \
+  --inputs /path/to/phase8-inputs.json \
+  --trace-id phase8-$(date -u +%Y%m%dT%H%M%SZ) \
+  --format json-v1
+```
+
+Use `--dry-run --format json-v1` first to validate command planning and receipt paths without
+executing model operations. Use `--receipt-dir PATH` when CI needs receipts in a workspace-owned
+artifact directory. Use `--resume` only when the prior summary manifest has matching pipeline and
+input hashes and the step receipts still match the current step metadata. Use `--from-step STEP_ID`
+to reload earlier step receipts and rerun a downstream section after fixing local state.
+
+Each pipeline run writes:
+
+- one `melix.cli.output.v1` or `melix.cli.error.v1` receipt per step
+- a `melix.pipeline.run.v1` summary manifest with pipeline hash, input hash, step status, receipt
+  paths, step-level `artifact_paths`, and pipeline metrics
+
+Successful step receipts include `pipeline_step` metadata with the step ID, index, command ID,
+pipeline hash, input hash, and resolved-argument hash. Resume and from-step recovery validate this
+metadata before reusing a receipt; stale, swapped, or schema-incompatible receipts fail fast and
+write a failed summary manifest.
+
+Keep `scripts/phase8_acceptance_bundle.py` working during v1. The pipeline runner becomes the
+default Phase 8 acceptance path only after deterministic integration coverage proves parity with
+the scripted bundle flow.
+
+Keep pipeline verification deterministic by default. CI should use the pipeline tests and dry-run
+sample to validate typed command planning, reference resolution, receipts, resume behavior, and
+summary artifacts without requiring a live model. Preserve live model and live runtime coverage as
+explicit acceptance gates: use `MELIX_PHASE8_REAL_SMALL_MODEL_E2E=1` for the real Phase 8
+small-model path, and use `MELIX_RUN_LIVE_RUNTIME_TESTS=1` when running CLI smoke tests that
+depend on local worker sockets.
+
 ## Latest Deterministic Acceptance Evidence
 
 Recorded on 2026-04-09. This evidence closes the repository-owned deterministic acceptance gate.

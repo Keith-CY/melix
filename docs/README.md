@@ -36,6 +36,11 @@ Use runbooks when you need executable procedures instead of narrative documentat
 - [`runbooks/phase-8-release-gates.md`](runbooks/phase-8-release-gates.md)
 - [`runbooks/phase-8-product-acceptance.md`](runbooks/phase-8-product-acceptance.md)
 
+## Examples
+
+- [`examples/pipelines/phase8-acceptance.pipeline.json`](examples/pipelines/phase8-acceptance.pipeline.json)
+  shows the v1 typed CLI pipeline form for the Phase 8 acceptance flow.
+
 ## Canonical Specifications
 
 These top-level specs remain canonical and should not be moved without an explicit migration task:

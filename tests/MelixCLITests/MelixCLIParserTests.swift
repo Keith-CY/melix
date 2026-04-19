@@ -85,6 +85,200 @@ struct MelixCLIParserTests {
         #expect(uploadOptions.json)
     }
 
+    @Test("parses json v1 output format and pipeline run options")
+    func parsesJSONV1OutputFormatAndPipelineRunOptions() throws {
+        #expect(MelixCLIParser.usageText.contains("melix pipeline run --file PIPELINE.json"))
+
+        let doctorInvocation = try MelixCLIParser.parseInvocation([
+            "doctor",
+            "--format", "json-v1",
+        ])
+
+        #expect(doctorInvocation.outputFormat == .jsonV1)
+        #expect(doctorInvocation.command == .doctor(.init(json: false)))
+
+        let pipelineInvocation = try MelixCLIParser.parseInvocation([
+            "pipeline",
+            "run",
+            "--file", "/tmp/phase8.pipeline.json",
+            "--inputs", "/tmp/phase8.inputs.json",
+            "--receipt-dir", "/tmp/melix-pipeline-receipts",
+            "--trace-id", "trace-pipeline-1",
+            "--resume",
+            "--from-step", "derived_chat",
+            "--dry-run",
+            "--format", "json-v1",
+        ])
+
+        #expect(pipelineInvocation.outputFormat == .jsonV1)
+        guard case .pipelineRun(let options) = pipelineInvocation.command else {
+            Issue.record("Expected pipelineRun command")
+            return
+        }
+        #expect(options.filePath == "/tmp/phase8.pipeline.json")
+        #expect(options.inputsPath == "/tmp/phase8.inputs.json")
+        #expect(options.receiptDir == "/tmp/melix-pipeline-receipts")
+        #expect(options.traceID == "trace-pipeline-1")
+        #expect(options.resume)
+        #expect(options.fromStepID == "derived_chat")
+        #expect(options.dryRun)
+    }
+
+    @Test("command codec round trips typed command arguments")
+    func commandCodecRoundTripsTypedCommandArguments() throws {
+        let command = MelixCLICommand.chatRun(
+            .init(
+                modelID: "melix-dev-text",
+                message: "Reply with OK",
+                systemPrompt: "Be concise.",
+                serverSessionID: "server-session-1",
+                json: true
+            )
+        )
+
+        let arguments = try MelixCLICommandCodec.arguments(for: command)
+
+        #expect(arguments == [
+            "chat",
+            "run",
+            "--model-id", "melix-dev-text",
+            "--message", "Reply with OK",
+            "--system", "Be concise.",
+            "--server-session-id", "server-session-1",
+            "--json",
+        ])
+        #expect(try MelixCLIParser.parse(arguments) == command)
+    }
+
+    @Test("command codec exposes stable ids and supported argv mappings")
+    func commandCodecExposesStableIDsAndSupportedArgvMappings() throws {
+        let allCommands: [(MelixCLICommand, String)] = [
+            (.doctor(.init()), "doctor"),
+            (.convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)), "convert"),
+            (.quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", json: true)), "quantize"),
+            (.upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)), "upload"),
+            (.modelList(.init(json: true)), "model.list"),
+            (.modelInspect(.init(modelID: "model", json: true)), "model.inspect"),
+            (.modelLoad(.init(modelID: "model", memoryBudgetBytes: 1024, json: true)), "model.load"),
+            (.modelUnload(.init(modelID: "model", json: true)), "model.unload"),
+            (.modelDownload(.init(modelID: "model", outputDir: "/tmp/model", json: true)), "model.download"),
+            (.modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)), "model.import"),
+            (.modelHubSearch(.init(query: "qwen", pageSize: 5, cursor: "next", mlxOnly: false, json: true)), "model.hub.search"),
+            (.modelHubShow(.init(repoID: "mlx/qwen", json: true)), "model.hub.show"),
+            (.modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)), "model.hub.download"),
+            (.modelRootsList(.init(json: true)), "model.roots.list"),
+            (.modelRootsAdd(.init(path: "/models", json: true)), "model.roots.add"),
+            (.modelRootsRemove(.init(path: "/models", json: true)), "model.roots.remove"),
+            (.modelRootsMove(.init(path: "/models", index: 1, json: true)), "model.roots.move"),
+            (.modelRootsRescan(.init(json: true)), "model.roots.rescan"),
+            (.serverSnapshot(.init(json: true)), "server.snapshot"),
+            (.serverSessionList(.init(json: true)), "server.session.list"),
+            (.serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
+            (.serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "server.session.update"),
+            (.serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)), "server.session.remove"),
+            (.serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)), "server.session.select"),
+            (.serverStart(.init(serverSessionID: "server-session-1", json: true)), "server.start"),
+            (.serverPause(.init(serverSessionID: "server-session-1", json: true)), "server.pause"),
+            (.serverResume(.init(serverSessionID: "server-session-1", json: true)), "server.resume"),
+            (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
+            (.serverStop(.init(serverSessionID: "server-session-1", json: true)), "server.stop"),
+            (.serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: true, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)), "server.set-idle-policy"),
+            (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
+            (.loraList(.init(modelID: "model", json: true)), "lora.list"),
+            (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)), "lora.train"),
+            (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
+            (.loraDatasetBuild(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", outputDir: "/tmp/out", json: true)), "lora.dataset.build"),
+            (.loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)), "lora.activate"),
+            (.loraRemoveDerived(.init(modelID: "model", derivedModelID: "derived", json: true)), "lora.remove-derived"),
+            (.loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)), "lora.publish"),
+            (.benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)), "bench.run"),
+            (.benchList(.init(json: true)), "bench.list"),
+            (.benchExportCSV(.init(jobID: "bench-1", outputPath: "/tmp/bench.csv", json: true)), "bench.export-csv"),
+            (.benchMatrixRun(.init(modelID: "model", taskKind: "text-generation", suites: ["smoke"], contextLengths: [1024], generationLengths: [128], batchSizes: [1], cacheProfiles: ["cold"], reasoningModes: ["disabled"], structuredOutputModes: ["disabled"], concurrencyLevels: [1], repeats: 2, requests: 4, allowLargeMatrix: true, json: true)), "bench.matrix.run"),
+            (.benchMatrixList(.init(json: true)), "bench.matrix.list"),
+            (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
+            (.benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)), "bench.matrix.export-requests-csv"),
+            (.evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)), "eval.run"),
+            (.evalCompare(.init(modelID: "base", targetModelIDs: ["target"], suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, json: true)), "eval.compare"),
+            (.evalList(.init(json: true)), "eval.list"),
+            (.evalCompareExportSummaryCSV(.init(jobID: "compare-1", outputPath: "/tmp/compare.csv", json: true)), "eval.compare.export-summary-csv"),
+            (.evalCompareExportSamplesCSV(.init(jobID: "compare-1", outputPath: "/tmp/compare-samples.csv", json: true)), "eval.compare.export-samples-csv"),
+            (.evalCompareExportSamplesJSONL(.init(jobID: "compare-1", outputPath: "/tmp/compare-samples.jsonl", json: true)), "eval.compare.export-samples-jsonl"),
+            (.evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval.csv", json: true)), "eval.export-summary-csv"),
+            (.evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.csv", json: true)), "eval.export-samples-csv"),
+            (.evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.jsonl", json: true)), "eval.export-samples-jsonl"),
+            (.pipelineRun(.init(filePath: "/tmp/pipeline.json", inputsPath: "/tmp/inputs.json", receiptDir: "/tmp/receipts", traceID: "trace", resume: true, fromStepID: "chat", dryRun: true)), "pipeline.run"),
+        ]
+
+        for (command, expectedID) in allCommands {
+            #expect(MelixCLICommandCodec.commandID(for: command) == expectedID)
+        }
+
+        let supportedCommands: [MelixCLICommand] = [
+            .doctor(.init(json: true)),
+            .convert(.init(modelID: "model", outputDir: "/tmp/out", targetFormat: "bundle", json: true)),
+            .quantize(.init(modelID: "model", outputDir: "/tmp/out", quantProfileID: "q4", weightQuant: "int4", kvQuant: "int8", json: true)),
+            .upload(.init(modelID: "model", outputDir: "/tmp/out", targetRepo: "melix/model", artifactPath: "/tmp/model", artifactKind: "bundle", artifactManifestPath: "/tmp/model/manifest.json", json: true)),
+            .modelImport(.init(path: "/tmp/model", modelID: "model", modelKind: "text", revision: "main", json: true)),
+            .modelHubDownload(.init(repoID: "mlx/qwen", revision: "main", json: true)),
+            .modelRootsList(.init(json: true)),
+            .modelRootsAdd(.init(path: "/models", json: true)),
+            .modelRootsRemove(.init(path: "/models", json: true)),
+            .modelRootsMove(.init(path: "/models", index: 1, json: true)),
+            .modelRootsRescan(.init(json: true)),
+            .serverSessionCreate(.init(title: "Server", modelID: "model", host: "127.0.0.1", port: 8080, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
+            .serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", modelID: "model", host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
+            .serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)),
+            .serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)),
+            .serverStart(.init(serverSessionID: "server-session-1", json: true)),
+            .serverPause(.init(serverSessionID: "server-session-1", json: true)),
+            .serverResume(.init(serverSessionID: "server-session-1", json: true)),
+            .serverWake(.init(serverSessionID: "server-session-1", json: true)),
+            .serverStop(.init(serverSessionID: "server-session-1", json: true)),
+            .serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: false, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)),
+            .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
+            .loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)),
+            .benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)),
+            .benchMatrixRun(.init(modelID: "model", taskKind: "text-generation", suites: ["smoke"], contextLengths: [1024], generationLengths: [128], batchSizes: [1], cacheProfiles: ["cold"], reasoningModes: ["disabled"], structuredOutputModes: ["disabled"], concurrencyLevels: [1], repeats: 2, requests: 4, allowLargeMatrix: true, json: true)),
+            .benchExportCSV(.init(jobID: "bench-1", outputPath: "/tmp/bench.csv", json: true)),
+            .benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)),
+            .benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)),
+            .evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .huggingFaceDataset(datasetPath: "org/ds", datasetName: "name", datasetRevision: "rev", split: "test"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)),
+            .evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval.csv", json: true)),
+            .evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.csv", json: true)),
+            .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.jsonl", json: true)),
+            .pipelineRun(.init(filePath: "/tmp/pipeline.json", inputsPath: "/tmp/inputs.json", receiptDir: "/tmp/receipts", traceID: "trace", resume: true, fromStepID: "chat", dryRun: true)),
+        ]
+
+        for command in supportedCommands {
+            let arguments = try MelixCLICommandCodec.arguments(for: command)
+            #expect(arguments.isEmpty == false)
+            if case .pipelineRun = command {
+                #expect(arguments.contains("--json") == false)
+            } else {
+                #expect(arguments.contains("--json"))
+                let jsonCommand = try MelixCLICommandCodec.jsonEnabledCommand(for: command)
+                #expect(MelixCLICommandCodec.commandID(for: jsonCommand) == MelixCLICommandCodec.commandID(for: command))
+                #expect(try MelixCLICommandCodec.arguments(for: jsonCommand).contains("--json"))
+            }
+        }
+
+        let unsupported: [MelixCLICommand] = [
+            .modelList(.init()),
+            .loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl")),
+            .evalCompare(.init(modelID: "base", targetModelIDs: ["target"])),
+        ]
+        for command in unsupported {
+            do {
+                _ = try MelixCLICommandCodec.arguments(for: command)
+                Issue.record("Expected unsupported codec command \(MelixCLICommandCodec.commandID(for: command)) to fail.")
+            } catch let error as MelixCLIError {
+                #expect(error == .runtime("Command codec does not support \(MelixCLICommandCodec.commandID(for: command))."))
+            }
+        }
+    }
+
     @Test("parses server snapshot and pause commands")
     func parsesServerSnapshotAndPauseCommands() throws {
         let snapshotCommand = try MelixCLIParser.parse([

@@ -1,0 +1,305 @@
+{
+  "schema_version": "melix.pipeline.v1",
+  "name": "phase8-acceptance",
+  "inputs": {
+    "model_source_kind": "local_path",
+    "model_path": "/absolute/path/to/local/mlx/model",
+    "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+    "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+    "revision": "main",
+    "server_session_id": "server-session-1",
+    "server_title": "Phase 8 Acceptance",
+    "host": "127.0.0.1",
+    "port": 8080,
+    "rate_limit_per_minute": 120,
+    "timeout_seconds": 120,
+    "base_chat_message": "Reply with BASE_OK only.",
+    "derived_chat_message": "Reply with DERIVED_OK only.",
+    "dataset_uri": "/absolute/path/to/lora-dataset.jsonl",
+    "adapter_name": "phase8-acceptance",
+    "derived_model_alias": "phase8-acceptance-derived",
+    "bench_suites": [
+      "smoke"
+    ],
+    "bench_context_lengths": [
+      1024
+    ],
+    "bench_generation_length": 128,
+    "bench_batch_sizes": [
+      1
+    ],
+    "bench_repeats": 1,
+    "bench_sample_size": 4,
+    "bench_batch_factor": 1,
+    "bench_job_id": "replace-with-benchmark-job-id-when-exporting-history",
+    "matrix_suites": [
+      "smoke"
+    ],
+    "matrix_context_lengths": [
+      1024
+    ],
+    "matrix_generation_lengths": [
+      128
+    ],
+    "matrix_batch_sizes": [
+      1
+    ],
+    "matrix_cache_profiles": [
+      "none"
+    ],
+    "matrix_reasoning_modes": [
+      "disabled"
+    ],
+    "matrix_structured_output_modes": [
+      "disabled"
+    ],
+    "matrix_concurrency": [
+      1
+    ],
+    "matrix_requests": 4,
+    "eval_suites": [
+      "mmlu"
+    ],
+    "eval_dataset_id": "mmlu.dev.v1",
+    "eval_sample_size": 4,
+    "eval_batch_factor": 1,
+    "acceptance_output_dir": "/tmp/melix-phase8-acceptance"
+  },
+  "steps": [
+    {
+      "id": "import_local_model",
+      "command": "model.import",
+      "when": {
+        "input": "model_source_kind",
+        "equals": "local_path"
+      },
+      "args": {
+        "path": "${inputs.model_path}",
+        "model_id": "${inputs.model_id}",
+        "model_kind": "text",
+        "revision": "${inputs.revision}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "model_id",
+          "managed_model_path"
+        ]
+      }
+    },
+    {
+      "id": "download_hub_model",
+      "command": "model.hub.download",
+      "when": {
+        "input": "model_source_kind",
+        "equals": "hub"
+      },
+      "args": {
+        "repo_id": "${inputs.repo_id}",
+        "revision": "${inputs.revision}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "model_id",
+          "managed_model_path"
+        ]
+      }
+    },
+    {
+      "id": "rescan_registry",
+      "command": "model.roots.rescan",
+      "args": {}
+    },
+    {
+      "id": "update_server_session",
+      "command": "server.session.update",
+      "args": {
+        "server_session_id": "${inputs.server_session_id}",
+        "title": "${inputs.server_title}",
+        "model_id": "${inputs.model_id}",
+        "host": "${inputs.host}",
+        "port": "${inputs.port}",
+        "rate_limit_per_minute": "${inputs.rate_limit_per_minute}",
+        "timeout_seconds": "${inputs.timeout_seconds}"
+      }
+    },
+    {
+      "id": "start_server",
+      "command": "server.start",
+      "args": {
+        "server_session_id": "${inputs.server_session_id}"
+      }
+    },
+    {
+      "id": "base_chat",
+      "command": "chat.run",
+      "args": {
+        "model_id": "${inputs.model_id}",
+        "server_session_id": "${inputs.server_session_id}",
+        "message": "${inputs.base_chat_message}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "assistant_text",
+          "request_id"
+        ]
+      }
+    },
+    {
+      "id": "train_lora",
+      "command": "lora.train",
+      "args": {
+        "model_id": "${inputs.model_id}",
+        "dataset_uri": "${inputs.dataset_uri}",
+        "adapter_name": "${inputs.adapter_name}",
+        "training_mode": "qlora",
+        "sample_limit": "16",
+        "derived_model_alias": "${inputs.derived_model_alias}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "job_id"
+        ]
+      }
+    },
+    {
+      "id": "activate_lora",
+      "command": "lora.activate",
+      "args": {
+        "model_id": "${inputs.model_id}",
+        "adapter_path": "${steps.train_lora.result.output_path}",
+        "activation_mode": "adapter_backed_runtime",
+        "derived_model_alias": "${inputs.derived_model_alias}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "job_id"
+        ]
+      }
+    },
+    {
+      "id": "derived_chat",
+      "command": "chat.run",
+      "args": {
+        "model_id": "${inputs.derived_model_alias}",
+        "server_session_id": "${inputs.server_session_id}",
+        "message": "${inputs.derived_chat_message}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "assistant_text",
+          "request_id"
+        ]
+      }
+    },
+    {
+      "id": "run_benchmark",
+      "command": "bench.run",
+      "args": {
+        "model_id": "${inputs.derived_model_alias}",
+        "suites": "${inputs.bench_suites}",
+        "context_lengths": "${inputs.bench_context_lengths}",
+        "generation_length": "${inputs.bench_generation_length}",
+        "batch_sizes": "${inputs.bench_batch_sizes}",
+        "repeats": "${inputs.bench_repeats}",
+        "sample_size": "${inputs.bench_sample_size}",
+        "batch_factor": "${inputs.bench_batch_factor}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "report_path",
+          "metrics"
+        ]
+      }
+    },
+    {
+      "id": "run_benchmark_matrix",
+      "command": "bench.matrix.run",
+      "args": {
+        "model_id": "${inputs.derived_model_alias}",
+        "suites": "${inputs.matrix_suites}",
+        "context_lengths": "${inputs.matrix_context_lengths}",
+        "generation_lengths": "${inputs.matrix_generation_lengths}",
+        "batch_sizes": "${inputs.matrix_batch_sizes}",
+        "cache_profiles": "${inputs.matrix_cache_profiles}",
+        "reasoning_modes": "${inputs.matrix_reasoning_modes}",
+        "structured_output_modes": "${inputs.matrix_structured_output_modes}",
+        "concurrency": "${inputs.matrix_concurrency}",
+        "requests": "${inputs.matrix_requests}",
+        "allow_large_matrix": true
+      },
+      "checks": {
+        "required_result_fields": [
+          "job.job_id"
+        ]
+      }
+    },
+    {
+      "id": "run_evaluation",
+      "command": "eval.run",
+      "args": {
+        "model_id": "${inputs.derived_model_alias}",
+        "suites": "${inputs.eval_suites}",
+        "dataset_id": "${inputs.eval_dataset_id}",
+        "sample_size": "${inputs.eval_sample_size}",
+        "batch_factor": "${inputs.eval_batch_factor}"
+      },
+      "checks": {
+        "required_result_fields": [
+          "0.job.job_id"
+        ]
+      }
+    },
+    {
+      "id": "export_benchmark_csv",
+      "command": "bench.export-csv",
+      "args": {
+        "job_id": "${inputs.bench_job_id}",
+        "output": "${inputs.acceptance_output_dir}/benchmark.csv"
+      },
+      "checks": {
+        "artifact_path_exists": [
+          "${steps.export_benchmark_csv.result.output_path}"
+        ]
+      }
+    },
+    {
+      "id": "export_matrix_summary_csv",
+      "command": "bench.matrix.export-summary-csv",
+      "args": {
+        "job_id": "${steps.run_benchmark_matrix.result.job.job_id}",
+        "output": "${inputs.acceptance_output_dir}/benchmark-matrix-summary.csv"
+      },
+      "checks": {
+        "artifact_path_exists": [
+          "${steps.export_matrix_summary_csv.result.output_path}"
+        ]
+      }
+    },
+    {
+      "id": "export_eval_summary_csv",
+      "command": "eval.export-summary-csv",
+      "args": {
+        "job_id": "${steps.run_evaluation.result.0.job.job_id}",
+        "output": "${inputs.acceptance_output_dir}/evaluation-summary.csv"
+      },
+      "checks": {
+        "artifact_path_exists": [
+          "${steps.export_eval_summary_csv.result.output_path}"
+        ]
+      }
+    },
+    {
+      "id": "export_eval_samples_jsonl",
+      "command": "eval.export-samples-jsonl",
+      "args": {
+        "job_id": "${steps.run_evaluation.result.0.job.job_id}",
+        "output": "${inputs.acceptance_output_dir}/evaluation-samples.jsonl"
+      },
+      "checks": {
+        "artifact_path_exists": [
+          "${steps.export_eval_samples_jsonl.result.output_path}"
+        ]
+      }
+    }
+  ]
+}
