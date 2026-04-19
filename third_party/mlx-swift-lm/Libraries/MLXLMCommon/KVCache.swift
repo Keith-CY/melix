@@ -75,6 +75,9 @@ public protocol KVCache: Evaluatable {
 
 public typealias QuantizedKVCacheTuple = (MLXArray, MLXArray, MLXArray?)
 
+private let melixFusedDecodeQuantizeEnabled =
+    ProcessInfo.processInfo.environment["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE"] == "1"
+
 /// Full quantized KV-cache storage plus the currently valid sequence length.
 ///
 /// `keys` and `values` can include preallocated future-token capacity. Callers
@@ -746,6 +749,7 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     private var keys: (MLXArray, MLXArray, MLXArray?)?
     private var values: (MLXArray, MLXArray, MLXArray?)?
     private let step: Int
+    private let fusedDecodeQuantizeEnabled: Bool?
     public let groupSize: Int
     public let bits: Int
     public let mode: QuantizationMode
@@ -754,15 +758,22 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     public private(set) var quantizedCacheUpdateCallCount: Int = 0
     public private(set) var quantizedCacheExpandTotalMicros: Int = 0
     public private(set) var quantizedCacheQuantizeTotalMicros: Int = 0
+    public private(set) var quantizedCacheFusedDecodeQuantizeCallCount: Int = 0
     public private(set) var quantizedCacheAppendTotalMicros: Int = 0
     public private(set) var quantizedCacheMaterializeTotalMicros: Int = 0
     public private(set) var quantizedCacheMaterializeCallCount: Int = 0
 
-    public init(groupSize: Int = 64, bits: Int = 8, mode: QuantizationMode = .affine) {
+    public init(
+        groupSize: Int = 64,
+        bits: Int = 8,
+        mode: QuantizationMode = .affine,
+        fusedDecodeQuantizeEnabled: Bool? = nil
+    ) {
         self.groupSize = groupSize
         self.bits = bits
         self.step = 256
         self.mode = mode
+        self.fusedDecodeQuantizeEnabled = fusedDecodeQuantizeEnabled
         super.init()
     }
 
@@ -890,13 +901,26 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         offset += numSteps
 
         let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
-        let quantizedKeys = quantized(newKeys, groupSize: groupSize, bits: bits)
-        let quantizedValues = quantized(newValues, groupSize: groupSize, bits: bits)
+        let (qKeys, qValues): (QuantizedKVCacheTuple, QuantizedKVCacheTuple)
+        if (fusedDecodeQuantizeEnabled ?? melixFusedDecodeQuantizeEnabled),
+            let fusedQuantized = fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: newKeys,
+            values: newValues,
+            groupSize: groupSize,
+            bits: bits,
+            mode: mode
+        ) {
+            quantizedCacheFusedDecodeQuantizeCallCount += 1
+            (qKeys, qValues) = fusedQuantized
+        } else {
+            let quantizedKeys = quantized(newKeys, groupSize: groupSize, bits: bits)
+            let quantizedValues = quantized(newValues, groupSize: groupSize, bits: bits)
+            (qKeys, qValues) = (
+                (quantizedKeys.wq, quantizedKeys.scales, quantizedKeys.biases),
+                (quantizedValues.wq, quantizedValues.scales, quantizedValues.biases)
+            )
+        }
         quantizedCacheQuantizeTotalMicros += quantizedKVElapsedMicros(since: quantizeStartedAt)
-
-        // Convert named tuples to positional tuples
-        let qKeys = (quantizedKeys.wq, quantizedKeys.scales, quantizedKeys.biases)
-        let qValues = (quantizedValues.wq, quantizedValues.scales, quantizedValues.biases)
 
         // Assign to storage
         guard let currentKeys = self.keys, let currentValues = self.values else {
@@ -905,16 +929,16 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
 
         // Update each component of the quantized tuples
         let appendStartedAt = Date.timeIntervalSinceReferenceDate
-        currentKeys.0[.ellipsis, prev ..< offset, 0...] = qKeys.0
-        currentKeys.1[.ellipsis, prev ..< offset, 0...] = qKeys.1
+        currentKeys.0[0..., 0..., prev ..< offset] = qKeys.0
+        currentKeys.1[0..., 0..., prev ..< offset] = qKeys.1
         if let qKeysBiases = qKeys.2 {
-            currentKeys.2![.ellipsis, prev ..< offset, 0...] = qKeysBiases
+            currentKeys.2![0..., 0..., prev ..< offset] = qKeysBiases
         }
 
-        currentValues.0[.ellipsis, prev ..< offset, 0...] = qValues.0
-        currentValues.1[.ellipsis, prev ..< offset, 0...] = qValues.1
+        currentValues.0[0..., 0..., prev ..< offset] = qValues.0
+        currentValues.1[0..., 0..., prev ..< offset] = qValues.1
         if let qValuesBiases = qValues.2 {
-            currentValues.2![.ellipsis, prev ..< offset, 0...] = qValuesBiases
+            currentValues.2![0..., 0..., prev ..< offset] = qValuesBiases
         }
 
         self.keys = currentKeys

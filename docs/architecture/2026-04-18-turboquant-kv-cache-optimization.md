@@ -25,6 +25,8 @@ The current benchmark evidence is:
 | Vendored online-softmax speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-online-softmax.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Cache-internal timing probe | `docs/metrics/phase2-active-kv-vendored-turboquant-cache-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored storage-fastpath speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-storage-fastpath.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Rejected fused decode-quantize experiment | `docs/metrics/phase2-active-kv-vendored-turboquant-fused-quantize-experiment.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Vendored append-slice speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-append-slice.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
@@ -96,6 +98,11 @@ release gate remains failed because the required threshold is `<= 15`.
 The online-softmax follow-up keeps the non-fallback route and removes the
 threadgroup score-vector materialization, but its real-model JSON still reports
 `worker_tps_overhead_pct = 60.0`, so the release gate remains failed.
+The cache-storage follow-ups remove trimmed-state materialization and slightly
+reduce append indexing overhead, but the latest routed JSON still reports
+`worker_tps_overhead_pct = 60.0`. The fused decode-quantize experiment is
+correctness-covered, including bfloat16, but is disabled by default because it
+regressed real-model `cache_quantize_total_us`.
 
 ## Implemented Optimization
 
@@ -407,6 +414,22 @@ reports `cache_update_total_us = 728859`,
 `active_kv_cache_materialize_avg_us = 93.0`. That confirms the storage path is
 active, but the routed fused path remains release-blocked because
 `worker_tps_overhead_pct = 61.43`.
+The fused decode-quantize experiment validates a single-dispatch q4 affine
+key/value quantizer, fixes bfloat16 scale/bias output casting, and keeps
+`active_kv_kernel_path = tq_mse_single`, `active_kv_runtime_route = routed`,
+and `active_kv_fallback_count = 0`. The real-model data rejects it as a default
+runtime optimization: aggregate `cache_quantize_total_us` regresses from the
+storage-fastpath `92171` us to `823275` us, and `cache_update_total_us`
+regresses to `1575930` us. It remains available only behind
+`MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE=1` for future experiments.
+The append-slice post-run keeps native MLX quantization as the default and
+shortens q4 storage writes to direct 3-axis slice updates. It reports
+`cache_update_total_us = 725794`,
+`cache_update_call_count = 5376`, `cache_append_total_us = 592356`,
+`cache_quantize_total_us = 112194`, `cache_materialize_total_us = 304`, and
+`cache_materialize_call_count = 3`. This improves aggregate append time by
+`23597` us versus the storage-fastpath run, but the routed fused path remains
+release-blocked because `worker_tps_overhead_pct = 60.0`.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -437,6 +460,11 @@ The absolute TurboQuant path is faster, but the real-model data shows the route
 is still too slow for the release target, so the next optimization must address
 remaining per-token fused-kernel evaluation, cache append, and incoming KV
 quantization overhead.
+The fused decode-quantize experiment shows that a naive custom quantizer is not
+the right next default step: MLX's native `quantized(...)` implementation is
+substantially faster than the single-thread-per-group custom kernel on the live
+decode shape. Future quantization work should either write directly into cache
+storage with a parallel layout or leave native quantization in place.
 
 The cache-internal timing probe now separates the remaining runtime cost inside
 Swift MLX LM's `QuantizedKVCache`. Each active-KV decode row can include:
@@ -477,10 +505,13 @@ efficiency. The recommended order is:
    beyond the online-softmax vector lane layout by dequantizing one q4 `uint32`
    word per active lane and accumulating eight value dimensions from that load,
    and the storage-fastpath slice removes per-token trimmed-cache
-   materialization from the fused route. The latest same-model gate still fails
-   at `worker_tps_overhead_pct = 61.43`. The next kernel slice should reduce
-   remaining per-token fused-kernel evaluation, cache append, and incoming KV
-   quantization overhead before rerunning the release gate.
+   materialization from the fused route. The append-slice cleanup slightly
+   reduces cache append overhead, while the fused decode-quantize experiment is
+   rejected for default runtime use because it is slower than native MLX
+   quantization. The latest same-model gate still fails at
+   `worker_tps_overhead_pct = 60.0`. The next kernel slice should reduce
+   remaining per-token fused-kernel evaluation before rerunning the release
+   gate.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -533,6 +564,13 @@ The storage-fastpath probe also does not change the release rule: it drops
 aggregate trimmed-state materialization from `348621` us to `278` us and keeps
 `active_kv_kernel_path = tq_mse_single`, but the same-model JSON still fails the
 throughput requirement with `worker_tps_overhead_pct = 61.43`.
+The append-slice probe also does not change the release rule: it lowers
+aggregate append timing from `615953` us to `592356` us and keeps
+`active_kv_kernel_path = tq_mse_single`, but the same-model JSON still fails the
+throughput requirement with `worker_tps_overhead_pct = 60.0`.
+The fused decode-quantize experiment must remain opt-in: it validates bfloat16
+correctness but regresses aggregate quantization timing to `823275` us, so it is
+not release-gate evidence.
 The Qwen3.5 support smoke also keeps the release gate blocked: it proves the
 Swift stack can load and decode `model_type = qwen3_5`, but `turboquant-q4`
 reports `active_kv_kernel_path = fallback`, `active_kv_runtime_route = blocked`,

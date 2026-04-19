@@ -6160,7 +6160,6 @@ final class WorkerScaffoldTests: XCTestCase {
             let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension])
             let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension])
             let fusedCache = QuantizedKVCache(groupSize: groupSize, bits: 4)
-            let referenceCache = QuantizedKVCache(groupSize: groupSize, bits: 4)
 
             let fused = attentionWithCacheUpdate(
                 queries: queries,
@@ -6170,9 +6169,17 @@ final class WorkerScaffoldTests: XCTestCase {
                 scale: scale,
                 mask: .causal
             )
-            let (quantizedKeys, quantizedValues) = referenceCache.updateQuantized(
-                keys: keys,
-                values: values
+            let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+            let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+            let quantizedKeys: QuantizedKVCacheTuple = (
+                referenceKeys.wq,
+                referenceKeys.scales,
+                referenceKeys.biases
+            )
+            let quantizedValues: QuantizedKVCacheTuple = (
+                referenceValues.wq,
+                referenceValues.scales,
+                referenceValues.biases
             )
             let expected = quantizedScaledDotProductAttention(
                 queries: queries,
@@ -6244,6 +6251,187 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(fallbackCache.quantizedCacheMaterializeCallCount, 1)
             XCTAssertTrue(allClose(fallback, expected, rtol: 1e-4, atol: 1e-4).all().item())
         }
+    }
+
+    func testFusedDecodeQuantizerMatchesReferenceForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            try assertFusedDecodeQuantizerMatchesReference(
+                dtype: .float32,
+                headDimension: 32,
+                groupSize: 32,
+                rtol: 1e-6,
+                atol: 1e-6
+            )
+        }
+    }
+
+    func testFusedDecodeQuantizerMatchesReferenceForSingleTokenBFloat16AffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            try assertFusedDecodeQuantizerMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    func testFusedDecodeQuantizerRejectsUnsupportedInputs() throws {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: .float32, headDimension: 32)
+
+        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: 32,
+            bits: 8,
+            mode: .affine
+        ))
+        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: 24,
+            bits: 4,
+            mode: .affine
+        ))
+    }
+
+    func testQuantizedKVCacheUsesNativeDecodeQuantizerByDefaultForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            assertQuantizedKVCacheStorageMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                expectedFusedDecodeQuantizeCallCount: 0,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    func testQuantizedKVCacheUsesFusedDecodeQuantizerWhenExplicitlyEnabledForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            assertQuantizedKVCacheStorageMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                fusedDecodeQuantizeEnabled: true,
+                expectedFusedDecodeQuantizeCallCount: 1,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    private func assertFusedDecodeQuantizerMatchesReference(
+        dtype: DType,
+        headDimension: Int,
+        groupSize: Int,
+        rtol: Double,
+        atol: Double
+    ) throws {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: dtype, headDimension: headDimension)
+        let fused = try XCTUnwrap(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: groupSize,
+            bits: 4,
+            mode: .affine
+        ))
+        let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+        let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+
+        assertQuantizedTuplesMatchReference(
+            keys: fused.0,
+            values: fused.1,
+            referenceKeys: referenceKeys,
+            referenceValues: referenceValues,
+            rtol: rtol,
+            atol: atol
+        )
+    }
+
+    private func assertQuantizedKVCacheStorageMatchesReference(
+        dtype: DType,
+        headDimension: Int,
+        groupSize: Int,
+        fusedDecodeQuantizeEnabled: Bool? = nil,
+        expectedFusedDecodeQuantizeCallCount: Int,
+        rtol: Double,
+        atol: Double
+    ) {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: dtype, headDimension: headDimension)
+        let cache = QuantizedKVCache(
+            groupSize: groupSize,
+            bits: 4,
+            fusedDecodeQuantizeEnabled: fusedDecodeQuantizeEnabled
+        )
+
+        let storageState = cache.updateQuantizedStorage(keys: keys, values: values)
+        let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+        let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+
+        XCTAssertEqual(
+            cache.quantizedCacheFusedDecodeQuantizeCallCount,
+            expectedFusedDecodeQuantizeCallCount
+        )
+        XCTAssertEqual(storageState.sequenceLength, 1)
+        assertQuantizedTuplesMatchReference(
+            keys: (
+                storageState.keys.0[.ellipsis, ..<1, 0...],
+                storageState.keys.1[.ellipsis, ..<1, 0...],
+                storageState.keys.2![.ellipsis, ..<1, 0...]
+            ),
+            values: (
+                storageState.values.0[.ellipsis, ..<1, 0...],
+                storageState.values.1[.ellipsis, ..<1, 0...],
+                storageState.values.2![.ellipsis, ..<1, 0...]
+            ),
+            referenceKeys: referenceKeys,
+            referenceValues: referenceValues,
+            rtol: rtol,
+            atol: atol
+        )
+    }
+
+    private func makeDecodeKeyValueTensors(
+        dtype: DType,
+        headDimension: Int
+    ) -> (MLXArray, MLXArray) {
+        let kvHeadCount = 2
+        let keyValues = (0 ..< kvHeadCount * headDimension).map { index in
+            Float((index % 23) - 11) / 13.0
+        }
+        let valueValues = (0 ..< kvHeadCount * headDimension).map { index in
+            Float((index % 29) - 14) / 15.0
+        }
+        let keys = MLXArray(keyValues, [1, kvHeadCount, 1, headDimension]).asType(dtype)
+        let values = MLXArray(valueValues, [1, kvHeadCount, 1, headDimension]).asType(dtype)
+        return (keys, values)
+    }
+
+    private func assertQuantizedTuplesMatchReference(
+        keys: QuantizedKVCacheTuple,
+        values: QuantizedKVCacheTuple,
+        referenceKeys: (wq: MLXArray, scales: MLXArray, biases: MLXArray?),
+        referenceValues: (wq: MLXArray, scales: MLXArray, biases: MLXArray?),
+        rtol: Double,
+        atol: Double
+    ) {
+        XCTAssertEqual(keys.0.asArray(UInt32.self), referenceKeys.wq.asArray(UInt32.self))
+        XCTAssertTrue(allClose(keys.1, referenceKeys.scales, rtol: rtol, atol: atol).all().item())
+        XCTAssertTrue(allClose(keys.2!, referenceKeys.biases!, rtol: rtol, atol: atol).all().item())
+        XCTAssertEqual(values.0.asArray(UInt32.self), referenceValues.wq.asArray(UInt32.self))
+        XCTAssertTrue(allClose(values.1, referenceValues.scales, rtol: rtol, atol: atol).all().item())
+        XCTAssertTrue(allClose(values.2!, referenceValues.biases!, rtol: rtol, atol: atol).all().item())
     }
 
     func testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes() throws {

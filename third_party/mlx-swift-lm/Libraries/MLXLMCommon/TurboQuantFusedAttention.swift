@@ -56,6 +56,151 @@ public func turboQuantFusedAttentionLaunchPlan(
     )
 }
 
+/// Quantize one decode key/value token into MLX's q4 affine tuple layout.
+///
+/// The cache append path still owns storage writes, but this combines key and
+/// value quantization for single-token decode into one custom Metal dispatch.
+/// Unsupported shapes return nil so callers can preserve MLX's native
+/// quantization fallback.
+public func fusedQ4AffineKeyValueQuantizedForDecode(
+    keys: MLXArray,
+    values: MLXArray,
+    groupSize: Int = 64,
+    bits: Int = 4,
+    mode: QuantizationMode = .affine
+) -> (QuantizedKVCacheTuple, QuantizedKVCacheTuple)? {
+    guard bits == 4, mode == .affine,
+        keys.shape.count == 4,
+        values.shape.count == 4,
+        keys.shape == values.shape,
+        keys.dtype == values.dtype
+    else {
+        return nil
+    }
+
+    let batchCount = keys.dim(0)
+    let kvHeadCount = keys.dim(1)
+    let tokenCount = keys.dim(2)
+    let headDimension = keys.dim(3)
+    guard batchCount > 0,
+        kvHeadCount > 0,
+        tokenCount == 1,
+        headDimension > 0,
+        headDimension % 8 == 0,
+        groupSize > 0,
+        groupSize % 8 == 0,
+        headDimension % groupSize == 0
+    else {
+        return nil
+    }
+
+    let packedWordsPerToken = headDimension / 8
+    let groupCount = headDimension / groupSize
+    let packedWordsPerGroup = groupSize / 8
+    let quantizationGroupCount = batchCount * kvHeadCount * groupCount
+    let outputDType = keys.dtype
+    let output = Device.withDefaultDevice(.gpu) {
+        let kernel = MLXFast.metalKernel(
+            name: "melix_turboquant_q4_affine_key_value_quantize_decode",
+            inputNames: ["keys", "values"],
+            outputNames: [
+                "packedKeys",
+                "keyScales",
+                "keyBiases",
+                "packedValues",
+                "valueScales",
+                "valueBiases",
+            ],
+            source: """
+                uint groupIndex = thread_position_in_grid.x;
+                bool isValue = groupIndex >= QUANTIZATION_GROUP_COUNT;
+                uint localGroupIndex = isValue ? groupIndex - QUANTIZATION_GROUP_COUNT : groupIndex;
+                uint group = localGroupIndex % GROUP_COUNT;
+                uint head = (localGroupIndex / GROUP_COUNT) % KV_HEAD_COUNT;
+                uint batch = localGroupIndex / (GROUP_COUNT * KV_HEAD_COUNT);
+                uint inputBase = (batch * KV_HEAD_COUNT + head) * HEAD_DIMENSION
+                    + group * GROUP_SIZE;
+
+                float minValue = 3.402823466e+38f;
+                float maxValue = -3.402823466e+38f;
+                for (uint offset = 0; offset < GROUP_SIZE; offset++) {
+                    float value = isValue ? float(values[inputBase + offset])
+                        : float(keys[inputBase + offset]);
+                    minValue = min(minValue, value);
+                    maxValue = max(maxValue, value);
+                }
+
+                float scale = (minValue - maxValue) * 0.0625f;
+                float bias = maxValue;
+                uint scaleIndex = (batch * KV_HEAD_COUNT + head) * GROUP_COUNT + group;
+                if (isValue) {
+                    valueScales[scaleIndex] = static_cast<T>(scale);
+                    valueBiases[scaleIndex] = static_cast<T>(bias);
+                } else {
+                    keyScales[scaleIndex] = static_cast<T>(scale);
+                    keyBiases[scaleIndex] = static_cast<T>(bias);
+                }
+
+                for (uint packedWord = 0; packedWord < PACKED_WORDS_PER_GROUP; packedWord++) {
+                    uint packed = 0;
+                    for (uint slot = 0; slot < 8; slot++) {
+                        uint elementOffset = packedWord * 8 + slot;
+                        float value = isValue ? float(values[inputBase + elementOffset])
+                            : float(keys[inputBase + elementOffset]);
+                        float qFloat = fabs(scale) > 1.0e-20f ? round((value - bias) / scale) : 0.0f;
+                        uint q = uint(clamp(qFloat, 0.0f, 15.0f));
+                        packed |= q << (slot * 4);
+                    }
+                    uint packedIndex = (batch * KV_HEAD_COUNT + head) * PACKED_WORDS_PER_TOKEN
+                        + group * PACKED_WORDS_PER_GROUP + packedWord;
+                    if (isValue) {
+                        packedValues[packedIndex] = packed;
+                    } else {
+                        packedKeys[packedIndex] = packed;
+                    }
+                }
+                """,
+            ensureRowContiguous: true
+        )
+        return kernel(
+            [keys, values],
+            template: [
+                ("T", outputDType),
+                ("HEAD_DIMENSION", headDimension),
+                ("KV_HEAD_COUNT", kvHeadCount),
+                ("GROUP_SIZE", groupSize),
+                ("GROUP_COUNT", groupCount),
+                ("PACKED_WORDS_PER_TOKEN", packedWordsPerToken),
+                ("PACKED_WORDS_PER_GROUP", packedWordsPerGroup),
+                ("QUANTIZATION_GROUP_COUNT", quantizationGroupCount),
+            ],
+            grid: (quantizationGroupCount * 2, 1, 1),
+            threadGroup: (1, 1, 1),
+            outputShapes: [
+                [batchCount, kvHeadCount, 1, packedWordsPerToken],
+                [batchCount, kvHeadCount, 1, groupCount],
+                [batchCount, kvHeadCount, 1, groupCount],
+                [batchCount, kvHeadCount, 1, packedWordsPerToken],
+                [batchCount, kvHeadCount, 1, groupCount],
+                [batchCount, kvHeadCount, 1, groupCount],
+            ],
+            outputDTypes: [
+                .uint32,
+                outputDType,
+                outputDType,
+                .uint32,
+                outputDType,
+                outputDType,
+            ]
+        )
+    }
+
+    return (
+        (output[0], output[1], output[2]),
+        (output[3], output[4], output[5])
+    )
+}
+
 /// Melix vendored q4 affine decode attention route.
 ///
 /// This fuses score, softmax, and value accumulation for one-token decode over
