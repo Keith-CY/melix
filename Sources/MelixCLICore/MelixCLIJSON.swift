@@ -7,6 +7,39 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
     return Double(nanos) / 1_000_000
 }
 
+enum MelixCLIJSONMetricPatch {
+    static let placeholderValue = 9.999999999999e99
+    static let placeholderLiteral = "9.9999999999989997e+99"
+
+    static func literal(for value: Double) -> String {
+        let finiteValue = value.isFinite ? max(value, 0) : 0
+        let boundedValue = min(finiteValue, placeholderValue)
+        let literal = String(
+            format: "%.16e",
+            locale: Locale(identifier: "en_US_POSIX"),
+            boundedValue
+        )
+        return literal
+    }
+
+    static func replacePlaceholder(in text: String, with value: Double) throws -> String {
+        guard let range = text.range(of: placeholderLiteral) else {
+            throw MelixCLIError.runtime("Failed to encode CLI metrics placeholder.")
+        }
+        var patched = text
+        patched.replaceSubrange(range, with: literal(for: value))
+        return patched
+    }
+
+    static func placeholderRange(in data: Data) throws -> Range<Data.Index> {
+        let placeholderData = Data(placeholderLiteral.utf8)
+        guard let range = data.range(of: placeholderData) else {
+            throw MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")
+        }
+        return range
+    }
+}
+
 enum MelixCLIJSON {
     static func prettyString(_ payload: Any) throws -> String {
         let data = try JSONSerialization.data(
@@ -38,8 +71,8 @@ public enum MelixCLIJSONEnvelope {
         status: String = "succeeded"
     ) throws -> String {
         var finalMetrics = metrics
-        finalMetrics["melix.cli.json_encode_ms"] = 0
-        var payload: [String: Any] = [
+        finalMetrics["melix.cli.json_encode_ms"] = MelixCLIJSONMetricPatch.placeholderValue
+        let payload: [String: Any] = [
             "schema_version": "melix.cli.output.v1",
             "command_id": commandID,
             "status": status,
@@ -50,10 +83,11 @@ public enum MelixCLIJSONEnvelope {
             "metrics": finalMetrics,
         ]
         let encodeStart = DispatchTime.now()
-        _ = try MelixCLIJSON.prettyString(payload)
-        finalMetrics["melix.cli.json_encode_ms"] = elapsedMilliseconds(since: encodeStart)
-        payload["metrics"] = finalMetrics
-        return try MelixCLIJSON.prettyString(payload)
+        let text = try MelixCLIJSON.prettyString(payload)
+        return try MelixCLIJSONMetricPatch.replacePlaceholder(
+            in: text,
+            with: elapsedMilliseconds(since: encodeStart)
+        )
     }
 
     public static func errorEnvelopeString(
@@ -79,8 +113,8 @@ public enum MelixCLIJSONEnvelope {
         metrics: [String: Double] = [:]
     ) throws -> String {
         var finalMetrics = metrics
-        finalMetrics["melix.cli.json_encode_ms"] = 0
-        var payload: [String: Any] = [
+        finalMetrics["melix.cli.json_encode_ms"] = MelixCLIJSONMetricPatch.placeholderValue
+        let payload: [String: Any] = [
             "schema_version": "melix.cli.error.v1",
             "command_id": commandID,
             "status": "failed",
@@ -94,10 +128,11 @@ public enum MelixCLIJSONEnvelope {
             "metrics": finalMetrics,
         ]
         let encodeStart = DispatchTime.now()
-        _ = try MelixCLIJSON.prettyString(payload)
-        finalMetrics["melix.cli.json_encode_ms"] = elapsedMilliseconds(since: encodeStart)
-        payload["metrics"] = finalMetrics
-        return try MelixCLIJSON.prettyString(payload)
+        let text = try MelixCLIJSON.prettyString(payload)
+        return try MelixCLIJSONMetricPatch.replacePlaceholder(
+            in: text,
+            with: elapsedMilliseconds(since: encodeStart)
+        )
     }
 
     public static func code(for error: MelixCLIError) -> String {

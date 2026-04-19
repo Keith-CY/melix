@@ -159,6 +159,16 @@ struct MelixCLIRunnerTests {
         #expect(metrics["melix.cli.parse_ms"] as? Double == 0.25)
     }
 
+    @Test("json metric patching rejects missing placeholders")
+    func jsonMetricPatchingRejectsMissingPlaceholders() throws {
+        #expect(throws: MelixCLIError.runtime("Failed to encode CLI metrics placeholder.")) {
+            try MelixCLIJSONMetricPatch.replacePlaceholder(in: "{}", with: 1)
+        }
+        #expect(throws: MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")) {
+            try MelixCLIJSONMetricPatch.placeholderRange(in: Data("{}".utf8))
+        }
+    }
+
     @Test("pipeline dry run writes planned step receipts and a summary")
     func pipelineDryRunWritesPlannedStepReceiptsAndASummary() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

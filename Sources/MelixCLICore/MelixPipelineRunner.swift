@@ -498,22 +498,34 @@ extension MelixCLIRunner {
         to url: URL,
         metrics: inout [String: Double]
     ) throws -> [String: Any] {
+        let receiptWriteMS = metrics["melix.pipeline.receipt_write_ms", default: 0]
+        var provisionalMetrics = metrics
+        provisionalMetrics["melix.pipeline.receipt_write_ms"] = MelixCLIJSONMetricPatch.placeholderValue
         var provisional = summary
-        provisional["metrics"] = metrics
+        provisional["metrics"] = provisionalMetrics
         let start = DispatchTime.now()
         let data = try JSONSerialization.data(withJSONObject: provisional, options: [.prettyPrinted, .sortedKeys])
+        let placeholderRange = try MelixCLIJSONMetricPatch.placeholderRange(in: data)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try data.write(to: url, options: .atomic)
-        metrics["melix.pipeline.receipt_write_ms", default: 0] += elapsedMilliseconds(since: start)
+        metrics["melix.pipeline.receipt_write_ms"] = receiptWriteMS + elapsedMilliseconds(since: start)
 
-        var final = summary
-        final["metrics"] = metrics
-        let finalData = try JSONSerialization.data(withJSONObject: final, options: [.prettyPrinted, .sortedKeys])
-        try finalData.write(to: url, options: .atomic)
-        return final
+        let replacementData = Data(
+            MelixCLIJSONMetricPatch.literal(
+                for: metrics["melix.pipeline.receipt_write_ms", default: 0]
+            ).utf8
+        )
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(placeholderRange.lowerBound))
+        try handle.write(contentsOf: replacementData)
+
+        var persisted = summary
+        persisted["metrics"] = metrics
+        return persisted
     }
 
     private func writeJSONObject(
