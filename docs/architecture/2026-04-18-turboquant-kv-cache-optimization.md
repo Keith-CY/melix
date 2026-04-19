@@ -21,6 +21,7 @@ The current benchmark evidence is:
 | Lazy-eval timing probe | `docs/metrics/phase2-active-kv-lazy-eval-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Blocked fallback speedup post-optimization | `docs/metrics/phase2-active-kv-blocked-fallback-speedup-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Vendored TurboQuant runtime probe | `docs/metrics/phase2-active-kv-vendored-turboquant-runtime.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Vendored shared-score speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-shared-scores.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
@@ -84,9 +85,10 @@ runtime path. The vendored-runtime slice changes that routing state:
 - `active_kv_decode_quantize_total_us = 0`
 - `active_kv_estimated_memory_savings_pct = 75`
 
-The remaining gap is performance, not route availability. The same real-model
-JSON reports `worker_tps_overhead_pct = 68.63`, so the fused TurboQuant release
-gate remains failed.
+The remaining gap is performance, not route availability. The first real-model
+vendored JSON reports `worker_tps_overhead_pct = 68.63`. A follow-up
+shared-score kernel layout reduces that to `60.87`, but the fused TurboQuant
+release gate remains failed because the required threshold is `<= 15`.
 
 ## Implemented Optimization
 
@@ -352,6 +354,13 @@ The vendored runtime post-run reports `status = "fail"`,
 `active_kv_estimated_memory_savings_pct = 75.0`, and
 `worker_tps_overhead_pct = 68.63`. This proves runtime routing without
 unblocking the release gate.
+The shared-score speedup post-run keeps the same non-fallback runtime state and
+reports `candidate_dispatch_count = 0`, `fallback_count = 0`,
+`observed_kernel_paths = ["tq_mse_single"]`,
+`observed_runtime_routes = ["routed"]`,
+`active_kv_estimated_memory_savings_pct = 75.0`, and
+`worker_tps_overhead_pct = 60.87`. This improves the vendored route by 7.76
+percentage points but still does not unblock the release gate.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -365,10 +374,15 @@ blocked, so the fused release gate must remain failed. The vendored runtime
 restores KV compression and removes fallback, but the first fused kernel is still
 slower than the release target.
 
-Implementation inference: the current Swift fused kernel dispatches one output
-element per thread and recomputes the key score plus softmax pass for every
-output dimension. That validates the route, but it does not match the oMLX
-near-zero-overhead layout where score/softmax work is shared across value lanes.
+Implementation inference: the first Swift fused kernel dispatched one output
+element per thread and recomputed the key score plus softmax pass for every
+output dimension. The shared-score follow-up now launches one threadgroup per
+batch/query-head, reduces key scores across head-dimension lanes with simdgroup
+partial reductions, stores one score vector in threadgroup memory, and shares
+per-token softmax weights across value lanes. That removes the largest repeated
+score pass, but the real-model data shows the remaining synchronization and
+materialized-score
+layout is still too slow for the release target.
 
 ## Next Optimization Architecture
 
@@ -384,10 +398,10 @@ efficiency. The recommended order is:
    `--require-fused-turboquant` CLI flag.
 
 2. Optimize the vendored fused kernel layout.
-   The current kernel is a correctness-first route proof. The next kernel should
-   compute score and online softmax once per batch/head/token block, then share
-   those weights across value lanes instead of recomputing the full score pass
-   for each output dimension.
+   The current shared-score kernel is a route-plus-layout proof. The next kernel
+   should go beyond the current simdgroup partial reduction with tiled
+   score/value work and online softmax that avoids materializing and
+   synchronizing a full score vector for every decode step.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state

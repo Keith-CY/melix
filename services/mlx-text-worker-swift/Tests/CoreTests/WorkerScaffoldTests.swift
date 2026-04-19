@@ -6073,6 +6073,29 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testVendoredFusedQ4AttentionLaunchPlanSharesScoresAcrossValueLanes() throws {
+        let plan = try XCTUnwrap(turboQuantFusedAttentionLaunchPlan(
+            batchCount: 2,
+            queryHeadCount: 4,
+            kvHeadCount: 2,
+            sequenceLength: 64,
+            headDimension: 128,
+            groupSize: 64
+        ))
+
+        XCTAssertEqual(plan.gridX, 128)
+        XCTAssertEqual(plan.gridY, 4)
+        XCTAssertEqual(plan.gridZ, 2)
+        XCTAssertEqual(plan.threadGroupX, 128)
+        XCTAssertEqual(plan.sharedScoreCount, 64)
+        XCTAssertEqual(plan.scoreDotProductsPerQueryHead, 64)
+        XCTAssertEqual(plan.scoreReductionLaneCount, 128)
+        XCTAssertEqual(plan.scoreReductionSimdgroupCount, 4)
+        XCTAssertTrue(plan.usesThreadgroupSharedScores)
+        XCTAssertTrue(plan.usesThreadgroupParallelScoreReduction)
+        XCTAssertFalse(plan.usesOnlineSoftmax)
+    }
+
     func testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs() async throws {
         try await withTemporaryDefaultMetallib {
             let sequenceLength = 3

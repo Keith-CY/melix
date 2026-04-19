@@ -1,6 +1,59 @@
 #if canImport(MLX)
 @preconcurrency import MLX
 
+public struct TurboQuantFusedAttentionLaunchPlan: Equatable {
+    public let gridX: Int
+    public let gridY: Int
+    public let gridZ: Int
+    public let threadGroupX: Int
+    public let sharedScoreCount: Int
+    public let scoreDotProductsPerQueryHead: Int
+    public let scoreReductionLaneCount: Int
+    public let scoreReductionSimdgroupCount: Int
+    public let usesThreadgroupSharedScores: Bool
+    public let usesThreadgroupParallelScoreReduction: Bool
+    public let usesOnlineSoftmax: Bool
+}
+
+public func turboQuantFusedAttentionLaunchPlan(
+    batchCount: Int,
+    queryHeadCount: Int,
+    kvHeadCount: Int,
+    sequenceLength: Int,
+    headDimension: Int,
+    groupSize: Int
+) -> TurboQuantFusedAttentionLaunchPlan? {
+    guard batchCount > 0,
+        queryHeadCount > 0,
+        kvHeadCount > 0,
+        sequenceLength > 0,
+        sequenceLength <= 4096,
+        headDimension > 0,
+        headDimension <= 256,
+        headDimension % 8 == 0,
+        headDimension % 32 == 0,
+        groupSize > 0,
+        headDimension % groupSize == 0,
+        queryHeadCount % kvHeadCount == 0
+    else {
+        return nil
+    }
+
+    return TurboQuantFusedAttentionLaunchPlan(
+        gridX: headDimension,
+        gridY: queryHeadCount,
+        gridZ: batchCount,
+        threadGroupX: headDimension,
+        sharedScoreCount: sequenceLength,
+        scoreDotProductsPerQueryHead: sequenceLength,
+        scoreReductionLaneCount: headDimension,
+        scoreReductionSimdgroupCount: headDimension / 32,
+        usesThreadgroupSharedScores: true,
+        usesThreadgroupParallelScoreReduction: true,
+        usesOnlineSoftmax: false
+    )
+}
+
 /// Melix vendored q4 affine decode attention route.
 ///
 /// This fuses score, softmax, and value accumulation for one-token decode over
@@ -46,6 +99,16 @@ public func fusedQ4ScaledDotProductAttention(
     let sequenceLength = quantizedKeys.0.dim(2)
     let packedWordsPerToken = headDimension / 8
     let groupCount = (headDimension + groupSize - 1) / groupSize
+    guard let launchPlan = turboQuantFusedAttentionLaunchPlan(
+        batchCount: batchCount,
+        queryHeadCount: queryHeadCount,
+        kvHeadCount: kvHeadCount,
+        sequenceLength: sequenceLength,
+        headDimension: headDimension,
+        groupSize: groupSize
+    ) else {
+        return nil
+    }
 
     guard batchCount > 0,
         queryHeadCount > 0,
@@ -72,8 +135,7 @@ public func fusedQ4ScaledDotProductAttention(
     }
 
     let queryRepeats = queryHeadCount / kvHeadCount
-    let elementCount = batchCount * queryHeadCount * headDimension
-    let threadGroupSize = min(256, headDimension)
+    let scoreSimdgroupCount = launchPlan.scoreReductionSimdgroupCount
     let attentionScale = MLXArray([scale])
     let output = Device.withDefaultDevice(.gpu) {
         let kernel = MLXFast.metalKernel(
@@ -90,52 +152,59 @@ public func fusedQ4ScaledDotProductAttention(
             ],
             outputNames: ["output"],
             source: """
-                uint elem = thread_position_in_grid.x;
-                uint dim = elem % HEAD_DIMENSION;
-                uint queryHead = (elem / HEAD_DIMENSION) % QUERY_HEAD_COUNT;
-                uint batch = elem / (HEAD_DIMENSION * QUERY_HEAD_COUNT);
+                uint dim = thread_position_in_threadgroup.x;
+                uint queryHead = thread_position_in_grid.y;
+                uint batch = thread_position_in_grid.z;
                 uint kvHead = queryHead / QUERY_REPEATS;
+                uint outputIndex = (batch * QUERY_HEAD_COUNT + queryHead) * HEAD_DIMENSION + dim;
+
+                threadgroup float scores[SEQUENCE_LENGTH];
+                threadgroup float weightScratch;
+                threadgroup float normalizerScratch;
+                threadgroup float scorePartials[SCORE_SIMDGROUP_COUNT];
 
                 float maxScore = -3.402823466e+38f;
                 for (uint token = 0; token < SEQUENCE_LENGTH; token++) {
-                    float dot = 0.0f;
-                    for (uint keyDim = 0; keyDim < HEAD_DIMENSION; keyDim++) {
-                        uint queryIndex = (batch * QUERY_HEAD_COUNT + queryHead) * HEAD_DIMENSION + keyDim;
-                        uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
-                            * PACKED_WORDS_PER_TOKEN + (keyDim >> 3);
-                        uint keyWord = packedKeys[keyWordIndex];
-                        uint keyByteShift = ((keyDim >> 1) & 0x3) << 3;
-                        uint keyPackedByte = (keyWord >> keyByteShift) & 0xff;
-                        uint keyQuantized = ((keyDim & 1) == 0) ? (keyPackedByte & 0x0f) : ((keyPackedByte >> 4) & 0x0f);
-                        uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
-                            * GROUP_COUNT + (keyDim / GROUP_SIZE);
-                        float keyValue = float(keyQuantized) * keyScales[keyScaleIndex] + keyBiases[keyScaleIndex];
-                        dot += queries[queryIndex] * keyValue;
+                    uint queryIndex = (batch * QUERY_HEAD_COUNT + queryHead) * HEAD_DIMENSION + dim;
+                    uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
+                        * PACKED_WORDS_PER_TOKEN + (dim >> 3);
+                    uint keyWord = packedKeys[keyWordIndex];
+                    uint keyByteShift = ((dim >> 1) & 0x3) << 3;
+                    uint keyPackedByte = (keyWord >> keyByteShift) & 0xff;
+                    uint keyQuantized = ((dim & 1) == 0)
+                        ? (keyPackedByte & 0x0f)
+                        : ((keyPackedByte >> 4) & 0x0f);
+                    uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
+                        * GROUP_COUNT + (dim / GROUP_SIZE);
+                    float keyValue = float(keyQuantized) * keyScales[keyScaleIndex] + keyBiases[keyScaleIndex];
+                    float simdDot = simd_sum(queries[queryIndex] * keyValue);
+                    if (thread_index_in_simdgroup == 0) {
+                        scorePartials[dim >> 5] = simdDot;
                     }
-                    float score = dot * attentionScale[0];
-                    maxScore = score > maxScore ? score : maxScore;
+                    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+                    if (dim == 0) {
+                        float dot = 0.0f;
+                        for (uint simdGroup = 0; simdGroup < SCORE_SIMDGROUP_COUNT; simdGroup++) {
+                            dot += scorePartials[simdGroup];
+                        }
+                        float score = dot * attentionScale[0];
+                        scores[token] = score;
+                        maxScore = score > maxScore ? score : maxScore;
+                    }
+                    threadgroup_barrier(mem_flags::mem_threadgroup);
                 }
 
                 float normalizer = 0.0f;
                 float accumulator = 0.0f;
                 for (uint token = 0; token < SEQUENCE_LENGTH; token++) {
-                    float dot = 0.0f;
-                    for (uint keyDim = 0; keyDim < HEAD_DIMENSION; keyDim++) {
-                        uint queryIndex = (batch * QUERY_HEAD_COUNT + queryHead) * HEAD_DIMENSION + keyDim;
-                        uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
-                            * PACKED_WORDS_PER_TOKEN + (keyDim >> 3);
-                        uint keyWord = packedKeys[keyWordIndex];
-                        uint keyByteShift = ((keyDim >> 1) & 0x3) << 3;
-                        uint keyPackedByte = (keyWord >> keyByteShift) & 0xff;
-                        uint keyQuantized = ((keyDim & 1) == 0) ? (keyPackedByte & 0x0f) : ((keyPackedByte >> 4) & 0x0f);
-                        uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
-                            * GROUP_COUNT + (keyDim / GROUP_SIZE);
-                        float keyValue = float(keyQuantized) * keyScales[keyScaleIndex] + keyBiases[keyScaleIndex];
-                        dot += queries[queryIndex] * keyValue;
+                    if (dim == 0) {
+                        float weight = exp(scores[token] - maxScore);
+                        weightScratch = weight;
+                        normalizer += weight;
+                        normalizerScratch = normalizer;
                     }
-
-                    float weight = exp(dot * attentionScale[0] - maxScore);
-                    normalizer += weight;
+                    threadgroup_barrier(mem_flags::mem_threadgroup);
 
                     uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
                         * PACKED_WORDS_PER_TOKEN + (dim >> 3);
@@ -146,10 +215,11 @@ public func fusedQ4ScaledDotProductAttention(
                     uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * SEQUENCE_LENGTH + token)
                         * GROUP_COUNT + (dim / GROUP_SIZE);
                     float value = float(valueQuantized) * valueScales[valueScaleIndex] + valueBiases[valueScaleIndex];
-                    accumulator += weight * value;
+                    accumulator += weightScratch * value;
+                    threadgroup_barrier(mem_flags::mem_threadgroup);
                 }
 
-                output[elem] = accumulator / normalizer;
+                output[outputIndex] = accumulator / normalizerScratch;
                 """,
             ensureRowContiguous: true
         )
@@ -173,9 +243,10 @@ public func fusedQ4ScaledDotProductAttention(
                 ("PACKED_WORDS_PER_TOKEN", packedWordsPerToken),
                 ("GROUP_SIZE", groupSize),
                 ("GROUP_COUNT", groupCount),
+                ("SCORE_SIMDGROUP_COUNT", scoreSimdgroupCount),
             ],
-            grid: (elementCount, 1, 1),
-            threadGroup: (threadGroupSize, 1, 1),
+            grid: (launchPlan.gridX, launchPlan.gridY, launchPlan.gridZ),
+            threadGroup: (launchPlan.threadGroupX, 1, 1),
             outputShapes: [[batchCount, queryHeadCount, 1, headDimension]],
             outputDTypes: [.float32]
         )
