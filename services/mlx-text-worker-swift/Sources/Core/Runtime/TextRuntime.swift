@@ -50,7 +50,10 @@ struct ActiveKVProbeSummary: Sendable {
     let prefillQuantizeMicros: Int
     let decodeModelTotalMicros: Int
     let decodeModelCallCount: Int
+    let decodeTokenEvalTotalMicros: Int
+    let decodeTokenEvalCallCount: Int
     let decodeQuantizeTotalMicros: Int
+    let decodeLoopTotalMicros: Int
     let decodeTokenCount: Int
     let estimatedFP16Bytes: Int
     let estimatedQuantizedBytes: Int
@@ -67,7 +70,10 @@ struct ActiveKVProbeSummary: Sendable {
         prefillQuantizeMicros: Int,
         decodeModelTotalMicros: Int,
         decodeModelCallCount: Int = 0,
+        decodeTokenEvalTotalMicros: Int = 0,
+        decodeTokenEvalCallCount: Int = 0,
         decodeQuantizeTotalMicros: Int,
+        decodeLoopTotalMicros: Int = 0,
         decodeTokenCount: Int,
         estimatedFP16Bytes: Int,
         estimatedQuantizedBytes: Int,
@@ -83,7 +89,10 @@ struct ActiveKVProbeSummary: Sendable {
         self.prefillQuantizeMicros = prefillQuantizeMicros
         self.decodeModelTotalMicros = decodeModelTotalMicros
         self.decodeModelCallCount = decodeModelCallCount
+        self.decodeTokenEvalTotalMicros = decodeTokenEvalTotalMicros
+        self.decodeTokenEvalCallCount = decodeTokenEvalCallCount
         self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
+        self.decodeLoopTotalMicros = decodeLoopTotalMicros
         self.decodeTokenCount = decodeTokenCount
         self.estimatedFP16Bytes = estimatedFP16Bytes
         self.estimatedQuantizedBytes = estimatedQuantizedBytes
@@ -97,15 +106,23 @@ struct ActiveKVProbeSummary: Sendable {
         averageMicros(total: decodeModelTotalMicros)
     }
 
+    var decodeTokenEvalAverageMicros: Int {
+        averageMicros(total: decodeTokenEvalTotalMicros, count: decodeTokenEvalCallCount)
+    }
+
     var decodeQuantizeAverageMicros: Int {
         averageMicros(total: decodeQuantizeTotalMicros)
     }
 
     private func averageMicros(total: Int) -> Int {
-        guard decodeTokenCount > 0 else {
+        averageMicros(total: total, count: decodeTokenCount)
+    }
+
+    private func averageMicros(total: Int, count: Int) -> Int {
+        guard count > 0 else {
             return 0
         }
-        return max(0, total / decodeTokenCount)
+        return max(0, total / count)
     }
 }
 

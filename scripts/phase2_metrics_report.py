@@ -931,8 +931,12 @@ def decode_active_kv_metrics(
             "active_kv_decode_model_total_us": 0,
             "active_kv_decode_model_call_count": 0,
             "active_kv_decode_model_avg_us": 0,
+            "active_kv_decode_token_eval_total_us": 0,
+            "active_kv_decode_token_eval_call_count": 0,
+            "active_kv_decode_token_eval_avg_us": 0,
             "active_kv_decode_quantize_total_us": 0,
             "active_kv_decode_quantize_avg_us": 0,
+            "active_kv_decode_loop_total_us": 0,
             "active_kv_decode_token_count": 0,
             "active_kv_estimated_fp16_bytes": 0,
             "active_kv_estimated_quantized_bytes": 0,
@@ -964,8 +968,20 @@ def decode_active_kv_metrics(
             "swift_text.active_kv_decode_model_call_count", 0
         ),
         "active_kv_decode_model_avg_us": exported.get("swift_text.active_kv_decode_model_avg_us"),
+        "active_kv_decode_token_eval_total_us": exported.get(
+            "swift_text.active_kv_decode_token_eval_total_us", 0
+        ),
+        "active_kv_decode_token_eval_call_count": exported.get(
+            "swift_text.active_kv_decode_token_eval_call_count", 0
+        ),
+        "active_kv_decode_token_eval_avg_us": exported.get(
+            "swift_text.active_kv_decode_token_eval_avg_us", 0
+        ),
         "active_kv_decode_quantize_total_us": exported.get("swift_text.active_kv_decode_quantize_total_us"),
         "active_kv_decode_quantize_avg_us": exported.get("swift_text.active_kv_decode_quantize_avg_us"),
+        "active_kv_decode_loop_total_us": exported.get(
+            "swift_text.active_kv_decode_loop_total_us", 0
+        ),
         "active_kv_decode_token_count": exported.get("swift_text.active_kv_decode_token_count"),
         "active_kv_estimated_fp16_bytes": exported.get("swift_text.active_kv_estimated_fp16_bytes"),
         "active_kv_estimated_quantized_bytes": exported.get("swift_text.active_kv_estimated_quantized_bytes"),
@@ -1057,6 +1073,7 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
         ttft = median_numeric(active_rows, "ttft_ms")
         total = median_numeric(active_rows, "total_ms")
         model_avg = median_numeric(active_rows, "active_kv_decode_model_avg_us")
+        token_eval_avg = median_numeric(active_rows, "active_kv_decode_token_eval_avg_us")
         quantize_avg = median_numeric(active_rows, "active_kv_decode_quantize_avg_us")
         comparisons[active_kv_comparison_name(label)] = {
             "baseline_worker_decode_tokens_per_second": baseline_worker_tps,
@@ -1070,6 +1087,8 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
             "active_kv_backend": first_non_empty(active_rows, "active_kv_backend"),
             "active_kv_kernel_path": first_non_empty(active_rows, "active_kv_kernel_path"),
             "active_kv_decode_model_avg_us": model_avg,
+            "active_kv_decode_token_eval_avg_us": token_eval_avg,
+            "active_kv_decode_loop_total_us": median_numeric(active_rows, "active_kv_decode_loop_total_us"),
             "active_kv_decode_quantize_avg_us": quantize_avg,
             "active_kv_decode_quantize_share_pct": quantize_share_percent(model_avg, quantize_avg),
             "active_kv_estimated_memory_savings_pct": median_numeric(
@@ -1117,6 +1136,8 @@ def build_active_kv_release_gates(
                 "fallback_count": 0,
                 "candidate_dispatch_count": 0,
                 "decode_quantize_total_us": 0,
+                "decode_token_eval_total_us": 0,
+                "decode_loop_total_us": 0,
                 "estimated_memory_savings_pct": None,
                 "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct"),
                 "failures": ["decode_turboquant_q4=missing"],
@@ -1147,6 +1168,12 @@ def build_active_kv_release_gates(
     )
     decode_model_call_count = sum(
         int_value(row.get("active_kv_decode_model_call_count")) for row in turbo_rows
+    )
+    decode_token_eval_total_us = sum(
+        int_value(row.get("active_kv_decode_token_eval_total_us")) for row in turbo_rows
+    )
+    decode_loop_total_us = sum(
+        int_value(row.get("active_kv_decode_loop_total_us")) for row in turbo_rows
     )
     decode_quantize_total_us = sum(int_value(row.get("active_kv_decode_quantize_total_us")) for row in turbo_rows)
     memory_savings = median_numeric(turbo_rows, "active_kv_estimated_memory_savings_pct")
@@ -1185,6 +1212,8 @@ def build_active_kv_release_gates(
             "candidate_dispatch_count": candidate_dispatch_count,
             "candidate_eligibility_check_count": candidate_eligibility_check_count,
             "decode_model_call_count": decode_model_call_count,
+            "decode_token_eval_total_us": decode_token_eval_total_us,
+            "decode_loop_total_us": decode_loop_total_us,
             "decode_quantize_total_us": decode_quantize_total_us,
             "estimated_memory_savings_pct": memory_savings,
             "worker_tps_overhead_pct": worker_tps_overhead,
@@ -1230,6 +1259,8 @@ def build_active_kv_fused_candidate_probes(
                     "candidate_eligibility_check_count"
                 ),
                 "decode_model_call_count": gate.get("decode_model_call_count"),
+                "decode_token_eval_total_us": gate.get("decode_token_eval_total_us"),
+                "decode_loop_total_us": gate.get("decode_loop_total_us"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
                 "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
                 "worker_tps_overhead_pct": gate.get("worker_tps_overhead_pct"),
@@ -1392,6 +1423,9 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_candidate_eligibility_check_count",
                 "active_kv_decode_model_call_count",
                 "active_kv_decode_model_avg_us",
+                "active_kv_decode_token_eval_call_count",
+                "active_kv_decode_token_eval_avg_us",
+                "active_kv_decode_loop_total_us",
                 "active_kv_decode_quantize_avg_us",
                 "active_kv_estimated_memory_savings_pct",
             ],
@@ -1411,6 +1445,9 @@ def render_report(report: dict[str, Any]) -> str:
                 "total_ms_delta",
                 "active_kv_backend",
                 "active_kv_kernel_path",
+                "active_kv_decode_model_avg_us",
+                "active_kv_decode_token_eval_avg_us",
+                "active_kv_decode_loop_total_us",
                 "active_kv_decode_quantize_share_pct",
                 "active_kv_estimated_memory_savings_pct",
             ],
@@ -1431,6 +1468,9 @@ def render_report(report: dict[str, Any]) -> str:
                 "observed_runtime_block_reasons",
                 "fallback_count",
                 "candidate_dispatch_count",
+                "decode_model_call_count",
+                "decode_token_eval_total_us",
+                "decode_loop_total_us",
                 "decode_quantize_total_us",
                 "estimated_memory_savings_pct",
                 "worker_tps_overhead_pct",

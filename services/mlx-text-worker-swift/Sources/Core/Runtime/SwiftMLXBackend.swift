@@ -715,6 +715,8 @@ private func makePreparedDecodeEvents(
             var generatedTokenCount = 0
             var decodeModelTotalMicros = 0
             var decodeModelCallCount = 0
+            var decodeTokenEvalTotalMicros = 0
+            var decodeTokenEvalCallCount = 0
             var decodeQuantizeTotalMicros = 0
             var didDispatchTurboQuantFusedAttention = false
             var turboQuantCandidateEligibilityCheckCount = 0
@@ -736,12 +738,15 @@ private func makePreparedDecodeEvents(
                     break
                 }
 
+                let tokenEvalStartedAt = Date.timeIntervalSinceReferenceDate
                 let token = sampleNextToken(
                     logits: output.logits,
                     processor: &processor,
                     sampler: sampler
                 )
                 let tokenID = token.item(Int.self)
+                decodeTokenEvalCallCount += 1
+                decodeTokenEvalTotalMicros += elapsedMicros(since: tokenEvalStartedAt)
 
                 if tokenID == context.tokenizer.unknownTokenId
                     || tokenID == context.tokenizer.eosTokenId
@@ -795,14 +800,18 @@ private func makePreparedDecodeEvents(
                 }
             }
 
-            let elapsed = max(Date.timeIntervalSinceReferenceDate - startedAt, 0.000_001)
+            let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
             let activeKVProbe = makeActiveKVProbeSummary(
                 cache: cache,
                 acceleration: acceleration,
                 prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
                 decodeModelTotalMicros: decodeModelTotalMicros,
                 decodeModelCallCount: decodeModelCallCount,
+                decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
+                decodeTokenEvalCallCount: decodeTokenEvalCallCount,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
+                decodeLoopTotalMicros: decodeLoopTotalMicros,
                 decodeTokenCount: generatedTokenCount,
                 turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention,
                 turboQuantCandidateEligibilityCheckCount: turboQuantCandidateEligibilityCheckCount
@@ -863,7 +872,10 @@ private func makeActiveKVProbeSummary(
     prefillQuantizeMicros: Int,
     decodeModelTotalMicros: Int,
     decodeModelCallCount: Int,
+    decodeTokenEvalTotalMicros: Int,
+    decodeTokenEvalCallCount: Int,
     decodeQuantizeTotalMicros: Int,
+    decodeLoopTotalMicros: Int,
     decodeTokenCount: Int,
     turboQuantFusedAttentionDispatched: Bool = false,
     turboQuantCandidateEligibilityCheckCount: Int = 0
@@ -896,7 +908,10 @@ private func makeActiveKVProbeSummary(
         prefillQuantizeMicros: prefillQuantizeMicros,
         decodeModelTotalMicros: decodeModelTotalMicros,
         decodeModelCallCount: decodeModelCallCount,
+        decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
+        decodeTokenEvalCallCount: decodeTokenEvalCallCount,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
+        decodeLoopTotalMicros: decodeLoopTotalMicros,
         decodeTokenCount: decodeTokenCount,
         estimatedFP16Bytes: Int(clamping: fp16Bytes),
         estimatedQuantizedBytes: Int(clamping: quantizedBytes),

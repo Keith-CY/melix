@@ -124,6 +124,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.active_kv_runtime_route_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_runtime_block_reason_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_loop_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
     }
@@ -3853,7 +3857,10 @@ final class WorkerScaffoldTests: XCTestCase {
                     prefillQuantizeMicros: 150,
                     decodeModelTotalMicros: 900,
                     decodeModelCallCount: 3,
+                    decodeTokenEvalTotalMicros: 1_800,
+                    decodeTokenEvalCallCount: 3,
                     decodeQuantizeTotalMicros: 120,
+                    decodeLoopTotalMicros: 2_100,
                     decodeTokenCount: 3,
                     estimatedFP16Bytes: 4_000,
                     estimatedQuantizedBytes: 1_000,
@@ -3924,8 +3931,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_total_us"], 900)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_call_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_avg_us"], 300)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_total_us"], 1_800)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_avg_us"], 600)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_loop_total_us"], 2_100)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_token_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_estimated_fp16_bytes"], 4_000)
         XCTAssertEqual(metrics["swift_text.active_kv_estimated_quantized_bytes"], 1_000)
@@ -3941,7 +3952,10 @@ final class WorkerScaffoldTests: XCTestCase {
             kernelPathCode: 10,
             prefillQuantizeMicros: 0,
             decodeModelTotalMicros: 120,
+            decodeTokenEvalTotalMicros: 90,
+            decodeTokenEvalCallCount: 0,
             decodeQuantizeTotalMicros: 80,
+            decodeLoopTotalMicros: 400,
             decodeTokenCount: 0,
             estimatedFP16Bytes: 0,
             estimatedQuantizedBytes: 0,
@@ -3950,6 +3964,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         XCTAssertEqual(summary.decodeModelAverageMicros, 0)
+        XCTAssertEqual(summary.decodeTokenEvalAverageMicros, 0)
         XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
     }
 

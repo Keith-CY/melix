@@ -16,6 +16,7 @@ The current benchmark evidence is:
 | Fused TurboQuant candidate audit | `docs/metrics/phase2-active-kv-fused-turboquant-candidate.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Terminal model-call pre-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 | Terminal model-call post-optimization probe | `docs/metrics/phase2-active-kv-terminal-model-call-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
+| Lazy-eval timing probe | `docs/metrics/phase2-active-kv-lazy-eval-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. The active-KV Swift benchmark uses Qwen3-0.6B because the pinned
@@ -180,6 +181,13 @@ probe confirms the release gate remains blocked because the TurboQuant kernel
 path is still `fallback` and worker throughput overhead is still above 15
 percent.
 
+The lazy-eval timing probe adds `active_kv_decode_token_eval_*` and
+`active_kv_decode_loop_total_us`. Swift MLX model calls build lazy graphs, so
+`active_kv_decode_model_*` measures graph construction but not the full GPU
+execution forced by sampling and `token.item(Int.self)`. The probe shows the
+remaining time is dominated by token evaluation, which is where the dependency
+owned quantized attention path executes.
+
 ## Before And After Metrics
 
 The current runs used:
@@ -228,6 +236,21 @@ Terminal model-call cleanup evidence:
 | TurboQuant kernel path | fallback | fallback |
 | TurboQuant release gate | fail | fail |
 
+Lazy-eval timing evidence:
+
+| Metric | TurboQuant fallback |
+| --- | ---: |
+| Baseline worker decode tok/s | 59.0 |
+| TurboQuant worker decode tok/s | 34.0 |
+| TurboQuant worker TPS overhead | 42.37% |
+| TurboQuant decode loop total, 5 runs | 9,497,000 us |
+| TurboQuant decode token eval total, 5 runs | 6,438,631 us |
+| TurboQuant decode model construction total, 5 runs | 3,018,404 us |
+| TurboQuant median token eval avg | 19,945 us |
+| TurboQuant median model construction avg | 9,303 us |
+| TurboQuant kernel path | fallback |
+| TurboQuant release gate | fail |
+
 The per-run q4 `active_kv_decode_quantize_total_us` values changed from
 `[23, 32, 21, 33, 28]` to `[0, 0, 0, 0, 0]`. The same post-run values are zero
 for `decode_turboquant_q4`.
@@ -242,9 +265,12 @@ reports `status = "fail"`, `candidate_dispatch_count = 5`,
 `worker_tps_overhead_pct = 44.83`. This preserves candidate-dispatch evidence
 without treating it as runtime success.
 
-Interpretation: the guard did remove the redundant maintenance work, but that
-work was already too small to move end-to-end throughput. The remaining overhead
-is in the quantized attention model call, not the Melix decode loop wrapper.
+Interpretation: the guard did remove the redundant maintenance work, and the
+terminal-call cleanup removed one unused model step per decode run, but both are
+too small to move end-to-end throughput. The lazy-eval probe shows about 68
+percent of the TurboQuant fallback decode loop is spent in token evaluation,
+where Swift MLX executes the dependency-owned quantized attention graph. That
+keeps non-hook wrapper optimizations below the release target.
 
 ## Next Optimization Architecture
 
