@@ -375,7 +375,7 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
             ],
             env_overrides=env,
         )
-        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+        assert created_state["id"] == "server-session-1"
 
         run_cli_json(
             repo_root,
@@ -490,7 +490,7 @@ def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_pa
             ],
             env_overrides=env,
         )
-        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+        assert created_state["id"] == "server-session-1"
 
         payload = run_python_script_json(
             repo_root,
@@ -605,7 +605,7 @@ def test_phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chai
             ],
             env_overrides=env,
         )
-        assert created_state["server_sessions"][0]["id"] == "server-session-1"
+        assert created_state["id"] == "server-session-1"
 
         bundle_args = [
             "--execution-profile",
