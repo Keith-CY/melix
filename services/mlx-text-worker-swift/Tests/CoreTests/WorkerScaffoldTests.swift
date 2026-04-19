@@ -5911,9 +5911,76 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
     }
+
+    func testActiveKVDecodeQuantizationGuardDetectsEligibleSimpleLayerAfterMambaCache() {
+        var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        activeAcceleration.mode = .activeKvQuantized
+        activeAcceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let mambaCache = MambaCache()
+        let simpleCache = KVCacheSimple()
+        simpleCache.offset = 2
+
+        XCTAssertTrue(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [mambaCache, simpleCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        let quantizedCache = QuantizedKVCache(groupSize: 64, bits: 4)
+        quantizedCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [mambaCache, quantizedCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+    }
     #endif
 
     #if canImport(MLX) && canImport(MLXLMCommon)
+    func testMaybeQuantizeKVCacheQuantizesSimpleLayerAfterMambaCache() async throws {
+        try await withTemporaryDefaultMetallib {
+            var emptyCache: [KVCache] = []
+            maybeQuantizeKVCache(cache: &emptyCache, kvBits: 4)
+            XCTAssertTrue(emptyCache.isEmpty)
+
+            let mambaCache = MambaCache()
+            let simpleCache = KVCacheSimple()
+            let sequenceLength = 2
+            let headDimension = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { Float($0 % 11) / 11.0 }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { Float($0 % 13) / 13.0 }
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            _ = simpleCache.update(keys: keys, values: values)
+
+            var cache: [KVCache] = [mambaCache, simpleCache]
+            maybeQuantizeKVCache(cache: &cache, kvBits: nil, kvGroupSize: 32)
+            XCTAssertTrue(cache[0] is MambaCache)
+            XCTAssertTrue(cache[1] is KVCacheSimple)
+
+            maybeQuantizeKVCache(
+                cache: &cache,
+                kvBits: 4,
+                kvGroupSize: 32,
+                quantizedKVStart: 0
+            )
+
+            XCTAssertTrue(cache[0] is MambaCache)
+            let quantizedCache = try XCTUnwrap(cache[1] as? QuantizedKVCacheProtocol)
+            XCTAssertEqual(quantizedCache.bits, 4)
+            XCTAssertEqual(quantizedCache.groupSize, 32)
+            XCTAssertEqual(quantizedCache.offset, sequenceLength)
+            XCTAssertNotNil(quantizedCache.getQuantizedState())
+        }
+    }
+
     func testQuantizedKVCacheRecordsUpdateAndMaterializeProbeTimings() async throws {
         try await withTemporaryDefaultMetallib {
             let sequenceLength = 2

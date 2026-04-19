@@ -679,10 +679,13 @@ func shouldAttemptActiveKVDecodeQuantization(
     ), kvBits != nil else {
         return false
     }
-    guard let firstCache = cache.first, firstCache.offset > quantizedKVStart else {
-        return false
+
+    return cache.contains { layer in
+        guard let simpleCache = layer as? KVCacheSimple else {
+            return false
+        }
+        return simpleCache.offset > quantizedKVStart
     }
-    return !(firstCache is QuantizedKVCacheProtocol)
 }
 
 private func activeKVRuntimeQuantizationRatioPercent(

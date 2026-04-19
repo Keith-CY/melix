@@ -1706,17 +1706,13 @@ public func maybeQuantizeKVCache(
     kvGroupSize: Int = 64,
     quantizedKVStart: Int = 0
 ) {
-    guard let kvBits = kvBits,
-        !cache.isEmpty,
-        !(cache[0] is QuantizedKVCache),
-        cache[0].offset > quantizedKVStart
-    else {
+    guard let kvBits = kvBits, !cache.isEmpty else {
         return
     }
 
     for i in 0 ..< cache.count {
         // Handle cache types that support quantization
-        if let simpleCache = cache[i] as? KVCacheSimple {
+        if let simpleCache = cache[i] as? KVCacheSimple, simpleCache.offset > quantizedKVStart {
             cache[i] = simpleCache.toQuantized(groupSize: kvGroupSize, bits: kvBits)
         }
         // TODO: RotatingKVCache.toQuantized() is not implemented yet, like in Python.

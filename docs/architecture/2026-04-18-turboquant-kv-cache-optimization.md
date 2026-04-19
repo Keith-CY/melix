@@ -29,14 +29,15 @@ The current benchmark evidence is:
 | Vendored append-slice speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-append-slice.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 | Fused eval-sync probe | `docs/metrics/phase2-active-kv-vendored-turboquant-eval-probe.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
+| Qwen3.5 hybrid-cache routed probe | `docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. Melix now vendors Qwen3.5 model support from
 `mlx-swift-lm` 2.31.3, so the real Qwen3.5 stack can load and decode. Active-KV
-fused routing is still blocked for Qwen3.5 because the hybrid cache contains
-unsupported state for the current fused q4 attention route; Qwen3-0.6B remains
-the supported non-fallback fused-kernel benchmark until hybrid cache handling is
-implemented.
+fused routing now handles Qwen3.5's hybrid cache by leaving Mamba cache entries
+unchanged and quantizing supported full-attention `KVCacheSimple` entries. The
+Qwen3.5 hybrid-cache routed probe is the current fused release-gate pass
+evidence.
 
 ## External Reference Findings
 
@@ -117,6 +118,19 @@ gate failed: `active_kv_kernel_path = "fallback"`,
 `active_kv_decode_model_eval_sync_avg_us = 22607`, and fused attention call
 count zero, confirming this Qwen3.5 run never entered the vendored fused
 attention route.
+
+The hybrid-cache routing fix changes dynamic KV quantization from a leading
+cache-entry guard to per-layer scanning. Qwen3.5 starts with `MambaCache`
+entries for linear-attention layers and uses `KVCacheSimple` entries for
+full-attention layers. Melix now skips the Mamba entries, quantizes eligible
+full-attention entries, and lets the vendored q4 attention route run on those
+quantized states. The real Qwen3.5 routed JSON reports release gate `status =
+"pass"`, `active_kv_kernel_path = "tq_mse_single"`,
+`active_kv_runtime_route = "routed"`, `active_kv_fallback_count = 0`,
+`active_kv_estimated_memory_savings_pct = 75.0`,
+`fused_attention_call_count = 1134`, and
+`worker_tps_overhead_pct = 12.82`, so it satisfies the first fused milestone's
+`<= 15` worker overhead threshold.
 
 ## Implemented Optimization
 
@@ -552,11 +566,11 @@ efficiency. The recommended order is:
 
 Do not claim TurboQuant optimization success without a post-run JSON produced by
 the same `scripts/phase2_metrics_report.py` command family and the same real
-model class. Qwen3.5 now has Swift model support, but the current Qwen3.5
-active-KV JSON reports `active_kv_runtime_block_reason = unsupported_cache_state`.
-Do not use it as fused-release evidence until a same-model JSON reports a
-non-fallback kernel path. Qwen3-0.6B remains the current supported
-non-fallback fused-kernel benchmark.
+model class. The current Qwen3.5 hybrid-cache routed JSON is valid fused-release
+evidence because it reports a non-fallback kernel path and worker overhead below
+the first fused milestone threshold. Older Qwen3.5 support-smoke and eval-sync
+JSON files remain historical blocked evidence and should not be used as pass
+evidence.
 
 Release-gate targets:
 
@@ -590,6 +604,11 @@ Swift stack can load and decode `model_type = qwen3_5`, but `turboquant-q4`
 reports `active_kv_kernel_path = fallback`, `active_kv_runtime_route = blocked`,
 `active_kv_runtime_block_reason = unsupported_cache_state`,
 `active_kv_fallback_count = 1`, and `active_kv_estimated_memory_savings_pct = 0.0`.
+The Qwen3.5 hybrid-cache routed probe supersedes that blocked evidence for the
+release gate: it reports `active_kv_kernel_path = tq_mse_single`,
+`active_kv_runtime_route = routed`, `active_kv_fallback_count = 0`,
+`active_kv_estimated_memory_savings_pct = 75.0`, and
+`worker_tps_overhead_pct = 12.82`.
 
 Quality and correctness gates:
 

@@ -12,4 +12,5 @@ Melix patches:
 - Add per-cache fused attention timing counters and a recording hook so Melix can report fused route wall time separately from MLX model evaluation sync time.
 - Add `QuantizedKVCache.updateQuantizedStorage(...)` so the fused route can consume preallocated quantized cache storage with an explicit effective sequence length instead of materializing trimmed q4 state for every decode token.
 - Shorten q4 storage appends to direct 3-axis slice updates for the routed fused path.
+- Update dynamic KV quantization to scan mixed cache arrays per layer, preserving Mamba-style cache entries while quantizing eligible `KVCacheSimple` full-attention entries for Qwen3.5-style hybrid models.
 - Add an experimental `fusedQ4AffineKeyValueQuantizedForDecode(...)` q4 affine key/value decode quantizer, including bfloat16 output casting, gated by `MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE=1` because real-model metrics show it is slower than MLX native `quantized(...)`.
