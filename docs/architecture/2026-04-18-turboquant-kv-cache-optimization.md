@@ -8,9 +8,13 @@ reduction, and the vendored runtime now routes supported one-token affine-q4
 decode through a fused Metal dispatch. It is still not the full oMLX
 TurboQuant cache architecture.
 
-The current benchmark evidence is:
+The current benchmark evidence is archived in GitHub issue
+[#46](https://github.com/Keith-CY/melix/issues/46). The table keeps the former
+repository paths as stable references for searching historical plans and issue
+comments; the raw JSON files are not runtime inputs and are no longer checked
+into the repository.
 
-| Evidence | File | Model | Profiles |
+| Evidence | Former repository path | Model | Profiles |
 | --- | --- | --- | --- |
 | Pre-optimization baseline | `docs/metrics/phase2-affine-q4-preopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4` |
 | Decode-guard post-optimization | `docs/metrics/phase2-active-kv-decode-guard-postopt.json` | `mlx-community/Qwen3-0.6B-4bit` | `q4`, `turboquant-q4` |

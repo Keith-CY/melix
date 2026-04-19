@@ -7,6 +7,15 @@ Capture repository-owned benchmark evidence for the remaining M6 acceleration sl
 - active KV quantization acceleration (`M6.7`)
 - sparse-prefill acceleration (`M6.8`)
 
+Generated metrics JSON files are not meant to remain checked into the
+repository. Write raw reports to a local or temporary output path, summarize the
+important values in the relevant plan or architecture note, and archive raw JSON
+that must remain reviewable in a GitHub issue. The historical TurboQuant Phase 2
+JSON artifacts are archived in
+[#46](https://github.com/Keith-CY/melix/issues/46), with former
+`docs/metrics/...` paths preserved in the issue comments and in
+`docs/metrics/README.md`.
+
 ## Prerequisites
 
 - a running local Melix stack with exported runtime environment
@@ -49,6 +58,9 @@ export MELIX_RUNTIME_DIR="${MELIX_RUNTIME_DIR:-/tmp/melix-phase2-qwen3-preopt}"
 export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-11438}"
 export MELIX_DEV_TEXT_MODEL_PATH="/path/to/mlx-community/Qwen3-0.6B-4bit"
 export MELIX_SWIFT_MLX_METALLIB_PATH="/path/to/mlx_metal-0.29.1/mlx.metallib"
+export MELIX_METRICS_DIR="${MELIX_METRICS_DIR:-/tmp/melix-phase2-metrics}"
+
+mkdir -p "$MELIX_METRICS_DIR"
 
 bash scripts/dev_up.sh --prefer-built
 
@@ -62,7 +74,7 @@ uv run --project services/mlx-worker-python python scripts/phase2_metrics_report
   --decode-repeats 5 \
   --active-kv-profiles q4 \
   --skip-abort \
-  --output docs/metrics/phase2-affine-q4-preopt.json
+  --output "$MELIX_METRICS_DIR/phase2-affine-q4-preopt.json"
 ```
 
 After a decode-path optimization, run the same command family with both affine q4
@@ -79,7 +91,7 @@ uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_me
   --decode-repeats 5 \
   --active-kv-profiles q4,turboquant-q4 \
   --skip-abort \
-  --output docs/metrics/phase2-active-kv-decode-guard-postopt.json
+  --output "$MELIX_METRICS_DIR/phase2-active-kv-decode-guard-postopt.json"
 ```
 
 After a fused TurboQuant candidate exists, run the same report with the explicit
@@ -98,7 +110,7 @@ uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_me
   --active-kv-profiles q4,turboquant-q4 \
   --skip-abort \
   --require-fused-turboquant \
-  --output docs/metrics/phase2-active-kv-fused-turboquant-candidate.json
+  --output "$MELIX_METRICS_DIR/phase2-active-kv-fused-turboquant-candidate.json"
 ```
 
 To backfill the fused-candidate probe block from an already captured real-model
@@ -109,10 +121,10 @@ fallback evidence is still preserved even though the command exits non-zero.
 ```bash
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.uv-cache" \
 uv run --project services/mlx-worker-python --extra mlx python scripts/phase2_metrics_report.py \
-  --input-json docs/metrics/phase2-active-kv-decode-guard-postopt.json \
+  --input-json "$MELIX_METRICS_DIR/phase2-active-kv-decode-guard-postopt.json" \
   --json \
   --require-fused-turboquant \
-  --output docs/metrics/phase2-active-kv-fused-turboquant-candidate.json
+  --output "$MELIX_METRICS_DIR/phase2-active-kv-fused-turboquant-candidate.json"
 ```
 
 ## Evidence To Inspect

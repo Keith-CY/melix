@@ -1,5 +1,10 @@
 # M6.7 KV-Cache Quantization Acceleration
 
+> Historical metrics paths named below are former repository paths. The raw
+> TurboQuant Phase 2 JSON artifacts are archived in GitHub issue
+> [#46](https://github.com/Keith-CY/melix/issues/46); the repository keeps only
+> references and compact summaries.
+
 ## Goal
 
 Add feature-flagged KV-cache quantization acceleration so memory pressure can be reduced on long-running decode paths with measurable trade-offs.

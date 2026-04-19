@@ -1,6 +1,11 @@
 # Qwen3.5 Hybrid Cache TurboQuant Routing Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use test-driven-development before modifying production code. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> Raw JSON evidence referenced by former `docs/metrics/...` paths is archived in
+> GitHub issue [#46](https://github.com/Keith-CY/melix/issues/46). The
+> repository keeps the historical references and compact summaries, not the
+> generated JSON artifacts.
 
 **Goal:** Let Qwen3.5 hybrid cache layouts quantize supported full-attention KV layers so `turboquant-q4` can enter the vendored fused attention route when the cache state is otherwise supported.
 
@@ -20,7 +25,7 @@ Qwen3.5 creates a hybrid cache array: linear-attention layers use `MambaCache()`
 - Modify `services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift` so `shouldAttemptActiveKVDecodeQuantization(...)` detects any eligible `KVCacheSimple` in mixed cache arrays.
 - Modify `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift` with RED/GREEN coverage for mixed Qwen3.5-style cache arrays.
 - Update `docs/architecture/2026-04-18-turboquant-kv-cache-optimization.md`, `docs/plans/2026-03-30-m6-7-kv-cache-quantization-acceleration.md`, and `third_party/mlx-swift-lm/MELIX_PATCHES.md` after real-model evidence is captured.
-- Add a real-model metrics JSON under `docs/metrics/` after implementation.
+- Archive the real-model metrics JSON in the shared GitHub issue after implementation and keep only references in `docs/metrics/README.md`.
 
 ## Tasks
 
@@ -55,7 +60,7 @@ Qwen3.5 creates a hybrid cache array: linear-attention layers use `MambaCache()`
 - The targeted TurboQuant Swift set passed with code coverage enabled:
   `swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter 'WorkerScaffoldTests/testActiveKVDecodeQuantizationGuardSkipsWhenCacheIsAlreadyQuantized|WorkerScaffoldTests/testActiveKVDecodeQuantizationGuardDetectsEligibleSimpleLayerAfterMambaCache|WorkerScaffoldTests/testMaybeQuantizeKVCacheQuantizesSimpleLayerAfterMambaCache|WorkerScaffoldTests/testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode|WorkerScaffoldTests/testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch|WorkerScaffoldTests/testAutoSwiftMLXBackendDecodeReportsTurboQuantFusedRuntimeRoute'`.
 - Changed-line coverage for the touched Swift files is 100.00% (`73/73`) across `SwiftMLXBackend.swift`, vendored `KVCache.swift`, and `WorkerScaffoldTests.swift`.
-- Real-model Qwen3.5 evidence was written to `docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json` using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` from the local Hugging Face cache and `MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1`.
+- Real-model Qwen3.5 evidence was written to former `docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json`, now archived in issue [#46](https://github.com/Keith-CY/melix/issues/46), using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` from the local Hugging Face cache and `MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1`.
 - `--require-fused-turboquant` exits zero for that JSON. The release gate reports `status = "pass"`, `active_kv_kernel_path = "tq_mse_single"`, `active_kv_runtime_route = "routed"`, `active_kv_fallback_count = 0`, `active_kv_estimated_memory_savings_pct = 75.0`, `fused_attention_call_count = 1134`, and `worker_tps_overhead_pct = 12.82`.
-- Stability evidence was added in `docs/metrics/phase2-active-kv-qwen35-hybrid-stability-summary.json`. It summarizes five sequential Qwen3.5 `turboquant-q4` runs, each checked with `--require-fused-turboquant`; all five pass, all five route through `tq_mse_single`, all five report `active_kv_fallback_count = 0`, and `worker_tps_overhead_pct` min/median/mean/max is `5.71 / 10.26 / 9.722 / 12.82`.
-- `jq empty docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json` and `git diff --check` both exit zero.
+- Stability evidence was added in former `docs/metrics/phase2-active-kv-qwen35-hybrid-stability-summary.json`, now archived in issue [#46](https://github.com/Keith-CY/melix/issues/46). It summarizes five sequential Qwen3.5 `turboquant-q4` runs, each checked with `--require-fused-turboquant`; all five pass, all five route through `tq_mse_single`, all five report `active_kv_fallback_count = 0`, and `worker_tps_overhead_pct` min/median/mean/max is `5.71 / 10.26 / 9.722 / 12.82`.
+- `jq empty docs/metrics/phase2-active-kv-qwen35-hybrid-turboquant-routing.json` applied to the local raw JSON before archive; `git diff --check` exits zero.

@@ -1,6 +1,11 @@
 # TurboQuant Fused Eval Probe Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use test-driven-development before modifying production code. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> Raw JSON evidence referenced by former `docs/metrics/...` paths is archived in
+> GitHub issue [#46](https://github.com/Keith-CY/melix/issues/46). The
+> repository keeps the historical references and compact summaries, not the
+> generated JSON artifacts.
 
 **Goal:** Add measurement probes that separate TurboQuant fused attention graph-build/route cost from MLX lazy evaluation sync cost before attempting another speedup.
 
@@ -19,7 +24,7 @@
 - Modify `services/mlx-text-worker-swift/Sources/Core/Inference/TextDecodeEngine.swift` and `services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift` to export the new metrics.
 - Modify `scripts/phase2_metrics_report.py` and `services/mlx-worker-python/tests/test_phase2_metrics_report.py` to preserve the new fields in decode rows, comparisons, release-gate evidence, and rendered tables.
 - Modify `services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift` for red/green Swift coverage.
-- Add one real-model JSON under `docs/metrics/` after implementation.
+- Archive one real-model JSON in the shared GitHub issue after implementation and keep only references in `docs/metrics/README.md`.
 
 ## Probe Fields
 
@@ -69,6 +74,6 @@
 - Python combined tests passed:
   `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest services/mlx-worker-python/tests/test_phase2_metrics_report.py services/mlx-worker-python/tests/test_dev_up_script.py -q`, reporting `55 passed`.
 - Python changed-line coverage for `scripts/phase2_metrics_report.py`, `scripts/dev_up.py`, and their touched tests was `100.00%` total.
-- Real-model evidence was written to `docs/metrics/phase2-active-kv-vendored-turboquant-eval-probe.json` using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` from the local Hugging Face cache and `MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1`.
+- Real-model evidence was written to former `docs/metrics/phase2-active-kv-vendored-turboquant-eval-probe.json`, now archived in issue [#46](https://github.com/Keith-CY/melix/issues/46), using `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` from the local Hugging Face cache and `MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1`.
 - The explicit fused release gate remains blocked. The JSON reports `active_kv_kernel_path = "fallback"`, `active_kv_runtime_route = "blocked"`, `active_kv_runtime_block_reason = "unsupported_cache_state"`, `active_kv_fallback_count = 3`, `active_kv_estimated_memory_savings_pct = 0.0`, and `worker_tps_overhead_pct = 0.0`.
 - The eval-sync probe reports `decode_model_eval_sync_total_us = 4311359` over `189` calls, with comparison median `active_kv_decode_model_eval_sync_avg_us = 22607`. Fused attention totals remain zero because the Qwen3.5 run never enters the vendored fused route.
