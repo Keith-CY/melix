@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; }
+.row { display: flex; gap: 4px; align-items: flex-end; margin-bottom: 8px; }
+.bar { background: var(--neutral-200); border-radius: 3px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; }
+.label { font-size: 9px; font-family: var(--font-mono); color: var(--fg-tertiary); text-align: center; margin-top: 4px; }
+.pair { display: flex; flex-direction: column; align-items: center; }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="pair"><div class="bar" style="width:16px;height:4px"></div><div class="label">4</div></div>
+  <div class="pair"><div class="bar" style="width:16px;height:8px"></div><div class="label">8</div></div>
+  <div class="pair"><div class="bar" style="width:20px;height:12px"></div><div class="label">12</div></div>
+  <div class="pair"><div class="bar" style="width:20px;height:14px"></div><div class="label">14*</div></div>
+  <div class="pair"><div class="bar" style="width:20px;height:16px"></div><div class="label">16</div></div>
+  <div class="pair"><div class="bar" style="width:20px;height:20px"></div><div class="label">20</div></div>
+  <div class="pair"><div class="bar" style="width:20px;height:24px"></div><div class="label">24</div></div>
+  <div class="pair"><div class="bar" style="width:24px;height:32px"></div><div class="label">32</div></div>
+  <div class="pair"><div class="bar" style="width:24px;height:40px"></div><div class="label">40</div></div>
+  <div class="pair"><div class="bar" style="width:24px;height:48px"></div><div class="label">48</div></div>
+  <div class="pair"><div class="bar" style="width:28px;height:64px; background:var(--accent-weak)"></div><div class="label">64</div></div>
+</div>
+<div style="font-size:9px; color:var(--fg-quaternary); font-family:var(--font-mono)">base unit: 4px · *14px compact macOS inset exception</div>
+</body></html>

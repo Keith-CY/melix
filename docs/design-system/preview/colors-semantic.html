@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; }
+.grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 10px; }
+.swatch { border-radius: var(--radius-lg); padding: 10px 8px; font-size: 10px; font-family: var(--font-sans); color: var(--fg-secondary); }
+.row2 { display: flex; gap: 6px; }
+.bg-swatch { flex: 1; border-radius: var(--radius-md); height: 32px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--font-mono); color: var(--fg-tertiary); }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div class="swatch" style="background:var(--bg-user)">user</div>
+  <div class="swatch" style="background:var(--bg-assistant)">assistant</div>
+  <div class="swatch" style="background:var(--bg-reasoning)">reasoning</div>
+  <div class="swatch" style="background:var(--bg-tool)">tool</div>
+  <div class="swatch" style="background:var(--bg-error)">error</div>
+</div>
+<div class="row2">
+  <div class="bg-swatch" style="background:var(--color-success); color:#fff">success</div>
+  <div class="bg-swatch" style="background:var(--color-warning); color:#fff">warning</div>
+  <div class="bg-swatch" style="background:var(--color-error); color:#fff">error</div>
+  <div class="bg-swatch" style="background:var(--bg-selected)">selected</div>
+  <div class="bg-swatch" style="background:var(--bg-elevated); border: 1px solid var(--border-subtle)">elevated</div>
+</div>
+</body></html>

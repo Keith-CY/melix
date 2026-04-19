@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.card {
+  background: rgba(0,0,0,0.04); border-radius: var(--radius-xl);
+  padding: 14px; max-width: 320px;
+}
+.card-title { font-size: 12px; font-weight: 600; color: var(--fg-primary); margin-bottom: 4px; }
+.card-value { font-size: 18px; font-weight: 700; color: var(--fg-primary); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.card-detail { font-size: 10px; color: var(--fg-tertiary); margin-top: 2px; }
+.cards-row { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="cards-row">
+  <div class="card">
+    <div class="card-title">Models Loaded</div>
+    <div class="card-value">3</div>
+    <div class="card-detail">of 12 discovered</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Active Sessions</div>
+    <div class="card-value">2</div>
+    <div class="card-detail">1 running · 1 paused</div>
+  </div>
+  <div class="card">
+    <div class="card-title">p50 Latency</div>
+    <div class="card-value" style="font-family:var(--font-mono)">42ms</div>
+    <div class="card-detail">last bench run · Llama 3.2 3B</div>
+  </div>
+</div>
+</body></html>

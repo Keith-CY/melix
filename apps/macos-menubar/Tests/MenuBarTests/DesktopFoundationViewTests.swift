@@ -52,6 +52,24 @@ struct DesktopFoundationViewTests {
         #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: false) == "Show Inspector")
     }
 
+    @Test("design tokens keep semantic opacity roles explicit")
+    func designTokensKeepSemanticOpacityRolesExplicit() {
+        _ = MelixDesignTokens.brandAccent
+        _ = MelixDesignTokens.BubbleTint.user
+        _ = MelixDesignTokens.BubbleTint.assistant
+        _ = MelixDesignTokens.BubbleTint.reasoning
+        _ = MelixDesignTokens.BubbleTint.tool
+        _ = MelixDesignTokens.BubbleTint.error
+
+        #expect(MelixDesignTokens.StrokeOpacity.hairline == MelixDesignTokens.SurfaceOpacity.card)
+        #expect(MelixDesignTokens.StrokeOpacity.interactive == 0.08)
+        #expect(MelixDesignTokens.BubbleOpacity.user == 0.14)
+        #expect(MelixDesignTokens.BubbleOpacity.assistant == 0.12)
+        #expect(MelixDesignTokens.BubbleOpacity.reasoning == 0.12)
+        #expect(MelixDesignTokens.BubbleOpacity.tool == 0.12)
+        #expect(MelixDesignTokens.BubbleOpacity.error == 0.12)
+    }
+
     @Test("desktop banner recovery priority is explicit")
     func desktopBannerRecoveryPriorityIsExplicit() {
         let recoverableWarning = DesktopBannerState(

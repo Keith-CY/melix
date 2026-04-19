@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Melix — macOS Operator App (Print Static)</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f0f0f0; font-family: system-ui, -apple-system, Arial, sans-serif; }
+
+.page {
+  width: 1122px; height: 794px;
+  background: #FAFAFA;
+  margin: 0 auto 20px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  position: relative;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.titlebar {
+  height: 44px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; background: #FAFAFA;
+  border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0;
+}
+.traffic { display: flex; gap: 6px; align-items: center; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.tab-strip {
+  display: flex; gap: 3px; background: #fff; border-radius: 9999px;
+  padding: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+}
+.tab { padding: 3px 12px; border-radius: 9999px; font-size: 11px; font-weight: 500; color: #6B6B6B; }
+.tab.active { background: rgba(15,118,110,0.12); color: #0A0A0A; font-weight: 600; }
+.toolbar-icons { display: flex; gap: 6px; }
+.icon-btn { width: 14px; height: 14px; background: rgba(0,0,0,0.08); border-radius: 3px; }
+
+.body { flex: 1; display: flex; overflow: hidden; }
+.sidebar { width: 200px; background: #F5F5F5; padding: 14px; flex-shrink: 0; overflow: hidden; }
+.sidebar-wide { width: 260px; background: #F5F5F5; padding: 14px; flex-shrink: 0; overflow: hidden; }
+.workspace { flex: 1; padding: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.inspector { width: 210px; background: #F5F5F5; padding: 14px; flex-shrink: 0; overflow: hidden; }
+
+.t-large { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: #0A0A0A; }
+.t-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: #0A0A0A; }
+.t-head { font-size: 11px; font-weight: 600; color: #0A0A0A; }
+.t-body { font-size: 11px; color: #0A0A0A; line-height: 1.5; }
+.t-cap { font-size: 9px; color: #6B6B6B; }
+.t-mono { font-family: ui-monospace, "Courier New", monospace; font-size: 10px; color: #6B6B6B; }
+.t-sec { color: #6B6B6B; }
+.t-accent { color: #0F766E; }
+
+.session-row { padding: 7px 9px; border-radius: 9px; margin-bottom: 4px; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 9999px; font-size: 8px; font-family: ui-monospace,"Courier New",monospace; color: #6B6B6B; background: rgba(0,0,0,0.06); }
+.card { background: rgba(0,0,0,0.04); border-radius: 11px; padding: 10px 12px; margin-bottom: 8px; }
+.card-sm { background: rgba(0,0,0,0.04); border-radius: 9px; padding: 7px 9px; }
+.section-label { font-size: 8px; font-weight: 600; color: #9A9A9A; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 7px; }
+.bubble { border-radius: 11px; padding: 8px 10px; margin-bottom: 6px; }
+.btn-primary { background: #0A0A0A; color: #FDFDFD; border: none; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 600; font-family: inherit; cursor: default; display: inline-block; }
+.btn-bordered { background: transparent; color: #3A3A3A; border: 1px solid #D4D4D4; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 500; font-family: inherit; cursor: default; display: inline-block; }
+.btn-accent { background: #0F766E; color: #fff; border: none; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 600; font-family: inherit; cursor: default; display: inline-block; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+.page-label { font-size: 9px; color: #9A9A9A; font-family: ui-monospace,"Courier New",monospace; position: absolute; bottom: 8px; right: 14px; }
+
+@media print {
+  body { background: white; }
+  .page { margin: 0; break-after: page; page-break-after: always; }
+  @page { size: A4 landscape; margin: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- PAGE 1: CHAT -->
+<div class="page" id="slide1">
+  <div class="titlebar">
+    <div class="traffic">
+      <span class="dot" style="background:#FF5F57"></span>
+      <span class="dot" style="background:#FFBD2E"></span>
+      <span class="dot" style="background:#28C840"></span>
+    </div>
+    <div class="tab-strip">
+      <div class="tab active">Chat</div><div class="tab">Image</div>
+      <div class="tab">Server</div><div class="tab">Tools</div><div class="tab">API</div>
+    </div>
+    <div class="toolbar-icons">
+      <div class="icon-btn"></div><div class="icon-btn"></div><div class="icon-btn"></div>
+    </div>
+  </div>
+  <div class="body">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+        <span class="t-head">Chat Sessions</span>
+        <span style="font-size:14px;color:#6B6B6B">+</span>
+      </div>
+      <div class="session-row" style="background:rgba(15,118,110,0.12)">
+        <div style="display:flex;justify-content:space-between">
+          <span class="t-head" style="font-size:10px">Llama 3.2 3B eval</span>
+          <span class="t-mono" style="font-size:8px">2m ago</span>
+        </div>
+        <div style="margin-top:3px;display:flex;gap:4px">
+          <span class="pill">main</span>
+          <span class="t-cap" style="font-size:8px">Compare base vs LoRA outputs</span>
+        </div>
+      </div>
+      <div class="session-row" style="background:rgba(0,0,0,0.03)">
+        <div style="display:flex;justify-content:space-between">
+          <span class="t-head" style="font-size:10px">LoRA training run</span>
+          <span class="t-mono" style="font-size:8px">18m ago</span>
+        </div>
+        <div style="margin-top:3px;display:flex;gap:4px">
+          <span class="pill">lora-v2</span>
+          <span class="t-cap" style="font-size:8px">Train on custom dataset</span>
+        </div>
+      </div>
+      <div class="session-row" style="background:rgba(0,0,0,0.03)">
+        <div style="display:flex;justify-content:space-between">
+          <span class="t-head" style="font-size:10px">Benchmark matrix</span>
+          <span class="t-mono" style="font-size:8px">1h ago</span>
+        </div>
+        <div style="margin-top:3px;display:flex;gap:4px">
+          <span class="pill">main</span>
+          <span class="t-cap" style="font-size:8px">p50/p95 across 4 configs</span>
+        </div>
+      </div>
+    </div>
+    <!-- Workspace -->
+    <div class="workspace">
+      <div style="margin-bottom:10px;flex-shrink:0">
+        <div class="t-title">Llama 3.2 3B eval</div>
+        <div style="margin-top:4px;display:flex;gap:5px">
+          <span class="pill">main</span>
+          <span class="pill">session-1 · running</span>
+        </div>
+      </div>
+      <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px">
+        <div class="bubble" style="background:rgba(0,100,220,0.10)">
+          <div class="t-mono" style="margin-bottom:2px;font-size:8px">user</div>
+          <div style="font-size:10px;line-height:1.45;color:#0A0A0A">Run a bench matrix across the loaded models and export the results.</div>
+        </div>
+        <div class="bubble" style="background:rgba(20,160,80,0.09)">
+          <div class="t-mono" style="margin-bottom:2px;font-size:8px">assistant</div>
+          <div style="font-size:10px;line-height:1.45;color:#0A0A0A">Starting bench matrix. Running p50 and p95 latency probes across 4 configurations and exporting a markdown artifact.</div>
+        </div>
+        <div class="bubble" style="background:rgba(220,110,20,0.09)">
+          <div class="t-mono" style="margin-bottom:2px;font-size:8px">reasoning</div>
+          <div style="font-size:10px;line-height:1.45;color:#0A0A0A">Selecting acceleration profiles and memory budgets for each model variant…</div>
+        </div>
+        <div class="bubble" style="background:rgba(120,60,200,0.09)">
+          <div class="t-mono" style="margin-bottom:2px;font-size:8px">tool</div>
+          <div style="font-size:10px;line-height:1.45;color:#0A0A0A;font-family:ui-monospace,'Courier New',monospace">{"op":"bench_matrix","configs":4,"probe":"latency","export":"markdown"}</div>
+        </div>
+        <div class="bubble" style="background:rgba(20,160,80,0.09)">
+          <div class="t-mono" style="margin-bottom:2px;font-size:8px">assistant</div>
+          <div style="font-size:10px;line-height:1.45;color:#0A0A0A">Bench complete. p50: 42ms · p95: 88ms · 4 configs · report saved to ~/.melix/bench/2026-04-19.md</div>
+        </div>
+      </div>
+      <!-- Composer -->
+      <div style="margin-top:8px;flex-shrink:0">
+        <div style="background:rgba(0,0,0,0.03);border-radius:9px;padding:6px 9px;border:1px solid rgba(0,0,0,0.07);height:38px;margin-bottom:5px">
+          <span class="t-mono" style="color:#9A9A9A">Enter a prompt…</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:6px">
+          <span class="btn-bordered">Clear</span>
+          <span class="btn-primary">Send ⌘↵</span>
+        </div>
+      </div>
+    </div>
+    <!-- Inspector -->
+    <div class="inspector">
+      <div class="card">
+        <div class="section-label">Session</div>
+        <div class="t-head" style="margin-bottom:3px">running</div>
+        <div class="t-mono">http://localhost:11434</div>
+      </div>
+      <div class="card">
+        <div class="section-label">Analysis Routes</div>
+        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">Chat Completion</span></div>
+        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">LoRA Training</span></div>
+        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">Bench Matrix</span></div>
+        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#9A9A9A;font-size:10px">○</span><span class="t-body" style="font-size:10px">Vision</span></div>
+      </div>
+      <div class="card">
+        <div class="section-label">Runtime</div>
+        <div class="t-mono">req_8f2a9c · 1024 tokens · 42ms p50</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-label">Chat Tab · 1 / 3</div>
+</div>
+
+<!-- PAGE 2: SERVER -->
+<div class="page" id="slide2">
+  <div class="titlebar">
+    <div class="traffic">
+      <span class="dot" style="background:#FF5F57"></span>
+      <span class="dot" style="background:#FFBD2E"></span>
+      <span class="dot" style="background:#28C840"></span>
+    </div>
+    <div class="tab-strip">
+      <div class="tab">Chat</div><div class="tab">Image</div>
+      <div class="tab active">Server</div><div class="tab">Tools</div><div class="tab">API</div>
+    </div>
+    <div class="toolbar-icons">
+      <div class="icon-btn"></div><div class="icon-btn"></div><div class="icon-btn"></div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="sidebar-wide">
+      <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+        <span class="t-head">Server Sessions</span>
+        <span style="font-size:14px;color:#6B6B6B">+</span>
+      </div>
+      <div class="session-row" style="background:rgba(15,118,110,0.12);display:flex;justify-content:space-between">
+        <div>
+          <div class="t-head" style="font-size:11px">Melix Text Turbo</div>
+          <div class="t-mono" style="margin-top:2px;font-size:8px;max-width:150px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">mlx-community/Llama-3.2-3B-Instruct-4bit</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:9px;font-weight:600;color:#14A05A">running</div>
+          <div class="t-mono" style="font-size:8px">:11434</div>
+        </div>
+      </div>
+      <div class="session-row" style="background:rgba(220,110,20,0.09);display:flex;justify-content:space-between">
+        <div>
+          <div class="t-head" style="font-size:11px">Qwen 7B</div>
+          <div class="t-mono" style="margin-top:2px;font-size:8px">mlx-community/Qwen2.5-7B-Instruct-4bit</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:9px;font-weight:600;color:#D97706">paused</div>
+          <div class="t-mono" style="font-size:8px">:11435</div>
+        </div>
+      </div>
+      <div class="session-row" style="background:rgba(0,0,0,0.04);display:flex;justify-content:space-between">
+        <div>
+          <div class="t-head" style="font-size:11px">Whisper Large</div>
+          <div class="t-mono" style="margin-top:2px;font-size:8px">mlx-community/whisper-large-v3-mlx</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:9px;font-weight:600;color:#9A9A9A">stopped</div>
+          <div class="t-mono" style="font-size:8px">:11436</div>
+        </div>
+      </div>
+    </div>
+    <div class="workspace" style="display:block;overflow:hidden;padding:16px">
+      <div style="margin-bottom:12px">
+        <div class="t-large" style="font-size:16px">Melix Text Turbo</div>
+        <div class="t-mono" style="margin-top:3px">mlx-community/Llama-3.2-3B-Instruct-4bit</div>
+        <div class="btns" style="margin-top:8px">
+          <span class="btn-bordered">Pause</span>
+          <span class="btn-bordered">Stop</span>
+          <span class="btn-primary">Wake</span>
+        </div>
+      </div>
+      <div class="grid-2" style="margin-bottom:8px">
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Port</div><div class="t-mono" style="color:#0A0A0A;font-size:11px">:11434</div></div>
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Context</div><div class="t-mono" style="color:#0A0A0A;font-size:11px">8192 tokens</div></div>
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Acceleration</div><div class="t-mono" style="color:#0A0A0A;font-size:11px">speculative_decode</div></div>
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Memory Policy</div><div class="t-mono" style="color:#0A0A0A;font-size:11px">pinned</div></div>
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Cache Mode</div><div class="t-mono" style="color:#0A0A0A;font-size:11px">tiered</div></div>
+        <div class="card-sm"><div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">State</div><div class="t-mono" style="color:#14A05A;font-size:11px">running</div></div>
+      </div>
+      <div class="card">
+        <div style="font-size:8px;font-weight:600;color:#9A9A9A;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Base URL</div>
+        <div style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0F766E">http://localhost:11434/v1</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-label">Server Tab · 2 / 3</div>
+</div>
+
+<!-- PAGE 3: TOOLS -->
+<div class="page" id="slide3">
+  <div class="titlebar">
+    <div class="traffic">
+      <span class="dot" style="background:#FF5F57"></span>
+      <span class="dot" style="background:#FFBD2E"></span>
+      <span class="dot" style="background:#28C840"></span>
+    </div>
+    <div class="tab-strip">
+      <div class="tab">Chat</div><div class="tab">Image</div>
+      <div class="tab">Server</div><div class="tab active">Tools</div><div class="tab">API</div>
+    </div>
+    <div class="toolbar-icons">
+      <div class="icon-btn"></div><div class="icon-btn"></div><div class="icon-btn"></div>
+    </div>
+  </div>
+  <div class="body" style="padding:14px 16px;gap:12px;align-items:flex-start">
+    <!-- Left -->
+    <div style="flex:1;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+      <div class="card">
+        <div class="section-label">Primary Model</div>
+        <div class="t-head">mlx-community/Llama-3.2-3B-Instruct-4bit</div>
+        <div class="t-cap" style="margin-top:2px">Melix Text Turbo · loaded · 8192 ctx</div>
+        <div class="btns">
+          <span class="btn-bordered">Inspect</span>
+          <span class="btn-bordered">Doctor</span>
+          <span class="btn-bordered">Bench</span>
+          <span class="btn-bordered">Convert</span>
+          <span class="btn-bordered">Quantize</span>
+          <span class="btn-accent">Train LoRA</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-label">Adapter Registry</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:#0A0A0A;font-family:ui-monospace,'Courier New',monospace">lora-llama-3b-v1</div>
+            <div class="t-mono" style="margin-top:1px">Llama-3.2-3B · data/train.jsonl · 512 steps · 4m 18s</div>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;flex-shrink:0;margin-left:8px">
+            <span style="font-size:9px;font-weight:600;color:#14A05A">published</span>
+            <span class="btn-bordered" style="padding:2px 7px;font-size:9px">Activate</span>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:#0A0A0A;font-family:ui-monospace,'Courier New',monospace">lora-llama-3b-v2</div>
+            <div class="t-mono" style="margin-top:1px">Llama-3.2-3B · data/train-v2.jsonl · 1024 steps · 8m 52s</div>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;flex-shrink:0;margin-left:8px">
+            <span style="font-size:9px;font-weight:600;color:#0F766E">active</span>
+            <span class="btn-bordered" style="padding:2px 7px;font-size:9px">Activate</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Right -->
+    <div style="width:280px;flex-shrink:0;display:flex;flex-direction:column;gap:10px">
+      <div class="card">
+        <div class="section-label">Bench Report</div>
+        <div class="t-mono" style="margin-bottom:8px;font-size:8px">~/.melix/bench/2026-04-19.md · Llama-3.2-3B · speculative_decode</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 24px">
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">prompt_tps</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">1,847 t/s</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">gen_tps</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">42.3 t/s</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">p50_latency</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">42ms</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">p95_latency</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">88ms</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">ttft</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">31ms</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10px;color:#3A3A3A">peak_memory</span><span style="font-family:ui-monospace,'Courier New',monospace;font-size:11px;color:#0A0A0A">3.8 GB</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-label">Training History</div>
+        <div style="margin-bottom:7px">
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:10px;font-weight:600;font-family:ui-monospace,'Courier New',monospace;color:#0A0A0A">lora-llama-3b-v1</span>
+            <span class="t-cap">4m 18s</span>
+          </div>
+          <div class="t-mono" style="margin-top:1px">data/train.jsonl · 512 steps</div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:10px;font-weight:600;font-family:ui-monospace,'Courier New',monospace;color:#0A0A0A">lora-llama-3b-v2</span>
+            <span class="t-cap">8m 52s</span>
+          </div>
+          <div class="t-mono" style="margin-top:1px">data/train-v2.jsonl · 1024 steps</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="page-label">Tools Tab · 3 / 3</div>
+</div>
+
+</body>
+</html>

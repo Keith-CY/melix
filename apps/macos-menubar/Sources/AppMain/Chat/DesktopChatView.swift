@@ -111,7 +111,7 @@ struct DesktopChatSessionSidebar: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Chat Sessions")
-                    .font(.headline)
+                    .melixSectionLabel()
                 Spacer()
                 Button {
                     viewModel.createChatSession()
@@ -285,12 +285,12 @@ struct DesktopChatSessionWorkspace: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
                         .fill(Color(nsColor: .textBackgroundColor).opacity(0.75))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                        .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive), lineWidth: 1)
                 )
 
                 HStack {
@@ -307,7 +307,7 @@ struct DesktopChatSessionWorkspace: View {
                         viewModel.clearChatTranscript()
                     }
                     .buttonStyle(.bordered)
-                    Button("Send") {
+                    Button("Send \u{2318}\u{21A9}") {
                         Task { await viewModel.submitChatPrompt() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -329,7 +329,7 @@ struct DesktopChatSessionInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Session") {
+            MelixSectionCard("Session") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(viewModel.selectedChatSession?.statusText ?? "Idle")
                         .font(.headline)
@@ -344,10 +344,9 @@ struct DesktopChatSessionInspector: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Analysis Routes") {
+            MelixSectionCard("Analysis Routes") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(viewModel.chatCapabilities) { capability in
                         HStack(alignment: .top) {
@@ -363,11 +362,10 @@ struct DesktopChatSessionInspector: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !viewModel.lastChatRequestID.isEmpty || !viewModel.lastChatUsageText.isEmpty {
-                GroupBox("Runtime") {
+                MelixSectionCard("Runtime") {
                     VStack(alignment: .leading, spacing: 6) {
                         if !viewModel.lastChatRequestID.isEmpty {
                             Text("request \(viewModel.lastChatRequestID)")
@@ -380,7 +378,6 @@ struct DesktopChatSessionInspector: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -424,12 +421,7 @@ private struct DesktopChatSessionRow: View {
             DesktopChatSessionRowActions(onFork: onFork, onExport: onExport)
         }
         .padding(10)
-        .background(
-            isSelected
-            ? Color.accentColor.opacity(0.14)
-            : Color.secondary.opacity(0.06),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
+        .melixSelection(isSelected)
     }
 }
 
@@ -480,21 +472,21 @@ private struct DesktopChatTranscriptRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(backgroundStyle, in: RoundedRectangle(cornerRadius: 12))
+        .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
     }
 
-    private var backgroundStyle: some ShapeStyle {
+    private var backgroundStyle: Color {
         switch entry.kind {
         case .user:
-            return .blue.opacity(0.14)
+            return MelixDesignTokens.BubbleTint.user.opacity(MelixDesignTokens.BubbleOpacity.user)
         case .assistant:
-            return .green.opacity(0.12)
+            return MelixDesignTokens.BubbleTint.assistant.opacity(MelixDesignTokens.BubbleOpacity.assistant)
         case .reasoning:
-            return .orange.opacity(0.12)
+            return MelixDesignTokens.BubbleTint.reasoning.opacity(MelixDesignTokens.BubbleOpacity.reasoning)
         case .tool:
-            return .purple.opacity(0.12)
+            return MelixDesignTokens.BubbleTint.tool.opacity(MelixDesignTokens.BubbleOpacity.tool)
         case .error:
-            return .red.opacity(0.12)
+            return MelixDesignTokens.BubbleTint.error.opacity(MelixDesignTokens.BubbleOpacity.error)
         }
     }
 }

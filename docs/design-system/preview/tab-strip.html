@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 28px 20px; display: flex; flex-direction: column; gap: 20px; align-items: flex-start; }
+/* Tab strip capsule */
+.tab-strip {
+  display: flex; gap: 3px; align-items: center;
+  background: var(--bg-surface); border-radius: var(--radius-full);
+  padding: 3px;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.tab {
+  padding: 4px 12px; border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 500; color: var(--fg-secondary);
+  cursor: pointer; white-space: nowrap; border: none; background: transparent;
+  font-family: var(--font-sans);
+}
+.tab.active {
+  background: var(--accent-weak);
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+.tab:hover:not(.active) { background: rgba(0,0,0,0.04); }
+
+/* Status pill */
+.pill {
+  padding: 2px 8px; border-radius: var(--radius-full);
+  font-size: 10px; font-weight: 500; font-family: var(--font-sans);
+}
+
+/* Row */
+.demo-row { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+  <div class="tab-strip">
+    <button class="tab active">Chat</button>
+    <button class="tab">Image</button>
+    <button class="tab">Server</button>
+    <button class="tab">Tools</button>
+    <button class="tab">API</button>
+  </div>
+  <div class="demo-row">
+    <span class="pill" style="background:var(--bg-assistant); color:var(--fg-secondary)">running</span>
+    <span class="pill" style="background:var(--bg-reasoning); color:var(--fg-secondary)">paused</span>
+    <span class="pill" style="background:var(--bg-error); color:var(--fg-secondary)">stopped</span>
+    <span class="pill" style="background:var(--neutral-200); color:var(--fg-tertiary)">draft</span>
+    <span class="pill" style="background:var(--accent-weak); color:var(--accent)">active</span>
+  </div>
+</body></html>
