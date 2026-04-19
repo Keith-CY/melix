@@ -225,6 +225,81 @@ def test_training_config_applies_named_presets_and_allows_explicit_overrides() -
     assert unknown_preset.value.code == "invalid_training_preset"
 
 
+def test_training_config_defaults_gradient_accumulation_to_one() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=1,
+    )
+
+    assert config.gradient_accumulation == 1
+
+
+def test_training_config_accepts_explicit_gradient_accumulation() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={"gradient_accumulation": "4"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.gradient_accumulation == 4
+
+
+@pytest.mark.parametrize("bad_value", ["0", "-1"])
+def test_training_config_rejects_non_positive_gradient_accumulation(bad_value: str) -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={"gradient_accumulation": bad_value},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "invalid_argument"
+    assert "gradient_accumulation" in (exc.value.message or "")
+
+
+def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
+    with pytest.raises(ValueError):
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={"gradient_accumulation": "abc"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+
+def test_mlx_lora_namespace_forwards_gradient_accumulation() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={"gradient_accumulation": "3"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-accum",
+        base_model_id="melix-dev-text",
+        model_path=Path("/tmp/dummy-model"),
+        model_revision="main",
+        adapter_output_dir=Path("/tmp/dummy-adapter"),
+        normalized_dataset_dir=Path("/tmp/dummy-dataset"),
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    namespace = mlx_lm_runner_module._mlx_lora_namespace(request)
+
+    assert namespace.grad_accumulation_steps == 3
+    assert namespace.batch_size == config.batch_size
+
+
 def test_training_config_caps_computed_iters_with_max_steps() -> None:
     config = training_config_module.normalize_training_config(
         source_model=_text_model(model_path="mlx-community/Qwen3.5-0.8B-OptiQ-4bit", quant_profile_id="q4"),

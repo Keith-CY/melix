@@ -876,6 +876,7 @@ def _deterministic_training_config() -> LoRATrainingConfig:
         max_steps=0,
         response_only=False,
         gradient_checkpointing=False,
+        gradient_accumulation=1,
         mask_prompt=False,
         max_seq_length=128,
         steps_per_report=1,

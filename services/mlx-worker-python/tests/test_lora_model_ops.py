@@ -315,6 +315,7 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
                     "dropout": "0.1",
                     "response_only": "true",
                     "gradient_checkpointing": "true",
+                    "gradient_accumulation": "2",
                     "preset_id": "balanced_adapter",
                     "experiment_group_id": "nightly-qwen35",
                     "target_repo": "melix/adapters/melix-dev-adapter",
@@ -344,6 +345,10 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
     assert payload["dataset_uri"] == str(dataset_dir)
     assert payload["response_only"] is True
     assert payload["gradient_checkpointing"] is True
+    assert payload["gradient_accumulation"] == 2
+    # Observability: plumbing (we do not assert MLX-LM honors the flag).
+    assert payload["effective_batch_size"] == payload["batch_size"] * 2
+    assert payload["optimizer_steps"] == payload["iters"] // 2
     assert payload["training_duration_ms"] == 1234.0
     assert payload["loss_final"] == 0.42
     assert payload["preset_id"] == "balanced_adapter"
