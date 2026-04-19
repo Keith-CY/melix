@@ -2090,7 +2090,7 @@ public enum MelixCLIParser {
             profileType: values.single["--profile-type"] ?? "final_result",
             resultKind: values.single["--result-kind"] ?? "text",
             extractionMode: values.single["--extraction-mode"] ?? "heuristic_final",
-            scoringMode: values.single["--scoring-mode"] ?? "normalized_exact_match",
+            scoringMode: values.single["--scoring-mode"] ?? "",
             threshold: try parseDoubleValue(values.single["--threshold"], option: "--threshold", defaultValue: 1.0) ?? 1.0,
             outputSchemaJSON: values.single["--output-schema-json"] ?? "",
             ignoredPaths: values.multi["--ignored-path"] ?? []
@@ -2712,7 +2712,7 @@ public actor MelixCLIRunner {
         case .modelRootsList(let options):
             let state = try loadOperatorState()
             if options.json {
-                return try prettyJSON(["registry_roots": state.registryRoots])
+                return try prettyJSON(state.registryRoots)
             }
             return renderRegistryRoots(state.registryRoots)
         case .modelRootsAdd(let options):
@@ -2723,7 +2723,7 @@ public actor MelixCLIRunner {
                 }
             }
             if options.json {
-                return try prettyJSON(["registry_roots": state.registryRoots])
+                return try prettyJSON(state.registryRoots)
             }
             return renderRegistryRoots(state.registryRoots)
         case .modelRootsRemove(let options):
@@ -2732,7 +2732,7 @@ public actor MelixCLIRunner {
                 current.registryRoots.removeAll { $0 == canonical }
             }
             if options.json {
-                return try prettyJSON(["registry_roots": state.registryRoots])
+                return try prettyJSON(state.registryRoots)
             }
             return renderRegistryRoots(state.registryRoots)
         case .modelRootsMove(let options):
@@ -2746,7 +2746,7 @@ public actor MelixCLIRunner {
                 current.registryRoots.insert(root, at: targetIndex)
             }
             if options.json {
-                return try prettyJSON(["registry_roots": state.registryRoots])
+                return try prettyJSON(state.registryRoots)
             }
             return renderRegistryRoots(state.registryRoots)
         case .modelRootsRescan(let options):

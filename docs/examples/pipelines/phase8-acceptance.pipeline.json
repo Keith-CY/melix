@@ -45,7 +45,7 @@
       1
     ],
     "matrix_cache_profiles": [
-      "none"
+      "cold"
     ],
     "matrix_reasoning_modes": [
       "disabled"
@@ -63,6 +63,7 @@
     "eval_dataset_id": "mmlu.dev.v1",
     "eval_sample_size": 4,
     "eval_batch_factor": 1,
+    "eval_scoring_mode": "multiple_choice_accuracy",
     "acceptance_output_dir": "/tmp/melix-phase8-acceptance"
   },
   "steps": [
@@ -241,7 +242,8 @@
         "suites": "${inputs.eval_suites}",
         "dataset_id": "${inputs.eval_dataset_id}",
         "sample_size": "${inputs.eval_sample_size}",
-        "batch_factor": "${inputs.eval_batch_factor}"
+        "batch_factor": "${inputs.eval_batch_factor}",
+        "scoring_mode": "${inputs.eval_scoring_mode}"
       },
       "checks": {
         "required_result_fields": [

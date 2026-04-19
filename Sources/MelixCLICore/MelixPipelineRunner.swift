@@ -568,8 +568,19 @@ private struct MelixPipelineDocument {
         guard path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             throw MelixCLIError.missingRequired("--file is required for melix pipeline run.")
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            throw MelixCLIError.runtime("Failed to read pipeline file \(path): \((error as NSError).localizedDescription)")
+        }
+        let jsonObject: Any
+        do {
+            jsonObject = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.usage("Pipeline file is not valid JSON: \((error as NSError).localizedDescription)")
+        }
+        guard let object = jsonObject as? [String: Any] else {
             throw MelixCLIError.usage("Pipeline file must be a JSON object.")
         }
         guard object["schema_version"] as? String == "melix.pipeline.v1" else {
@@ -606,8 +617,19 @@ private struct MelixPipelineDocument {
         guard path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             return [:]
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            throw MelixCLIError.runtime("Failed to read pipeline inputs file \(path): \((error as NSError).localizedDescription)")
+        }
+        let jsonObject: Any
+        do {
+            jsonObject = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.usage("Pipeline inputs file is not valid JSON: \((error as NSError).localizedDescription)")
+        }
+        guard let object = jsonObject as? [String: Any] else {
             throw MelixCLIError.usage("Pipeline inputs file must be a JSON object.")
         }
         return object
@@ -1232,7 +1254,7 @@ private enum MelixPipelineCommandBuilder {
             profileType: string("profile_type", args) ?? "final_result",
             resultKind: string("result_kind", args) ?? "text",
             extractionMode: string("extraction_mode", args) ?? "heuristic_final",
-            scoringMode: string("scoring_mode", args) ?? "normalized_exact_match",
+            scoringMode: string("scoring_mode", args) ?? "",
             threshold: Double(string("threshold", args) ?? "") ?? 1.0,
             outputSchemaJSON: string("output_schema_json", args) ?? "",
             ignoredPaths: try stringArray("ignored_paths", args) ?? []
