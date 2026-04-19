@@ -24,6 +24,7 @@ The current benchmark evidence is:
 | Vendored shared-score speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-shared-scores.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored online-softmax speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-online-softmax.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Cache-internal timing probe | `docs/metrics/phase2-active-kv-vendored-turboquant-cache-probe.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
+| Vendored storage-fastpath speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-storage-fastpath.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
@@ -395,6 +396,17 @@ it reports `cache_update_total_us = 1081676`,
 `active_kv_cache_update_avg_us = 200.0`, and median
 `active_kv_cache_materialize_avg_us = 64.0`. The routed fused path remains
 release-blocked because `worker_tps_overhead_pct = 73.61`.
+The storage-fastpath post-run keeps the routed non-fallback evidence and removes
+decode-side trimmed-state materialization from the fused attention path. It
+reports `cache_update_total_us = 728859`,
+`cache_update_call_count = 5376`, `cache_append_total_us = 615953`,
+`cache_quantize_total_us = 92171`,
+`cache_materialize_total_us = 278`,
+`cache_materialize_call_count = 3`, median
+`active_kv_cache_update_avg_us = 135.0`, and median
+`active_kv_cache_materialize_avg_us = 93.0`. That confirms the storage path is
+active, but the routed fused path remains release-blocked because
+`worker_tps_overhead_pct = 61.43`.
 
 Interpretation: the guard did remove the redundant maintenance work, and the
 terminal-call cleanup removed one unused model step per decode run, but both are
@@ -418,10 +430,13 @@ score pass. The online-softmax follow-up removes the materialized score vector
 and uses one simdgroup per batch/query-head so each value lane rescales its
 accumulator as scores arrive. The packed-word-lane follow-up maps each active
 lane to one q4 `uint32` word and accumulates eight output dimensions from that
-packed load. The absolute TurboQuant path is faster, but the real-model data
-shows the route is still too slow for the release target, so the next
-optimization must address remaining per-token dispatch, cache update, and
-quantized decode overhead rather than only score-vector sharing.
+packed load. The storage-fastpath follow-up lets fused decode consume
+preallocated q4 cache storage with an explicit valid sequence length, so
+`updateQuantizedStorage(...)` no longer slices a trimmed state for every token.
+The absolute TurboQuant path is faster, but the real-model data shows the route
+is still too slow for the release target, so the next optimization must address
+remaining per-token fused-kernel evaluation, cache append, and incoming KV
+quantization overhead.
 
 The cache-internal timing probe now separates the remaining runtime cost inside
 Swift MLX LM's `QuantizedKVCache`. Each active-KV decode row can include:
@@ -461,10 +476,11 @@ efficiency. The recommended order is:
    The current packed-word-lane kernel is a route-plus-layout proof. It goes
    beyond the online-softmax vector lane layout by dequantizing one q4 `uint32`
    word per active lane and accumulating eight value dimensions from that load,
-   but the real-model gate still fails at `worker_tps_overhead_pct = 73.97` in
-   the same-model run. The next kernel slice should reduce remaining per-token
-   dispatch, cache update, and quantized decode overhead before rerunning the
-   release gate.
+   and the storage-fastpath slice removes per-token trimmed-cache
+   materialization from the fused route. The latest same-model gate still fails
+   at `worker_tps_overhead_pct = 61.43`. The next kernel slice should reduce
+   remaining per-token fused-kernel evaluation, cache append, and incoming KV
+   quantization overhead before rerunning the release gate.
 
 3. Implement a Swift `TurboQuantKVCacheProtocol` path.
    It should store packed quantized key/value state, preserve offset and state
@@ -513,6 +529,10 @@ blocked unless the same real-model JSON reports both `active_kv_kernel_path !=
 fallback` and `worker_tps_overhead_pct <= 15`. The current packed-word-lane JSON
 meets the non-fallback requirement but fails the throughput requirement with
 `worker_tps_overhead_pct = 73.97`.
+The storage-fastpath probe also does not change the release rule: it drops
+aggregate trimmed-state materialization from `348621` us to `278` us and keeps
+`active_kv_kernel_path = tq_mse_single`, but the same-model JSON still fails the
+throughput requirement with `worker_tps_overhead_pct = 61.43`.
 The Qwen3.5 support smoke also keeps the release gate blocked: it proves the
 Swift stack can load and decode `model_type = qwen3_5`, but `turboquant-q4`
 reports `active_kv_kernel_path = fallback`, `active_kv_runtime_route = blocked`,

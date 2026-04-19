@@ -53,20 +53,23 @@ public func attentionWithCacheUpdate(
         )
     }
     if let quantizedKVCache = cache as? QuantizedKVCacheProtocol {
-        let (quantizedKeys, quantizedValues) = quantizedKVCache.updateQuantized(
-            keys: keys, values: values)
+        let storageState = quantizedKVCache.updateQuantizedStorage(keys: keys, values: values)
         if let fusedOutput = fusedQ4ScaledDotProductAttention(
             queries: queries,
-            quantizedKeys: quantizedKeys,
-            quantizedValues: quantizedValues,
+            quantizedKeys: storageState.keys,
+            quantizedValues: storageState.values,
             scale: scale,
             mask: mask,
+            sequenceLength: storageState.sequenceLength,
             groupSize: quantizedKVCache.groupSize,
             bits: quantizedKVCache.bits,
             mode: quantizedKVCache.mode
         ) {
             quantizedKVCache.recordFusedAttentionDispatch()
             return fusedOutput
+        }
+        guard let (quantizedKeys, quantizedValues) = quantizedKVCache.getQuantizedState() else {
+            fatalError("Quantized cache update did not produce readable quantized state.")
         }
         return quantizedScaledDotProductAttention(
             queries: queries,

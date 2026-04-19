@@ -68,6 +68,7 @@ public func fusedQ4ScaledDotProductAttention(
     quantizedValues: (MLXArray, MLXArray, MLXArray?),
     scale: Float,
     mask: MLXFast.ScaledDotProductAttentionMaskMode = .none,
+    sequenceLength: Int? = nil,
     groupSize: Int = 64,
     bits: Int = 8,
     mode: QuantizationMode = .affine
@@ -98,14 +99,15 @@ public func fusedQ4ScaledDotProductAttention(
     let queryLength = queries.dim(2)
     let headDimension = queries.dim(3)
     let kvHeadCount = quantizedKeys.0.dim(1)
-    let sequenceLength = quantizedKeys.0.dim(2)
+    let storageSequenceLength = quantizedKeys.0.dim(2)
+    let effectiveSequenceLength = sequenceLength ?? storageSequenceLength
     let packedWordsPerToken = headDimension / 8
     let groupCount = (headDimension + groupSize - 1) / groupSize
     guard let launchPlan = turboQuantFusedAttentionLaunchPlan(
         batchCount: batchCount,
         queryHeadCount: queryHeadCount,
         kvHeadCount: kvHeadCount,
-        sequenceLength: sequenceLength,
+        sequenceLength: effectiveSequenceLength,
         headDimension: headDimension,
         groupSize: groupSize
     ) else {
@@ -116,7 +118,8 @@ public func fusedQ4ScaledDotProductAttention(
         queryHeadCount > 0,
         queryLength == 1,
         kvHeadCount > 0,
-        sequenceLength > 0,
+        effectiveSequenceLength > 0,
+        storageSequenceLength >= effectiveSequenceLength,
         headDimension > 0,
         headDimension % 8 == 0,
         groupSize > 0,
@@ -127,19 +130,19 @@ public func fusedQ4ScaledDotProductAttention(
         return nil
     }
 
-    guard quantizedKeys.0.shape == [batchCount, kvHeadCount, sequenceLength, packedWordsPerToken],
-        quantizedValues.0.shape == [batchCount, kvHeadCount, sequenceLength, packedWordsPerToken],
-        quantizedKeys.1.shape == [batchCount, kvHeadCount, sequenceLength, groupCount],
-        keyBiases.shape == [batchCount, kvHeadCount, sequenceLength, groupCount],
-        quantizedValues.1.shape == [batchCount, kvHeadCount, sequenceLength, groupCount],
-        valueBiases.shape == [batchCount, kvHeadCount, sequenceLength, groupCount]
+    guard quantizedKeys.0.shape == [batchCount, kvHeadCount, storageSequenceLength, packedWordsPerToken],
+        quantizedValues.0.shape == [batchCount, kvHeadCount, storageSequenceLength, packedWordsPerToken],
+        quantizedKeys.1.shape == [batchCount, kvHeadCount, storageSequenceLength, groupCount],
+        keyBiases.shape == [batchCount, kvHeadCount, storageSequenceLength, groupCount],
+        quantizedValues.1.shape == [batchCount, kvHeadCount, storageSequenceLength, groupCount],
+        valueBiases.shape == [batchCount, kvHeadCount, storageSequenceLength, groupCount]
     else {
         return nil
     }
 
     let queryRepeats = queryHeadCount / kvHeadCount
     let attentionScale = MLXArray([scale])
-    let sequenceLengthScalar = MLXArray([Int32(sequenceLength)])
+    let sequenceLengthScalar = MLXArray([Int32(effectiveSequenceLength)])
     let output = Device.withDefaultDevice(.gpu) {
         let kernel = MLXFast.metalKernel(
             name: "melix_turboquant_q4_affine_fused_decode_attention",
@@ -174,10 +177,10 @@ public func fusedQ4ScaledDotProductAttention(
                 for (uint token = 0; token < sequenceLength; token++) {
                     float partialScore = 0.0f;
                     if (activeLane) {
-                        uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
+                        uint keyWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint keyWord = packedKeys[keyWordIndex];
-                        uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
+                        uint keyScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * GROUP_COUNT + (dimBase / GROUP_SIZE);
                         float keyScale = keyScales[keyScaleIndex];
                         float keyBias = keyBiases[keyScaleIndex];
@@ -207,10 +210,10 @@ public func fusedQ4ScaledDotProductAttention(
                     maxScore = newMaxScore;
 
                     if (activeLane) {
-                        uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
+                        uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * PACKED_WORDS_PER_TOKEN + packedWordLane;
                         uint valueWord = packedValues[valueWordIndex];
-                        uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * sequenceLength + token)
+                        uint valueScaleIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)
                             * GROUP_COUNT + (dimBase / GROUP_SIZE);
                         float valueScale = valueScales[valueScaleIndex];
                         float valueBias = valueBiases[valueScaleIndex];
@@ -260,6 +263,7 @@ public func fusedQ4ScaledDotProductAttention(
                 ("KV_HEAD_COUNT", kvHeadCount),
                 ("QUERY_REPEATS", queryRepeats),
                 ("PACKED_WORDS_PER_TOKEN", packedWordsPerToken),
+                ("CACHE_SEQUENCE_LENGTH", storageSequenceLength),
                 ("GROUP_SIZE", groupSize),
                 ("GROUP_COUNT", groupCount),
             ],

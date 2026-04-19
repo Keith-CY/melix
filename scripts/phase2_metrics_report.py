@@ -56,6 +56,7 @@ TURBOQUANT_FUSED_CAPABILITY_EVIDENCE = {
         "WorkerScaffoldTests.testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs",
         "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState",
         "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA",
+        "WorkerScaffoldTests.testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode",
         "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes",
         "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled",
         "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch",

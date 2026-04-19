@@ -1236,6 +1236,10 @@ def test_main_backfills_fused_candidate_probe_from_input_json_before_gate_failur
     )
     assert "WorkerScaffoldTests.testTurboQuantCandidateDispatchReadsQuantizedKVCacheState" in smoke_tests
     assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA" in smoke_tests
+    assert (
+        "WorkerScaffoldTests.testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode"
+        in smoke_tests
+    )
     assert "WorkerScaffoldTests.testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes" in smoke_tests
     assert "WorkerScaffoldTests.testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled" in smoke_tests
     assert "WorkerScaffoldTests.testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch" in smoke_tests

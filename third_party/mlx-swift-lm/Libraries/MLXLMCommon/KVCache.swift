@@ -73,6 +73,29 @@ public protocol KVCache: Evaluatable {
     ) -> MLXFast.ScaledDotProductAttentionMaskMode
 }
 
+public typealias QuantizedKVCacheTuple = (MLXArray, MLXArray, MLXArray?)
+
+/// Full quantized KV-cache storage plus the currently valid sequence length.
+///
+/// `keys` and `values` can include preallocated future-token capacity. Callers
+/// that consume this state directly must use `sequenceLength` as the valid token
+/// count and the array dimensions as storage strides.
+public struct QuantizedKVCacheStorageState {
+    public let keys: QuantizedKVCacheTuple
+    public let values: QuantizedKVCacheTuple
+    public let sequenceLength: Int
+
+    public init(
+        keys: QuantizedKVCacheTuple,
+        values: QuantizedKVCacheTuple,
+        sequenceLength: Int
+    ) {
+        self.keys = keys
+        self.values = values
+        self.sequenceLength = sequenceLength
+    }
+}
+
 /// Protocol for caches that support efficient quantized operations
 ///
 /// **Usage Example:**
@@ -134,6 +157,12 @@ public protocol QuantizedKVCacheProtocol: KVCache {
     func updateQuantized(keys: MLXArray, values: MLXArray) -> (
         (MLXArray, MLXArray, MLXArray?), (MLXArray, MLXArray, MLXArray?)
     )
+
+    /// Update cache and return full quantized storage without trimming.
+    ///
+    /// This lets fused decode kernels consume preallocated cache storage with an
+    /// explicit valid sequence length, avoiding per-token materialization.
+    func updateQuantizedStorage(keys: MLXArray, values: MLXArray) -> QuantizedKVCacheStorageState
 
     /// Get current quantized state without updating
     ///
@@ -793,6 +822,20 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
             }, quantTuple)
     }
 
+    private func materializeQuantizedState(
+        keys: QuantizedKVCacheTuple,
+        values: QuantizedKVCacheTuple,
+        sequenceLength: Int
+    ) -> (QuantizedKVCacheTuple, QuantizedKVCacheTuple) {
+        let materializeStartedAt = Date.timeIntervalSinceReferenceDate
+        let trimmedKeys = treeMap({ $0[.ellipsis, ..<sequenceLength, 0...] }, keys)
+        let trimmedValues = treeMap({ $0[.ellipsis, ..<sequenceLength, 0...] }, values)
+        quantizedCacheMaterializeCallCount += 1
+        quantizedCacheMaterializeTotalMicros += quantizedKVElapsedMicros(since: materializeStartedAt)
+
+        return (trimmedKeys, trimmedValues)
+    }
+
     /// Get current quantized keys and values as tuples (efficient access)
     /// - Returns: Tuple of ((keyWeight, keyScales, keyBiases), (valueWeight, valueScales, valueBiases))
     public func getQuantizedState() -> (
@@ -800,36 +843,18 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     )? {
         guard let keys = keys, let values = values else { return nil }
 
-        let materializeStartedAt = Date.timeIntervalSinceReferenceDate
-        let trimmedKeys = treeMap({ $0[.ellipsis, ..<offset, 0...] }, keys)
-        let trimmedValues = treeMap({ $0[.ellipsis, ..<offset, 0...] }, values)
-        quantizedCacheMaterializeCallCount += 1
-        quantizedCacheMaterializeTotalMicros += quantizedKVElapsedMicros(since: materializeStartedAt)
-
-        return (trimmedKeys, trimmedValues)
+        return materializeQuantizedState(keys: keys, values: values, sequenceLength: offset)
     }
 
-    /// Update cache and return quantized tuples (Python's update_and_fetch)
-    /// This is needed because `update` in Swift must return `(MLXArray, MLXArray)`
-    ///
-    /// - Parameters:
-    ///   - keys: New key data to add to cache
-    ///   - values: New value data to add to cache
-    /// - Returns: Quantized tuples (keys, values) as ((weight, scales, biases), (weight, scales, biases))
-    public func updateQuantized(keys: MLXArray, values: MLXArray) -> (
-        (MLXArray, MLXArray, MLXArray?), (MLXArray, MLXArray, MLXArray?)
-    ) {
-        let updateStartedAt = Date.timeIntervalSinceReferenceDate
-        defer {
-            quantizedCacheUpdateCallCount += 1
-            quantizedCacheUpdateTotalMicros += quantizedKVElapsedMicros(since: updateStartedAt)
-        }
-
-        let B = keys.dim(0)
-        let nKVHeads = keys.dim(1)
-        let numSteps = keys.dim(2)
-        let kHeadDim = keys.dim(3)
-        let vHeadDim = values.dim(3)
+    private func appendQuantizedStorageState(
+        keys newKeys: MLXArray,
+        values newValues: MLXArray
+    ) -> QuantizedKVCacheStorageState {
+        let B = newKeys.dim(0)
+        let nKVHeads = newKeys.dim(1)
+        let numSteps = newKeys.dim(2)
+        let kHeadDim = newKeys.dim(3)
+        let vHeadDim = newValues.dim(3)
         let prev = offset
 
         // Check if we need to expand the cache
@@ -856,8 +881,8 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
                 self.values = expandQuant(self.values!, newShape: shape)
             } else {
                 // Initialize new quantized cache
-                self.keys = initQuant(dim: kHeadDim, shape: shape, dtype: keys.dtype)
-                self.values = initQuant(dim: vHeadDim, shape: shape, dtype: keys.dtype)
+                self.keys = initQuant(dim: kHeadDim, shape: shape, dtype: newKeys.dtype)
+                self.values = initQuant(dim: vHeadDim, shape: shape, dtype: newKeys.dtype)
             }
             quantizedCacheExpandTotalMicros += quantizedKVElapsedMicros(since: expandStartedAt)
         }
@@ -865,8 +890,8 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         offset += numSteps
 
         let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
-        let quantizedKeys = quantized(keys, groupSize: groupSize, bits: bits)
-        let quantizedValues = quantized(values, groupSize: groupSize, bits: bits)
+        let quantizedKeys = quantized(newKeys, groupSize: groupSize, bits: bits)
+        let quantizedValues = quantized(newValues, groupSize: groupSize, bits: bits)
         quantizedCacheQuantizeTotalMicros += quantizedKVElapsedMicros(since: quantizeStartedAt)
 
         // Convert named tuples to positional tuples
@@ -896,14 +921,49 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         self.values = currentValues
         quantizedCacheAppendTotalMicros += quantizedKVElapsedMicros(since: appendStartedAt)
 
-        // Return quantized tuples
-        let materializeStartedAt = Date.timeIntervalSinceReferenceDate
-        let trimmedKeys = treeMap({ $0[.ellipsis, ..<offset, 0...] }, currentKeys)
-        let trimmedValues = treeMap({ $0[.ellipsis, ..<offset, 0...] }, currentValues)
-        quantizedCacheMaterializeCallCount += 1
-        quantizedCacheMaterializeTotalMicros += quantizedKVElapsedMicros(since: materializeStartedAt)
+        return QuantizedKVCacheStorageState(
+            keys: currentKeys,
+            values: currentValues,
+            sequenceLength: offset
+        )
+    }
 
-        return (trimmedKeys, trimmedValues)
+    public func updateQuantizedStorage(
+        keys: MLXArray,
+        values: MLXArray
+    ) -> QuantizedKVCacheStorageState {
+        let updateStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            quantizedCacheUpdateCallCount += 1
+            quantizedCacheUpdateTotalMicros += quantizedKVElapsedMicros(since: updateStartedAt)
+        }
+
+        return appendQuantizedStorageState(keys: keys, values: values)
+    }
+
+    /// Update cache and return quantized tuples (Python's update_and_fetch)
+    /// This is needed because `update` in Swift must return `(MLXArray, MLXArray)`
+    ///
+    /// - Parameters:
+    ///   - keys: New key data to add to cache
+    ///   - values: New value data to add to cache
+    /// - Returns: Quantized tuples (keys, values) as ((weight, scales, biases), (weight, scales, biases))
+    public func updateQuantized(keys: MLXArray, values: MLXArray) -> (
+        (MLXArray, MLXArray, MLXArray?), (MLXArray, MLXArray, MLXArray?)
+    ) {
+        let updateStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            quantizedCacheUpdateCallCount += 1
+            quantizedCacheUpdateTotalMicros += quantizedKVElapsedMicros(since: updateStartedAt)
+        }
+
+        let storageState = appendQuantizedStorageState(keys: keys, values: values)
+
+        return materializeQuantizedState(
+            keys: storageState.keys,
+            values: storageState.values,
+            sequenceLength: storageState.sequenceLength
+        )
     }
 
     /// This method is required by the KVCache protocol, but it is not intended to be used with QuantizedKVCache.

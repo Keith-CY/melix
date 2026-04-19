@@ -6137,6 +6137,115 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 32
+            let groupSize = 32
+            let queryHeadCount = 4
+            let kvHeadCount = 2
+            let scale = Float(1.0 / Double(headDimension).squareRoot())
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 31) - 15) / 17.0
+            }
+            let keyValues = (0 ..< kvHeadCount * sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< kvHeadCount * sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let fusedCache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let referenceCache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+
+            let fused = attentionWithCacheUpdate(
+                queries: queries,
+                keys: keys,
+                values: values,
+                cache: fusedCache,
+                scale: scale,
+                mask: .causal
+            )
+            let (quantizedKeys, quantizedValues) = referenceCache.updateQuantized(
+                keys: keys,
+                values: values
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: scale,
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fusedCache.offset, sequenceLength)
+            XCTAssertEqual(fusedCache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionDispatchCount, 1)
+            XCTAssertEqual(fusedCache.quantizedCacheMaterializeCallCount, 0)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testAttentionWithCacheUpdateMaterializesQuantizedStorageWhenFusedRouteIsUnsupported()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let scale = Float(1.0 / Double(headDimension).squareRoot())
+            let queryValues = (0 ..< headDimension).map { index in
+                Float((index % 29) - 14) / 15.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 9.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 13) - 6) / 7.0
+            }
+            let queries = MLXArray(queryValues, [1, 1, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let fallbackCache = QuantizedKVCache(groupSize: groupSize, bits: 8)
+            let referenceCache = QuantizedKVCache(groupSize: groupSize, bits: 8)
+
+            let fallback = attentionWithCacheUpdate(
+                queries: queries,
+                keys: keys,
+                values: values,
+                cache: fallbackCache,
+                scale: scale,
+                mask: .causal
+            )
+            let (quantizedKeys, quantizedValues) = referenceCache.updateQuantized(
+                keys: keys,
+                values: values
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: scale,
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 8,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fallbackCache.fusedAttentionDispatchCount, 0)
+            XCTAssertEqual(fallbackCache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(fallbackCache.quantizedCacheMaterializeCallCount, 1)
+            XCTAssertTrue(allClose(fallback, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
     func testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes() throws {
         let plan = try XCTUnwrap(turboQuantFusedAttentionLaunchPlan(
             batchCount: 2,
