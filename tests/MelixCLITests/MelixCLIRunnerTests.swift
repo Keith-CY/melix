@@ -107,6 +107,1616 @@ struct MelixCLIRunnerTests {
         #expect(findings[0]["severity"] as? String == "warning")
     }
 
+    @Test("json v1 wraps command results in a stable envelope")
+    func jsonV1WrapsCommandResultsInAStableEnvelope() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setDoctorReport(
+            makeDoctorReport(
+                markdown: "# Melix Doctor\n\n- worker_state: idle\n",
+                healthStatus: .healthy
+            )
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            MelixCLIInvocation(
+                command: .doctor(.init()),
+                outputFormat: .jsonV1,
+                traceID: "trace-json-v1"
+            )
+        )
+        let envelope = try #require(parseJSONObject(output))
+        let result = try #require(envelope["result"] as? [String: Any])
+        let metrics = try #require(envelope["metrics"] as? [String: Any])
+
+        #expect(envelope["schema_version"] as? String == "melix.cli.output.v1")
+        #expect(envelope["command_id"] as? String == "doctor")
+        #expect(envelope["status"] as? String == "succeeded")
+        #expect(envelope["trace_id"] as? String == "trace-json-v1")
+        #expect(result["health_status"] as? String == "healthy")
+        #expect((metrics["melix.cli.parse_ms"] as? Double) != nil)
+        #expect((metrics["melix.cli.command_ms"] as? Double) != nil)
+        #expect((metrics["melix.cli.json_encode_ms"] as? Double) != nil)
+    }
+
+    @Test("json v1 error envelopes are machine readable")
+    func jsonV1ErrorEnvelopesAreMachineReadable() throws {
+        let output = try MelixCLIJSONEnvelope.errorEnvelopeString(
+            commandID: "chat.run",
+            traceID: "trace-error",
+            error: MelixCLIError.missingRequired("--message is required for melix chat run."),
+            metrics: ["melix.cli.parse_ms": 0.25]
+        )
+        let envelope = try #require(parseJSONObject(output))
+        let error = try #require(envelope["error"] as? [String: Any])
+        let metrics = try #require(envelope["metrics"] as? [String: Any])
+
+        #expect(envelope["schema_version"] as? String == "melix.cli.error.v1")
+        #expect(envelope["command_id"] as? String == "chat.run")
+        #expect(envelope["status"] as? String == "failed")
+        #expect(envelope["trace_id"] as? String == "trace-error")
+        #expect(error["code"] as? String == "missing_required")
+        #expect(error["message"] as? String == "--message is required for melix chat run.")
+        #expect(metrics["melix.cli.parse_ms"] as? Double == 0.25)
+    }
+
+    @Test("json metric patching rejects missing placeholders")
+    func jsonMetricPatchingRejectsMissingPlaceholders() throws {
+        #expect(throws: MelixCLIError.runtime("Failed to encode CLI metrics placeholder.")) {
+            try MelixCLIJSONMetricPatch.replacePlaceholder(in: "{}", with: 1)
+        }
+        #expect(throws: MelixCLIError.runtime("Failed to locate pipeline metrics placeholder.")) {
+            try MelixCLIJSONMetricPatch.placeholderRange(in: Data("{}".utf8))
+        }
+        let duplicatePlaceholder = MelixCLIJSONMetricPatch.Placeholder(token: "__DUPLICATE__")
+        #expect(throws: MelixCLIError.runtime("Found duplicate CLI metrics placeholders.")) {
+            try MelixCLIJSONMetricPatch.replacePlaceholder(
+                in: "\(duplicatePlaceholder.jsonLiteral) \(duplicatePlaceholder.jsonLiteral)",
+                placeholder: duplicatePlaceholder,
+                with: 1
+            )
+        }
+        #expect(throws: MelixCLIError.runtime("Found duplicate pipeline metrics placeholders.")) {
+            try MelixCLIJSONMetricPatch.placeholderRange(
+                in: Data("\(duplicatePlaceholder.jsonLiteral) \(duplicatePlaceholder.jsonLiteral)".utf8),
+                placeholder: duplicatePlaceholder
+            )
+        }
+        #expect(throws: MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")) {
+            try MelixCLIJSONMetricPatch.paddedLiteralData(for: 1, byteCount: 1)
+        }
+    }
+
+    @Test("json metric patching preserves user artifact strings that look like the old sentinel")
+    func jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel() throws {
+        let sentinel = "9.9999999999989997e+99"
+        let output = try MelixCLIJSONEnvelope.outputEnvelopeString(
+            commandID: "doctor",
+            traceID: "trace-sentinel",
+            result: ["health_status": "healthy"],
+            artifacts: [["path": sentinel]]
+        )
+        let envelope = try #require(parseJSONObject(output))
+        let artifacts = try #require(envelope["artifacts"] as? [[String: Any]])
+        let metrics = try #require(envelope["metrics"] as? [String: Any])
+
+        #expect(artifacts.first?["path"] as? String == sentinel)
+        #expect((metrics["melix.cli.json_encode_ms"] as? Double) != nil)
+        #expect(metrics["melix.cli.json_encode_ms"] as? Double != 9.999999999999e99)
+    }
+
+    @Test("pipeline dry run writes planned step receipts and a summary")
+    func pipelineDryRunWritesPlannedStepReceiptsAndASummary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("phase8.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "fake-phase8",
+          "inputs": {
+            "model_id": "melix-dev-text",
+            "model_path": "/tmp/melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "${inputs.model_path}",
+                "model_id": "${inputs.model_id}",
+                "model_kind": "text"
+              }
+            },
+            {
+              "id": "rescan_registry",
+              "command": "model.roots.rescan",
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-pipeline-dry-run",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let metrics = try #require(summary["metrics"] as? [String: Any])
+
+        #expect(summary["schema_version"] as? String == "melix.pipeline.run.v1")
+        #expect(summary["name"] as? String == "fake-phase8")
+        #expect(summary["trace_id"] as? String == "trace-pipeline-dry-run")
+        #expect(summary["status"] as? String == "planned")
+        #expect(steps.count == 2)
+        #expect(steps.allSatisfy { $0["status"] as? String == "planned" })
+        #expect((metrics["melix.pipeline.total_ms"] as? Double) != nil)
+        #expect(metrics["melix.pipeline.resume_skipped_count"] as? Int == 0)
+        #expect(metrics["melix.pipeline.failed_step_count"] as? Int == 0)
+
+        for step in steps {
+            let receiptPath = try #require(step["receipt_path"] as? String)
+            #expect(FileManager.default.fileExists(atPath: receiptPath))
+            let receipt = try #require(try parseJSONFile(receiptPath))
+            #expect(receipt["schema_version"] as? String == "melix.cli.output.v1")
+            #expect(receipt["status"] as? String == "planned")
+        }
+
+        let summaryPath = try #require(summary["summary_path"] as? String)
+        #expect(FileManager.default.fileExists(atPath: summaryPath))
+    }
+
+    @Test("pipeline dry run covers default receipt roots inputs and command builder variants")
+    func pipelineDryRunCoversDefaultReceiptRootsInputsAndCommandBuilderVariants() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("builder-coverage.pipeline.json")
+        let inputsURL = root.appendingPathComponent("builder-coverage.inputs.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "builder coverage",
+          "inputs": {
+            "model_id": "melix-dev-text",
+            "hub": {
+              "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+            },
+            "metadata": {
+              "suite": "smoke"
+            },
+            "numeric_value": 7,
+            "enabled": true
+          },
+          "steps": [
+            {
+              "id": "download",
+              "command": "model.hub.download",
+              "args": {
+                "repo_id": "${inputs.hub.repo_id}",
+                "revision": true
+              }
+            },
+            {
+              "id": "rescan",
+              "command": "model.roots.rescan"
+            },
+            {
+              "id": "update_session",
+              "command": "server.session.update",
+              "args": {
+                "server_session_id": "server-session-1",
+                "title": 123,
+                "model_id": "${inputs.model_id}",
+                "host": true,
+                "port": "8080",
+                "rate_limit_per_minute": 60,
+                "timeout_seconds": 30
+              }
+            },
+            {
+              "id": "select_session",
+              "command": "server.session.select"
+            },
+            {
+              "id": "start_server",
+              "command": "server.start"
+            },
+            {
+              "id": "chat",
+              "command": "chat.run",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "message": "number ${inputs.numeric_value} flag ${inputs.enabled} object ${inputs.metadata}"
+              }
+            },
+            {
+              "id": "train",
+              "command": "lora.train",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "hf_dataset_path": "org/dataset",
+                "adapter_name": "adapter",
+                "target_repo": "melix/adapter",
+                "training_mode": "qlora",
+                "rank": 8,
+                "response_only": true
+              }
+            },
+            {
+              "id": "activate",
+              "command": "lora.activate",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "adapter_path": "/tmp/adapter.json",
+                "alias": "derived-model",
+                "activation_mode": "adapter_backed_runtime"
+              }
+            },
+            {
+              "id": "bench",
+              "command": "bench.run",
+              "args": {
+                "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "suite": "smoke,latency",
+                "context_length": "1024,2048",
+                "generation_length": "128",
+                "batch_size": [1, "2"],
+                "repeats": 2,
+                "cache_profile": "cold",
+                "reasoning_mode": "disabled",
+                "structured_output_mode": "disabled",
+                "sample_size": 4,
+                "batch_factor": 2
+              }
+            },
+            {
+              "id": "matrix",
+              "command": "bench.matrix.run",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "task_kind": "text-generation",
+                "suites": ["smoke", 7],
+                "context_lengths": [1024, "2048"],
+                "generation_length": "128,256",
+                "batch_sizes": [1],
+                "cache_profile": "cold,warm",
+                "reasoning_mode": "disabled",
+                "structured_output_mode": "disabled",
+                "concurrency": "1,2",
+                "duration_seconds": 30,
+                "allow_large_matrix": 1
+              }
+            },
+            {
+              "id": "export_bench",
+              "command": "bench.export-csv",
+              "args": {
+                "job_id": "bench-1",
+                "output": "/tmp/bench.csv"
+              }
+            },
+            {
+              "id": "export_matrix_summary",
+              "command": "bench.matrix.export-summary-csv",
+              "args": {
+                "job_id": "matrix-1",
+                "output": "/tmp/matrix-summary.csv"
+              }
+            },
+            {
+              "id": "export_matrix_requests",
+              "command": "bench.matrix.export-requests-csv",
+              "args": {
+                "job_id": "matrix-1",
+                "output": "/tmp/matrix-requests.csv"
+              }
+            },
+            {
+              "id": "eval_csv",
+              "command": "eval.run",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "suite": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "sample_size": 4,
+                "source_csv": "/tmp/eval.csv",
+                "field_system_path": "system",
+                "field_input_text_path": "input",
+                "field_target_path": "target",
+                "field_sample_id_path": "id",
+                "profile_type": "final_result",
+                "result_kind": "text",
+                "extraction_mode": "heuristic_final",
+                "scoring_mode": "normalized_exact_match",
+                "threshold": "0.75",
+                "output_schema_json": "{\"type\":\"string\"}",
+                "ignored_paths": "metadata.trace,metadata.debug",
+                "few_shot": 2,
+                "seed": 11,
+                "code_exec_policy": "sandboxed"
+              }
+            },
+            {
+              "id": "eval_jsonl",
+              "command": "eval.run",
+              "args": {
+                "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                "source_jsonl": "/tmp/eval.jsonl"
+              }
+            },
+            {
+              "id": "eval_hf",
+              "command": "eval.run",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "hf_dataset_path": "org/eval",
+                "hf_dataset_name": 123,
+                "hf_dataset_revision": false,
+                "hf_dataset_split": "test"
+              }
+            },
+            {
+              "id": "export_eval_summary",
+              "command": "eval.export-summary-csv",
+              "args": {
+                "job_id": "eval-1",
+                "output": "/tmp/eval-summary.csv"
+              }
+            },
+            {
+              "id": "export_eval_samples_csv",
+              "command": "eval.export-samples-csv",
+              "args": {
+                "job_id": "eval-1",
+                "output": "/tmp/eval-samples.csv"
+              }
+            },
+            {
+              "id": "export_eval_samples_jsonl",
+              "command": "eval.export-samples-jsonl",
+              "args": {
+                "job_id": "eval-1",
+                "output": "/tmp/eval-samples.jsonl"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+        try Data(#"{"model_id":"override-model"}"#.utf8).write(to: inputsURL)
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    inputsPath: inputsURL.path,
+                    traceID: "trace-default-root",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let expectedReceiptDir = root
+            .appendingPathComponent("pipelines")
+            .appendingPathComponent("builder-coverage")
+            .appendingPathComponent("trace-default-root")
+            .path
+        let chatStep = try #require(steps.first { $0["id"] as? String == "chat" })
+        let chatReceiptPath = try #require(chatStep["receipt_path"] as? String)
+        let chatReceipt = try #require(try parseJSONFile(chatReceiptPath))
+        let chatResult = try #require(chatReceipt["result"] as? [String: Any])
+        let chatArguments = try #require(chatResult["arguments"] as? [String])
+        let trainStep = try #require(steps.first { $0["id"] as? String == "train" })
+        let trainReceiptPath = try #require(trainStep["receipt_path"] as? String)
+        let trainReceipt = try #require(try parseJSONFile(trainReceiptPath))
+        let trainResult = try #require(trainReceipt["result"] as? [String: Any])
+        let trainArguments = try #require(trainResult["arguments"] as? [String])
+
+        #expect(summary["receipt_dir"] as? String == expectedReceiptDir)
+        #expect(summary["status"] as? String == "planned")
+        #expect(steps.count == 19)
+        #expect(steps.allSatisfy { $0["status"] as? String == "planned" })
+        #expect(chatArguments.contains("override-model"))
+        #expect(chatArguments.contains(#"number 7 flag true object {"suite":"smoke"}"#))
+        #expect(trainArguments.contains("--response-only"))
+    }
+
+    @Test("successful fake phase 8 pipeline writes receipts summary and artifact paths")
+    func successfulFakePhase8PipelineWritesReceiptsSummaryAndArtifactPaths() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("phase8-success.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        let artifactRoot = root.appendingPathComponent("artifacts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "fake-phase8-success",
+          "inputs": {
+            "model_id": "melix-dev-text",
+            "derived_model_alias": "melix-dev-text-derived",
+            "model_path": "/tmp/melix-dev-text",
+            "server_session_id": "server-session-1",
+            "bench_job_id": "bench-1",
+            "artifact_dir": "\#(artifactRoot.path)"
+          },
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "${inputs.model_path}",
+                "model_id": "${inputs.model_id}",
+                "model_kind": "text"
+              },
+              "checks": {
+                "required_result_fields": ["model_id", "managed_model_path"]
+              }
+            },
+            {
+              "id": "rescan_registry",
+              "command": "model.roots.rescan",
+              "args": {}
+            },
+            {
+              "id": "update_server_session",
+              "command": "server.session.update",
+              "args": {
+                "server_session_id": "${inputs.server_session_id}",
+                "title": "Fake Phase 8",
+                "model_id": "${inputs.model_id}",
+                "host": "127.0.0.1",
+                "port": 8080
+              }
+            },
+            {
+              "id": "start_server",
+              "command": "server.start",
+              "args": {
+                "server_session_id": "${inputs.server_session_id}"
+              }
+            },
+            {
+              "id": "base_chat",
+              "command": "chat.run",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "server_session_id": "${inputs.server_session_id}",
+                "message": "Reply with BASE_OK only."
+              },
+              "checks": {
+                "required_result_fields": ["assistant_text", "request_id"]
+              }
+            },
+            {
+              "id": "train_lora",
+              "command": "lora.train",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "dataset_uri": "/tmp/melix-dataset.jsonl",
+                "adapter_name": "fake-phase8",
+                "derived_model_alias": "${inputs.derived_model_alias}"
+              },
+              "checks": {
+                "required_result_fields": ["job_id", "output_path"]
+              }
+            },
+            {
+              "id": "activate_lora",
+              "command": "lora.activate",
+              "args": {
+                "model_id": "${inputs.model_id}",
+                "adapter_path": "${steps.train_lora.result.output_path}",
+                "activation_mode": "adapter_backed_runtime",
+                "derived_model_alias": "${inputs.derived_model_alias}"
+              },
+              "checks": {
+                "required_result_fields": ["job_id"]
+              }
+            },
+            {
+              "id": "derived_chat",
+              "command": "chat.run",
+              "args": {
+                "model_id": "${inputs.derived_model_alias}",
+                "server_session_id": "${inputs.server_session_id}",
+                "message": "Reply with DERIVED_OK only."
+              },
+              "checks": {
+                "required_result_fields": ["assistant_text", "request_id"]
+              }
+            },
+            {
+              "id": "run_benchmark",
+              "command": "bench.run",
+              "args": {
+                "model_id": "${inputs.derived_model_alias}",
+                "suites": ["smoke"],
+                "context_lengths": [1024],
+                "generation_length": 128
+              },
+              "checks": {
+                "required_result_fields": ["report_path", "metrics"]
+              }
+            },
+            {
+              "id": "run_benchmark_matrix",
+              "command": "bench.matrix.run",
+              "args": {
+                "model_id": "${inputs.derived_model_alias}",
+                "suites": ["smoke"],
+                "context_lengths": [1024],
+                "generation_lengths": [128],
+                "batch_sizes": [1],
+                "cache_profiles": ["cold"],
+                "reasoning_modes": ["disabled"],
+                "structured_output_modes": ["disabled"],
+                "concurrency": [1],
+                "requests": 4,
+                "allow_large_matrix": true
+              },
+              "checks": {
+                "required_result_fields": ["job.job_id"]
+              }
+            },
+            {
+              "id": "run_evaluation",
+              "command": "eval.run",
+              "args": {
+                "model_id": "${inputs.derived_model_alias}",
+                "suites": ["mmlu"],
+                "dataset_id": "mmlu.dev.v1",
+                "sample_size": 4
+              },
+              "checks": {
+                "required_result_fields": ["0.job.job_id"]
+              }
+            },
+            {
+              "id": "export_benchmark_csv",
+              "command": "bench.export-csv",
+              "args": {
+                "job_id": "${inputs.bench_job_id}",
+                "output": "${inputs.artifact_dir}/benchmark.csv"
+              },
+              "checks": {
+                "artifact_path_exists": ["${steps.export_benchmark_csv.result.output_path}"]
+              }
+            },
+            {
+              "id": "export_matrix_summary_csv",
+              "command": "bench.matrix.export-summary-csv",
+              "args": {
+                "job_id": "${steps.run_benchmark_matrix.result.job.job_id}",
+                "output": "${inputs.artifact_dir}/matrix-summary.csv"
+              },
+              "checks": {
+                "artifact_path_exists": ["${steps.export_matrix_summary_csv.result.output_path}"]
+              }
+            },
+            {
+              "id": "export_eval_summary_csv",
+              "command": "eval.export-summary-csv",
+              "args": {
+                "job_id": "${steps.run_evaluation.result.0.job.job_id}",
+                "output": "${inputs.artifact_dir}/eval-summary.csv"
+              },
+              "checks": {
+                "artifact_path_exists": ["${steps.export_eval_summary_csv.result.output_path}"]
+              }
+            },
+            {
+              "id": "export_eval_samples_jsonl",
+              "command": "eval.export-samples-jsonl",
+              "args": {
+                "job_id": "${steps.run_evaluation.result.0.job.job_id}",
+                "output": "${inputs.artifact_dir}/eval-samples.jsonl"
+              },
+              "checks": {
+                "artifact_path_exists": ["${steps.export_eval_samples_jsonl.result.output_path}"]
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "melix-dev-text", kind: "text"),
+            makeModelSummary(id: "melix-dev-text-derived", kind: "text"),
+        ]))
+        await client.setChatExecution(
+            requestID: "chat-phase8",
+            modelID: "melix-dev-text",
+            events: [
+                .tokenDelta("OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+        await client.setBenchResult(
+            .init(
+                reportPath: "/tmp/melix/bench/bench-1/report.md",
+                reportMarkdown: "# Bench\n",
+                metrics: ["bench.smoke.ttft_ms": 24.45]
+            )
+        )
+        await client.setBenchMatrixResult(
+            .init(
+                job: makeBenchmarkMatrixJobSummary(
+                    jobID: "bench-matrix-1",
+                    modelID: "melix-dev-text-derived",
+                    taskKind: "text-generation",
+                    sourceRepo: ""
+                ),
+                summaryRows: []
+            )
+        )
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-1",
+                suiteID: "mmlu",
+                datasetID: "mmlu.dev.v1",
+                metricName: "eval.mmlu.accuracy",
+                metricValue: 0.75
+            ),
+        ])
+        await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix/train_lora/fake-phase8.adapter.json",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-text",
+                  "managed_model_path": "/tmp/melix-managed/melix-dev-text",
+                  "source_kind": "local_path",
+                  "source_locator": "/tmp/melix-dev-text",
+                  "job_id": "model-op-job-1",
+                  "output_path": "/tmp/melix/train_lora/fake-phase8.adapter.json",
+                  "ext": {
+                    "melix.source_kind": "local_path",
+                    "melix.source_locator": "/tmp/melix-dev-text"
+                  }
+                }
+                """#
+            )
+        )
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-fake-phase8-success"
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let metrics = try #require(summary["metrics"] as? [String: Any])
+        let exportStep = try #require(steps.first { $0["id"] as? String == "export_eval_samples_jsonl" })
+        let artifactPaths = try #require(exportStep["artifact_paths"] as? [String])
+
+        #expect(summary["status"] as? String == "succeeded")
+        #expect(steps.count == 15)
+        #expect(steps.allSatisfy { $0["status"] as? String == "succeeded" })
+        #expect((metrics["melix.pipeline.step_ms.export_eval_samples_jsonl"] as? Double) != nil)
+        #expect(artifactPaths == [artifactRoot.appendingPathComponent("eval-samples.jsonl").path])
+        #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("benchmark.csv").path))
+        #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("matrix-summary.csv").path))
+        #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("eval-summary.csv").path))
+        #expect(FileManager.default.fileExists(atPath: artifactRoot.appendingPathComponent("eval-samples.jsonl").path))
+    }
+
+    @Test("pipeline writes an error receipt and summary when a step fails")
+    func pipelineWritesErrorReceiptAndSummaryWhenAStepFails() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("failing.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "failing-pipeline",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "unsupported",
+              "command": "unsupported.command",
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        do {
+            _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-failing-pipeline"
+                    )
+                )
+            )
+            Issue.record("Expected unsupported pipeline command to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error.errorDescription == "Unsupported pipeline command unsupported.command.")
+        }
+
+        let summary = try #require(try parseJSONFile(receiptURL.appendingPathComponent("run.json").path))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let errorReceiptPath = try #require(steps.first?["receipt_path"] as? String)
+        let errorReceipt = try #require(try parseJSONFile(errorReceiptPath))
+        let receiptError = try #require(errorReceipt["error"] as? [String: Any])
+
+        #expect(summary["status"] as? String == "failed")
+        #expect(steps.first?["status"] as? String == "failed")
+        #expect(errorReceipt["schema_version"] as? String == "melix.cli.error.v1")
+        #expect(receiptError["code"] as? String == "usage")
+    }
+
+    @Test("pipeline writes an error receipt and summary when a step throws a non Melix error")
+    func pipelineWritesErrorReceiptAndSummaryForNonMelixStepErrors() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("generic-failing.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "generic-failing-pipeline",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "/tmp/melix-dev-text",
+                "model_id": "melix-dev-text",
+                "model_kind": "text"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationError(NonMelixPipelineTestError(message: "transport disconnected"))
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-generic-failing-pipeline"
+                    )
+                )
+            )
+            Issue.record("Expected generic pipeline step error to fail.")
+        } catch {
+            #expect(String(describing: error).contains("transport disconnected"))
+        }
+
+        let summary = try #require(try parseJSONFile(receiptURL.appendingPathComponent("run.json").path))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let errorReceiptPath = try #require(steps.first?["receipt_path"] as? String)
+        let errorReceipt = try #require(try parseJSONFile(errorReceiptPath))
+        let receiptError = try #require(errorReceipt["error"] as? [String: Any])
+
+        #expect(summary["status"] as? String == "failed")
+        #expect(steps.first?["status"] as? String == "failed")
+        #expect(errorReceipt["schema_version"] as? String == "melix.cli.error.v1")
+        #expect(receiptError["code"] as? String == "runtime")
+        #expect((receiptError["message"] as? String)?.contains("transport disconnected") == true)
+    }
+
+    @Test("pipeline resume skips successful receipts and rejects changed hashes")
+    func pipelineResumeSkipsSuccessfulReceiptsAndRejectsChangedHashes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("resume.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "resume-pipeline",
+          "inputs": {
+            "model_id": "melix-dev-text",
+            "model_path": "/tmp/melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "${inputs.model_path}",
+                "model_id": "${inputs.model_id}",
+                "model_kind": "text"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let firstClient = StubControlPlaneXPCClient()
+        await firstClient.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/melix-dev-text",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-text",
+                  "ext": {
+                    "melix.source_kind": "local_path",
+                    "melix.source_locator": "/tmp/melix-dev-text"
+                  }
+                }
+                """#
+            )
+        )
+        _ = try await MelixCLIRunner(client: firstClient).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-resume-pipeline"
+                )
+            )
+        )
+
+        let resumeClient = StubControlPlaneXPCClient()
+        let resumedOutput = try await MelixCLIRunner(client: resumeClient).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-resume-pipeline",
+                    resume: true
+                )
+            )
+        )
+        let resumedSummary = try #require(parseJSONObject(resumedOutput))
+        let resumedMetrics = try #require(resumedSummary["metrics"] as? [String: Any])
+        let resumedSteps = try #require(resumedSummary["steps"] as? [[String: Any]])
+
+        #expect(resumedSteps.first?["status"] as? String == "skipped")
+        #expect(resumedMetrics["melix.pipeline.resume_skipped_count"] as? Double == 1)
+        #expect(await resumeClient.lastModelOperationCall == nil)
+
+        try Data(pipelineJSON.replacingOccurrences(of: "melix-dev-text", with: "melix-dev-text-v2").utf8)
+            .write(to: pipelineURL)
+        do {
+            _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-resume-pipeline",
+                        resume: true
+                    )
+                )
+            )
+            Issue.record("Expected resume to reject changed pipeline and input hashes.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("Pipeline resume metadata does not match the current pipeline or inputs."))
+        }
+    }
+
+    @Test("pipeline from step rejects unknown targets and persists a failed summary")
+    func pipelineFromStepRejectsUnknownTargetsAndPersistsAFailedSummary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("from-step-unknown.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "from-step-unknown",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "rescan_registry",
+              "command": "model.roots.rescan",
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-from-step-unknown",
+                    dryRun: true
+                )
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-from-step-unknown",
+                        fromStepID: "missing_step",
+                        dryRun: true
+                    )
+                )
+            )
+            Issue.record("Expected unknown --from-step to fail.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("--from-step missing_step does not match any pipeline step."))
+        }
+
+        let summary = try #require(try parseJSONFile(receiptURL.appendingPathComponent("run.json").path))
+        let metrics = try #require(summary["metrics"] as? [String: Any])
+        let error = try #require(summary["error"] as? [String: Any])
+
+        #expect(summary["status"] as? String == "failed")
+        #expect(error["code"] as? String == "runtime")
+        #expect(error["message"] as? String == "--from-step missing_step does not match any pipeline step.")
+        #expect(metrics["melix.pipeline.failed_step_count"] as? Double == 1)
+        #expect((metrics["melix.pipeline.receipt_write_ms"] as? Double ?? 0) > 0)
+    }
+
+    @Test("pipeline from step loads prior receipts and reruns from the requested step")
+    func pipelineFromStepLoadsPriorReceiptsAndRerunsFromRequestedStep() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("from-step.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "from-step",
+          "inputs": {
+            "model_path": "/tmp/melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "${inputs.model_path}",
+                "model_id": "melix-dev-text",
+                "model_kind": "text"
+              }
+            },
+            {
+              "id": "chat",
+              "command": "chat.run",
+              "args": {
+                "model_id": "${steps.materialize.result.model_id}",
+                "message": "Say OK."
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let firstClient = StubControlPlaneXPCClient()
+        await firstClient.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/melix-dev-text",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-text",
+                  "managed_model_path": "/tmp/melix-managed/melix-dev-text"
+                }
+                """#
+            )
+        )
+        await firstClient.setChatExecution(
+            requestID: "chat-initial",
+            modelID: "melix-dev-text",
+            events: [
+                .tokenDelta("OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+        _ = try await MelixCLIRunner(client: firstClient).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-from-step"
+                )
+            )
+        )
+        let materializeReceiptURL = receiptURL
+            .appendingPathComponent("steps")
+            .appendingPathComponent("001-materialize.json")
+        let materializeReceiptBefore = try Data(contentsOf: materializeReceiptURL)
+
+        let resumeClient = StubControlPlaneXPCClient()
+        await resumeClient.setChatExecution(
+            requestID: "chat-rerun",
+            modelID: "melix-dev-text",
+            events: [
+                .tokenDelta("RERUN_OK"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+        let output = try await MelixCLIRunner(client: resumeClient).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-from-step",
+                    fromStepID: "chat"
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let chatRequest = try #require(await resumeClient.lastChatRequest)
+        let materializeReceiptAfter = try Data(contentsOf: materializeReceiptURL)
+
+        #expect(steps.map { $0["status"] as? String } == ["loaded", "succeeded"])
+        #expect(materializeReceiptAfter == materializeReceiptBefore)
+        #expect(chatRequest.modelID == "melix-dev-text")
+    }
+
+    @Test("pipeline resume rejects stale step receipts")
+    func pipelineResumeRejectsStaleStepReceipts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("resume-stale.pipeline.json")
+        let receiptURL = root.appendingPathComponent("receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "resume-stale",
+          "inputs": {
+            "model_id": "melix-dev-text",
+            "model_path": "/tmp/melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "materialize",
+              "command": "model.import",
+              "args": {
+                "path": "${inputs.model_path}",
+                "model_id": "${inputs.model_id}",
+                "model_kind": "text"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let firstClient = StubControlPlaneXPCClient()
+        await firstClient.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-managed/melix-dev-text",
+                manifestJSON: #"""
+                {
+                  "model_id": "melix-dev-text",
+                  "managed_model_path": "/tmp/melix-managed/melix-dev-text"
+                }
+                """#
+            )
+        )
+        _ = try await MelixCLIRunner(client: firstClient).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-resume-stale"
+                )
+            )
+        )
+
+        let receiptPath = receiptURL
+            .appendingPathComponent("steps")
+            .appendingPathComponent("001-materialize.json")
+        var receipt = try #require(try parseJSONFile(receiptPath.path))
+        receipt["command_id"] = "chat.run"
+        try writeJSONObjectForTest(receipt, to: receiptPath)
+
+        do {
+            _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                .pipelineRun(
+                    .init(
+                        filePath: pipelineURL.path,
+                        receiptDir: receiptURL.path,
+                        traceID: "trace-resume-stale",
+                        resume: true
+                    )
+                )
+            )
+            Issue.record("Expected resume to reject a stale step receipt.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("Pipeline receipt for step materialize does not match the current command model.import."))
+        }
+    }
+
+    @Test("pipeline rejects invalid schema and argument value types")
+    func pipelineRejectsInvalidSchemaAndArgumentValueTypes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let cases: [(name: String, json: String, expected: String)] = [
+            (
+                "inputs-array",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-inputs",
+                  "inputs": [],
+                  "steps": [
+                    {"id": "rescan", "command": "model.roots.rescan", "args": {}}
+                  ]
+                }
+                """#,
+                "Pipeline inputs must be a JSON object."
+            ),
+            (
+                "args-array",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-args",
+                  "inputs": {},
+                  "steps": [
+                    {"id": "rescan", "command": "model.roots.rescan", "args": []}
+                  ]
+                }
+                """#,
+                "Pipeline step rescan args must be a JSON object."
+            ),
+            (
+                "when-array",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-when",
+                  "inputs": {},
+                  "steps": [
+                    {"id": "rescan", "command": "model.roots.rescan", "args": {}, "when": []}
+                  ]
+                }
+                """#,
+                "Pipeline step rescan when must be a JSON object."
+            ),
+            (
+                "checks-array",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-checks",
+                  "inputs": {},
+                  "steps": [
+                    {"id": "rescan", "command": "model.roots.rescan", "args": {}, "checks": []}
+                  ]
+                }
+                """#,
+                "Pipeline step rescan checks must be a JSON object."
+            ),
+            (
+                "invalid-bool",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-bool",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "matrix",
+                      "command": "bench.matrix.run",
+                      "args": {
+                        "allow_large_matrix": "maybe"
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument allow_large_matrix must be a boolean."
+            ),
+            (
+                "invalid-uint-array",
+                #"""
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "invalid-uint-array",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "bench",
+                      "command": "bench.run",
+                      "args": {
+                        "context_lengths": ["not-a-number"]
+                      }
+                    }
+                  ]
+                }
+                """#,
+                "Pipeline command argument context_lengths must be an array of unsigned integers."
+            ),
+        ]
+
+        for item in cases {
+            let pipelineURL = root.appendingPathComponent("\(item.name).pipeline.json")
+            let receiptURL = root.appendingPathComponent("\(item.name)-receipts")
+            try Data(item.json.utf8).write(to: pipelineURL)
+
+            do {
+                _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                    .pipelineRun(
+                        .init(
+                            filePath: pipelineURL.path,
+                            receiptDir: receiptURL.path,
+                            traceID: "trace-\(item.name)",
+                            dryRun: true
+                        )
+                    )
+                )
+                Issue.record("Expected invalid pipeline case \(item.name) to fail.")
+            } catch let error as MelixCLIError {
+                #expect(error.localizedDescription == item.expected)
+            }
+        }
+    }
+
+    @Test("pipeline validates skipped commands without resolving skipped arguments")
+    func pipelineValidatesSkippedCommandsWithoutResolvingSkippedArguments() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let validSkippedPipelineURL = root.appendingPathComponent("valid-skipped.pipeline.json")
+        try Data(
+            #"""
+            {
+              "schema_version": "melix.pipeline.v1",
+              "name": "valid-skipped",
+              "inputs": {
+                "mode": "local"
+              },
+              "steps": [
+                {
+                  "id": "download",
+                  "command": "model.hub.download",
+                  "when": {
+                    "input": "mode",
+                    "equals": "hub"
+                  },
+                  "args": {
+                    "repo_id": "${inputs.repo_id}"
+                  }
+                }
+              ]
+            }
+            """#.utf8
+        )
+        .write(to: validSkippedPipelineURL)
+
+        let summaryText = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+            .pipelineRun(
+                .init(
+                    filePath: validSkippedPipelineURL.path,
+                    receiptDir: root.appendingPathComponent("valid-skipped-receipts").path,
+                    traceID: "trace-valid-skipped",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(summaryText))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        #expect(steps.first?["status"] as? String == "skipped")
+
+        let invalidSkippedPipelineURL = root.appendingPathComponent("invalid-skipped.pipeline.json")
+        try Data(
+            #"""
+            {
+              "schema_version": "melix.pipeline.v1",
+              "name": "invalid-skipped",
+              "inputs": {
+                "mode": "local"
+              },
+              "steps": [
+                {
+                  "id": "unsupported",
+                  "command": "unsupported.command",
+                  "when": {
+                    "input": "mode",
+                    "equals": "hub"
+                  },
+                  "args": {
+                    "ignored": "${inputs.missing}"
+                  }
+                }
+              ]
+            }
+            """#.utf8
+        )
+        .write(to: invalidSkippedPipelineURL)
+
+        do {
+            _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                .pipelineRun(
+                    .init(
+                        filePath: invalidSkippedPipelineURL.path,
+                        receiptDir: root.appendingPathComponent("invalid-skipped-receipts").path,
+                        traceID: "trace-invalid-skipped",
+                        dryRun: true
+                    )
+                )
+            )
+            Issue.record("Expected skipped unsupported commands to be rejected.")
+        } catch let error as MelixCLIError {
+            #expect(error == .usage("Unsupported pipeline command unsupported.command."))
+        }
+    }
+
+    @Test("pipeline when equality compares nested JSON values structurally")
+    func pipelineWhenEqualityComparesNestedJSONValuesStructurally() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("nested-when.pipeline.json")
+        let receiptURL = root.appendingPathComponent("nested-when-receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "nested-when",
+          "inputs": {
+            "gate": {
+              "enabled": true,
+              "labels": ["base", "derived"],
+              "profile": {
+                "name": "acceptance",
+                "limits": [1, 2, 3]
+              }
+            }
+          },
+          "steps": [
+            {
+              "id": "rescan",
+              "command": "model.roots.rescan",
+              "when": {
+                "input": "gate",
+                "equals": {
+                  "profile": {
+                    "limits": [1, 2, 3],
+                    "name": "acceptance"
+                  },
+                  "labels": ["base", "derived"],
+                  "enabled": true
+                }
+              },
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let summaryText = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient()
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-nested-when",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(summaryText))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+
+        #expect(steps.first?["status"] as? String == "planned")
+    }
+
+    @Test("pipeline when equality rejects structurally different JSON values")
+    func pipelineWhenEqualityRejectsStructurallyDifferentJSONValues() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("mismatched-when.pipeline.json")
+        let receiptURL = root.appendingPathComponent("mismatched-when-receipts")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "mismatched-when",
+          "inputs": {
+            "null_gate": null,
+            "array_gate": ["base"],
+            "object_gate": {"name": "acceptance", "limit": 1},
+            "bool_gate": true,
+            "mixed_gate": ["base"]
+          },
+          "steps": [
+            {
+              "id": "null_match",
+              "command": "model.roots.rescan",
+              "when": {"input": "null_gate", "equals": null},
+              "args": {}
+            },
+            {
+              "id": "array_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "array_gate", "equals": ["base", "derived"]},
+              "args": {}
+            },
+            {
+              "id": "object_count_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "object_gate", "equals": {"name": "acceptance"}},
+              "args": {}
+            },
+            {
+              "id": "object_value_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "object_gate", "equals": {"name": "acceptance", "limit": 2}},
+              "args": {}
+            },
+            {
+              "id": "bool_type_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "bool_gate", "equals": "true"},
+              "args": {}
+            },
+            {
+              "id": "mixed_type_mismatch",
+              "command": "model.roots.rescan",
+              "when": {"input": "mixed_gate", "equals": {"0": "base"}},
+              "args": {}
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let summaryText = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient()
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    receiptDir: receiptURL.path,
+                    traceID: "trace-mismatched-when",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(summaryText))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let statuses = Dictionary(uniqueKeysWithValues: steps.compactMap { step -> (String, String)? in
+            guard let id = step["id"] as? String,
+                  let status = step["status"] as? String
+            else {
+                return nil
+            }
+            return (id, status)
+        })
+
+        #expect(statuses["null_match"] == "planned")
+        #expect(statuses["array_mismatch"] == "skipped")
+        #expect(statuses["object_count_mismatch"] == "skipped")
+        #expect(statuses["object_value_mismatch"] == "skipped")
+        #expect(statuses["bool_type_mismatch"] == "skipped")
+        #expect(statuses["mixed_type_mismatch"] == "skipped")
+    }
+
+    @Test("pipeline rejects invalid check field types")
+    func pipelineRejectsInvalidCheckFieldTypes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let cases: [(name: String, checks: String, expected: String)] = [
+            (
+                "required-fields-string",
+                #""required_result_fields": "model_id""#,
+                "Pipeline step import checks.required_result_fields must be an array of strings."
+            ),
+            (
+                "equals-array",
+                #""equals": []"#,
+                "Pipeline step import checks.equals must be a JSON object."
+            ),
+            (
+                "artifact-path-number",
+                #""artifact_path_exists": [1]"#,
+                "Pipeline step import checks.artifact_path_exists must be an array of strings."
+            ),
+        ]
+
+        for item in cases {
+            let pipelineURL = root.appendingPathComponent("\(item.name).pipeline.json")
+            try Data(
+                """
+                {
+                  "schema_version": "melix.pipeline.v1",
+                  "name": "\(item.name)",
+                  "inputs": {},
+                  "steps": [
+                    {
+                      "id": "import",
+                      "command": "model.import",
+                      "args": {
+                        "path": "/tmp/model",
+                        "model_id": "melix-dev-text"
+                      },
+                      "checks": {
+                        \(item.checks)
+                      }
+                    }
+                  ]
+                }
+                """.utf8
+            )
+            .write(to: pipelineURL)
+
+            do {
+                _ = try await MelixCLIRunner(client: StubControlPlaneXPCClient()).run(
+                    .pipelineRun(
+                        .init(
+                            filePath: pipelineURL.path,
+                            receiptDir: root.appendingPathComponent("\(item.name)-receipts").path,
+                            traceID: "trace-\(item.name)",
+                            dryRun: true
+                        )
+                    )
+                )
+                Issue.record("Expected invalid check case \(item.name) to fail.")
+            } catch let error as MelixCLIError {
+                #expect(error.localizedDescription == item.expected)
+            }
+        }
+    }
+
     @Test("public model ops commands forward convert quantize and upload payloads")
     func publicModelOpsCommandsForwardConvertQuantizeAndUploadPayloads() async throws {
         let client = StubControlPlaneXPCClient()
@@ -976,7 +2586,7 @@ struct MelixCLIRunnerTests {
 
         let output = try await MelixCLIRunner(client: client).run(.loraList(.init()))
 
-        #expect(output == "No adapters found.\n")
+        #expect(output == "No adapters or derived models found.\n")
     }
 
     @Test("lora train forwards dataset, adapter, repo, and tuning parameters")
@@ -2827,10 +4437,10 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "eval-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,score_name,score_value,correct_count,incorrect_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
-        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,6,2,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
-        #expect(samplesCSV.contains("job_id,suite_id,id,task_kind,correct,expected,predicted,question,raw_response,time_s,parse_status,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
-        #expect(samplesCSV.contains("eval-1,mmlu,sample-1,text-generation,true,4,4,2+2?,4,0.01,parsed,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
+        #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
+        #expect(summaryCSV.contains("eval-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,mmlu,mmlu.dev.v1,8,eval.mmlu.accuracy,0.75,8,8,8,0,0.1,improvement,0.12,0.41,0.1,0.38,12.5,1712400000000"))
+        #expect(samplesCSV.contains("job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
+        #expect(samplesCSV.contains("eval-1,mmlu,sample-1,text-generation,4,4,2+2?,4,1.0,0.01,extracted,validated,,text,,python,solve,compiled,ok,ok,passed,2,2,,math,algebra"))
         #expect(samplesJSONL.contains("\"sample_id\":\"sample-1\""))
         #expect(samplesJSONL.contains("\"task_kind\":\"text-generation\""))
         #expect(samplesJSONL.contains("\"code_language\":\"python\""))
@@ -2864,8 +4474,9 @@ struct MelixCLIRunnerTests {
         #expect(response["row_count"] as? Int == 1)
         #expect(summaryCSV.contains("job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds"))
         #expect(summaryCSV.contains("eval-compare-1,melix-dev-text,melix-dev-text-lora-a,mbpp,mbpp.dev.v1,2,1,0,1,0,0.5,1.0,0.5,1.75"))
-        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,question,expected,base_predicted,target_predicted"))
+        #expect(samplesCSV.contains("job_id,suite_id,dataset_id,sample_id,target_model_id,input_text,target,base_extracted_result,target_extracted_result,base_raw_response,target_raw_response,base_typed_score,target_typed_score,outcome,regression_kind,base_time_s,target_time_s,base_extraction_status,target_extraction_status,base_validation_status,target_validation_status,base_failure_reason,target_failure_reason,base_parse_status,target_parse_status,code_language,code_entry_point"))
         #expect(samplesCSV.contains("eval-compare-1,mbpp,mbpp.dev.v1,sample-1,melix-dev-text-lora-a,Write solve(n) that returns n,solve,\"def solve(n):"))
+        #expect(samplesCSV.contains("parsed_code_fallback,parsed_code_fallback"))
         #expect(samplesCSV.contains("python,solve,compiled,compiled,ok,ok,ok,ok,failed,passed,1,2,2,2,assertion failed,"))
         #expect(samplesJSONL.contains("\"target_model_id\":\"melix-dev-text-lora-a\""))
         #expect(samplesJSONL.contains("\"base_code_failure_detail\":\"assertion failed\""))
@@ -3405,6 +5016,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
+    private var modelOperationError: Error?
     private var chatRequestID = "stub-chat"
     private var chatModelID = "melix-dev-text"
     private var chatEvents: [ControlPlaneChatStreamEvent] = []
@@ -3415,6 +5027,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setModelOperationResult(_ result: Melix_Controlplane_V1_ModelOperationResult) {
         self.modelOperationResult = result
+    }
+
+    func setModelOperationError(_ error: Error?) {
+        self.modelOperationError = error
     }
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
@@ -3592,6 +5208,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         kvQuant: String,
         ext: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        if let modelOperationError {
+            throw modelOperationError
+        }
         lastModelOperationCall = ModelOperationCall(
             modelID: modelID,
             operation: operation,
@@ -3822,11 +5441,29 @@ private func parseJSONObject(_ text: String) -> [String: Any]? {
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 }
 
+private func writeJSONObjectForTest(_ object: [String: Any], to url: URL) throws {
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url)
+}
+
 private func parseJSONArray(_ text: String) -> [Any]? {
     guard let data = text.data(using: .utf8) else {
         return nil
     }
     return (try? JSONSerialization.jsonObject(with: data)) as? [Any]
+}
+
+private func parseJSONFile(_ path: String) throws -> [String: Any]? {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+private struct NonMelixPipelineTestError: Error, CustomStringConvertible {
+    let message: String
+
+    var description: String {
+        message
+    }
 }
 
 private func makeBenchmarkExportBundleJSON() -> String {

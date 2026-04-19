@@ -6,7 +6,7 @@
 
 | Resource | Path / URL |
 |---|---|
-| Logo SVG | `assets/melix_logo.svg` |
+| Logo SVG | `assets/melix_logo.svg` (mirrored byte-for-byte into the macOS app resource bundle) |
 | macOS app codebase | `github.com/Keith-CY/melix` (branch `main`) |
 | Design brief | Provided inline (see Visual Foundations) |
 

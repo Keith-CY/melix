@@ -820,6 +820,58 @@ public struct ServerSessionIDOptions: Equatable, Sendable {
     }
 }
 
+public struct PipelineRunOptions: Equatable, Sendable {
+    public let filePath: String
+    public let inputsPath: String
+    public let receiptDir: String
+    public let traceID: String
+    public let resume: Bool
+    public let fromStepID: String
+    public let dryRun: Bool
+
+    public init(
+        filePath: String,
+        inputsPath: String = "",
+        receiptDir: String = "",
+        traceID: String = "",
+        resume: Bool = false,
+        fromStepID: String = "",
+        dryRun: Bool = false
+    ) {
+        self.filePath = filePath
+        self.inputsPath = inputsPath
+        self.receiptDir = receiptDir
+        self.traceID = traceID
+        self.resume = resume
+        self.fromStepID = fromStepID
+        self.dryRun = dryRun
+    }
+}
+
+public enum MelixCLIOutputFormat: String, Equatable, Sendable {
+    case legacy
+    case jsonV1 = "json-v1"
+}
+
+public struct MelixCLIInvocation: Equatable, Sendable {
+    public let command: MelixCLICommand
+    public let outputFormat: MelixCLIOutputFormat
+    public let traceID: String
+    public let parseDurationMS: Double
+
+    public init(
+        command: MelixCLICommand,
+        outputFormat: MelixCLIOutputFormat = .legacy,
+        traceID: String = "",
+        parseDurationMS: Double = 0
+    ) {
+        self.command = command
+        self.outputFormat = outputFormat
+        self.traceID = traceID
+        self.parseDurationMS = parseDurationMS
+    }
+}
+
 public enum MelixCLICommand: Equatable, Sendable {
     case doctor(DoctorOptions)
     case convert(ConvertOptions)
@@ -875,6 +927,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case evalExportSummaryCSV(EvalExportOptions)
     case evalExportSamplesCSV(EvalExportOptions)
     case evalExportSamplesJSONL(EvalExportOptions)
+    case pipelineRun(PipelineRunOptions)
 }
 
 public enum MelixCLIError: Error, LocalizedError, Equatable, Sendable {
@@ -898,7 +951,31 @@ public enum MelixCLIError: Error, LocalizedError, Equatable, Sendable {
 }
 
 public enum MelixCLIParser {
+    public static func parseInvocation(_ arguments: [String]) throws -> MelixCLIInvocation {
+        let parseStart = DispatchTime.now()
+        let (format, strippedArguments) = try extractOutputFormat(arguments)
+        let command = try parseCommand(strippedArguments)
+        let parseDurationMS = elapsedMilliseconds(since: parseStart)
+        return MelixCLIInvocation(
+            command: command,
+            outputFormat: format,
+            traceID: traceID(for: command),
+            parseDurationMS: parseDurationMS
+        )
+    }
+
+    public static func requestedOutputFormat(_ arguments: [String]) -> MelixCLIOutputFormat {
+        if let format = try? extractOutputFormat(arguments).0 {
+            return format
+        }
+        return arguments.contains("--format") ? .jsonV1 : .legacy
+    }
+
     public static func parse(_ arguments: [String]) throws -> MelixCLICommand {
+        try parseCommand(arguments)
+    }
+
+    private static func parseCommand(_ arguments: [String]) throws -> MelixCLICommand {
         guard let group = arguments.first else {
             throw MelixCLIError.usage(Self.usageText)
         }
@@ -924,6 +1001,8 @@ public enum MelixCLIParser {
             return try parseBench(tail)
         case "eval":
             return try parseEval(tail)
+        case "pipeline":
+            return try parsePipeline(tail)
         default:
             throw MelixCLIError.usage(Self.usageText)
         }
@@ -985,7 +1064,42 @@ public enum MelixCLIParser {
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
+      melix pipeline run --file PIPELINE.json [--inputs INPUTS.json] [--receipt-dir PATH] [--trace-id ID] [--resume] [--from-step STEP_ID] [--dry-run] [--format json-v1]
     """
+
+    private static func extractOutputFormat(
+        _ arguments: [String]
+    ) throws -> (MelixCLIOutputFormat, [String]) {
+        var stripped: [String] = []
+        var format = MelixCLIOutputFormat.legacy
+        var index = 0
+        while index < arguments.count {
+            let token = arguments[index]
+            guard token == "--format" else {
+                stripped.append(token)
+                index += 1
+                continue
+            }
+            let valueIndex = index + 1
+            guard valueIndex < arguments.count else {
+                throw MelixCLIError.missingValue("--format")
+            }
+            let value = arguments[valueIndex]
+            guard let parsedFormat = MelixCLIOutputFormat(rawValue: value) else {
+                throw MelixCLIError.usage("Invalid value for --format. Expected json-v1.")
+            }
+            format = parsedFormat
+            index += 2
+        }
+        return (format, stripped)
+    }
+
+    private static func traceID(for command: MelixCLICommand) -> String {
+        if case .pipelineRun(let options) = command {
+            return options.traceID
+        }
+        return ""
+    }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
         let values = try ArgumentCursor(arguments: arguments).parse()
@@ -1835,6 +1949,30 @@ public enum MelixCLIParser {
         }
     }
 
+    private static func parsePipeline(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        guard action == "run" else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard let filePath = values.single["--file"], !filePath.isEmpty else {
+            throw MelixCLIError.missingRequired("--file is required for melix pipeline run.")
+        }
+        return .pipelineRun(
+            PipelineRunOptions(
+                filePath: filePath,
+                inputsPath: values.single["--inputs"] ?? "",
+                receiptDir: values.single["--receipt-dir"] ?? "",
+                traceID: values.single["--trace-id"] ?? "",
+                resume: values.flags.contains("--resume"),
+                fromStepID: values.single["--from-step"] ?? "",
+                dryRun: values.flags.contains("--dry-run")
+            )
+        )
+    }
+
     private static func parseEvalCompare(_ arguments: [String]) throws -> MelixCLICommand {
         if let action = arguments.first,
            ["export-summary-csv", "export-samples-csv", "export-samples-jsonl"].contains(action)
@@ -2100,6 +2238,8 @@ private struct ArgumentCursor {
             "--mask-prompt",
             "--gradient-checkpointing",
             "--allow-large-matrix",
+            "--resume",
+            "--dry-run",
         ]
         while index < arguments.count {
             let token = arguments[index]
@@ -2189,7 +2329,8 @@ public struct MelixCLIProcessExecutor: Sendable {
 public actor MelixCLIRunner {
     private let client: any ControlPlaneXPCClient
     private let operatorSessionStore: any MelixOperatorSessionStoring
-    private let environment: [String: String]
+    /// Package-visible so the pipeline extension can derive MELIX_HOME-compatible receipt roots.
+    let environment: [String: String]
     private let commandExecutor: MelixCLICommandExecutor?
 
     public init(
@@ -2467,6 +2608,8 @@ public actor MelixCLIRunner {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
+        case .pipelineRun(let options):
+            return try await runPipeline(options)
         case .doctor(let options):
             let report = try await client.runDoctor()
             if options.json {

@@ -70,6 +70,28 @@ struct DesktopFoundationViewTests {
         #expect(MelixDesignTokens.BubbleOpacity.error == 0.12)
     }
 
+    @Test("logo svg resource mirrors the design system asset")
+    func logoSVGResourceMirrorsDesignSystemAsset() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let designSystemLogo = root.appendingPathComponent("docs/design-system/assets/melix_logo.svg")
+        let appLogo = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Resources/Branding/melix_logo.svg"
+        )
+
+        #expect(try Data(contentsOf: appLogo) == Data(contentsOf: designSystemLogo))
+    }
+
+    @Test("repository root helper rejects unrelated roots")
+    func repositoryRootHelperRejectsUnrelatedRoots() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(throws: DesktopFoundationTestError.repositoryRootNotFound) {
+            try repositoryRootForDesktopFoundationTests(startingAt: root)
+        }
+    }
+
     @Test("desktop banner recovery priority is explicit")
     func desktopBannerRecoveryPriorityIsExplicit() {
         let recoverableWarning = DesktopBannerState(
@@ -3590,6 +3612,34 @@ struct DesktopFoundationViewTests {
         #expect(foundation.models.isEmpty)
         #expect(hasResidencyCard)
     }
+}
+
+private enum DesktopFoundationTestError: Error {
+    case repositoryRootNotFound
+}
+
+private func repositoryRootForDesktopFoundationTests(
+    startingAt start: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+) throws -> URL {
+    var current = start
+    for _ in 0..<8 {
+        let designSystemLogo = current.appendingPathComponent("docs/design-system/assets/melix_logo.svg")
+        let appLogo = current.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Resources/Branding/melix_logo.svg"
+        )
+        if FileManager.default.fileExists(atPath: current.appendingPathComponent("AGENTS.md").path),
+           FileManager.default.fileExists(atPath: designSystemLogo.path),
+           FileManager.default.fileExists(atPath: appLogo.path)
+        {
+            return current
+        }
+        let parent = current.deletingLastPathComponent()
+        guard parent.path != current.path else {
+            break
+        }
+        current = parent
+    }
+    throw DesktopFoundationTestError.repositoryRootNotFound
 }
 
 @Suite("Phase 8 Window UI Acceptance Runner", .serialized)

@@ -475,7 +475,7 @@ private struct DesktopChatTranscriptRowView: View {
         .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
     }
 
-    private var backgroundStyle: Color {
+    private var backgroundStyle: some ShapeStyle {
         switch entry.kind {
         case .user:
             return MelixDesignTokens.BubbleTint.user.opacity(MelixDesignTokens.BubbleOpacity.user)

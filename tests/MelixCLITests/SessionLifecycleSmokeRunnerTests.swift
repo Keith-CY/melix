@@ -5,6 +5,9 @@ import Testing
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
+private let liveRuntimeSmokeTestsEnabled =
+    ProcessInfo.processInfo.environment["MELIX_RUN_LIVE_RUNTIME_TESTS"] == "1"
+
 @Suite("Session Lifecycle Smoke")
 struct SessionLifecycleSmokeRunnerTests {
     @Test("runner records pause sleep wake and restart evidence")
@@ -257,9 +260,12 @@ struct SessionLifecycleSmokeRunnerTests {
         )
     }
 
-    @Test("local runtime factory powers the default CLI runner snapshot path")
+    @Test(
+        "local runtime factory powers the default CLI runner snapshot path",
+        .enabled(if: liveRuntimeSmokeTestsEnabled)
+    )
     func localRuntimeFactoryPowersDefaultCLIRunnerSnapshotPath() async throws {
-        let runner = MelixCLIRunner(environment: [:])
+        let runner = MelixCLIRunner(environment: ProcessInfo.processInfo.environment)
         let output = try await runner.run(.serverSnapshot(.init(json: true)))
 
         #expect(output.contains("\"server_state\""))
