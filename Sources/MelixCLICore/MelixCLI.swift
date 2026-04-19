@@ -3052,13 +3052,15 @@ public actor MelixCLIRunner {
         case .benchRun(let options):
             let result = try await runBenchmark(options)
             if options.json {
-                return try prettyJSON(
-                    [
-                        "report_path": result.reportPath,
-                        "report_markdown": result.reportMarkdown,
-                        "metrics": result.metrics,
-                    ]
-                )
+                var payload: [String: Any] = [
+                    "report_path": result.reportPath,
+                    "report_markdown": result.reportMarkdown,
+                    "metrics": result.metrics,
+                ]
+                if let job = result.job {
+                    payload["job"] = makeBenchmarkJobPayload(job)
+                }
+                return try prettyJSON(payload)
             }
             return result.reportMarkdown.isEmpty ? result.reportPath : result.reportMarkdown
         case .benchList(let options):
@@ -4474,6 +4476,23 @@ public actor MelixCLIRunner {
                     },
                 ]
             },
+        ]
+    }
+
+    private func makeBenchmarkJobPayload(_ job: Melix_Controlplane_V1_BenchmarkJobSummary) -> [String: Any] {
+        [
+            "schema_version": job.schemaVersion,
+            "job_id": job.jobID,
+            "model_id": job.modelID,
+            "task_kind": job.taskKind,
+            "source_repo": job.sourceRepo,
+            "suites": job.suites,
+            "benchmark_mode": job.benchmarkMode,
+            "status": job.status,
+            "output_dir": job.outputDir,
+            "created_at_unix_ms": job.createdAtUnixMs,
+            "updated_at_unix_ms": job.updatedAtUnixMs,
+            "parameters": job.parameters,
         ]
     }
 

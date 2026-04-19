@@ -132,11 +132,18 @@ public struct ControlPlaneBenchResult: Equatable, Sendable {
     public let reportPath: String
     public let reportMarkdown: String
     public let metrics: [String: Double]
+    public let job: Melix_Controlplane_V1_BenchmarkJobSummary?
 
-    public init(reportPath: String, reportMarkdown: String, metrics: [String: Double]) {
+    public init(
+        reportPath: String,
+        reportMarkdown: String,
+        metrics: [String: Double],
+        job: Melix_Controlplane_V1_BenchmarkJobSummary? = nil
+    ) {
         self.reportPath = reportPath
         self.reportMarkdown = reportMarkdown
         self.metrics = metrics
+        self.job = job
     }
 }
 
@@ -990,7 +997,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
             ControlPlaneBenchResult(
                 reportPath: response.ops.reportPath,
                 reportMarkdown: response.ops.reportMarkdown,
-                metrics: response.ops.metrics.values
+                metrics: response.ops.metrics.values,
+                job: response.ops.hasBenchmarkJob ? response.ops.benchmarkJob : nil
             )
         }
     }

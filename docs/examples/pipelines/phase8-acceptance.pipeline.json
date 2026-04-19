@@ -31,7 +31,6 @@
     "bench_repeats": 1,
     "bench_sample_size": 4,
     "bench_batch_factor": 1,
-    "bench_job_id": "replace-with-benchmark-job-id-when-exporting-history",
     "matrix_suites": [
       "smoke"
     ],
@@ -208,7 +207,8 @@
       "checks": {
         "required_result_fields": [
           "report_path",
-          "metrics"
+          "metrics",
+          "job.job_id"
         ]
       }
     },
@@ -255,7 +255,7 @@
       "id": "export_benchmark_csv",
       "command": "bench.export-csv",
       "args": {
-        "job_id": "${inputs.bench_job_id}",
+        "job_id": "${steps.run_benchmark.result.job.job_id}",
         "output": "${inputs.acceptance_output_dir}/benchmark.csv"
       },
       "checks": {
