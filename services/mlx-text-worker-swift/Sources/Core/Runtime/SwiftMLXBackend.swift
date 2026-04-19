@@ -772,6 +772,8 @@ private func makePreparedDecodeEvents(
             var decodeModelCallCount = 0
             var decodeTokenEvalTotalMicros = 0
             var decodeTokenEvalCallCount = 0
+            var decodeModelEvalSyncTotalMicros = 0
+            var decodeModelEvalSyncCallCount = 0
             var decodeQuantizeTotalMicros = 0
             var prefillQuantizeMicros = decodeState.prefillQuantizeMicros
 
@@ -811,6 +813,9 @@ private func makePreparedDecodeEvents(
                 acceleration: acceleration,
                 turboQuantCandidateProbeEnabled: turboQuantCandidateProbeEnabled
             )
+            let shouldForceModelEvalProbe =
+                ProcessInfo.processInfo.environment["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
+                && normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
             let startedAt = Date.timeIntervalSinceReferenceDate
 
             while parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
@@ -862,6 +867,13 @@ private func makePreparedDecodeEvents(
                 )
                 decodeModelCallCount += 1
                 decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
+                    enabled: shouldForceModelEvalProbe,
+                    logits: output.logits
+                ) {
+                    decodeModelEvalSyncCallCount += 1
+                    decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
+                }
                 if shouldMaintainQuantizedDecodeCache {
                     let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
                     maybeQuantizeKVCache(
@@ -891,6 +903,8 @@ private func makePreparedDecodeEvents(
                 decodeModelCallCount: decodeModelCallCount,
                 decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
                 decodeTokenEvalCallCount: decodeTokenEvalCallCount,
+                decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
+                decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
                 decodeLoopTotalMicros: decodeLoopTotalMicros,
                 decodeTokenCount: generatedTokenCount,
@@ -955,6 +969,9 @@ private struct QuantizedKVCacheTimingTotals {
     var appendTotalMicros = 0
     var materializeTotalMicros = 0
     var materializeCallCount = 0
+    var fusedAttentionTotalMicros = 0
+    var fusedAttentionCallCount = 0
+    var fusedAttentionRouteTotalMicros = 0
 }
 
 private func makeActiveKVProbeSummary(
@@ -965,6 +982,8 @@ private func makeActiveKVProbeSummary(
     decodeModelCallCount: Int,
     decodeTokenEvalTotalMicros: Int,
     decodeTokenEvalCallCount: Int,
+    decodeModelEvalSyncTotalMicros: Int,
+    decodeModelEvalSyncCallCount: Int,
     decodeQuantizeTotalMicros: Int,
     decodeLoopTotalMicros: Int,
     decodeTokenCount: Int,
@@ -1014,6 +1033,8 @@ private func makeActiveKVProbeSummary(
         decodeModelCallCount: decodeModelCallCount,
         decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
         decodeTokenEvalCallCount: decodeTokenEvalCallCount,
+        decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
+        decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
         decodeLoopTotalMicros: decodeLoopTotalMicros,
         decodeTokenCount: decodeTokenCount,
@@ -1031,6 +1052,9 @@ private func makeActiveKVProbeSummary(
         cacheAppendTotalMicros: cacheTiming.appendTotalMicros,
         cacheMaterializeTotalMicros: cacheTiming.materializeTotalMicros,
         cacheMaterializeCallCount: cacheTiming.materializeCallCount,
+        fusedAttentionTotalMicros: cacheTiming.fusedAttentionTotalMicros,
+        fusedAttentionCallCount: cacheTiming.fusedAttentionCallCount,
+        fusedAttentionRouteTotalMicros: cacheTiming.fusedAttentionRouteTotalMicros,
         candidateDispatchCode: activeKVCandidateDispatchCode(
             for: normalized,
             turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
@@ -1052,6 +1076,9 @@ private func quantizedKVCacheTimingTotals(cache: [KVCache]) -> QuantizedKVCacheT
         totals.appendTotalMicros += quantizedCache.quantizedCacheAppendTotalMicros
         totals.materializeTotalMicros += quantizedCache.quantizedCacheMaterializeTotalMicros
         totals.materializeCallCount += quantizedCache.quantizedCacheMaterializeCallCount
+        totals.fusedAttentionTotalMicros += quantizedCache.fusedAttentionTotalMicros
+        totals.fusedAttentionCallCount += quantizedCache.fusedAttentionCallCount
+        totals.fusedAttentionRouteTotalMicros += quantizedCache.fusedAttentionRouteTotalMicros
     }
     return totals
 }
@@ -1343,6 +1370,15 @@ private func estimatedFP16Bytes(quantizedBytes: UInt64, quantizationRatio: Int) 
         return 0
     }
     return (quantizedBytes * 100) / UInt64(quantizationRatio)
+}
+
+func activeKVModelEvalSyncMicrosIfNeeded(enabled: Bool, logits: MLXArray) -> Int? {
+    guard enabled else {
+        return nil
+    }
+    let startedAt = Date.timeIntervalSinceReferenceDate
+    eval(logits)
+    return elapsedMicros(since: startedAt)
 }
 
 private func elapsedMicros(since startedAt: TimeInterval) -> Int {

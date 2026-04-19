@@ -54,6 +54,7 @@ public func attentionWithCacheUpdate(
     }
     if let quantizedKVCache = cache as? QuantizedKVCacheProtocol {
         let storageState = quantizedKVCache.updateQuantizedStorage(keys: keys, values: values)
+        let fusedRouteStartedAt = Date.timeIntervalSinceReferenceDate
         if let fusedOutput = fusedQ4ScaledDotProductAttention(
             queries: queries,
             quantizedKeys: storageState.keys,
@@ -65,6 +66,11 @@ public func attentionWithCacheUpdate(
             bits: quantizedKVCache.bits,
             mode: quantizedKVCache.mode
         ) {
+            let fusedRouteMicros = attentionElapsedMicros(since: fusedRouteStartedAt)
+            quantizedKVCache.recordFusedAttentionTiming(
+                attentionMicros: fusedRouteMicros,
+                routeMicros: fusedRouteMicros
+            )
             quantizedKVCache.recordFusedAttentionDispatch()
             return fusedOutput
         }
@@ -91,4 +97,8 @@ public func attentionWithCacheUpdate(
             mask: mask
         )
     }
+}
+
+private func attentionElapsedMicros(since startedAt: TimeInterval) -> Int {
+    max(0, Int(((Date.timeIntervalSinceReferenceDate - startedAt) * 1_000_000).rounded()))
 }

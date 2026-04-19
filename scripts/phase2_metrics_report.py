@@ -944,6 +944,14 @@ def decode_active_kv_metrics(
             "active_kv_decode_token_eval_total_us": 0,
             "active_kv_decode_token_eval_call_count": 0,
             "active_kv_decode_token_eval_avg_us": 0,
+            "active_kv_decode_model_eval_sync_total_us": 0,
+            "active_kv_decode_model_eval_sync_call_count": 0,
+            "active_kv_decode_model_eval_sync_avg_us": 0,
+            "active_kv_fused_attention_total_us": 0,
+            "active_kv_fused_attention_call_count": 0,
+            "active_kv_fused_attention_avg_us": 0,
+            "active_kv_fused_attention_route_total_us": 0,
+            "active_kv_fused_attention_route_avg_us": 0,
             "active_kv_decode_quantize_total_us": 0,
             "active_kv_decode_quantize_avg_us": 0,
             "active_kv_decode_loop_total_us": 0,
@@ -995,6 +1003,30 @@ def decode_active_kv_metrics(
         ),
         "active_kv_decode_token_eval_avg_us": exported.get(
             "swift_text.active_kv_decode_token_eval_avg_us", 0
+        ),
+        "active_kv_decode_model_eval_sync_total_us": exported.get(
+            "swift_text.active_kv_decode_model_eval_sync_total_us", 0
+        ),
+        "active_kv_decode_model_eval_sync_call_count": exported.get(
+            "swift_text.active_kv_decode_model_eval_sync_call_count", 0
+        ),
+        "active_kv_decode_model_eval_sync_avg_us": exported.get(
+            "swift_text.active_kv_decode_model_eval_sync_avg_us", 0
+        ),
+        "active_kv_fused_attention_total_us": exported.get(
+            "swift_text.active_kv_fused_attention_total_us", 0
+        ),
+        "active_kv_fused_attention_call_count": exported.get(
+            "swift_text.active_kv_fused_attention_call_count", 0
+        ),
+        "active_kv_fused_attention_avg_us": exported.get(
+            "swift_text.active_kv_fused_attention_avg_us", 0
+        ),
+        "active_kv_fused_attention_route_total_us": exported.get(
+            "swift_text.active_kv_fused_attention_route_total_us", 0
+        ),
+        "active_kv_fused_attention_route_avg_us": exported.get(
+            "swift_text.active_kv_fused_attention_route_avg_us", 0
         ),
         "active_kv_decode_quantize_total_us": exported.get("swift_text.active_kv_decode_quantize_total_us"),
         "active_kv_decode_quantize_avg_us": exported.get("swift_text.active_kv_decode_quantize_avg_us"),
@@ -1110,6 +1142,9 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
         total = median_numeric(active_rows, "total_ms")
         model_avg = median_numeric(active_rows, "active_kv_decode_model_avg_us")
         token_eval_avg = median_numeric(active_rows, "active_kv_decode_token_eval_avg_us")
+        model_eval_sync_avg = median_numeric(active_rows, "active_kv_decode_model_eval_sync_avg_us")
+        fused_attention_avg = median_numeric(active_rows, "active_kv_fused_attention_avg_us")
+        fused_attention_route_avg = median_numeric(active_rows, "active_kv_fused_attention_route_avg_us")
         quantize_avg = median_numeric(active_rows, "active_kv_decode_quantize_avg_us")
         cache_update_avg = median_numeric(active_rows, "active_kv_cache_update_avg_us")
         cache_materialize_avg = median_numeric(active_rows, "active_kv_cache_materialize_avg_us")
@@ -1126,6 +1161,9 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
             "active_kv_kernel_path": first_non_empty(active_rows, "active_kv_kernel_path"),
             "active_kv_decode_model_avg_us": model_avg,
             "active_kv_decode_token_eval_avg_us": token_eval_avg,
+            "active_kv_decode_model_eval_sync_avg_us": model_eval_sync_avg,
+            "active_kv_fused_attention_avg_us": fused_attention_avg,
+            "active_kv_fused_attention_route_avg_us": fused_attention_route_avg,
             "active_kv_decode_loop_total_us": median_numeric(active_rows, "active_kv_decode_loop_total_us"),
             "active_kv_decode_quantize_avg_us": quantize_avg,
             "active_kv_cache_update_avg_us": cache_update_avg,
@@ -1177,6 +1215,11 @@ def build_active_kv_release_gates(
                 "candidate_dispatch_count": 0,
                 "decode_quantize_total_us": 0,
                 "decode_token_eval_total_us": 0,
+                "decode_model_eval_sync_total_us": 0,
+                "decode_model_eval_sync_call_count": 0,
+                "fused_attention_total_us": 0,
+                "fused_attention_call_count": 0,
+                "fused_attention_route_total_us": 0,
                 "decode_loop_total_us": 0,
                 "cache_update_total_us": 0,
                 "cache_update_call_count": 0,
@@ -1218,6 +1261,21 @@ def build_active_kv_release_gates(
     )
     decode_token_eval_total_us = sum(
         int_value(row.get("active_kv_decode_token_eval_total_us")) for row in turbo_rows
+    )
+    decode_model_eval_sync_total_us = sum(
+        int_value(row.get("active_kv_decode_model_eval_sync_total_us")) for row in turbo_rows
+    )
+    decode_model_eval_sync_call_count = sum(
+        int_value(row.get("active_kv_decode_model_eval_sync_call_count")) for row in turbo_rows
+    )
+    fused_attention_total_us = sum(
+        int_value(row.get("active_kv_fused_attention_total_us")) for row in turbo_rows
+    )
+    fused_attention_call_count = sum(
+        int_value(row.get("active_kv_fused_attention_call_count")) for row in turbo_rows
+    )
+    fused_attention_route_total_us = sum(
+        int_value(row.get("active_kv_fused_attention_route_total_us")) for row in turbo_rows
     )
     decode_loop_total_us = sum(
         int_value(row.get("active_kv_decode_loop_total_us")) for row in turbo_rows
@@ -1271,6 +1329,11 @@ def build_active_kv_release_gates(
             "candidate_eligibility_check_count": candidate_eligibility_check_count,
             "decode_model_call_count": decode_model_call_count,
             "decode_token_eval_total_us": decode_token_eval_total_us,
+            "decode_model_eval_sync_total_us": decode_model_eval_sync_total_us,
+            "decode_model_eval_sync_call_count": decode_model_eval_sync_call_count,
+            "fused_attention_total_us": fused_attention_total_us,
+            "fused_attention_call_count": fused_attention_call_count,
+            "fused_attention_route_total_us": fused_attention_route_total_us,
             "decode_loop_total_us": decode_loop_total_us,
             "decode_quantize_total_us": decode_quantize_total_us,
             "cache_update_total_us": cache_update_total_us,
@@ -1331,6 +1394,13 @@ def build_active_kv_fused_candidate_probes(
                 ),
                 "decode_model_call_count": gate.get("decode_model_call_count"),
                 "decode_token_eval_total_us": gate.get("decode_token_eval_total_us"),
+                "decode_model_eval_sync_total_us": gate.get("decode_model_eval_sync_total_us"),
+                "decode_model_eval_sync_call_count": gate.get(
+                    "decode_model_eval_sync_call_count"
+                ),
+                "fused_attention_total_us": gate.get("fused_attention_total_us"),
+                "fused_attention_call_count": gate.get("fused_attention_call_count"),
+                "fused_attention_route_total_us": gate.get("fused_attention_route_total_us"),
                 "decode_loop_total_us": gate.get("decode_loop_total_us"),
                 "decode_quantize_total_us": gate.get("decode_quantize_total_us"),
                 "cache_update_total_us": gate.get("cache_update_total_us"),
@@ -1503,6 +1573,9 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_token_eval_call_count",
                 "active_kv_decode_token_eval_avg_us",
+                "active_kv_decode_model_eval_sync_avg_us",
+                "active_kv_fused_attention_avg_us",
+                "active_kv_fused_attention_route_avg_us",
                 "active_kv_decode_loop_total_us",
                 "active_kv_decode_quantize_avg_us",
                 "active_kv_cache_update_avg_us",
@@ -1527,6 +1600,9 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_kernel_path",
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_token_eval_avg_us",
+                "active_kv_decode_model_eval_sync_avg_us",
+                "active_kv_fused_attention_avg_us",
+                "active_kv_fused_attention_route_avg_us",
                 "active_kv_decode_loop_total_us",
                 "active_kv_decode_quantize_share_pct",
                 "active_kv_cache_update_avg_us",
@@ -1552,6 +1628,10 @@ def render_report(report: dict[str, Any]) -> str:
                 "candidate_dispatch_count",
                 "decode_model_call_count",
                 "decode_token_eval_total_us",
+                "decode_model_eval_sync_total_us",
+                "fused_attention_total_us",
+                "fused_attention_call_count",
+                "fused_attention_route_total_us",
                 "decode_loop_total_us",
                 "decode_quantize_total_us",
                 "cache_update_total_us",

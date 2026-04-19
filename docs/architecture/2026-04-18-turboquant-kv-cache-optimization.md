@@ -28,6 +28,7 @@ The current benchmark evidence is:
 | Rejected fused decode-quantize experiment | `docs/metrics/phase2-active-kv-vendored-turboquant-fused-quantize-experiment.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Vendored append-slice speedup probe | `docs/metrics/phase2-active-kv-vendored-turboquant-append-slice.json` | `mlx-community/Qwen3-0.6B-4bit` | `turboquant-q4` |
 | Qwen3.5 support smoke | `docs/metrics/phase2-active-kv-qwen35-support-smoke.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
+| Fused eval-sync probe | `docs/metrics/phase2-active-kv-vendored-turboquant-eval-probe.json` | `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` | `turboquant-q4` |
 
 `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` remains the shared Phase 8 real-model
 E2E convention. Melix now vendors Qwen3.5 model support from
@@ -103,6 +104,19 @@ reduce append indexing overhead, but the latest routed JSON still reports
 `worker_tps_overhead_pct = 60.0`. The fused decode-quantize experiment is
 correctness-covered, including bfloat16, but is disabled by default because it
 regressed real-model `cache_quantize_total_us`.
+
+The fused eval-sync probe adds per-cache fused attention timing counters and an
+opt-in `MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1` model evaluation sync
+timer. On the shared Qwen3.5 real-model convention, the probe keeps the release
+gate failed: `active_kv_kernel_path = "fallback"`,
+`active_kv_runtime_route = "blocked"`,
+`active_kv_runtime_block_reason = "unsupported_cache_state"`,
+`active_kv_fallback_count = 3`, and
+`active_kv_estimated_memory_savings_pct = 0.0`. It reports
+`decode_model_eval_sync_total_us = 4311359` over `189` calls, comparison median
+`active_kv_decode_model_eval_sync_avg_us = 22607`, and fused attention call
+count zero, confirming this Qwen3.5 run never entered the vendored fused
+attention route.
 
 ## Implemented Optimization
 

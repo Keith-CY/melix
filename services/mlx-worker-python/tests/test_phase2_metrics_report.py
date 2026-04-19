@@ -223,6 +223,9 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
             "active_kv_kernel_path": None if is_baseline else "affine_quantized_sdpa",
             "active_kv_decode_model_avg_us": 0 if is_baseline else 300,
             "active_kv_decode_token_eval_avg_us": 0 if is_baseline else 650,
+            "active_kv_decode_model_eval_sync_avg_us": 0 if is_baseline else 500,
+            "active_kv_fused_attention_avg_us": 0 if is_baseline else 250,
+            "active_kv_fused_attention_route_avg_us": 0 if is_baseline else 300,
             "active_kv_decode_loop_total_us": 0 if is_baseline else 2_100,
             "active_kv_decode_quantize_avg_us": 0 if is_baseline else 40,
             "active_kv_cache_update_avg_us": 0 if is_baseline else 400,
@@ -252,6 +255,9 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
     assert comparisons["affine_q4_vs_baseline"]["worker_tps_overhead_pct"] == 25.0
     assert comparisons["affine_q4_vs_baseline"]["ttft_delta_ms"] == 2.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_token_eval_avg_us"] == 650.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_model_eval_sync_avg_us"] == 500.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_fused_attention_avg_us"] == 250.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_fused_attention_route_avg_us"] == 300.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_loop_total_us"] == 2100.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_cache_update_avg_us"] == 400.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_cache_materialize_avg_us"] == 70.0
@@ -295,6 +301,10 @@ def test_active_kv_release_gates_report_not_requested_without_turboquant_probe()
     assert gate["status"] == "not_requested"
     assert gate["failures"] == ["decode_turboquant_q4=missing"]
     assert gate["worker_tps_overhead_pct"] == 12.5
+    assert gate["decode_model_eval_sync_total_us"] == 0
+    assert gate["fused_attention_total_us"] == 0
+    assert gate["fused_attention_call_count"] == 0
+    assert gate["fused_attention_route_total_us"] == 0
 
 
 def test_active_kv_release_gates_block_incomplete_turboquant_evidence() -> None:
@@ -405,6 +415,11 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
                 "active_kv_candidate_eligibility_check_count": 64,
                 "active_kv_decode_model_call_count": 63,
                 "active_kv_decode_token_eval_total_us": 720_000,
+                "active_kv_decode_model_eval_sync_total_us": 500_000,
+                "active_kv_decode_model_eval_sync_call_count": 63,
+                "active_kv_fused_attention_total_us": 12_000,
+                "active_kv_fused_attention_call_count": 63,
+                "active_kv_fused_attention_route_total_us": 15_000,
                 "active_kv_decode_loop_total_us": 1_800_000,
                 "active_kv_decode_quantize_total_us": 0,
                 "active_kv_estimated_memory_savings_pct": 75,
@@ -465,6 +480,11 @@ def test_active_kv_fused_candidate_probe_separates_capability_and_runtime_eviden
     assert probe["runtime_evidence"]["candidate_eligibility_check_count"] == 64
     assert probe["runtime_evidence"]["decode_model_call_count"] == 63
     assert probe["runtime_evidence"]["decode_token_eval_total_us"] == 720_000
+    assert probe["runtime_evidence"]["decode_model_eval_sync_total_us"] == 500_000
+    assert probe["runtime_evidence"]["decode_model_eval_sync_call_count"] == 63
+    assert probe["runtime_evidence"]["fused_attention_total_us"] == 12_000
+    assert probe["runtime_evidence"]["fused_attention_call_count"] == 63
+    assert probe["runtime_evidence"]["fused_attention_route_total_us"] == 15_000
     assert probe["runtime_evidence"]["decode_loop_total_us"] == 1_800_000
     assert "active_kv_kernel_path=fallback" in probe["runtime_evidence"]["failures"]
     assert probe["runtime_evidence"]["observed_runtime_routes"] == ["blocked"]
@@ -658,6 +678,14 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_decode_token_eval_total_us": 500,
                     "swift_text.active_kv_decode_token_eval_call_count": 10,
                     "swift_text.active_kv_decode_token_eval_avg_us": 50,
+                    "swift_text.active_kv_decode_model_eval_sync_total_us": 1500,
+                    "swift_text.active_kv_decode_model_eval_sync_call_count": 3,
+                    "swift_text.active_kv_decode_model_eval_sync_avg_us": 500,
+                    "swift_text.active_kv_fused_attention_total_us": 750,
+                    "swift_text.active_kv_fused_attention_call_count": 3,
+                    "swift_text.active_kv_fused_attention_avg_us": 250,
+                    "swift_text.active_kv_fused_attention_route_total_us": 900,
+                    "swift_text.active_kv_fused_attention_route_avg_us": 300,
                     "swift_text.active_kv_decode_quantize_total_us": 30,
                     "swift_text.active_kv_decode_quantize_avg_us": 3,
                     "swift_text.active_kv_decode_loop_total_us": 900,
@@ -713,6 +741,8 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert baseline["active_kv_runtime_block_reason"] is None
     assert baseline["active_kv_quantization_ratio"] == 0
     assert baseline["active_kv_estimated_memory_savings_pct"] == 0
+    assert baseline["active_kv_decode_model_eval_sync_total_us"] == 0
+    assert baseline["active_kv_fused_attention_total_us"] == 0
     assert active["active_kv_backend"] == "affine"
     assert active["active_kv_kernel_path"] == "affine_quantized_sdpa"
     assert active["active_kv_runtime_route"] is None
@@ -721,6 +751,14 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_decode_model_call_count"] == 10
     assert active["active_kv_decode_token_eval_call_count"] == 10
     assert active["active_kv_decode_token_eval_avg_us"] == 50
+    assert active["active_kv_decode_model_eval_sync_total_us"] == 1500
+    assert active["active_kv_decode_model_eval_sync_call_count"] == 3
+    assert active["active_kv_decode_model_eval_sync_avg_us"] == 500
+    assert active["active_kv_fused_attention_total_us"] == 750
+    assert active["active_kv_fused_attention_call_count"] == 3
+    assert active["active_kv_fused_attention_avg_us"] == 250
+    assert active["active_kv_fused_attention_route_total_us"] == 900
+    assert active["active_kv_fused_attention_route_avg_us"] == 300
     assert active["active_kv_decode_loop_total_us"] == 900
     assert active["active_kv_cache_update_total_us"] == 120
     assert active["active_kv_cache_update_call_count"] == 4
@@ -756,6 +794,14 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert inactive_metrics["active_kv_decode_model_call_count"] == 0
     assert inactive_metrics["active_kv_decode_token_eval_call_count"] == 0
     assert inactive_metrics["active_kv_decode_token_eval_avg_us"] == 0
+    assert inactive_metrics["active_kv_decode_model_eval_sync_total_us"] == 0
+    assert inactive_metrics["active_kv_decode_model_eval_sync_call_count"] == 0
+    assert inactive_metrics["active_kv_decode_model_eval_sync_avg_us"] == 0
+    assert inactive_metrics["active_kv_fused_attention_total_us"] == 0
+    assert inactive_metrics["active_kv_fused_attention_call_count"] == 0
+    assert inactive_metrics["active_kv_fused_attention_avg_us"] == 0
+    assert inactive_metrics["active_kv_fused_attention_route_total_us"] == 0
+    assert inactive_metrics["active_kv_fused_attention_route_avg_us"] == 0
     assert inactive_metrics["active_kv_decode_loop_total_us"] == 0
     assert inactive_metrics["active_kv_cache_update_total_us"] == 0
     assert inactive_metrics["active_kv_cache_update_call_count"] == 0
@@ -1375,6 +1421,9 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
                     "active_kv_kernel_path": "affine_quantized_sdpa",
                     "active_kv_decode_model_avg_us": 300,
                     "active_kv_decode_token_eval_avg_us": 650,
+                    "active_kv_decode_model_eval_sync_avg_us": 500,
+                    "active_kv_fused_attention_avg_us": 250,
+                    "active_kv_fused_attention_route_avg_us": 300,
                     "active_kv_decode_loop_total_us": 2_100,
                     "active_kv_decode_quantize_avg_us": 40,
                     "active_kv_estimated_memory_savings_pct": 75,
@@ -1395,6 +1444,9 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
                     "active_kv_runtime_block_reason": "attention_hook_unavailable",
                     "active_kv_decode_model_avg_us": 300,
                     "active_kv_decode_token_eval_avg_us": 650,
+                    "active_kv_decode_model_eval_sync_avg_us": 500,
+                    "active_kv_fused_attention_avg_us": 250,
+                    "active_kv_fused_attention_route_avg_us": 300,
                     "active_kv_decode_loop_total_us": 2_100,
                     "active_kv_decode_quantize_avg_us": 0,
                     "active_kv_estimated_memory_savings_pct": 75,
@@ -1403,6 +1455,9 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
             "comparisons": {
                 "affine_q4_vs_baseline": {
                     "worker_tps_overhead_pct": 8.0,
+                    "active_kv_decode_model_eval_sync_avg_us": 500.0,
+                    "active_kv_fused_attention_avg_us": 250.0,
+                    "active_kv_fused_attention_route_avg_us": 300.0,
                     "active_kv_estimated_memory_savings_pct": 75.0,
                 }
             },
@@ -1417,6 +1472,9 @@ def test_render_report_includes_sparse_prefill_columns() -> None:
     assert "active_kv_kernel_path" in rendered
     assert "active_kv_runtime_route" in rendered
     assert "active_kv_decode_token_eval_avg_us" in rendered
+    assert "active_kv_decode_model_eval_sync_avg_us" in rendered
+    assert "active_kv_fused_attention_avg_us" in rendered
+    assert "active_kv_fused_attention_route_avg_us" in rendered
     assert "active_kv_decode_loop_total_us" in rendered
     assert "attention_hook_unavailable" in rendered
     assert "affine_q4_vs_baseline" in rendered

@@ -53,6 +53,8 @@ struct ActiveKVProbeSummary: Sendable {
     let decodeModelCallCount: Int
     let decodeTokenEvalTotalMicros: Int
     let decodeTokenEvalCallCount: Int
+    let decodeModelEvalSyncTotalMicros: Int
+    let decodeModelEvalSyncCallCount: Int
     let decodeQuantizeTotalMicros: Int
     let decodeLoopTotalMicros: Int
     let decodeTokenCount: Int
@@ -67,6 +69,9 @@ struct ActiveKVProbeSummary: Sendable {
     let cacheAppendTotalMicros: Int
     let cacheMaterializeTotalMicros: Int
     let cacheMaterializeCallCount: Int
+    let fusedAttentionTotalMicros: Int
+    let fusedAttentionCallCount: Int
+    let fusedAttentionRouteTotalMicros: Int
     let candidateDispatchCode: Int
     let candidateEligibilityCheckCount: Int
 
@@ -81,6 +86,8 @@ struct ActiveKVProbeSummary: Sendable {
         decodeModelCallCount: Int = 0,
         decodeTokenEvalTotalMicros: Int = 0,
         decodeTokenEvalCallCount: Int = 0,
+        decodeModelEvalSyncTotalMicros: Int = 0,
+        decodeModelEvalSyncCallCount: Int = 0,
         decodeQuantizeTotalMicros: Int,
         decodeLoopTotalMicros: Int = 0,
         decodeTokenCount: Int,
@@ -95,6 +102,9 @@ struct ActiveKVProbeSummary: Sendable {
         cacheAppendTotalMicros: Int = 0,
         cacheMaterializeTotalMicros: Int = 0,
         cacheMaterializeCallCount: Int = 0,
+        fusedAttentionTotalMicros: Int = 0,
+        fusedAttentionCallCount: Int = 0,
+        fusedAttentionRouteTotalMicros: Int = 0,
         candidateDispatchCode: Int = 0,
         candidateEligibilityCheckCount: Int = 0
     ) {
@@ -108,6 +118,8 @@ struct ActiveKVProbeSummary: Sendable {
         self.decodeModelCallCount = decodeModelCallCount
         self.decodeTokenEvalTotalMicros = decodeTokenEvalTotalMicros
         self.decodeTokenEvalCallCount = decodeTokenEvalCallCount
+        self.decodeModelEvalSyncTotalMicros = decodeModelEvalSyncTotalMicros
+        self.decodeModelEvalSyncCallCount = decodeModelEvalSyncCallCount
         self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
         self.decodeLoopTotalMicros = decodeLoopTotalMicros
         self.decodeTokenCount = decodeTokenCount
@@ -122,6 +134,9 @@ struct ActiveKVProbeSummary: Sendable {
         self.cacheAppendTotalMicros = cacheAppendTotalMicros
         self.cacheMaterializeTotalMicros = cacheMaterializeTotalMicros
         self.cacheMaterializeCallCount = cacheMaterializeCallCount
+        self.fusedAttentionTotalMicros = fusedAttentionTotalMicros
+        self.fusedAttentionCallCount = fusedAttentionCallCount
+        self.fusedAttentionRouteTotalMicros = fusedAttentionRouteTotalMicros
         self.candidateDispatchCode = candidateDispatchCode
         self.candidateEligibilityCheckCount = candidateEligibilityCheckCount
     }
@@ -134,6 +149,10 @@ struct ActiveKVProbeSummary: Sendable {
         averageMicros(total: decodeTokenEvalTotalMicros, count: decodeTokenEvalCallCount)
     }
 
+    var decodeModelEvalSyncAverageMicros: Int {
+        averageMicros(total: decodeModelEvalSyncTotalMicros, count: decodeModelEvalSyncCallCount)
+    }
+
     var decodeQuantizeAverageMicros: Int {
         averageMicros(total: decodeQuantizeTotalMicros)
     }
@@ -144,6 +163,14 @@ struct ActiveKVProbeSummary: Sendable {
 
     var cacheMaterializeAverageMicros: Int {
         averageMicros(total: cacheMaterializeTotalMicros, count: cacheMaterializeCallCount)
+    }
+
+    var fusedAttentionAverageMicros: Int {
+        averageMicros(total: fusedAttentionTotalMicros, count: fusedAttentionCallCount)
+    }
+
+    var fusedAttentionRouteAverageMicros: Int {
+        averageMicros(total: fusedAttentionRouteTotalMicros, count: fusedAttentionCallCount)
     }
 
     private func averageMicros(total: Int) -> Int {

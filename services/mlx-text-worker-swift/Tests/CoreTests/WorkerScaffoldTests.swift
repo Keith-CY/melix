@@ -127,8 +127,16 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_avg_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_loop_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_route_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_route_avg_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_cache_update_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_cache_update_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_total_us"], 0)
@@ -3879,6 +3887,8 @@ final class WorkerScaffoldTests: XCTestCase {
                     decodeModelCallCount: 3,
                     decodeTokenEvalTotalMicros: 1_800,
                     decodeTokenEvalCallCount: 3,
+                    decodeModelEvalSyncTotalMicros: 1_500,
+                    decodeModelEvalSyncCallCount: 3,
                     decodeQuantizeTotalMicros: 120,
                     decodeLoopTotalMicros: 2_100,
                     decodeTokenCount: 3,
@@ -3892,7 +3902,10 @@ final class WorkerScaffoldTests: XCTestCase {
                     cacheQuantizeTotalMicros: 540,
                     cacheAppendTotalMicros: 360,
                     cacheMaterializeTotalMicros: 210,
-                    cacheMaterializeCallCount: 3
+                    cacheMaterializeCallCount: 3,
+                    fusedAttentionTotalMicros: 750,
+                    fusedAttentionCallCount: 3,
+                    fusedAttentionRouteTotalMicros: 900
                 )
             )
         )
@@ -3962,6 +3975,9 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_total_us"], 1_800)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_call_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_avg_us"], 600)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_total_us"], 1_500)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_avg_us"], 500)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_loop_total_us"], 2_100)
@@ -3981,6 +3997,11 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_total_us"], 210)
         XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_call_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_avg_us"], 70)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_total_us"], 750)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_avg_us"], 250)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_total_us"], 900)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_avg_us"], 300)
     }
 
     func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {
@@ -3991,6 +4012,8 @@ final class WorkerScaffoldTests: XCTestCase {
             decodeModelTotalMicros: 120,
             decodeTokenEvalTotalMicros: 90,
             decodeTokenEvalCallCount: 0,
+            decodeModelEvalSyncTotalMicros: 70,
+            decodeModelEvalSyncCallCount: 0,
             decodeQuantizeTotalMicros: 80,
             decodeLoopTotalMicros: 400,
             decodeTokenCount: 0,
@@ -4002,6 +4025,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(summary.decodeModelAverageMicros, 0)
         XCTAssertEqual(summary.decodeTokenEvalAverageMicros, 0)
+        XCTAssertEqual(summary.decodeModelEvalSyncAverageMicros, 0)
         XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
         XCTAssertEqual(summary.cacheUpdateAverageMicros, 0)
         XCTAssertEqual(summary.cacheMaterializeAverageMicros, 0)
@@ -5932,6 +5956,19 @@ final class WorkerScaffoldTests: XCTestCase {
     #endif
 
     #if canImport(MLX)
+    func testActiveKVModelEvalSyncProbeIsOptIn() async throws {
+        try await withTemporaryDefaultMetallib {
+            let logits = MLXArray([Float(1.0), Float(2.0)], [1, 2])
+
+            XCTAssertNil(activeKVModelEvalSyncMicrosIfNeeded(enabled: false, logits: logits))
+
+            let elapsed = activeKVModelEvalSyncMicrosIfNeeded(enabled: true, logits: logits)
+
+            XCTAssertNotNil(elapsed)
+            XCTAssertGreaterThanOrEqual(elapsed ?? -1, 0)
+        }
+    }
+
     func testTurboQuantMetalCapabilityRunsCustomIdentityKernel() async throws {
         try await withTemporaryDefaultMetallib {
             let input = MLXArray([Float(1.0), Float(-2.0), Float(3.5), Float(4.25)])
@@ -6195,6 +6232,9 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(fusedCache.offset, sequenceLength)
             XCTAssertEqual(fusedCache.quantizedCacheUpdateCallCount, 1)
             XCTAssertEqual(fusedCache.fusedAttentionDispatchCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionCallCount, 1)
+            XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionRouteTotalMicros, fusedCache.fusedAttentionTotalMicros)
             XCTAssertEqual(fusedCache.quantizedCacheMaterializeCallCount, 0)
             XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-4).all().item())
         }

@@ -127,6 +127,15 @@ public protocol QuantizedKVCacheProtocol: KVCache {
     /// Number of decode attention calls completed by the Melix fused q4 kernel route.
     var fusedAttentionDispatchCount: Int { get }
 
+    /// Number of fused q4 attention route attempts that produced a routed output.
+    var fusedAttentionCallCount: Int { get }
+
+    /// Total time spent building the fused q4 attention MLX graph, in microseconds.
+    var fusedAttentionTotalMicros: Int { get }
+
+    /// Total time spent in the fused q4 attention route after cache update, in microseconds.
+    var fusedAttentionRouteTotalMicros: Int { get }
+
     /// Total time spent inside quantized cache updates, in microseconds.
     var quantizedCacheUpdateTotalMicros: Int { get }
 
@@ -150,6 +159,9 @@ public protocol QuantizedKVCacheProtocol: KVCache {
 
     /// Record one fused q4 attention dispatch for runtime metrics.
     func recordFusedAttentionDispatch()
+
+    /// Record routed fused q4 attention timing for runtime metrics.
+    func recordFusedAttentionTiming(attentionMicros: Int, routeMicros: Int)
 
     /// Update cache and return quantized tuples for maximum efficiency
     ///
@@ -754,6 +766,9 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     public let bits: Int
     public let mode: QuantizationMode
     public private(set) var fusedAttentionDispatchCount: Int = 0
+    public private(set) var fusedAttentionCallCount: Int = 0
+    public private(set) var fusedAttentionTotalMicros: Int = 0
+    public private(set) var fusedAttentionRouteTotalMicros: Int = 0
     public private(set) var quantizedCacheUpdateTotalMicros: Int = 0
     public private(set) var quantizedCacheUpdateCallCount: Int = 0
     public private(set) var quantizedCacheExpandTotalMicros: Int = 0
@@ -779,6 +794,12 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
 
     public func recordFusedAttentionDispatch() {
         fusedAttentionDispatchCount += 1
+    }
+
+    public func recordFusedAttentionTiming(attentionMicros: Int, routeMicros: Int) {
+        fusedAttentionCallCount += 1
+        fusedAttentionTotalMicros += max(0, attentionMicros)
+        fusedAttentionRouteTotalMicros += max(0, routeMicros)
     }
 
     public override func innerState() -> [MLXArray] {

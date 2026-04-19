@@ -14,6 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SWIFT_MLX_METALLIB_PATH_ENV = "MELIX_SWIFT_MLX_METALLIB_PATH"
 SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV = "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"
+SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV = "MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"
+SWIFT_OPTIONAL_PARENT_ENV = (
+    SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV,
+    SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV,
+)
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built]
 
 Options:
@@ -358,7 +363,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
     if os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, "").strip():
         exports[SWIFT_MLX_METALLIB_PATH_ENV] = os.fspath(resolve_configured_mlx_metallib())
-    exports.update(optional_parent_environment_exports((SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV,)))
+    exports.update(optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV))
     lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     lines.extend(f'export {key}="{value}"' for key, value in exports.items())
     lines.append("")
@@ -392,7 +397,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_DEV_TEXT_MODEL_PATH": os.environ.get("MELIX_DEV_TEXT_MODEL_PATH", ""),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
-            **optional_parent_environment_exports((SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV,)),
+            **optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV),
         },
         command=swift_text_command,
     )

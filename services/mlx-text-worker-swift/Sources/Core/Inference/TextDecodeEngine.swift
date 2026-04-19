@@ -308,10 +308,33 @@ struct TextDecodeEngine: Sendable {
         metrics.set("swift_text.active_kv_decode_token_eval_total_us", value: probe.decodeTokenEvalTotalMicros)
         metrics.set("swift_text.active_kv_decode_token_eval_call_count", value: probe.decodeTokenEvalCallCount)
         metrics.set("swift_text.active_kv_decode_token_eval_avg_us", value: probe.decodeTokenEvalAverageMicros)
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_total_us",
+            value: probe.decodeModelEvalSyncTotalMicros
+        )
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_call_count",
+            value: probe.decodeModelEvalSyncCallCount
+        )
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_avg_us",
+            value: probe.decodeModelEvalSyncAverageMicros
+        )
         metrics.set("swift_text.active_kv_decode_quantize_total_us", value: probe.decodeQuantizeTotalMicros)
         metrics.set("swift_text.active_kv_decode_quantize_avg_us", value: probe.decodeQuantizeAverageMicros)
         metrics.set("swift_text.active_kv_decode_loop_total_us", value: probe.decodeLoopTotalMicros)
         metrics.set("swift_text.active_kv_decode_token_count", value: probe.decodeTokenCount)
+        metrics.set("swift_text.active_kv_fused_attention_total_us", value: probe.fusedAttentionTotalMicros)
+        metrics.set("swift_text.active_kv_fused_attention_call_count", value: probe.fusedAttentionCallCount)
+        metrics.set("swift_text.active_kv_fused_attention_avg_us", value: probe.fusedAttentionAverageMicros)
+        metrics.set(
+            "swift_text.active_kv_fused_attention_route_total_us",
+            value: probe.fusedAttentionRouteTotalMicros
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_route_avg_us",
+            value: probe.fusedAttentionRouteAverageMicros
+        )
         metrics.set("swift_text.active_kv_cache_update_total_us", value: probe.cacheUpdateTotalMicros)
         metrics.set("swift_text.active_kv_cache_update_call_count", value: probe.cacheUpdateCallCount)
         metrics.set("swift_text.active_kv_cache_update_avg_us", value: probe.cacheUpdateAverageMicros)
