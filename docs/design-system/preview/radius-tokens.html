@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; display: flex; gap: 20px; align-items: center; }
+.box { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.shape { background: var(--neutral-200); width: 48px; height: 48px; }
+.label { font-size: 9px; font-family: var(--font-mono); color: var(--fg-tertiary); }
+</style>
+</head>
+<body>
+  <div class="box"><div class="shape" style="border-radius:var(--radius-sm)"></div><div class="label">sm · 6px<br>tags</div></div>
+  <div class="box"><div class="shape" style="border-radius:var(--radius-md)"></div><div class="label">md · 8px<br>buttons</div></div>
+  <div class="box"><div class="shape" style="border-radius:var(--radius-lg)"></div><div class="label">lg · 10px<br>inputs</div></div>
+  <div class="box"><div class="shape" style="border-radius:var(--radius-xl)"></div><div class="label">xl · 12px<br>cards</div></div>
+  <div class="box"><div class="shape" style="border-radius:var(--radius-full)"></div><div class="label">full<br>capsule</div></div>
+</body></html>

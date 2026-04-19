@@ -28,7 +28,7 @@ struct DesktopWorkspaceTitleBarCommandCenterButton: View {
             Image(systemName: "command.circle")
                 .font(.title3.weight(.semibold))
                 .frame(width: 28, height: 28)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("Open Command Center")
@@ -97,7 +97,7 @@ struct DesktopPaneToggleButton: View {
                     width: DesktopShellChromeMetrics.paneToggleButtonWidth,
                     height: DesktopShellChromeMetrics.paneToggleButtonHeight
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(label)
@@ -128,7 +128,7 @@ struct DesktopShellTabStripView: View {
                         .padding(.vertical, DesktopShellChromeMetrics.titleBarTabVerticalPadding)
                         .background(
                             selectedSurface == surface
-                            ? Color.accentColor.opacity(0.18)
+                            ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule)
                             : Color.clear,
                             in: Capsule()
                         )
@@ -143,7 +143,7 @@ struct DesktopShellTabStripView: View {
         .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
         .overlay(
             Capsule()
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                .stroke(Color.primary.opacity(MelixDesignTokens.SurfaceOpacity.hairline), lineWidth: 1)
         )
     }
 

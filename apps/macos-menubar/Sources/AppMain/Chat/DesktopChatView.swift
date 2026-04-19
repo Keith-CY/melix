@@ -285,12 +285,12 @@ struct DesktopChatSessionWorkspace: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
                         .fill(Color(nsColor: .textBackgroundColor).opacity(0.75))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                        .stroke(Color.primary.opacity(MelixDesignTokens.SurfaceOpacity.elevated), lineWidth: 1)
                 )
 
                 HStack {
@@ -424,12 +424,7 @@ private struct DesktopChatSessionRow: View {
             DesktopChatSessionRowActions(onFork: onFork, onExport: onExport)
         }
         .padding(10)
-        .background(
-            isSelected
-            ? Color.accentColor.opacity(0.14)
-            : Color.secondary.opacity(0.06),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
+        .melixSelection(isSelected)
     }
 }
 
@@ -480,21 +475,21 @@ private struct DesktopChatTranscriptRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(backgroundStyle, in: RoundedRectangle(cornerRadius: 12))
+        .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
     }
 
-    private var backgroundStyle: some ShapeStyle {
+    private var backgroundStyle: Color {
         switch entry.kind {
         case .user:
-            return .blue.opacity(0.14)
+            return MelixDesignTokens.Bubble.user
         case .assistant:
-            return .green.opacity(0.12)
+            return MelixDesignTokens.Bubble.assistant
         case .reasoning:
-            return .orange.opacity(0.12)
+            return MelixDesignTokens.Bubble.reasoning
         case .tool:
-            return .purple.opacity(0.12)
+            return MelixDesignTokens.Bubble.tool
         case .error:
-            return .red.opacity(0.12)
+            return MelixDesignTokens.Bubble.error
         }
     }
 }

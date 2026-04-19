@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatch { flex: 1; min-width: 64px; height: 48px; border-radius: var(--radius-md); }
+.labels { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.label { flex: 1; min-width: 64px; font-size: 9px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="swatch" style="background:var(--neutral-900)"></div>
+  <div class="swatch" style="background:var(--neutral-800)"></div>
+  <div class="swatch" style="background:var(--neutral-700)"></div>
+  <div class="swatch" style="background:var(--neutral-600)"></div>
+  <div class="swatch" style="background:var(--neutral-500)"></div>
+  <div class="swatch" style="background:var(--neutral-400)"></div>
+  <div class="swatch" style="background:var(--neutral-300)"></div>
+  <div class="swatch" style="background:var(--neutral-200)"></div>
+  <div class="swatch" style="background:var(--neutral-100)"></div>
+  <div class="swatch" style="background:var(--neutral-50); border: 1px solid var(--border-subtle)"></div>
+</div>
+<div class="labels">
+  <div class="label">900</div><div class="label">800</div><div class="label">700</div>
+  <div class="label">600</div><div class="label">500</div><div class="label">400</div>
+  <div class="label">300</div><div class="label">200</div><div class="label">100</div>
+  <div class="label">50</div>
+</div>
+</body></html>

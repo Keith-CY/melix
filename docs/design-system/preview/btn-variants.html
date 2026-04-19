@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 24px 20px; display: flex; flex-direction: column; gap: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+/* Primary (black) */
+.btn-primary {
+  background: var(--fg-primary); color: var(--fg-inverse);
+  border: none; border-radius: var(--radius-md);
+  padding: 6px 14px; font-size: 12px; font-weight: 600;
+  font-family: var(--font-sans); cursor: pointer; transition: background 0.1s;
+}
+.btn-primary:hover { background: var(--neutral-700); }
+/* Accent (1 per screen) */
+.btn-accent {
+  background: var(--accent); color: #fff;
+  border: none; border-radius: var(--radius-md);
+  padding: 6px 14px; font-size: 12px; font-weight: 600;
+  font-family: var(--font-sans); cursor: pointer;
+}
+/* Bordered (secondary) */
+.btn-bordered {
+  background: transparent; color: var(--fg-primary);
+  border: 1px solid var(--neutral-300); border-radius: var(--radius-md);
+  padding: 6px 14px; font-size: 12px; font-weight: 500;
+  font-family: var(--font-sans); cursor: pointer;
+}
+.btn-bordered:hover { background: var(--neutral-100); }
+/* Plain (icon) */
+.btn-plain {
+  background: transparent; color: var(--fg-secondary);
+  border: none; border-radius: var(--radius-md);
+  padding: 4px 8px; font-size: 12px;
+  font-family: var(--font-sans); cursor: pointer; opacity: 1;
+}
+.btn-plain:hover { opacity: 0.6; }
+/* Disabled */
+.btn-disabled {
+  background: var(--neutral-200); color: var(--fg-quaternary);
+  border: none; border-radius: var(--radius-md);
+  padding: 6px 14px; font-size: 12px; font-weight: 500;
+  font-family: var(--font-sans); cursor: not-allowed;
+}
+.tag { font-size: 9px; color: var(--fg-quaternary); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="row">
+  <button class="btn-primary">Apply Settings</button>
+  <span class="tag">primary · black</span>
+</div>
+<div class="row">
+  <button class="btn-accent">Train LoRA</button>
+  <span class="tag">accent · 1 per screen</span>
+</div>
+<div class="row">
+  <button class="btn-bordered">Rescan</button>
+  <button class="btn-bordered">Inspect</button>
+  <button class="btn-bordered">Export</button>
+  <span class="tag">bordered · secondary</span>
+</div>
+<div class="row">
+  <button class="btn-plain">+ New</button>
+  <button class="btn-plain">···</button>
+  <span class="tag">plain · icon / inline</span>
+</div>
+<div class="row">
+  <button class="btn-disabled" disabled>Send</button>
+  <span class="tag">disabled state</span>
+</div>
+</body></html>

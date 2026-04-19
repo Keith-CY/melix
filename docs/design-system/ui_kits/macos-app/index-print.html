@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Melix — macOS Operator App (Print)</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f0f0; font-family: system-ui, -apple-system, sans-serif; }
+
+  .page {
+    width: 297mm;
+    height: 210mm;
+    background: #FAFAFA;
+    margin: 0 auto 20px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Titlebar */
+  .titlebar {
+    height: 44px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: #FAFAFA; border-bottom: 1px solid rgba(0,0,0,0.06);
+    flex-shrink: 0;
+  }
+  .traffic { display: flex; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .tab-strip {
+    display: flex; gap: 3px; background: #fff; border-radius: 9999px;
+    padding: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+  }
+  .tab {
+    padding: 3px 12px; border-radius: 9999px; font-size: 11px; font-weight: 500;
+    color: #6B6B6B;
+  }
+  .tab.active { background: rgba(15,118,110,0.12); color: #0A0A0A; font-weight: 600; }
+  .page-label {
+    font-size: 9px; color: #9A9A9A; font-family: ui-monospace, monospace;
+    position: absolute; bottom: 8px; right: 14px;
+  }
+
+  /* Body layout */
+  .body { flex: 1; display: flex; overflow: hidden; }
+  .sidebar { width: 200px; background: #F5F5F5; padding: 14px; flex-shrink: 0; overflow: hidden; }
+  .workspace { flex: 1; padding: 14px; overflow: hidden; }
+  .inspector { width: 210px; background: #F5F5F5; padding: 14px; flex-shrink: 0; overflow: hidden; }
+
+  /* Typography */
+  .t-large { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: #0A0A0A; }
+  .t-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: #0A0A0A; }
+  .t-head { font-size: 11px; font-weight: 600; color: #0A0A0A; }
+  .t-body { font-size: 11px; color: #0A0A0A; line-height: 1.5; }
+  .t-cap { font-size: 9px; color: #6B6B6B; }
+  .t-mono { font-family: ui-monospace, monospace; font-size: 10px; color: #6B6B6B; }
+  .t-sec { color: #6B6B6B; }
+
+  /* Components */
+  .session-row {
+    padding: 7px 9px; border-radius: 9px; margin-bottom: 4px; cursor: default;
+  }
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 9999px;
+    font-size: 8px; font-family: ui-monospace, monospace; color: #6B6B6B;
+    background: rgba(0,0,0,0.06);
+  }
+  .card { background: rgba(0,0,0,0.04); border-radius: 11px; padding: 10px 12px; margin-bottom: 8px; }
+  .card-sm { background: rgba(0,0,0,0.04); border-radius: 9px; padding: 7px 9px; }
+  .section-label {
+    font-size: 8px; font-weight: 600; color: #9A9A9A; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 7px;
+  }
+  .bubble { border-radius: 11px; padding: 8px 10px; margin-bottom: 6px; }
+  .btn-primary {
+    background: #0A0A0A; color: #FDFDFD; border: none; border-radius: 7px;
+    padding: 4px 11px; font-size: 10px; font-weight: 600;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .btn-bordered {
+    background: transparent; color: #3A3A3A; border: 1px solid #D4D4D4;
+    border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 500;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .btn-accent {
+    background: #0F766E; color: #fff; border: none; border-radius: 7px;
+    padding: 4px 11px; font-size: 10px; font-weight: 600;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .divider-row { display: flex; justify-content: space-between; padding: 4px 0; align-items: baseline; }
+
+  @media print {
+    body { background: white; }
+    .page {
+      margin: 0;
+      break-after: page;
+      page-break-after: always;
+    }
+    @page { size: A4 landscape; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="Tokens.js"></script>
+<script type="text/babel">
+
+/* ── Page 1: Chat Tab ─────────────────────────────────────────── */
+function ChatPage() {
+  const sessions = [
+    { title: 'Llama 3.2 3B eval', branch: 'main', summary: 'Compare base vs LoRA adapter outputs', time: '2m ago', sel: true },
+    { title: 'LoRA training run', branch: 'lora-v2', summary: 'Train on custom dataset, 512 steps', time: '18m ago', sel: false },
+    { title: 'Benchmark matrix', branch: 'main', summary: 'p50/p95 across 4 model configs', time: '1h ago', sel: false },
+  ];
+  const transcript = [
+    { kind: 'user', label: 'user', text: 'Run a bench matrix across the loaded models and export the results.' },
+    { kind: 'assistant', label: 'assistant', text: 'Starting bench matrix. Running p50 and p95 latency probes across 4 configurations and exporting a markdown artifact.' },
+    { kind: 'reasoning', label: 'reasoning', text: 'Selecting acceleration profiles and memory budgets for each model variant…' },
+    { kind: 'tool', label: 'tool', text: '{"op":"bench_matrix","configs":4,"probe":"latency","export":"markdown"}' },
+    { kind: 'assistant', label: 'assistant', text: 'Bench complete. p50: 42ms · p95: 88ms · 4 configs · report saved to ~/.melix/bench/2026-04-19.md' },
+  ];
+  const bubbleBg = { user: 'rgba(0,100,220,0.10)', assistant: 'rgba(20,160,80,0.09)', reasoning: 'rgba(220,110,20,0.09)', tool: 'rgba(120,60,200,0.09)' };
+  return (
+    <div className="page">
+      <Titlebar active="Chat" />
+      <div className="body">
+        {/* Sidebar */}
+        <div className="sidebar">
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:10 }}>
+            <span className="t-head">Chat Sessions</span>
+            <span style={{ fontSize:14, color:'#6B6B6B', cursor:'default' }}>+</span>
+          </div>
+          {sessions.map(s => (
+            <div key={s.title} className="session-row" style={{ background: s.sel ? 'rgba(15,118,110,0.12)' : 'rgba(0,0,0,0.03)' }}>
+              <div style={{ display:'flex', justifyContent:'space-between' }}>
+                <span className="t-head" style={{ fontSize:10 }}>{s.title}</span>
+                <span className="t-mono" style={{ fontSize:8 }}>{s.time}</span>
+              </div>
+              <div style={{ marginTop:3, display:'flex', gap:4 }}>
+                <span className="pill">{s.branch}</span>
+                <span className="t-cap" style={{ fontSize:8, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis', maxWidth:100 }}>{s.summary}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Workspace */}
+        <div className="workspace" style={{ display:'flex', flexDirection:'column' }}>
+          <div style={{ marginBottom:10, flexShrink:0 }}>
+            <div className="t-title">Llama 3.2 3B eval</div>
+            <div style={{ marginTop:3, display:'flex', gap:5 }}>
+              <span className="pill">main</span>
+              <span className="pill">session-1 · running</span>
+            </div>
+          </div>
+          <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column', gap:5 }}>
+            {transcript.map((e,i) => (
+              <div key={i} className="bubble" style={{ background: bubbleBg[e.kind] || 'rgba(0,0,0,0.04)' }}>
+                <div className="t-mono" style={{ marginBottom:2, fontSize:8 }}>{e.label}</div>
+                <div style={{ fontSize:10, lineHeight:1.45, color:'#0A0A0A', fontFamily: e.kind==='tool' ? 'ui-monospace,monospace' : 'inherit' }}>{e.text}</div>
+              </div>
+            ))}
+          </div>
+          {/* Composer */}
+          <div style={{ marginTop:8, flexShrink:0 }}>
+            <div style={{ background:'rgba(0,0,0,0.03)', borderRadius:9, padding:'6px 9px', border:'1px solid rgba(0,0,0,0.07)', height:40, marginBottom:5 }}>
+              <span className="t-mono" style={{ color:'#9A9A9A' }}>Enter a prompt…</span>
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:6 }}>
+              <button className="btn-bordered">Clear</button>
+              <button className="btn-primary">Send ⌘↵</button>
+            </div>
+          </div>
+        </div>
+        {/* Inspector */}
+        <div className="inspector">
+          <div className="card" style={{ marginBottom:8 }}>
+            <div className="section-label">Session</div>
+            <div className="t-head" style={{ marginBottom:3 }}>running</div>
+            <div className="t-mono">http://localhost:11434</div>
+          </div>
+          <div className="card">
+            <div className="section-label">Analysis Routes</div>
+            {[
+              { l:'Chat Completion', r:true },
+              { l:'LoRA Training', r:true },
+              { l:'Bench Matrix', r:true },
+              { l:'Vision', r:false },
+            ].map(c => (
+              <div key={c.l} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
+                <span style={{ color: c.r ? '#14A05A' : '#9A9A9A', fontSize:10, marginTop:1 }}>{c.r ? '●' : '○'}</span>
+                <span className="t-body" style={{ fontSize:10 }}>{c.l}</span>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="section-label">Runtime</div>
+            <div className="t-mono">req_8f2a9c · 1024 tokens · 42ms p50</div>
+          </div>
+        </div>
+      </div>
+      <div className="page-label">Chat Tab · 1 / 3</div>
+    </div>
+  );
+}
+
+/* ── Page 2: Server Tab ───────────────────────────────────────── */
+function ServerPage() {
+  const sessions = [
+    { alias:'Melix Text Turbo', model:'mlx-community/Llama-3.2-3B-Instruct-4bit', state:'running', port:11434, color:'rgba(20,160,80,0.09)', stateColor:'#14A05A' },
+    { alias:'Qwen 7B', model:'mlx-community/Qwen2.5-7B-Instruct-4bit', state:'paused', port:11435, color:'rgba(220,110,20,0.09)', stateColor:'#D97706' },
+    { alias:'Whisper Large', model:'mlx-community/whisper-large-v3-mlx', state:'stopped', port:11436, color:'rgba(0,0,0,0.04)', stateColor:'#9A9A9A' },
+  ];
+  const detail = sessions[0];
+  const info = [
+    ['Port', ':11434'], ['Context', '8192 tokens'], ['Acceleration', 'speculative_decode'],
+    ['Memory Policy', 'pinned'], ['Cache Mode', 'tiered'], ['State', 'running'],
+  ];
+  return (
+    <div className="page">
+      <Titlebar active="Server" />
+      <div className="body">
+        {/* Session list */}
+        <div className="sidebar" style={{ width:260 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:10 }}>
+            <span className="t-head">Server Sessions</span>
+            <span style={{ fontSize:14, color:'#6B6B6B' }}>+</span>
+          </div>
+          {sessions.map(s => (
+            <div key={s.alias} style={{ background: s.state==='running' ? 'rgba(15,118,110,0.12)' : s.color, borderRadius:9, padding:'8px 10px', marginBottom:4, display:'flex', justifyContent:'space-between' }}>
+              <div>
+                <div className="t-head" style={{ fontSize:11 }}>{s.alias}</div>
+                <div className="t-mono" style={{ marginTop:2, fontSize:8, maxWidth:150, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis' }}>{s.model}</div>
+              </div>
+              <div style={{ textAlign:'right' }}>
+                <div style={{ fontSize:9, fontWeight:600, color:s.stateColor }}>{s.state}</div>
+                <div className="t-mono" style={{ fontSize:8 }}>:{s.port}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Detail */}
+        <div className="workspace">
+          <div style={{ marginBottom:12 }}>
+            <div className="t-large" style={{ fontSize:16 }}>{detail.alias}</div>
+            <div className="t-mono" style={{ marginTop:3 }}>{detail.model}</div>
+            <div style={{ marginTop:8, display:'flex', gap:6 }}>
+              <button className="btn-bordered">Pause</button>
+              <button className="btn-bordered">Stop</button>
+              <button className="btn-primary">Wake</button>
+            </div>
+          </div>
+          <div className="grid-2">
+            {info.map(([k,v]) => (
+              <div key={k} className="card-sm">
+                <div style={{ fontSize:8, fontWeight:600, color:'#9A9A9A', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:2 }}>{k}</div>
+                <div className="t-mono" style={{ color:'#0A0A0A', fontSize:11 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="card" style={{ marginTop:8 }}>
+            <div style={{ fontSize:8, fontWeight:600, color:'#9A9A9A', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Base URL</div>
+            <div style={{ fontFamily:'ui-monospace,monospace', fontSize:11, color:'#0F766E' }}>http://localhost:11434/v1</div>
+          </div>
+        </div>
+      </div>
+      <div className="page-label">Server Tab · 2 / 3</div>
+    </div>
+  );
+}
+
+/* ── Page 3: Tools Tab ────────────────────────────────────────── */
+function ToolsPage() {
+  const bench = [
+    ['prompt_tps','1,847 t/s'], ['gen_tps','42.3 t/s'],
+    ['p50_latency','42ms'], ['p95_latency','88ms'],
+    ['ttft','31ms'], ['peak_memory','3.8 GB'],
+  ];
+  const adapters = [
+    { name:'lora-llama-3b-v1', src:'Llama-3.2-3B-Instruct-4bit', dataset:'data/train.jsonl', status:'published', steps:512, dur:'4m 18s' },
+    { name:'lora-llama-3b-v2', src:'Llama-3.2-3B-Instruct-4bit', dataset:'data/train-v2.jsonl', status:'active', steps:1024, dur:'8m 52s' },
+  ];
+  const statusColor = { published:'#14A05A', active:'#0F766E' };
+  return (
+    <div className="page">
+      <Titlebar active="Tools" />
+      <div className="body" style={{ padding:'14px 16px', gap:12, flexDirection:'row', alignItems:'flex-start' }}>
+        {/* Left column */}
+        <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>
+          <div className="card">
+            <div className="section-label">Primary Model</div>
+            <div className="t-head">mlx-community/Llama-3.2-3B-Instruct-4bit</div>
+            <div className="t-cap" style={{ marginTop:2 }}>Melix Text Turbo · loaded · 8192 ctx</div>
+            <div style={{ marginTop:8, display:'flex', gap:5, flexWrap:'wrap' }}>
+              {['Inspect','Doctor','Bench','Convert','Quantize'].map(l => (
+                <button key={l} className="btn-bordered">{l}</button>
+              ))}
+              <button className="btn-accent">Train LoRA</button>
+            </div>
+          </div>
+          <div className="card">
+            <div className="section-label">Adapter Registry</div>
+            {adapters.map(a => (
+              <div key={a.name} style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
+                <div>
+                  <div style={{ fontSize:10, fontWeight:600, color:'#0A0A0A', fontFamily:'ui-monospace,monospace' }}>{a.name}</div>
+                  <div className="t-mono" style={{ marginTop:1 }}>{a.src} · {a.steps} steps · {a.dur}</div>
+                </div>
+                <div style={{ display:'flex', gap:5, alignItems:'center', flexShrink:0, marginLeft:8 }}>
+                  <span style={{ fontSize:9, fontWeight:600, color:statusColor[a.status] }}>{a.status}</span>
+                  <button className="btn-bordered" style={{ padding:'2px 7px', fontSize:9 }}>Activate</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Right column */}
+        <div style={{ width:260, flexShrink:0, display:'flex', flexDirection:'column', gap:10 }}>
+          <div className="card">
+            <div className="section-label">Bench Report</div>
+            <div className="t-mono" style={{ marginBottom:8, fontSize:8 }}>~/.melix/bench/2026-04-19.md · speculative_decode</div>
+            {bench.map(([k,v]) => (
+              <div key={k} className="divider-row" style={{ borderBottom:'none' }}>
+                <span className="t-cap" style={{ fontSize:10, color:'#3A3A3A' }}>{k}</span>
+                <span style={{ fontFamily:'ui-monospace,monospace', fontSize:11, color:'#0A0A0A', fontVariantNumeric:'tabular-nums' }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="section-label">Training History</div>
+            {adapters.map(a => (
+              <div key={a.name} style={{ marginBottom:7 }}>
+                <div style={{ display:'flex', justifyContent:'space-between' }}>
+                  <span style={{ fontSize:10, fontWeight:600, fontFamily:'ui-monospace,monospace', color:'#0A0A0A' }}>{a.name}</span>
+                  <span className="t-cap">{a.dur}</span>
+                </div>
+                <div className="t-mono" style={{ marginTop:1 }}>{a.dataset}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="page-label">Tools Tab · 3 / 3</div>
+    </div>
+  );
+}
+
+/* ── Shared titlebar ────────────────────────────────────────── */
+function Titlebar({ active }) {
+  const tabs = ['Chat','Image','Server','Tools','API'];
+  return (
+    <div className="titlebar">
+      <div className="traffic">
+        <div className="dot" style={{ background:'#FF5F57' }} />
+        <div className="dot" style={{ background:'#FFBD2E' }} />
+        <div className="dot" style={{ background:'#28C840' }} />
+      </div>
+      <div className="tab-strip">
+        {tabs.map(t => (
+          <div key={t} className={`tab${t === active ? ' active' : ''}`}>{t}</div>
+        ))}
+      </div>
+      <div style={{ width:70, display:'flex', justifyContent:'flex-end', gap:6 }}>
+        <div style={{ width:14, height:14, background:'rgba(0,0,0,0.08)', borderRadius:3 }} />
+        <div style={{ width:14, height:14, background:'rgba(0,0,0,0.08)', borderRadius:3 }} />
+        <div style={{ width:14, height:14, background:'rgba(0,0,0,0.08)', borderRadius:3 }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Root render + auto print ──────────────────────────────── */
+function PrintDoc() {
+  return (
+    <div>
+      <ChatPage />
+      <ServerPage />
+      <ToolsPage />
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<PrintDoc />);
+
+// Auto-print after fonts + Babel settle
+document.fonts.ready.then(() => {
+  setTimeout(() => window.print(), 500);
+});
+</script>
+</body>
+</html>

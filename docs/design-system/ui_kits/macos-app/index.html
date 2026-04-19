@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Melix — macOS Operator App</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+  body { background: #1A1A1A; display: flex; align-items: center; justify-content: center; }
+
+  /* macOS window frame */
+  .window-frame {
+    width: min(1200px, 98vw);
+    height: min(780px, 96vh);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+  }
+
+  textarea:focus { outline: none; }
+  button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
+
+  /* Tweaks panel */
+  #tweaks-panel {
+    display: none;
+    position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+    background: var(--bg-surface); border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-overlay); padding: 16px; width: 220px;
+    font-family: var(--font-sans);
+  }
+  #tweaks-panel h4 { font-size: 11px; font-weight: 600; color: var(--fg-primary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  #tweaks-panel label { display: block; font-size: 11px; color: var(--fg-secondary); margin-bottom: 4px; margin-top: 10px; }
+  #tweaks-panel select, #tweaks-panel input[type=range] { width: 100%; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="window-frame" id="app-window">
+  <div id="root"></div>
+</div>
+
+<div id="tweaks-panel">
+  <h4>Tweaks</h4>
+  <label>Active Tab</label>
+  <select id="tweak-tab">
+    <option>Chat</option><option>Image</option><option>Server</option><option>Tools</option><option>API</option>
+  </select>
+  <label>Sidebar</label>
+  <select id="tweak-sidebar">
+    <option value="1">Visible</option><option value="0">Collapsed</option>
+  </select>
+  <label>Inspector</label>
+  <select id="tweak-inspector">
+    <option value="1">Visible</option><option value="0">Collapsed</option>
+  </select>
+</div>
+
+<script src="Tokens.js"></script>
+<script type="text/babel" src="Shell.jsx"></script>
+<script type="text/babel" src="ChatView.jsx"></script>
+<script type="text/babel" src="ServerView.jsx"></script>
+<script type="text/babel" src="ToolsView.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+const T = window.MelixTokens;
+
+const LS = {
+  get: (k, def) => { try { const v = localStorage.getItem('melix_kit_' + k); return v !== null ? JSON.parse(v) : def; } catch { return def; } },
+  set: (k, v) => { try { localStorage.setItem('melix_kit_' + k, JSON.stringify(v)); } catch {} },
+};
+
+function DashboardView() {
+  const cards = [
+    { title: 'Models Loaded', value: '3', detail: 'of 12 discovered' },
+    { title: 'Active Sessions', value: '2', detail: '1 running · 1 paused' },
+    { title: 'Adapters', value: '4', detail: '1 active · 2 published' },
+    { title: 'p50 Latency', value: '42ms', detail: 'Llama 3.2 3B · speculative_decode', mono: true },
+  ];
+  return (
+    <div style={{ padding: 20, overflowY: 'auto', height: '100%' }}>
+      <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', color: T.fgPrimary, marginBottom: 16 }}>Dashboard</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10, marginBottom: 20 }}>
+        {cards.map(c => (
+          <div key={c.title} style={{ background: T.bgCard, borderRadius: T.radiusXl, padding: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: T.fgTertiary, marginBottom: 4 }}>{c.title}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em', color: T.fgPrimary, fontFamily: c.mono ? T.fontMono : T.fontSans }}>{c.value}</div>
+            <div style={{ fontSize: 10, color: T.fgQuaternary, marginTop: 2 }}>{c.detail}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ background: T.bgCard, borderRadius: T.radiusXl, padding: 14 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: T.fgTertiary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Scheduler Lanes</div>
+        {[
+          { id: 'chat', cls: 'interactive', queued: 0, active: 2, bp: 0.14 },
+          { id: 'lora', cls: 'training', queued: 1, active: 0, bp: 0.00 },
+          { id: 'bench', cls: 'evaluation', queued: 3, active: 1, bp: 0.62 },
+        ].map(l => (
+          <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
+            <div>
+              <span style={{ fontSize: 12, fontWeight: 600, color: T.fgPrimary }}>{l.id}</span>
+              <span style={{ fontSize: 10, color: T.fgTertiary, marginLeft: 8 }}>{l.cls}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 16, fontFamily: T.fontMono, fontSize: 11, color: T.fgTertiary }}>
+              <span>queued {l.queued}</span>
+              <span>active {l.active}</span>
+              <span>bp {l.bp.toFixed(2)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlaceholderView({ name }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: T.fgTertiary }}>{name}</div>
+      <div style={{ fontSize: 11, color: T.fgQuaternary }}>— not yet in this prototype —</div>
+    </div>
+  );
+}
+
+function App() {
+  const [tab, setTab] = useState(() => LS.get('tab', 'Chat'));
+  const [sidebar, setSidebar] = useState(() => LS.get('sidebar', true));
+  const [inspector, setInspector] = useState(() => LS.get('inspector', true));
+  const [chatSession, setChatSession] = useState(1);
+
+  useEffect(() => { LS.set('tab', tab); }, [tab]);
+  useEffect(() => { LS.set('sidebar', sidebar); }, [sidebar]);
+  useEffect(() => { LS.set('inspector', inspector); }, [inspector]);
+
+  // Tweak controls sync
+  useEffect(() => {
+    const tabEl = document.getElementById('tweak-tab');
+    const sbEl = document.getElementById('tweak-sidebar');
+    const insEl = document.getElementById('tweak-inspector');
+    if (!tabEl) return;
+    tabEl.value = tab;
+    sbEl.value = sidebar ? '1' : '0';
+    insEl.value = inspector ? '1' : '0';
+    const onChange = () => {
+      setTab(tabEl.value);
+      setSidebar(sbEl.value === '1');
+      setInspector(insEl.value === '1');
+    };
+    tabEl.addEventListener('change', onChange);
+    sbEl.addEventListener('change', onChange);
+    insEl.addEventListener('change', onChange);
+    return () => {
+      tabEl.removeEventListener('change', onChange);
+      sbEl.removeEventListener('change', onChange);
+      insEl.removeEventListener('change', onChange);
+    };
+  }, [tab, sidebar, inspector]);
+
+  const sidebarContent = tab === 'Chat'
+    ? <ChatSidebar selected={chatSession} onSelect={setChatSession} />
+    : tab === 'Server'
+    ? null
+    : null;
+
+  const inspectorContent = tab === 'Chat'
+    ? <ChatInspector />
+    : null;
+
+  const mainContent = tab === 'Chat'
+    ? <ChatWorkspace sessionId={chatSession} />
+    : tab === 'Server'
+    ? <ServerView />
+    : tab === 'Tools'
+    ? <ToolsView />
+    : tab === 'Image' || tab === 'API'
+    ? <PlaceholderView name={`${tab} Tab`} />
+    : <DashboardView />;
+
+  // For Server tab, use full width (no sidebar/inspector)
+  const effectiveSidebar = (tab === 'Server' || tab === 'Tools' || tab === 'Image' || tab === 'API') ? false : sidebar;
+  const effectiveInspector = (tab === 'Server' || tab === 'Tools' || tab === 'Image' || tab === 'API') ? false : inspector;
+
+  return (
+    <AppShell
+      activeTab={tab}
+      onTabSelect={setTab}
+      showSidebar={effectiveSidebar}
+      showInspector={effectiveInspector}
+      onToggleSidebar={() => setSidebar(v => !v)}
+      onToggleInspector={() => setInspector(v => !v)}
+      sidebarContent={sidebarContent}
+      inspectorContent={inspectorContent}
+    >
+      {mainContent}
+    </AppShell>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+// Tweaks toggle
+window.addEventListener('message', e => {
+  const p = document.getElementById('tweaks-panel');
+  if (e.data?.type === '__activate_edit_mode') p.style.display = 'block';
+  if (e.data?.type === '__deactivate_edit_mode') p.style.display = 'none';
+});
+window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.bubble { border-radius: var(--radius-xl); padding: 10px 12px; max-width: 360px; }
+.bubble .role { font-size: 10px; font-weight: 600; margin-bottom: 3px; font-family: var(--font-mono); }
+.bubble .text { font-size: 12px; line-height: 1.5; color: var(--fg-primary); }
+</style>
+</head>
+<body>
+  <div class="bubble" style="background:var(--bg-user)">
+    <div class="role" style="color:var(--fg-tertiary)">user</div>
+    <div class="text">Train a LoRA adapter on the Llama 3.2 3B base with 512 steps.</div>
+  </div>
+  <div class="bubble" style="background:var(--bg-assistant)">
+    <div class="role" style="color:var(--fg-tertiary)">assistant</div>
+    <div class="text">Starting LoRA training job. I'll bind the adapter to the active server session after completion.</div>
+  </div>
+  <div class="bubble" style="background:var(--bg-reasoning)">
+    <div class="role" style="color:var(--fg-tertiary)">reasoning</div>
+    <div class="text">Selecting dataset URI and gradient checkpointing settings…</div>
+  </div>
+  <div class="bubble" style="background:var(--bg-tool); font-family:var(--font-mono)">
+    <div class="role" style="color:var(--fg-tertiary)">tool</div>
+    <div class="text" style="font-size:11px">{"op":"train_lora","model":"Llama-3.2-3B","steps":512}</div>
+  </div>
+  <div class="bubble" style="background:var(--bg-error)">
+    <div class="role" style="color:var(--fg-tertiary)">error</div>
+    <div class="text">Server session unavailable. Start a session before submitting prompts.</div>
+  </div>
+</body></html>

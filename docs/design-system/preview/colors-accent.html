@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 20px; }
+.row { display: flex; gap: 8px; align-items: stretch; }
+.col { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.swatch { border-radius: var(--radius-md); display: flex; align-items: flex-end; padding: 8px; }
+.label { font-size: 9px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="col">
+    <div class="swatch" style="background:var(--accent); height:56px;">
+      <span class="label" style="color:#fff">accent #0F766E</span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="swatch" style="background:var(--accent-medium); height:56px;">
+      <span class="label">accent-medium 32%</span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="swatch" style="background:var(--accent-weak); height:56px;">
+      <span class="label">accent-weak 12%</span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="swatch" style="background:var(--accent-faint); height:56px;">
+      <span class="label">accent-faint 6%</span>
+    </div>
+  </div>
+</div>
+<div style="margin-top:12px; display:flex; gap:16px; align-items:center;">
+  <span style="font-size:11px; color:var(--accent); text-decoration:underline; text-underline-offset:2px; font-family:var(--font-sans)">link text</span>
+  <span style="font-size:11px; font-family:var(--font-sans); color:var(--fg-tertiary)">focus:</span>
+  <span style="font-size:11px; font-family:var(--font-sans); padding:2px 8px; outline:1px solid var(--accent); border-radius:4px; color:var(--fg-primary)">input</span>
+  <span style="font-size:10px; font-family:var(--font-mono); color:var(--fg-tertiary)">≤ 3% visual area</span>
+</div>
+</body></html>

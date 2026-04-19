@@ -51,7 +51,7 @@ struct DesktopDashboardTabView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+                        .melixCard()
                     }
                 }
 

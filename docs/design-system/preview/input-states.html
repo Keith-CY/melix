@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-base); font-family: var(--font-sans); padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+.field-wrap { display: flex; flex-direction: column; gap: 4px; }
+.label { font-size: 10px; color: var(--fg-quaternary); font-family: var(--font-mono); }
+/* Default */
+input {
+  font-family: var(--font-sans); font-size: 13px; color: var(--fg-primary);
+  background: var(--bg-sunken); border: none; border-radius: var(--radius-lg);
+  padding: 7px 10px; width: 280px; outline: none;
+  border-bottom: 1px solid transparent; transition: border-color 0.15s;
+}
+input.active { border-bottom: 1px solid var(--fg-primary); background: var(--bg-sunken); }
+input.accent-active { border-bottom: 1px solid var(--accent); background: var(--bg-sunken); }
+input:focus-visible { outline: 1px solid var(--accent); }
+.placeholder { color: var(--fg-quaternary); }
+</style>
+</head>
+<body>
+  <div class="field-wrap">
+    <div class="label">default</div>
+    <input type="text" value="" placeholder="Repo ID or keywords" class="placeholder">
+  </div>
+  <div class="field-wrap">
+    <div class="label">active · bottom border = black</div>
+    <input type="text" value="mlx-community/Llama-3.2-3B" class="active">
+  </div>
+  <div class="field-wrap">
+    <div class="label">active · bottom border = accent</div>
+    <input type="text" value="Add Registry Root" class="accent-active">
+  </div>
+  <div class="field-wrap">
+    <div class="label">focus ring</div>
+    <input type="text" value="focused input" style="outline:1px solid var(--accent); outline-offset:2px;">
+  </div>
+</body></html>
