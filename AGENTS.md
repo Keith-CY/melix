@@ -184,6 +184,27 @@ state from `.runtime`.
 - Before any commit, ensure measured automated test coverage for the repository scope touched by the change is at least 95 percent. If coverage is not currently measurable for that scope, add or update the coverage command before committing.
 - Before any commit or handoff, include a metrics report for the changed scope. If the change is documentation-only or the path is not yet measurable, include an explicit `N/A` metrics report with the reason.
 
+## Pull Request Evidence Rules
+
+Before creating or updating a pull request, read and follow:
+
+1. `.github/pull_request_template.md`
+2. `docs/contributing.md`
+3. `docs/templates/pr-evidence-checklist.md`
+
+The pull request body must keep the template section headings exactly,
+including `## Plan or Spec`, `## Commands Run`, `## Coverage and Metrics`,
+and `## Known Gaps`. The `pr-evidence` GitHub Actions workflow validates these
+headings through `scripts/validate_pr_evidence.py`; do not open a pull request,
+including a draft pull request, with an empty body, placeholder body, or a body
+that omits those sections.
+
+For behavior changes, identify a governing canonical spec or plan from `docs/`
+or `docs/plans/`. If no such document applies, write `N/A: <reason>` in the
+`Plan or Spec` section and explain why the change is intentionally not governed
+by a canonical plan or spec. Session-local notes outside the repository do not
+replace the required PR evidence.
+
 ## Documentation Rules
 
 - `docs/product-brief.md` remains intentionally ignored and untracked unless the user explicitly changes that policy.
