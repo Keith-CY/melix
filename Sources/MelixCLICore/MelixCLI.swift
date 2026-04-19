@@ -2763,17 +2763,29 @@ public actor MelixCLIRunner {
                 outputDir: "",
                 ext: ext
             )
-            return options.json ? result.manifestJson : result.outputPath + "\n"
+            if options.json {
+                return try prettyJSON(
+                    try filterManifestKeys(
+                        fromManifestJson: result.manifestJson,
+                        defaults: modelRegistrySnapshotDefaults()
+                    )
+                )
+            }
+            return result.outputPath + "\n"
         case .serverSnapshot(let options):
             let snapshot = try await client.serverSnapshot()
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverSessionList(let options):
             let state = try loadOperatorState()
             if options.json {
-                return try prettyJSON(state)
+                return try prettyJSON(ServerSessionListResponse(
+                    serverSessions: state.serverSessions,
+                    selectedServerSessionID: state.selectedServerSessionID
+                ))
             }
             return renderServerSessions(state)
         case .serverSessionCreate(let options):
+            var createdID = ""
             let state = try mutateOperatorState { current in
                 let nextIndex = current.serverSessions.count + 1
                 let created = MelixOperatorServerSessionState(
@@ -2788,9 +2800,13 @@ public actor MelixCLIRunner {
                 )
                 current.serverSessions.append(created)
                 current.selectedServerSessionID = created.id
+                createdID = created.id
             }
             if options.json {
-                return try prettyJSON(state)
+                guard let created = state.serverSessions.first(where: { $0.id == createdID }) else {
+                    throw MelixCLIError.runtime("Created server session \(createdID) was not found in persisted state.")
+                }
+                return try prettyJSON(created)
             }
             return renderServerSessions(state)
         case .serverSessionUpdate(let options):
@@ -2821,7 +2837,10 @@ public actor MelixCLIRunner {
                 current.serverSessions[index] = session
             }
             if options.json {
-                return try prettyJSON(state)
+                guard let updated = state.serverSessions.first(where: { $0.id == options.serverSessionID }) else {
+                    throw MelixCLIError.runtime("Server session \(options.serverSessionID) was not found.")
+                }
+                return try prettyJSON(updated)
             }
             return renderServerSessions(state)
         case .serverSessionRemove(let options):
@@ -2832,7 +2851,10 @@ public actor MelixCLIRunner {
                 }
             }
             if options.json {
-                return try prettyJSON(state)
+                return try prettyJSON([
+                    "removed_id": options.serverSessionID,
+                    "selected_server_session_id": state.selectedServerSessionID,
+                ])
             }
             return renderServerSessions(state)
         case .serverSessionSelect(let options):
@@ -2842,7 +2864,9 @@ public actor MelixCLIRunner {
                 }
             }
             if options.json {
-                return try prettyJSON(state)
+                return try prettyJSON([
+                    "selected_server_session_id": state.selectedServerSessionID,
+                ])
             }
             return renderServerSessions(state)
         case .serverStart(let options):
@@ -2955,7 +2979,15 @@ public actor MelixCLIRunner {
                 outputDir: "",
                 ext: [:]
             )
-            return options.json ? result.manifestJson : renderRegistrySnapshot(result.manifestJson)
+            if options.json {
+                return try prettyJSON(
+                    try filterManifestKeys(
+                        fromManifestJson: result.manifestJson,
+                        defaults: loraRegistryDefaults()
+                    )
+                )
+            }
+            return renderRegistrySnapshot(result.manifestJson)
         case .loraTrain(let options):
             var ext = options.parameters
             ext["adapter_name"] = options.adapterName
@@ -4011,6 +4043,51 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func filterManifestKeys(
+        fromManifestJson manifestJSON: String,
+        defaults: [String: Any]
+    ) throws -> [String: Any] {
+        guard let data = manifestJSON.data(using: .utf8) else {
+            throw MelixCLIError.runtime("Registry manifest could not be decoded as UTF-8.")
+        }
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.runtime("Registry manifest is not valid JSON: \((error as NSError).localizedDescription)")
+        }
+        guard let payload = object as? [String: Any] else {
+            throw MelixCLIError.runtime("Registry manifest must be a JSON object.")
+        }
+        var result = defaults
+        for key in defaults.keys {
+            if let value = payload[key] {
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    private func loraRegistryDefaults() -> [String: Any] {
+        [
+            "adapters": [] as [Any],
+            "experiment_groups": [] as [Any],
+            "derived_models": [] as [Any],
+            "downloads": [] as [Any],
+        ]
+    }
+
+    private func modelRegistrySnapshotDefaults() -> [String: Any] {
+        [
+            "adapters": [] as [Any],
+            "derived_models": [] as [Any],
+            "experiment_groups": [] as [Any],
+            "downloads": [] as [Any],
+            "model_registry": [:] as [String: Any],
+            "warnings": [] as [Any],
+        ]
+    }
+
     private func renderRegistrySnapshot(_ manifestJSON: String) -> String {
         guard
             let data = manifestJSON.data(using: .utf8),
@@ -4684,6 +4761,16 @@ private struct BenchExportCSVResponse: Encodable {
     let jobID: String
     let outputPath: String
     let rowCount: Int
+}
+
+private struct ServerSessionListResponse: Encodable {
+    let serverSessions: [MelixOperatorServerSessionState]
+    let selectedServerSessionID: String
+
+    enum CodingKeys: String, CodingKey {
+        case serverSessions = "server_sessions"
+        case selectedServerSessionID = "selected_server_session_id"
+    }
 }
 
 private struct EvalExportResponse: Encodable {

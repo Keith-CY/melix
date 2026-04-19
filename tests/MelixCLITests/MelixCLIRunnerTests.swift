@@ -803,9 +803,22 @@ struct MelixCLIRunnerTests {
             )
         )
 
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": root.path])
+        )
+        try await store.save(
+            MelixOperatorSessionState(
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(id: "server-session-1", title: "Fake Phase 8", modelID: "melix-dev-text")
+                ]
+            )
+        )
+
         let output = try await MelixCLIRunner(
             client: client,
-            environment: ["MELIX_HOME": root.path]
+            environment: ["MELIX_HOME": root.path],
+            operatorSessionStore: store
         ).run(
             .pipelineRun(
                 .init(
@@ -2566,7 +2579,12 @@ struct MelixCLIRunnerTests {
         let call = try #require(await client.lastModelOperationCall)
 
         #expect(call.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
-        #expect(output == #"{"adapters":[{"adapter_name":"demo-adapter"}]}"#)
+        let payload = try #require(parseJSONObject(output))
+        let adapters = try #require(payload["adapters"] as? [[String: Any]])
+        #expect(adapters.count == 1)
+        #expect(adapters.first?["adapter_name"] as? String == "demo-adapter")
+        #expect(payload["experiment_groups"] as? [Any] != nil)
+        #expect(payload["jobs"] == nil)
     }
 
     @Test("lora list falls back to raw manifest text when the registry payload is not tabular")
