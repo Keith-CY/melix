@@ -3905,7 +3905,11 @@ final class WorkerScaffoldTests: XCTestCase {
                     cacheMaterializeCallCount: 3,
                     fusedAttentionTotalMicros: 750,
                     fusedAttentionCallCount: 3,
-                    fusedAttentionRouteTotalMicros: 900
+                    fusedAttentionRouteTotalMicros: 900,
+                    fusedAttentionActiveLaneTotal: 48,
+                    fusedAttentionLaunchedLaneTotal: 96,
+                    fusedAttentionSoftmaxLaneTotal: 96,
+                    fusedAttentionSoftmaxTokenLaneTotal: 6_144
                 )
             )
         )
@@ -4002,6 +4006,11 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_avg_us"], 250)
         XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_total_us"], 900)
         XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_avg_us"], 300)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_active_lane_total"], 48)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_launched_lane_total"], 96)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_inactive_lane_total"], 48)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_softmax_lane_total"], 96)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_softmax_token_lane_total"], 6_144)
     }
 
     func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {
@@ -6300,6 +6309,10 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(fusedCache.quantizedCacheUpdateCallCount, 1)
             XCTAssertEqual(fusedCache.fusedAttentionDispatchCount, 1)
             XCTAssertEqual(fusedCache.fusedAttentionCallCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionActiveLaneTotal, 4)
+            XCTAssertEqual(fusedCache.fusedAttentionLaunchedLaneTotal, 32)
+            XCTAssertEqual(fusedCache.fusedAttentionSoftmaxLaneTotal, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionSoftmaxTokenLaneTotal, 4)
             XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionTotalMicros, 0)
             XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionRouteTotalMicros, fusedCache.fusedAttentionTotalMicros)
             XCTAssertEqual(fusedCache.quantizedCacheMaterializeCallCount, 0)
@@ -6559,6 +6572,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(plan.scoreDotProductsPerQueryHead, 64)
         XCTAssertEqual(plan.scoreReductionLaneCount, 16)
         XCTAssertEqual(plan.scoreReductionSimdgroupCount, 1)
+        XCTAssertEqual(plan.softmaxLaneCount, 1)
         XCTAssertFalse(plan.usesThreadgroupSharedScores)
         XCTAssertTrue(plan.usesThreadgroupParallelScoreReduction)
         XCTAssertTrue(plan.usesOnlineSoftmax)

@@ -148,11 +148,74 @@ def main() -> None:
         help="Read an existing Phase 2 report JSON, backfill derived gates, and emit it without probing a live stack.",
     )
     parser.add_argument(
+        "--stability-input-json",
+        action="append",
+        default=[],
+        help=(
+            "Ordered Phase 2 report JSON to include in a TurboQuant stability summary. "
+            "Repeat this flag for warmup and measured runs."
+        ),
+    )
+    parser.add_argument(
+        "--stability-warmup-count",
+        type=int,
+        default=0,
+        help="Number of leading stability input JSONs to record as warmups and exclude from measured gate stats.",
+    )
+    parser.add_argument(
+        "--stability-required-runs",
+        type=int,
+        default=5,
+        help="Required measured run count for the TurboQuant stability gate.",
+    )
+    parser.add_argument("--stability-model", default="", help="Human-readable model label for a stability summary.")
+    parser.add_argument("--stability-runtime-dir", default="", help="Runtime directory recorded in a stability summary.")
+    parser.add_argument("--stability-output-dir", default="", help="Raw artifact directory recorded in a stability summary.")
+    parser.add_argument(
+        "--stability-committed-summary-path",
+        default="",
+        help="Repository-relative committed summary path recorded in a stability summary.",
+    )
+    parser.add_argument(
+        "--stability-probe-env",
+        action="append",
+        default=[],
+        help="KEY=VALUE probe environment entry recorded in a stability summary. Repeatable.",
+    )
+    parser.add_argument(
         "--require-fused-turboquant",
         action="store_true",
         help="Exit non-zero unless the turboquant-q4 probe reports a non-fallback fused decode kernel.",
     )
     args = parser.parse_args()
+
+    if args.stability_input_json:
+        if args.input_json:
+            raise SystemExit("--input-json and --stability-input-json are mutually exclusive.")
+        input_paths = [Path(raw_path) for raw_path in args.stability_input_json]
+        reports = [load_report_json(path) for path in input_paths]
+        summary = build_turboquant_stability_summary(
+            reports=reports,
+            input_paths=input_paths,
+            warmup_count=max(0, int(args.stability_warmup_count)),
+            required_runs=max(1, int(args.stability_required_runs)),
+            model=str(args.stability_model or "") or None,
+            runtime_dir=str(args.stability_runtime_dir or "") or None,
+            output_dir=str(args.stability_output_dir or "") or None,
+            committed_summary_path=str(args.stability_committed_summary_path or args.output or "") or None,
+            probe_environment=parse_probe_environment_entries(args.stability_probe_env),
+        )
+        rendered = json.dumps(summary, indent=2)
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(f"{rendered}\n", encoding="utf-8")
+        print(rendered)
+        if args.require_fused_turboquant:
+            failures = fused_turboquant_stability_failures(summary)
+            if failures:
+                raise SystemExit(f"Phase 2 fused TurboQuant stability gate failed: {'; '.join(failures)}")
+        return
 
     if args.input_json:
         report = load_report_json(Path(args.input_json))
@@ -952,6 +1015,11 @@ def decode_active_kv_metrics(
             "active_kv_fused_attention_avg_us": 0,
             "active_kv_fused_attention_route_total_us": 0,
             "active_kv_fused_attention_route_avg_us": 0,
+            "active_kv_fused_attention_active_lane_total": 0,
+            "active_kv_fused_attention_launched_lane_total": 0,
+            "active_kv_fused_attention_inactive_lane_total": 0,
+            "active_kv_fused_attention_softmax_lane_total": 0,
+            "active_kv_fused_attention_softmax_token_lane_total": 0,
             "active_kv_decode_quantize_total_us": 0,
             "active_kv_decode_quantize_avg_us": 0,
             "active_kv_decode_loop_total_us": 0,
@@ -1027,6 +1095,21 @@ def decode_active_kv_metrics(
         ),
         "active_kv_fused_attention_route_avg_us": exported.get(
             "swift_text.active_kv_fused_attention_route_avg_us", 0
+        ),
+        "active_kv_fused_attention_active_lane_total": exported.get(
+            "swift_text.active_kv_fused_attention_active_lane_total", 0
+        ),
+        "active_kv_fused_attention_launched_lane_total": exported.get(
+            "swift_text.active_kv_fused_attention_launched_lane_total", 0
+        ),
+        "active_kv_fused_attention_inactive_lane_total": exported.get(
+            "swift_text.active_kv_fused_attention_inactive_lane_total", 0
+        ),
+        "active_kv_fused_attention_softmax_lane_total": exported.get(
+            "swift_text.active_kv_fused_attention_softmax_lane_total", 0
+        ),
+        "active_kv_fused_attention_softmax_token_lane_total": exported.get(
+            "swift_text.active_kv_fused_attention_softmax_token_lane_total", 0
         ),
         "active_kv_decode_quantize_total_us": exported.get("swift_text.active_kv_decode_quantize_total_us"),
         "active_kv_decode_quantize_avg_us": exported.get("swift_text.active_kv_decode_quantize_avg_us"),
@@ -1436,6 +1519,236 @@ def fused_turboquant_gate_failures(report: dict[str, Any]) -> list[str]:
     if isinstance(failures, list) and failures:
         return [str(failure) for failure in failures]
     return [f"turboquant_fused_decode={gate.get('status', 'unknown')}"]
+
+
+def parse_probe_environment_entries(entries: list[str]) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    for entry in entries:
+        key, separator, value = entry.partition("=")
+        if not separator or not key.strip():
+            raise SystemExit(f"--stability-probe-env expects KEY=VALUE, got: {entry}")
+        environment[key.strip()] = value
+    return environment
+
+
+def build_turboquant_stability_summary(
+    *,
+    reports: list[dict[str, Any]],
+    input_paths: list[Path],
+    warmup_count: int,
+    required_runs: int,
+    model: str | None = None,
+    runtime_dir: str | None = None,
+    output_dir: str | None = None,
+    committed_summary_path: str | None = None,
+    probe_environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    if len(reports) != len(input_paths):
+        raise ValueError("reports and input_paths must have the same length")
+    if warmup_count >= len(reports):
+        raise ValueError("stability summary requires at least one measured run after warmups")
+
+    run_entries = [
+        turboquant_stability_run_entry(
+            report=report,
+            input_path=input_path,
+            run_number=index - warmup_count + 1 if index >= warmup_count else index,
+        )
+        for index, (report, input_path) in enumerate(zip(reports, input_paths))
+    ]
+    warmup_entries = run_entries[:warmup_count]
+    measured_entries = run_entries[warmup_count:]
+    pass_count = sum(1 for run in measured_entries if run.get("gate") == "pass")
+    all_measured_passed = bool(measured_entries) and pass_count == len(measured_entries)
+    all_required_runs_present = len(measured_entries) >= required_runs
+    all_non_fallback = bool(measured_entries) and all(
+        "fallback" not in run.get("kernel_paths", []) for run in measured_entries
+    )
+    all_routed = bool(measured_entries) and all(
+        run.get("runtime_routes") == ["routed"] for run in measured_entries
+    )
+    all_worker_overhead_within_threshold = bool(measured_entries) and all(
+        numeric_value(run.get("worker_tps_overhead_pct")) is not None
+        and float(run["worker_tps_overhead_pct"]) <= TURBOQUANT_FUSED_MAX_WORKER_TPS_OVERHEAD_PCT
+        for run in measured_entries
+    )
+
+    summary: dict[str, Any] = {
+        "model": model or stability_model_label(reports[0]),
+        "committed_summary_path": committed_summary_path,
+        "runtime_dir": runtime_dir or reports[0].get("runtime_dir"),
+        "output_dir": output_dir or common_parent(input_paths),
+        "measurement_protocol": stability_measurement_protocol(warmup_count, required_runs),
+        "raw_run_artifact_policy": (
+            "Raw run JSON and gate logs were generated under output_dir during measurement; "
+            "this committed summary preserves the extracted warmup and per-run gate metrics."
+        ),
+        "probe_environment": probe_environment or {},
+        "thresholds": {
+            "worker_tps_overhead_pct_max_allowed": TURBOQUANT_FUSED_MAX_WORKER_TPS_OVERHEAD_PCT,
+            "active_kv_kernel_path_must_not_be": "fallback",
+            "measured_run_count_required": required_runs,
+        },
+    }
+    if len(warmup_entries) == 1:
+        summary["warmup_run"] = warmup_entries[0]
+    elif warmup_entries:
+        summary["warmup_runs"] = warmup_entries
+    summary.update({
+        "pass_count": pass_count,
+        "run_count": len(measured_entries),
+        "all_gate_passed": all_measured_passed and all_required_runs_present,
+        "all_non_fallback": all_non_fallback,
+        "all_routed": all_routed,
+        "all_worker_overhead_within_threshold": all_worker_overhead_within_threshold,
+        "worker_tps_overhead_pct": numeric_summary(measured_entries, "worker_tps_overhead_pct"),
+        "wall_tps_overhead_pct": numeric_summary(measured_entries, "wall_tps_overhead_pct"),
+        "fused_attention_softmax_token_lane_total": numeric_summary(
+            measured_entries,
+            "fused_attention_softmax_token_lane_total",
+            integer=True,
+        ),
+        "decode_model_eval_sync_total_us": numeric_summary(
+            measured_entries,
+            "decode_model_eval_sync_total_us",
+            integer=True,
+        ),
+        "runs": measured_entries,
+    })
+    return summary
+
+
+def turboquant_stability_run_entry(
+    *,
+    report: dict[str, Any],
+    input_path: Path,
+    run_number: int,
+) -> dict[str, Any]:
+    ensure_active_kv_release_gates(report)
+    direct = report.get("swift_worker_direct")
+    if not isinstance(direct, dict):
+        raise RuntimeError(f"stability input is missing swift_worker_direct: {input_path}")
+    gates = direct.get("active_kv_release_gates", {})
+    gate = gates.get("turboquant_fused_decode") if isinstance(gates, dict) else None
+    if not isinstance(gate, dict):
+        raise RuntimeError(f"stability input is missing turboquant_fused_decode gate: {input_path}")
+    comparisons = direct.get("comparisons", {})
+    comparison = comparisons.get("turboquant_q4_vs_baseline", {}) if isinstance(comparisons, dict) else {}
+    decode_rows = direct.get("decode", [])
+    turbo_rows = [row for row in decode_rows if isinstance(row, dict) and row.get("label") == "decode_turboquant_q4"]
+    entry = {
+        "run": run_number,
+        "gate": gate.get("status"),
+        "worker_tps_overhead_pct": comparison.get("worker_tps_overhead_pct", gate.get("worker_tps_overhead_pct")),
+        "wall_tps_overhead_pct": comparison.get("wall_tps_overhead_pct"),
+        "active_worker_decode_tokens_per_second": comparison.get("active_worker_decode_tokens_per_second"),
+        "baseline_worker_decode_tokens_per_second": comparison.get("baseline_worker_decode_tokens_per_second"),
+        "kernel_paths": gate.get("observed_kernel_paths", []),
+        "runtime_routes": gate.get("observed_runtime_routes", []),
+        "fallback_count": gate.get("fallback_count"),
+        "fused_attention_call_count": gate.get("fused_attention_call_count"),
+        "fused_attention_total_us": gate.get("fused_attention_total_us"),
+        "fused_attention_route_total_us": gate.get("fused_attention_route_total_us"),
+        "decode_model_eval_sync_total_us": gate.get("decode_model_eval_sync_total_us"),
+        "cache_update_total_us": gate.get("cache_update_total_us"),
+        "cache_quantize_total_us": gate.get("cache_quantize_total_us"),
+        "estimated_memory_savings_pct": gate.get("estimated_memory_savings_pct"),
+        "fused_attention_active_lane_total": sum_int(turbo_rows, "active_kv_fused_attention_active_lane_total"),
+        "fused_attention_launched_lane_total": sum_int(turbo_rows, "active_kv_fused_attention_launched_lane_total"),
+        "fused_attention_inactive_lane_total": sum_int(turbo_rows, "active_kv_fused_attention_inactive_lane_total"),
+        "fused_attention_softmax_lane_total": sum_int(turbo_rows, "active_kv_fused_attention_softmax_lane_total"),
+        "fused_attention_softmax_token_lane_total": sum_int(
+            turbo_rows,
+            "active_kv_fused_attention_softmax_token_lane_total",
+        ),
+        "json_path": os.fspath(input_path),
+    }
+    gate_log_path = inferred_gate_log_path(input_path)
+    if gate_log_path is not None:
+        entry["gate_log_path"] = os.fspath(gate_log_path)
+    return entry
+
+
+def stability_measurement_protocol(warmup_count: int, required_runs: int) -> str:
+    if warmup_count == 1 and required_runs == 5:
+        return (
+            "one warmup run followed by five measured runs; warmup_run is recorded but excluded "
+            "from pass_count, run_count, and aggregate statistics"
+        )
+    return (
+        f"{warmup_count} warmup run(s) followed by {required_runs} measured run(s); warmup run(s) "
+        "are recorded but excluded from pass_count, run_count, and aggregate statistics"
+    )
+
+
+def stability_model_label(report: dict[str, Any]) -> str:
+    model_path = str(report.get("model_path", "") or "")
+    if "mlx-community" in model_path and "Qwen3.5-0.8B-OptiQ-4bit" in model_path:
+        return "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    return str(report.get("model_id") or model_path or "unknown")
+
+
+def common_parent(paths: list[Path]) -> str | None:
+    if not paths:
+        return None
+    try:
+        return os.path.commonpath([os.fspath(path.parent) for path in paths])
+    except ValueError:
+        return None
+
+
+def inferred_gate_log_path(input_path: Path) -> Path | None:
+    candidates = [input_path.with_name(f"{input_path.stem}-gate.log")]
+    if input_path.stem == "warmup":
+        candidates.append(input_path.with_name("warmup-gate.log"))
+    if input_path.stem.startswith("measured-"):
+        candidates.append(input_path.with_name(f"gate-{input_path.stem.removeprefix('measured-')}.log"))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def numeric_summary(rows: list[dict[str, Any]], key: str, *, integer: bool = False) -> dict[str, Any] | None:
+    values = [row[key] for row in rows if isinstance(row.get(key), (int, float))]
+    if not values:
+        return None
+    return {
+        "min": rounded_summary_value(min(values), integer=integer),
+        "median": rounded_summary_value(statistics.median(values), integer=integer),
+        "mean": rounded_summary_value(statistics.mean(values), integer=integer),
+        "max": rounded_summary_value(max(values), integer=integer),
+    }
+
+
+def rounded_summary_value(value: float, *, integer: bool) -> int | float:
+    rounded = round(float(value), 3)
+    if integer and rounded.is_integer():
+        return int(rounded)
+    return rounded
+
+
+def sum_int(rows: list[dict[str, Any]], key: str) -> int:
+    return sum(int_value(row.get(key)) for row in rows)
+
+
+def fused_turboquant_stability_failures(summary: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    thresholds = summary.get("thresholds", {})
+    required_runs = int_value(thresholds.get("measured_run_count_required") if isinstance(thresholds, dict) else None)
+    run_count = int_value(summary.get("run_count"))
+    pass_count = int_value(summary.get("pass_count"))
+    if required_runs and run_count < required_runs:
+        failures.append(f"measured_run_count={run_count}<required:{required_runs}")
+    if pass_count != run_count:
+        failures.append(f"pass_count={pass_count}/{run_count}")
+    for field in ("all_gate_passed", "all_non_fallback", "all_routed", "all_worker_overhead_within_threshold"):
+        if summary.get(field) is not True:
+            failures.append(f"{field}={summary.get(field)}")
+    for run in summary.get("runs", []):
+        if isinstance(run, dict) and run.get("gate") != "pass":
+            failures.append(f"run_{run.get('run')}_gate={run.get('gate')}")
+    return failures
 
 
 def int_value(value: Any) -> int:

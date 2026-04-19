@@ -136,6 +136,18 @@ public protocol QuantizedKVCacheProtocol: KVCache {
     /// Total time spent in the fused q4 attention route after cache update, in microseconds.
     var fusedAttentionRouteTotalMicros: Int { get }
 
+    /// Total active packed-word lanes used by routed fused q4 attention calls.
+    var fusedAttentionActiveLaneTotal: Int { get }
+
+    /// Total launched lanes reserved by routed fused q4 attention calls.
+    var fusedAttentionLaunchedLaneTotal: Int { get }
+
+    /// Total lanes computing online softmax state across routed fused q4 attention calls.
+    var fusedAttentionSoftmaxLaneTotal: Int { get }
+
+    /// Total token-lanes computing online softmax state across routed fused q4 attention calls.
+    var fusedAttentionSoftmaxTokenLaneTotal: Int { get }
+
     /// Total time spent inside quantized cache updates, in microseconds.
     var quantizedCacheUpdateTotalMicros: Int { get }
 
@@ -162,6 +174,14 @@ public protocol QuantizedKVCacheProtocol: KVCache {
 
     /// Record routed fused q4 attention timing for runtime metrics.
     func recordFusedAttentionTiming(attentionMicros: Int, routeMicros: Int)
+
+    /// Record routed fused q4 attention launch occupancy for runtime metrics.
+    func recordFusedAttentionLaunch(
+        activeLaneCount: Int,
+        launchedLaneCount: Int,
+        softmaxLaneCount: Int,
+        sequenceLength: Int
+    )
 
     /// Update cache and return quantized tuples for maximum efficiency
     ///
@@ -769,6 +789,10 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
     public private(set) var fusedAttentionCallCount: Int = 0
     public private(set) var fusedAttentionTotalMicros: Int = 0
     public private(set) var fusedAttentionRouteTotalMicros: Int = 0
+    public private(set) var fusedAttentionActiveLaneTotal: Int = 0
+    public private(set) var fusedAttentionLaunchedLaneTotal: Int = 0
+    public private(set) var fusedAttentionSoftmaxLaneTotal: Int = 0
+    public private(set) var fusedAttentionSoftmaxTokenLaneTotal: Int = 0
     public private(set) var quantizedCacheUpdateTotalMicros: Int = 0
     public private(set) var quantizedCacheUpdateCallCount: Int = 0
     public private(set) var quantizedCacheExpandTotalMicros: Int = 0
@@ -800,6 +824,19 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         fusedAttentionCallCount += 1
         fusedAttentionTotalMicros += max(0, attentionMicros)
         fusedAttentionRouteTotalMicros += max(0, routeMicros)
+    }
+
+    public func recordFusedAttentionLaunch(
+        activeLaneCount: Int,
+        launchedLaneCount: Int,
+        softmaxLaneCount: Int,
+        sequenceLength: Int
+    ) {
+        fusedAttentionActiveLaneTotal += max(0, activeLaneCount)
+        fusedAttentionLaunchedLaneTotal += max(0, launchedLaneCount)
+        let softmaxLaneCount = max(0, softmaxLaneCount)
+        fusedAttentionSoftmaxLaneTotal += softmaxLaneCount
+        fusedAttentionSoftmaxTokenLaneTotal += softmaxLaneCount * max(0, sequenceLength)
     }
 
     public override func innerState() -> [MLXArray] {

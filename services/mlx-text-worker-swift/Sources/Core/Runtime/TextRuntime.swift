@@ -72,6 +72,10 @@ struct ActiveKVProbeSummary: Sendable {
     let fusedAttentionTotalMicros: Int
     let fusedAttentionCallCount: Int
     let fusedAttentionRouteTotalMicros: Int
+    let fusedAttentionActiveLaneTotal: Int
+    let fusedAttentionLaunchedLaneTotal: Int
+    let fusedAttentionSoftmaxLaneTotal: Int
+    let fusedAttentionSoftmaxTokenLaneTotal: Int
     let candidateDispatchCode: Int
     let candidateEligibilityCheckCount: Int
 
@@ -105,6 +109,10 @@ struct ActiveKVProbeSummary: Sendable {
         fusedAttentionTotalMicros: Int = 0,
         fusedAttentionCallCount: Int = 0,
         fusedAttentionRouteTotalMicros: Int = 0,
+        fusedAttentionActiveLaneTotal: Int = 0,
+        fusedAttentionLaunchedLaneTotal: Int = 0,
+        fusedAttentionSoftmaxLaneTotal: Int = 0,
+        fusedAttentionSoftmaxTokenLaneTotal: Int = 0,
         candidateDispatchCode: Int = 0,
         candidateEligibilityCheckCount: Int = 0
     ) {
@@ -137,6 +145,10 @@ struct ActiveKVProbeSummary: Sendable {
         self.fusedAttentionTotalMicros = fusedAttentionTotalMicros
         self.fusedAttentionCallCount = fusedAttentionCallCount
         self.fusedAttentionRouteTotalMicros = fusedAttentionRouteTotalMicros
+        self.fusedAttentionActiveLaneTotal = fusedAttentionActiveLaneTotal
+        self.fusedAttentionLaunchedLaneTotal = fusedAttentionLaunchedLaneTotal
+        self.fusedAttentionSoftmaxLaneTotal = fusedAttentionSoftmaxLaneTotal
+        self.fusedAttentionSoftmaxTokenLaneTotal = fusedAttentionSoftmaxTokenLaneTotal
         self.candidateDispatchCode = candidateDispatchCode
         self.candidateEligibilityCheckCount = candidateEligibilityCheckCount
     }
@@ -171,6 +183,10 @@ struct ActiveKVProbeSummary: Sendable {
 
     var fusedAttentionRouteAverageMicros: Int {
         averageMicros(total: fusedAttentionRouteTotalMicros, count: fusedAttentionCallCount)
+    }
+
+    var fusedAttentionInactiveLaneTotal: Int {
+        max(0, fusedAttentionLaunchedLaneTotal - fusedAttentionActiveLaneTotal)
     }
 
     private func averageMicros(total: Int) -> Int {

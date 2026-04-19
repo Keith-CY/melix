@@ -10,6 +10,7 @@ public struct TurboQuantFusedAttentionLaunchPlan: Equatable {
     public let scoreDotProductsPerQueryHead: Int
     public let scoreReductionLaneCount: Int
     public let scoreReductionSimdgroupCount: Int
+    public let softmaxLaneCount: Int
     public let usesThreadgroupSharedScores: Bool
     public let usesThreadgroupParallelScoreReduction: Bool
     public let usesOnlineSoftmax: Bool
@@ -50,6 +51,7 @@ public func turboQuantFusedAttentionLaunchPlan(
         scoreDotProductsPerQueryHead: sequenceLength,
         scoreReductionLaneCount: min(32, packedWordsPerToken),
         scoreReductionSimdgroupCount: 1,
+        softmaxLaneCount: 1,
         usesThreadgroupSharedScores: false,
         usesThreadgroupParallelScoreReduction: true,
         usesOnlineSoftmax: true
@@ -314,8 +316,10 @@ public func fusedQ4ScaledDotProductAttention(
                 uint dimBase = packedWordLane << 3;
 
                 float accumulators[8];
+                float queryValues[8];
                 for (uint slot = 0; slot < 8; slot++) {
                     accumulators[slot] = 0.0f;
+                    queryValues[slot] = activeLane ? float(queries[outputBase + dimBase + slot]) : 0.0f;
                 }
                 float maxScore = -3.402823466e+38f;
                 float normalizer = 0.0f;
@@ -329,30 +333,31 @@ public func fusedQ4ScaledDotProductAttention(
                             * GROUP_COUNT + (dimBase / GROUP_SIZE);
                         float keyScale = keyScales[keyScaleIndex];
                         float keyBias = keyBiases[keyScaleIndex];
-                        partialScore += queries[outputBase + dimBase + 0]
-                            * (float((keyWord >> 0) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 1]
-                            * (float((keyWord >> 4) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 2]
-                            * (float((keyWord >> 8) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 3]
-                            * (float((keyWord >> 12) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 4]
-                            * (float((keyWord >> 16) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 5]
-                            * (float((keyWord >> 20) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 6]
-                            * (float((keyWord >> 24) & 0x0f) * keyScale + keyBias);
-                        partialScore += queries[outputBase + dimBase + 7]
-                            * (float((keyWord >> 28) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[0] * (float((keyWord >> 0) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[1] * (float((keyWord >> 4) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[2] * (float((keyWord >> 8) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[3] * (float((keyWord >> 12) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[4] * (float((keyWord >> 16) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[5] * (float((keyWord >> 20) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[6] * (float((keyWord >> 24) & 0x0f) * keyScale + keyBias);
+                        partialScore += queryValues[7] * (float((keyWord >> 28) & 0x0f) * keyScale + keyBias);
                     }
 
                     float score = simd_sum(partialScore) * attentionScale[0];
-                    float newMaxScore = score > maxScore ? score : maxScore;
-                    float rescale = normalizer > 0.0f ? exp(maxScore - newMaxScore) : 0.0f;
-                    float weight = exp(score - newMaxScore);
-                    normalizer = normalizer * rescale + weight;
-                    maxScore = newMaxScore;
+                    float nextMaxScore = maxScore;
+                    float nextNormalizer = normalizer;
+                    float rescale = 0.0f;
+                    float weight = 0.0f;
+                    if (packedWordLane == 0) {
+                        nextMaxScore = score > maxScore ? score : maxScore;
+                        rescale = normalizer > 0.0f ? exp(maxScore - nextMaxScore) : 0.0f;
+                        weight = exp(score - nextMaxScore);
+                        nextNormalizer = normalizer * rescale + weight;
+                    }
+                    rescale = simd_broadcast(rescale, 0);
+                    weight = simd_broadcast(weight, 0);
+                    maxScore = simd_broadcast(nextMaxScore, 0);
+                    normalizer = simd_broadcast(nextNormalizer, 0);
 
                     if (activeLane) {
                         uint valueWordIndex = ((batch * KV_HEAD_COUNT + kvHead) * CACHE_SEQUENCE_LENGTH + token)

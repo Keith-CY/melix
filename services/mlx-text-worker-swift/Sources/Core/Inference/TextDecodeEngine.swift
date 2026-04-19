@@ -335,6 +335,26 @@ struct TextDecodeEngine: Sendable {
             "swift_text.active_kv_fused_attention_route_avg_us",
             value: probe.fusedAttentionRouteAverageMicros
         )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_active_lane_total",
+            value: probe.fusedAttentionActiveLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_launched_lane_total",
+            value: probe.fusedAttentionLaunchedLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_inactive_lane_total",
+            value: probe.fusedAttentionInactiveLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_softmax_lane_total",
+            value: probe.fusedAttentionSoftmaxLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_softmax_token_lane_total",
+            value: probe.fusedAttentionSoftmaxTokenLaneTotal
+        )
         metrics.set("swift_text.active_kv_cache_update_total_us", value: probe.cacheUpdateTotalMicros)
         metrics.set("swift_text.active_kv_cache_update_call_count", value: probe.cacheUpdateCallCount)
         metrics.set("swift_text.active_kv_cache_update_avg_us", value: probe.cacheUpdateAverageMicros)

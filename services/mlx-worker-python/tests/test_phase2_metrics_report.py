@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 from scripts import phase2_metrics_report
 
@@ -686,6 +688,11 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_fused_attention_avg_us": 250,
                     "swift_text.active_kv_fused_attention_route_total_us": 900,
                     "swift_text.active_kv_fused_attention_route_avg_us": 300,
+                    "swift_text.active_kv_fused_attention_active_lane_total": 96,
+                    "swift_text.active_kv_fused_attention_launched_lane_total": 128,
+                    "swift_text.active_kv_fused_attention_inactive_lane_total": 32,
+                    "swift_text.active_kv_fused_attention_softmax_lane_total": 4,
+                    "swift_text.active_kv_fused_attention_softmax_token_lane_total": 256,
                     "swift_text.active_kv_decode_quantize_total_us": 30,
                     "swift_text.active_kv_decode_quantize_avg_us": 3,
                     "swift_text.active_kv_decode_loop_total_us": 900,
@@ -743,6 +750,11 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert baseline["active_kv_estimated_memory_savings_pct"] == 0
     assert baseline["active_kv_decode_model_eval_sync_total_us"] == 0
     assert baseline["active_kv_fused_attention_total_us"] == 0
+    assert baseline["active_kv_fused_attention_active_lane_total"] == 0
+    assert baseline["active_kv_fused_attention_launched_lane_total"] == 0
+    assert baseline["active_kv_fused_attention_inactive_lane_total"] == 0
+    assert baseline["active_kv_fused_attention_softmax_lane_total"] == 0
+    assert baseline["active_kv_fused_attention_softmax_token_lane_total"] == 0
     assert active["active_kv_backend"] == "affine"
     assert active["active_kv_kernel_path"] == "affine_quantized_sdpa"
     assert active["active_kv_runtime_route"] is None
@@ -759,6 +771,11 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_fused_attention_avg_us"] == 250
     assert active["active_kv_fused_attention_route_total_us"] == 900
     assert active["active_kv_fused_attention_route_avg_us"] == 300
+    assert active["active_kv_fused_attention_active_lane_total"] == 96
+    assert active["active_kv_fused_attention_launched_lane_total"] == 128
+    assert active["active_kv_fused_attention_inactive_lane_total"] == 32
+    assert active["active_kv_fused_attention_softmax_lane_total"] == 4
+    assert active["active_kv_fused_attention_softmax_token_lane_total"] == 256
     assert active["active_kv_decode_loop_total_us"] == 900
     assert active["active_kv_cache_update_total_us"] == 120
     assert active["active_kv_cache_update_call_count"] == 4
@@ -802,6 +819,11 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert inactive_metrics["active_kv_fused_attention_avg_us"] == 0
     assert inactive_metrics["active_kv_fused_attention_route_total_us"] == 0
     assert inactive_metrics["active_kv_fused_attention_route_avg_us"] == 0
+    assert inactive_metrics["active_kv_fused_attention_active_lane_total"] == 0
+    assert inactive_metrics["active_kv_fused_attention_launched_lane_total"] == 0
+    assert inactive_metrics["active_kv_fused_attention_inactive_lane_total"] == 0
+    assert inactive_metrics["active_kv_fused_attention_softmax_lane_total"] == 0
+    assert inactive_metrics["active_kv_fused_attention_softmax_token_lane_total"] == 0
     assert inactive_metrics["active_kv_decode_loop_total_us"] == 0
     assert inactive_metrics["active_kv_cache_update_total_us"] == 0
     assert inactive_metrics["active_kv_cache_update_call_count"] == 0
@@ -1342,6 +1364,243 @@ def test_main_backfills_input_json_without_gate_requirement(tmp_path: Path, monk
     )
 
 
+def test_turboquant_stability_summary_excludes_warmup_from_gate_stats(tmp_path: Path) -> None:
+    input_paths = [tmp_path / "warmup.json", tmp_path / "measured-1.json", tmp_path / "measured-2.json"]
+    reports = [
+        _turboquant_stability_report(
+            worker_overhead=80.0,
+            wall_overhead=82.0,
+            kernel_path="fallback",
+            route="blocked",
+            fallback_count=1,
+            softmax_token_lanes=999,
+        ),
+        _turboquant_stability_report(worker_overhead=12.0, wall_overhead=13.0, softmax_token_lanes=64),
+        _turboquant_stability_report(worker_overhead=10.0, wall_overhead=11.0, softmax_token_lanes=64),
+    ]
+    (tmp_path / "gate-1.log").write_text("pass", encoding="utf-8")
+    for path, report in zip(input_paths, reports):
+        path.write_text(json.dumps(report), encoding="utf-8")
+
+    summary = phase2_metrics_report.build_turboquant_stability_summary(
+        reports=reports,
+        input_paths=input_paths,
+        warmup_count=1,
+        required_runs=2,
+        model="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        runtime_dir="/tmp/runtime",
+        output_dir="/tmp/output",
+        committed_summary_path="docs/metrics/stability.json",
+        probe_environment={"MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE": "1"},
+    )
+
+    assert summary["warmup_run"]["run"] == 0
+    assert summary["warmup_run"]["gate"] == "fail"
+    assert summary["warmup_run"]["worker_tps_overhead_pct"] == 80.0
+    assert summary["pass_count"] == 2
+    assert summary["run_count"] == 2
+    assert summary["all_gate_passed"] is True
+    assert summary["all_non_fallback"] is True
+    assert summary["all_routed"] is True
+    assert summary["worker_tps_overhead_pct"] == {"min": 10.0, "median": 11.0, "mean": 11.0, "max": 12.0}
+    assert summary["runs"][0]["gate_log_path"] == str(tmp_path / "gate-1.log")
+    assert summary["fused_attention_softmax_token_lane_total"] == {
+        "min": 64,
+        "median": 64,
+        "mean": 64,
+        "max": 64,
+    }
+    assert phase2_metrics_report.fused_turboquant_stability_failures(summary) == []
+
+
+def test_turboquant_stability_summary_records_multiple_warmups(tmp_path: Path) -> None:
+    reports = [
+        _turboquant_stability_report(worker_overhead=50.0),
+        _turboquant_stability_report(worker_overhead=40.0),
+        _turboquant_stability_report(worker_overhead=9.0),
+    ]
+
+    summary = phase2_metrics_report.build_turboquant_stability_summary(
+        reports=reports,
+        input_paths=[tmp_path / "warmup-a.json", tmp_path / "warmup-b.json", tmp_path / "measured-1.json"],
+        warmup_count=2,
+        required_runs=1,
+    )
+
+    assert [run["run"] for run in summary["warmup_runs"]] == [0, 1]
+    assert summary["runs"][0]["run"] == 1
+    assert summary["model"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+
+
+def test_main_writes_turboquant_stability_summary_and_enforces_gate(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warmup_path = tmp_path / "warmup.json"
+    measured_path = tmp_path / "measured-1.json"
+    output_path = tmp_path / "summary.json"
+    warmup_path.write_text(json.dumps(_turboquant_stability_report(worker_overhead=99.0)), encoding="utf-8")
+    measured_path.write_text(json.dumps(_turboquant_stability_report(worker_overhead=8.0)), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--stability-input-json",
+            str(warmup_path),
+            "--stability-input-json",
+            str(measured_path),
+            "--stability-warmup-count",
+            "1",
+            "--stability-required-runs",
+            "1",
+            "--stability-model",
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--stability-probe-env",
+            "MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE=1",
+            "--output",
+            str(output_path),
+            "--require-fused-turboquant",
+        ],
+    )
+
+    phase2_metrics_report.main()
+
+    emitted = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert emitted["measurement_protocol"].startswith("1 warmup run(s) followed by 1 measured run(s)")
+    assert written["warmup_run"]["worker_tps_overhead_pct"] == 99.0
+    assert written["run_count"] == 1
+    assert written["all_gate_passed"] is True
+    assert written["probe_environment"]["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
+
+
+def test_main_rejects_conflicting_stability_and_single_input_modes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    input_path = tmp_path / "measured.json"
+    input_path.write_text(json.dumps(_turboquant_stability_report(worker_overhead=8.0)), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--input-json",
+            str(input_path),
+            "--stability-input-json",
+            str(input_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        phase2_metrics_report.main()
+    assert "--input-json and --stability-input-json are mutually exclusive" in str(exc.value)
+
+
+def test_main_rejects_failed_turboquant_stability_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    measured_path = tmp_path / "measured-1.json"
+    measured_path.write_text(
+        json.dumps(
+            _turboquant_stability_report(
+                worker_overhead=20.0,
+                kernel_path="fallback",
+                route="blocked",
+                fallback_count=1,
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--stability-input-json",
+            str(measured_path),
+            "--stability-required-runs",
+            "2",
+            "--stability-probe-env",
+            "bad-entry",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        phase2_metrics_report.main()
+    assert "--stability-probe-env expects KEY=VALUE" in str(exc.value)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "phase2_metrics_report.py",
+            "--stability-input-json",
+            str(measured_path),
+            "--stability-required-runs",
+            "2",
+            "--require-fused-turboquant",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        phase2_metrics_report.main()
+    message = str(exc.value)
+    assert "measured_run_count=1<required:2" in message
+    assert "pass_count=0/1" in message
+    assert "all_non_fallback=False" in message
+    assert "run_1_gate=fail" in message
+
+
+def test_turboquant_stability_helper_edges(tmp_path: Path) -> None:
+    report = _turboquant_stability_report(worker_overhead=8.0)
+
+    assert phase2_metrics_report.stability_measurement_protocol(1, 5).startswith("one warmup run")
+    assert phase2_metrics_report.stability_model_label({"model_id": "custom-model", "model_path": ""}) == (
+        "custom-model"
+    )
+    assert phase2_metrics_report.common_parent([]) is None
+    assert phase2_metrics_report.common_parent([Path("/tmp/a.json"), Path("relative.json")]) is None
+    assert phase2_metrics_report.inferred_gate_log_path(tmp_path / "missing.json") is None
+    assert phase2_metrics_report.numeric_summary([], "missing") is None
+
+    with pytest.raises(ValueError) as exc:
+        phase2_metrics_report.build_turboquant_stability_summary(
+            reports=[report],
+            input_paths=[],
+            warmup_count=0,
+            required_runs=1,
+        )
+    assert "same length" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        phase2_metrics_report.build_turboquant_stability_summary(
+            reports=[report],
+            input_paths=[tmp_path / "warmup.json"],
+            warmup_count=1,
+            required_runs=1,
+        )
+    assert "at least one measured run" in str(exc.value)
+
+    with pytest.raises(RuntimeError) as exc:
+        phase2_metrics_report.turboquant_stability_run_entry(
+            report={},
+            input_path=tmp_path / "missing-direct.json",
+            run_number=1,
+        )
+    assert "swift_worker_direct" in str(exc.value)
+
+    with pytest.raises(RuntimeError) as exc:
+        phase2_metrics_report.turboquant_stability_run_entry(
+            report={"swift_worker_direct": {"active_kv_release_gates": []}},
+            input_path=tmp_path / "missing-gate.json",
+            run_number=1,
+        )
+    assert "turboquant_fused_decode" in str(exc.value)
+
+
 def test_load_report_json_rejects_non_object(tmp_path: Path) -> None:
     input_path = tmp_path / "postopt.json"
     input_path.write_text("[]", encoding="utf-8")
@@ -1352,6 +1611,63 @@ def test_load_report_json_rejects_non_object(tmp_path: Path) -> None:
         assert "must be a JSON object" in str(exc)
     else:
         raise AssertionError("expected non-object input report to fail")
+
+
+def _turboquant_stability_report(
+    *,
+    worker_overhead: float,
+    wall_overhead: float = 9.0,
+    kernel_path: str = "tq_mse_single",
+    route: str = "routed",
+    fallback_count: int = 0,
+    softmax_token_lanes: int = 64,
+) -> dict[str, object]:
+    return {
+        "runtime_dir": "/tmp/runtime",
+        "model_id": "melix-dev-text",
+        "model_path": "/models/mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "swift_worker_direct": {
+            "decode": [
+                {
+                    "label": "decode_turboquant_q4",
+                    "active_kv_kernel_path": kernel_path,
+                    "active_kv_runtime_route": route,
+                    "active_kv_runtime_block_reason": "attention_hook_unavailable" if route == "blocked" else None,
+                    "active_kv_fallback_count": fallback_count,
+                    "active_kv_decode_quantize_total_us": 0,
+                    "active_kv_estimated_memory_savings_pct": 75,
+                    "active_kv_decode_model_call_count": 1,
+                    "active_kv_decode_token_eval_total_us": 2,
+                    "active_kv_decode_model_eval_sync_total_us": 3,
+                    "active_kv_decode_model_eval_sync_call_count": 1,
+                    "active_kv_fused_attention_total_us": 4,
+                    "active_kv_fused_attention_call_count": 5,
+                    "active_kv_fused_attention_route_total_us": 4,
+                    "active_kv_decode_loop_total_us": 6,
+                    "active_kv_cache_update_total_us": 7,
+                    "active_kv_cache_update_call_count": 1,
+                    "active_kv_cache_expand_total_us": 8,
+                    "active_kv_cache_quantize_total_us": 9,
+                    "active_kv_cache_append_total_us": 10,
+                    "active_kv_cache_materialize_total_us": 11,
+                    "active_kv_cache_materialize_call_count": 1,
+                    "active_kv_fused_attention_active_lane_total": 32,
+                    "active_kv_fused_attention_launched_lane_total": 32,
+                    "active_kv_fused_attention_inactive_lane_total": 0,
+                    "active_kv_fused_attention_softmax_lane_total": 1,
+                    "active_kv_fused_attention_softmax_token_lane_total": softmax_token_lanes,
+                }
+            ],
+            "comparisons": {
+                "turboquant_q4_vs_baseline": {
+                    "worker_tps_overhead_pct": worker_overhead,
+                    "wall_tps_overhead_pct": wall_overhead,
+                    "active_worker_decode_tokens_per_second": 36.0,
+                    "baseline_worker_decode_tokens_per_second": 40.0,
+                }
+            },
+        },
+    }
 
 
 def test_emit_report_writes_json_output(tmp_path: Path) -> None:

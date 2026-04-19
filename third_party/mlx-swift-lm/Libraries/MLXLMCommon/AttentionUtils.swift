@@ -54,6 +54,17 @@ public func attentionWithCacheUpdate(
     }
     if let quantizedKVCache = cache as? QuantizedKVCacheProtocol {
         let storageState = quantizedKVCache.updateQuantizedStorage(keys: keys, values: values)
+        var fusedLaunchPlan: TurboQuantFusedAttentionLaunchPlan?
+        if queries.shape.count == 4, storageState.keys.0.shape.count == 4 {
+            fusedLaunchPlan = turboQuantFusedAttentionLaunchPlan(
+                batchCount: queries.dim(0),
+                queryHeadCount: queries.dim(1),
+                kvHeadCount: storageState.keys.0.dim(1),
+                sequenceLength: storageState.sequenceLength,
+                headDimension: queries.dim(3),
+                groupSize: quantizedKVCache.groupSize
+            )
+        }
         let fusedRouteStartedAt = Date.timeIntervalSinceReferenceDate
         if let fusedOutput = fusedQ4ScaledDotProductAttention(
             queries: queries,
@@ -71,6 +82,14 @@ public func attentionWithCacheUpdate(
                 attentionMicros: fusedRouteMicros,
                 routeMicros: fusedRouteMicros
             )
+            if let fusedLaunchPlan {
+                quantizedKVCache.recordFusedAttentionLaunch(
+                    activeLaneCount: fusedLaunchPlan.scoreReductionLaneCount,
+                    launchedLaneCount: fusedLaunchPlan.threadGroupX,
+                    softmaxLaneCount: fusedLaunchPlan.softmaxLaneCount,
+                    sequenceLength: storageState.sequenceLength
+                )
+            }
             quantizedKVCache.recordFusedAttentionDispatch()
             return fusedOutput
         }

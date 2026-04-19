@@ -975,6 +975,10 @@ private struct QuantizedKVCacheTimingTotals {
     var fusedAttentionTotalMicros = 0
     var fusedAttentionCallCount = 0
     var fusedAttentionRouteTotalMicros = 0
+    var fusedAttentionActiveLaneTotal = 0
+    var fusedAttentionLaunchedLaneTotal = 0
+    var fusedAttentionSoftmaxLaneTotal = 0
+    var fusedAttentionSoftmaxTokenLaneTotal = 0
 }
 
 private func makeActiveKVProbeSummary(
@@ -1058,6 +1062,10 @@ private func makeActiveKVProbeSummary(
         fusedAttentionTotalMicros: cacheTiming.fusedAttentionTotalMicros,
         fusedAttentionCallCount: cacheTiming.fusedAttentionCallCount,
         fusedAttentionRouteTotalMicros: cacheTiming.fusedAttentionRouteTotalMicros,
+        fusedAttentionActiveLaneTotal: cacheTiming.fusedAttentionActiveLaneTotal,
+        fusedAttentionLaunchedLaneTotal: cacheTiming.fusedAttentionLaunchedLaneTotal,
+        fusedAttentionSoftmaxLaneTotal: cacheTiming.fusedAttentionSoftmaxLaneTotal,
+        fusedAttentionSoftmaxTokenLaneTotal: cacheTiming.fusedAttentionSoftmaxTokenLaneTotal,
         candidateDispatchCode: activeKVCandidateDispatchCode(
             for: normalized,
             turboQuantFusedAttentionDispatched: turboQuantFusedAttentionDispatched
@@ -1082,6 +1090,10 @@ private func quantizedKVCacheTimingTotals(cache: [KVCache]) -> QuantizedKVCacheT
         totals.fusedAttentionTotalMicros += quantizedCache.fusedAttentionTotalMicros
         totals.fusedAttentionCallCount += quantizedCache.fusedAttentionCallCount
         totals.fusedAttentionRouteTotalMicros += quantizedCache.fusedAttentionRouteTotalMicros
+        totals.fusedAttentionActiveLaneTotal += quantizedCache.fusedAttentionActiveLaneTotal
+        totals.fusedAttentionLaunchedLaneTotal += quantizedCache.fusedAttentionLaunchedLaneTotal
+        totals.fusedAttentionSoftmaxLaneTotal += quantizedCache.fusedAttentionSoftmaxLaneTotal
+        totals.fusedAttentionSoftmaxTokenLaneTotal += quantizedCache.fusedAttentionSoftmaxTokenLaneTotal
     }
     return totals
 }
