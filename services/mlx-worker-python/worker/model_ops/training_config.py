@@ -44,6 +44,8 @@ class LoRATrainingConfig:
     desired_derived_model_alias: str
     adapter_name: str
     target_repo: str
+    chunked_training: bool
+    chunk_size: int
 
 
 _DENSE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -391,6 +393,25 @@ def normalize_training_config(
         minimum=1,
         field_name="max_seq_length",
     )
+    chunked_training = _bool_value(ext.get("chunked_training", ""), default=False)
+    chunk_size_raw = ext.get("chunk_size", "").strip()
+    if chunk_size_raw:
+        chunk_size = _int_value(
+            chunk_size_raw,
+            default=max_seq_length,
+            minimum=512,
+            field_name="chunk_size",
+        )
+        if chunk_size > max_seq_length:
+            raise ModelOperationError(
+                code="invalid_chunk_size",
+                message=(
+                    f"chunk_size {chunk_size} must be <= max_seq_length "
+                    f"{max_seq_length}."
+                ),
+            )
+    else:
+        chunk_size = max_seq_length
     steps_per_report = min(max(1, iters), 10)
     steps_per_eval = max(iters, 1) if validation_sample_count > 0 else 0
     steps_per_save = max(iters, 1)
@@ -436,6 +457,8 @@ def normalize_training_config(
         desired_derived_model_alias=ext.get("derived_model_alias", "").strip(),
         adapter_name=ext.get("adapter_name", "melix-adapter").strip() or "melix-adapter",
         target_repo=ext.get("target_repo", "").strip(),
+        chunked_training=chunked_training,
+        chunk_size=chunk_size,
     )
 
 

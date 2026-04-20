@@ -19,6 +19,10 @@ from worker.model_ops.response_only_boundary import (
     compute_response_only_boundary,
 )
 from worker.model_ops.training_config import LoRATrainingConfig
+from worker.model_ops.training_dataset_chunker import (
+    ChunkStats,
+    chunk_long_samples,
+)
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
 
@@ -44,6 +48,14 @@ class TrainingMetrics:
     response_only_boundary_min: int = 0
     response_only_boundary_max: int = 0
     response_only_boundary_mean: float = 0.0
+    # Milestone #43 Phase 3B: long-context chunking observability. ``chunked_enabled``
+    # is True iff chunk_long_samples ran; ``chunk_count`` is the post-chunking
+    # sample count (equal to ``source_sample_count`` when no sample exceeded
+    # chunk_size). Zero/False on the baseline path so every pre-Phase-3B
+    # receipt stays forward-compatible.
+    chunked_enabled: bool = False
+    chunk_count: int = 0
+    source_sample_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -146,6 +158,11 @@ class MLXLMRunner:
 
         model, tokenizer = load(str(request.model_path), lazy=False)
         args = _mlx_lora_namespace(request)
+        # Phase 3B: when chunked_training is enabled, rewrite train.jsonl with
+        # chunked samples before MLX-LM reads it. No-op otherwise; the
+        # stats returned carry enabled=False + chunk_count=0 so they fall
+        # through into forward-compatible defaults on TrainingMetrics.
+        chunk_stats = _maybe_chunk_training_dataset(request, tokenizer)
         train_set, valid_set, _ = load_local_dataset(
             request.normalized_dataset_dir,
             tokenizer,
@@ -194,6 +211,9 @@ class MLXLMRunner:
                 response_only_boundary_min=boundary_aggregate.boundary_min,
                 response_only_boundary_max=boundary_aggregate.boundary_max,
                 response_only_boundary_mean=boundary_aggregate.boundary_mean,
+                chunked_enabled=chunk_stats.enabled,
+                chunk_count=chunk_stats.chunk_count,
+                source_sample_count=chunk_stats.source_sample_count,
             ),
             execution_backend="native",
         )
@@ -479,6 +499,50 @@ def _probe_response_only_boundary(
             sample_count,
         )
     return aggregate
+
+
+def _maybe_chunk_training_dataset(
+    request: TrainingRequest,
+    tokenizer: Any,
+) -> ChunkStats:
+    """Rewrite train.jsonl with chunked samples when chunked_training is on.
+
+    Disabled by default — returns a stats object with enabled=False and zero
+    counts so the caller can forward the values unconditionally into
+    TrainingMetrics without branching.
+    """
+
+    config = request.config
+    if not config.chunked_training:
+        return ChunkStats(
+            enabled=False,
+            chunk_size=0,
+            chunk_count=0,
+            source_sample_count=0,
+        )
+
+    train_path = request.normalized_dataset_dir / "train.jsonl"
+    if not train_path.is_file():
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message=(
+                f"chunked_training=true but train.jsonl is missing at "
+                f"{train_path}."
+            ),
+        )
+    samples = [
+        json.loads(line)
+        for line in train_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    chunked_samples, stats = chunk_long_samples(
+        samples,
+        chunk_size=config.chunk_size,
+        tokenizer=tokenizer,
+    )
+    serialized = "\n".join(json.dumps(sample) for sample in chunked_samples) + "\n"
+    train_path.write_text(serialized, encoding="utf-8")
+    return stats
 
 
 def _reset_mlx_peak_memory_probe() -> None:
