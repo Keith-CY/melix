@@ -42,25 +42,187 @@ struct SparsePrefillPlan: Sendable {
     )
 }
 
+struct ActiveKVProbeSummary: Sendable {
+    let backendCode: Int
+    let kernelPathCode: Int
+    let runtimeRouteCode: Int
+    let runtimeBlockReasonCode: Int
+    let quantizationRatioPercent: Int
+    let prefillQuantizeMicros: Int
+    let decodeModelTotalMicros: Int
+    let decodeModelCallCount: Int
+    let decodeTokenEvalTotalMicros: Int
+    let decodeTokenEvalCallCount: Int
+    let decodeModelEvalSyncTotalMicros: Int
+    let decodeModelEvalSyncCallCount: Int
+    let decodeQuantizeTotalMicros: Int
+    let decodeLoopTotalMicros: Int
+    let decodeTokenCount: Int
+    let estimatedFP16Bytes: Int
+    let estimatedQuantizedBytes: Int
+    let estimatedMemorySavingsPercent: Int
+    let fallbackCount: Int
+    let cacheUpdateTotalMicros: Int
+    let cacheUpdateCallCount: Int
+    let cacheExpandTotalMicros: Int
+    let cacheQuantizeTotalMicros: Int
+    let cacheAppendTotalMicros: Int
+    let cacheMaterializeTotalMicros: Int
+    let cacheMaterializeCallCount: Int
+    let fusedAttentionTotalMicros: Int
+    let fusedAttentionCallCount: Int
+    let fusedAttentionRouteTotalMicros: Int
+    let fusedAttentionActiveLaneTotal: Int
+    let fusedAttentionLaunchedLaneTotal: Int
+    let fusedAttentionSoftmaxLaneTotal: Int
+    let fusedAttentionSoftmaxTokenLaneTotal: Int
+    let candidateDispatchCode: Int
+    let candidateEligibilityCheckCount: Int
+
+    init(
+        backendCode: Int,
+        kernelPathCode: Int,
+        runtimeRouteCode: Int = 0,
+        runtimeBlockReasonCode: Int = 0,
+        quantizationRatioPercent: Int = 0,
+        prefillQuantizeMicros: Int,
+        decodeModelTotalMicros: Int,
+        decodeModelCallCount: Int = 0,
+        decodeTokenEvalTotalMicros: Int = 0,
+        decodeTokenEvalCallCount: Int = 0,
+        decodeModelEvalSyncTotalMicros: Int = 0,
+        decodeModelEvalSyncCallCount: Int = 0,
+        decodeQuantizeTotalMicros: Int,
+        decodeLoopTotalMicros: Int = 0,
+        decodeTokenCount: Int,
+        estimatedFP16Bytes: Int,
+        estimatedQuantizedBytes: Int,
+        estimatedMemorySavingsPercent: Int,
+        fallbackCount: Int,
+        cacheUpdateTotalMicros: Int = 0,
+        cacheUpdateCallCount: Int = 0,
+        cacheExpandTotalMicros: Int = 0,
+        cacheQuantizeTotalMicros: Int = 0,
+        cacheAppendTotalMicros: Int = 0,
+        cacheMaterializeTotalMicros: Int = 0,
+        cacheMaterializeCallCount: Int = 0,
+        fusedAttentionTotalMicros: Int = 0,
+        fusedAttentionCallCount: Int = 0,
+        fusedAttentionRouteTotalMicros: Int = 0,
+        fusedAttentionActiveLaneTotal: Int = 0,
+        fusedAttentionLaunchedLaneTotal: Int = 0,
+        fusedAttentionSoftmaxLaneTotal: Int = 0,
+        fusedAttentionSoftmaxTokenLaneTotal: Int = 0,
+        candidateDispatchCode: Int = 0,
+        candidateEligibilityCheckCount: Int = 0
+    ) {
+        self.backendCode = backendCode
+        self.kernelPathCode = kernelPathCode
+        self.runtimeRouteCode = runtimeRouteCode
+        self.runtimeBlockReasonCode = runtimeBlockReasonCode
+        self.quantizationRatioPercent = quantizationRatioPercent
+        self.prefillQuantizeMicros = prefillQuantizeMicros
+        self.decodeModelTotalMicros = decodeModelTotalMicros
+        self.decodeModelCallCount = decodeModelCallCount
+        self.decodeTokenEvalTotalMicros = decodeTokenEvalTotalMicros
+        self.decodeTokenEvalCallCount = decodeTokenEvalCallCount
+        self.decodeModelEvalSyncTotalMicros = decodeModelEvalSyncTotalMicros
+        self.decodeModelEvalSyncCallCount = decodeModelEvalSyncCallCount
+        self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
+        self.decodeLoopTotalMicros = decodeLoopTotalMicros
+        self.decodeTokenCount = decodeTokenCount
+        self.estimatedFP16Bytes = estimatedFP16Bytes
+        self.estimatedQuantizedBytes = estimatedQuantizedBytes
+        self.estimatedMemorySavingsPercent = estimatedMemorySavingsPercent
+        self.fallbackCount = fallbackCount
+        self.cacheUpdateTotalMicros = cacheUpdateTotalMicros
+        self.cacheUpdateCallCount = cacheUpdateCallCount
+        self.cacheExpandTotalMicros = cacheExpandTotalMicros
+        self.cacheQuantizeTotalMicros = cacheQuantizeTotalMicros
+        self.cacheAppendTotalMicros = cacheAppendTotalMicros
+        self.cacheMaterializeTotalMicros = cacheMaterializeTotalMicros
+        self.cacheMaterializeCallCount = cacheMaterializeCallCount
+        self.fusedAttentionTotalMicros = fusedAttentionTotalMicros
+        self.fusedAttentionCallCount = fusedAttentionCallCount
+        self.fusedAttentionRouteTotalMicros = fusedAttentionRouteTotalMicros
+        self.fusedAttentionActiveLaneTotal = fusedAttentionActiveLaneTotal
+        self.fusedAttentionLaunchedLaneTotal = fusedAttentionLaunchedLaneTotal
+        self.fusedAttentionSoftmaxLaneTotal = fusedAttentionSoftmaxLaneTotal
+        self.fusedAttentionSoftmaxTokenLaneTotal = fusedAttentionSoftmaxTokenLaneTotal
+        self.candidateDispatchCode = candidateDispatchCode
+        self.candidateEligibilityCheckCount = candidateEligibilityCheckCount
+    }
+
+    var decodeModelAverageMicros: Int {
+        averageMicros(total: decodeModelTotalMicros)
+    }
+
+    var decodeTokenEvalAverageMicros: Int {
+        averageMicros(total: decodeTokenEvalTotalMicros, count: decodeTokenEvalCallCount)
+    }
+
+    var decodeModelEvalSyncAverageMicros: Int {
+        averageMicros(total: decodeModelEvalSyncTotalMicros, count: decodeModelEvalSyncCallCount)
+    }
+
+    var decodeQuantizeAverageMicros: Int {
+        averageMicros(total: decodeQuantizeTotalMicros)
+    }
+
+    var cacheUpdateAverageMicros: Int {
+        averageMicros(total: cacheUpdateTotalMicros, count: cacheUpdateCallCount)
+    }
+
+    var cacheMaterializeAverageMicros: Int {
+        averageMicros(total: cacheMaterializeTotalMicros, count: cacheMaterializeCallCount)
+    }
+
+    var fusedAttentionAverageMicros: Int {
+        averageMicros(total: fusedAttentionTotalMicros, count: fusedAttentionCallCount)
+    }
+
+    var fusedAttentionRouteAverageMicros: Int {
+        averageMicros(total: fusedAttentionRouteTotalMicros, count: fusedAttentionCallCount)
+    }
+
+    var fusedAttentionInactiveLaneTotal: Int {
+        max(0, fusedAttentionLaunchedLaneTotal - fusedAttentionActiveLaneTotal)
+    }
+
+    private func averageMicros(total: Int) -> Int {
+        averageMicros(total: total, count: decodeTokenCount)
+    }
+
+    private func averageMicros(total: Int, count: Int) -> Int {
+        guard count > 0 else {
+            return 0
+        }
+        return max(0, total / count)
+    }
+}
+
 struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
     let speculativeAcceptedTokens: Int?
     let speculativeRejectedTokens: Int?
+    let activeKVProbe: ActiveKVProbeSummary?
 
     init(
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double?,
         speculativeAcceptedTokens: Int? = nil,
-        speculativeRejectedTokens: Int? = nil
+        speculativeRejectedTokens: Int? = nil,
+        activeKVProbe: ActiveKVProbeSummary? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
         self.speculativeAcceptedTokens = speculativeAcceptedTokens
         self.speculativeRejectedTokens = speculativeRejectedTokens
+        self.activeKVProbe = activeKVProbe
     }
 }
 
@@ -241,7 +403,9 @@ func makeTextRuntime(
         )
     default:
         return TextRuntime(
-            backend: AutoSwiftMLXBackend(),
+            backend: AutoSwiftMLXBackend(
+                turboQuantCandidateProbeEnabled: configuration.turboQuantCandidateProbeEnabled
+            ),
             residentMemoryReader: residentMemoryReader
         )
     }

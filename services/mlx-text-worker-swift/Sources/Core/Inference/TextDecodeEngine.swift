@@ -57,6 +57,7 @@ struct TextDecodeEngine: Sendable {
             var tokensPerSecond: Double?
             var speculativeAccepted: Int?
             var speculativeRejected: Int?
+            var activeKVProbe: ActiveKVProbeSummary?
 
             if acceleration.mode != .baseline {
                 var accelerationEvent = Melix_Worker_V1_ExecuteEvent()
@@ -149,6 +150,7 @@ struct TextDecodeEngine: Sendable {
                     tokensPerSecond = summary.tokensPerSecond
                     speculativeAccepted = summary.speculativeAcceptedTokens
                     speculativeRejected = summary.speculativeRejectedTokens
+                    activeKVProbe = summary.activeKVProbe
                 }
             }
 
@@ -235,6 +237,7 @@ struct TextDecodeEngine: Sendable {
                 "swift_text.active_kv_quantization_ratio",
                 value: activeKVQuantizationRatioPercent(for: acceleration)
             )
+            recordActiveKVProbeMetrics(activeKVProbe)
             recordSpeculativeMetrics(
                 accepted: speculativeAccepted,
                 rejected: speculativeRejected
@@ -283,6 +286,102 @@ struct TextDecodeEngine: Sendable {
         let total = max(accepted + rejected, 1)
         metrics.set("swift_text.speculative_acceptance_rate", value: (accepted * 100) / total)
         metrics.set("swift_text.speculative_rollback_rate", value: (rejected * 100) / total)
+    }
+
+    private func recordActiveKVProbeMetrics(_ probe: ActiveKVProbeSummary?) {
+        guard let probe else {
+            return
+        }
+
+        metrics.set("swift_text.active_kv_quantization_ratio", value: probe.quantizationRatioPercent)
+        metrics.set("swift_text.active_kv_backend_code", value: probe.backendCode)
+        metrics.set("swift_text.active_kv_kernel_path_code", value: probe.kernelPathCode)
+        metrics.set("swift_text.active_kv_runtime_route_code", value: probe.runtimeRouteCode)
+        metrics.set(
+            "swift_text.active_kv_runtime_block_reason_code",
+            value: probe.runtimeBlockReasonCode
+        )
+        metrics.set("swift_text.active_kv_prefill_quantize_us", value: probe.prefillQuantizeMicros)
+        metrics.set("swift_text.active_kv_decode_model_total_us", value: probe.decodeModelTotalMicros)
+        metrics.set("swift_text.active_kv_decode_model_call_count", value: probe.decodeModelCallCount)
+        metrics.set("swift_text.active_kv_decode_model_avg_us", value: probe.decodeModelAverageMicros)
+        metrics.set("swift_text.active_kv_decode_token_eval_total_us", value: probe.decodeTokenEvalTotalMicros)
+        metrics.set("swift_text.active_kv_decode_token_eval_call_count", value: probe.decodeTokenEvalCallCount)
+        metrics.set("swift_text.active_kv_decode_token_eval_avg_us", value: probe.decodeTokenEvalAverageMicros)
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_total_us",
+            value: probe.decodeModelEvalSyncTotalMicros
+        )
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_call_count",
+            value: probe.decodeModelEvalSyncCallCount
+        )
+        metrics.set(
+            "swift_text.active_kv_decode_model_eval_sync_avg_us",
+            value: probe.decodeModelEvalSyncAverageMicros
+        )
+        metrics.set("swift_text.active_kv_decode_quantize_total_us", value: probe.decodeQuantizeTotalMicros)
+        metrics.set("swift_text.active_kv_decode_quantize_avg_us", value: probe.decodeQuantizeAverageMicros)
+        metrics.set("swift_text.active_kv_decode_loop_total_us", value: probe.decodeLoopTotalMicros)
+        metrics.set("swift_text.active_kv_decode_token_count", value: probe.decodeTokenCount)
+        metrics.set("swift_text.active_kv_fused_attention_total_us", value: probe.fusedAttentionTotalMicros)
+        metrics.set("swift_text.active_kv_fused_attention_call_count", value: probe.fusedAttentionCallCount)
+        metrics.set("swift_text.active_kv_fused_attention_avg_us", value: probe.fusedAttentionAverageMicros)
+        metrics.set(
+            "swift_text.active_kv_fused_attention_route_total_us",
+            value: probe.fusedAttentionRouteTotalMicros
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_route_avg_us",
+            value: probe.fusedAttentionRouteAverageMicros
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_active_lane_total",
+            value: probe.fusedAttentionActiveLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_launched_lane_total",
+            value: probe.fusedAttentionLaunchedLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_inactive_lane_total",
+            value: probe.fusedAttentionInactiveLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_softmax_lane_total",
+            value: probe.fusedAttentionSoftmaxLaneTotal
+        )
+        metrics.set(
+            "swift_text.active_kv_fused_attention_softmax_token_lane_total",
+            value: probe.fusedAttentionSoftmaxTokenLaneTotal
+        )
+        metrics.set("swift_text.active_kv_cache_update_total_us", value: probe.cacheUpdateTotalMicros)
+        metrics.set("swift_text.active_kv_cache_update_call_count", value: probe.cacheUpdateCallCount)
+        metrics.set("swift_text.active_kv_cache_update_avg_us", value: probe.cacheUpdateAverageMicros)
+        metrics.set("swift_text.active_kv_cache_expand_total_us", value: probe.cacheExpandTotalMicros)
+        metrics.set("swift_text.active_kv_cache_quantize_total_us", value: probe.cacheQuantizeTotalMicros)
+        metrics.set("swift_text.active_kv_cache_append_total_us", value: probe.cacheAppendTotalMicros)
+        metrics.set("swift_text.active_kv_cache_materialize_total_us", value: probe.cacheMaterializeTotalMicros)
+        metrics.set(
+            "swift_text.active_kv_cache_materialize_call_count",
+            value: probe.cacheMaterializeCallCount
+        )
+        metrics.set("swift_text.active_kv_cache_materialize_avg_us", value: probe.cacheMaterializeAverageMicros)
+        metrics.set("swift_text.active_kv_estimated_fp16_bytes", value: probe.estimatedFP16Bytes)
+        metrics.set("swift_text.active_kv_estimated_quantized_bytes", value: probe.estimatedQuantizedBytes)
+        metrics.set(
+            "swift_text.active_kv_estimated_memory_savings_pct",
+            value: probe.estimatedMemorySavingsPercent
+        )
+        metrics.set("swift_text.active_kv_fallback_count", value: probe.fallbackCount)
+        metrics.set(
+            "swift_text.active_kv_candidate_dispatch_code",
+            value: probe.candidateDispatchCode
+        )
+        metrics.set(
+            "swift_text.active_kv_candidate_eligibility_check_count",
+            value: probe.candidateEligibilityCheckCount
+        )
     }
 }
 

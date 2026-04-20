@@ -12,6 +12,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+SWIFT_MLX_METALLIB_PATH_ENV = "MELIX_SWIFT_MLX_METALLIB_PATH"
+SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV = "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"
+SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV = "MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"
+SWIFT_OPTIONAL_PARENT_ENV = (
+    SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV,
+    SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV,
+)
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built]
 
 Options:
@@ -66,6 +73,14 @@ def parse_args(argv: list[str]) -> DevUpOptions:
 
 def resolve_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
+
+
+def optional_parent_environment_exports(names: tuple[str, ...]) -> dict[str, str]:
+    return {
+        name: value.strip()
+        for name in names
+        if (value := os.environ.get(name, "")).strip()
+    }
 
 
 def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, product_name: str) -> Path:
@@ -211,8 +226,21 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
     return None
 
 
+def resolve_configured_mlx_metallib() -> Path | None:
+    raw_path = os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, "").strip()
+    if not raw_path:
+        return None
+
+    metallib_path = resolve_path(raw_path)
+    if not metallib_path.is_file():
+        raise RuntimeError(f"{SWIFT_MLX_METALLIB_PATH_ENV} does not point to a file: {metallib_path}")
+    return metallib_path
+
+
 def prepare_swift_worker_launch_cwd(layout: RuntimeLayout, repo_root: Path) -> Path:
-    metallib_path = resolve_local_mlx_metallib(repo_root, uv_cache_dir=layout.uv_cache_dir)
+    metallib_path = resolve_configured_mlx_metallib()
+    if metallib_path is None:
+        metallib_path = resolve_local_mlx_metallib(repo_root, uv_cache_dir=layout.uv_cache_dir)
     if metallib_path is None:
         return repo_root
 
@@ -333,6 +361,9 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
+    if os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, "").strip():
+        exports[SWIFT_MLX_METALLIB_PATH_ENV] = os.fspath(resolve_configured_mlx_metallib())
+    exports.update(optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV))
     lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     lines.extend(f'export {key}="{value}"' for key, value in exports.items())
     lines.append("")
@@ -366,6 +397,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_DEV_TEXT_MODEL_PATH": os.environ.get("MELIX_DEV_TEXT_MODEL_PATH", ""),
             "HOME": os.fspath(layout.swift_home),
             "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
+            **optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV),
         },
         command=swift_text_command,
     )

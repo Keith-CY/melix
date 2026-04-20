@@ -4,6 +4,9 @@ import MelixWorkerProtocol
 #if canImport(MLX)
 import MLX
 #endif
+#if canImport(MLXNN)
+import MLXNN
+#endif
 #if canImport(MLXLMCommon)
 import MLXLMCommon
 #endif
@@ -31,6 +34,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 0)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
         XCTAssertEqual(configuration.initialCacheBlocks, 0)
+        XCTAssertFalse(configuration.turboQuantCandidateProbeEnabled)
     }
 
     func testConfigurationReadsEnvironmentOverrides() {
@@ -47,6 +51,7 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "4096",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "1024",
             "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
+            "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE": "true",
         ])
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-dev")
@@ -61,6 +66,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 4_096)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 1_024)
         XCTAssertEqual(configuration.initialCacheBlocks, 4)
+        XCTAssertTrue(configuration.turboQuantCandidateProbeEnabled)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -113,6 +119,29 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
+        XCTAssertEqual(counters["swift_text.active_kv_backend_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_kernel_path_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_runtime_route_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_runtime_block_reason_code"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_eval_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_loop_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_route_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_fused_attention_route_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_update_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_update_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
     }
 
     func testWorkerServicesPublishMemoryEnforcementAndInitialCacheMetrics() {
@@ -924,6 +953,215 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.promptTokens, promptTokens.count)
         XCTAssertGreaterThan(summary.completionTokens, 0)
         XCTAssertNotNil(summary.tokensPerSecond)
+    }
+
+    func testAutoSwiftMLXBackendDecodeReportsTurboQuantFusedRuntimeRoute() async throws {
+        let backend = AutoSwiftMLXBackend(turboQuantCandidateProbeEnabled: true)
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge active kv decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-active-kv-decode",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 2)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 20)
+        XCTAssertEqual(activeKVProbe.runtimeRouteCode, 2)
+        XCTAssertEqual(activeKVProbe.runtimeBlockReasonCode, 0)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 25)
+        XCTAssertEqual(activeKVProbe.candidateDispatchCode, 1)
+        XCTAssertGreaterThanOrEqual(activeKVProbe.prefillQuantizeMicros, 0)
+        XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedFP16Bytes, activeKVProbe.estimatedQuantizedBytes)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 0)
+        XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 1)
+    }
+
+    func testAutoSwiftMLXBackendDecodeUsesVendoredTurboQuantRouteWhenProbeIsDisabled() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge disabled candidate checks")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-disabled-candidate-checks",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return (
+                    activeKVQuantizationRatio: prefill.activeKVQuantizationRatio,
+                    events: try await collectTextGenerationEvents(from: stream)
+                )
+            }
+        }
+
+        XCTAssertEqual(result.activeKVQuantizationRatio, 0)
+        let summary = try XCTUnwrap(renderedSummary(from: result.events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 2)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 20)
+        XCTAssertEqual(activeKVProbe.runtimeRouteCode, 2)
+        XCTAssertEqual(activeKVProbe.runtimeBlockReasonCode, 0)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 25)
+        XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
+        XCTAssertEqual(activeKVProbe.fallbackCount, 0)
+        XCTAssertEqual(activeKVProbe.candidateDispatchCode, 0)
+        XCTAssertEqual(activeKVProbe.candidateEligibilityCheckCount, 0)
+        XCTAssertEqual(activeKVProbe.decodeQuantizeTotalMicros, 0)
+    }
+
+    func testAutoSwiftMLXBackendDecodeSkipsTerminalModelCallAtMaxOutputTokens() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let counter = CountingLanguageModelCallCounter()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 1
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeCountingPreparedLogitsModelContainer(counter: counter)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge counted decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-counted-decode",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.completionTokens, 1)
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.decodeModelCallCount, 0)
+        XCTAssertEqual(counter.stepCallCount, 0)
+    }
+
+    func testAutoSwiftMLXBackendDecodeCanLazilyQuantizeBaselinePrefillCache() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q4"
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge lazy active kv decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-baseline-prefill-active-kv-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.backendCode, 1)
+        XCTAssertEqual(activeKVProbe.kernelPathCode, 10)
+        XCTAssertEqual(activeKVProbe.quantizationRatioPercent, 25)
+        XCTAssertGreaterThan(activeKVProbe.decodeTokenCount, 0)
+        XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
+        XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
     }
     #endif
 
@@ -3097,7 +3335,9 @@ final class WorkerScaffoldTests: XCTestCase {
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-decode"
         request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.scheduling.lane = "text.decode.batch"
         request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 1
         request.returnUsage = true
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -3117,13 +3357,13 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(recorded.count, 4)
         XCTAssertEqual(recorded[0].decodeStarted.decodeHandle, prefillResponse.decodeHandle)
         XCTAssertEqual(recorded[0].executionKind, "decode")
+        XCTAssertEqual(recorded[0].lane, "text.decode.batch")
         XCTAssertEqual(recorded[1].tokenDelta.text, "decode")
-        XCTAssertEqual(recorded[2].tokenDelta.text, " result")
-        XCTAssertEqual(recorded[3].usageDelta.completionTokens, 2)
+        XCTAssertEqual(recorded[2].usageDelta.completionTokens, 1)
         XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
         let storedAfterDecode = await services.registry.prefillContext(for: prefillResponse.decodeHandle)
         XCTAssertNil(storedAfterDecode)
-        XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 16)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 8)
     }
 
     func testDecodeStreamingRpcReturnsStructuredNotFoundForMissingDecodeHandle() async throws {
@@ -3627,6 +3867,177 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.first?.accelerationApplied.policy.mode, .activeKvQuantized)
         XCTAssertEqual(recorded.first?.accelerationApplied.policy.activeKvQuantProfile, "q8")
         XCTAssertEqual(services.metrics.counters["swift_text.active_kv_quantization_ratio"], 50)
+    }
+
+    func testDecodeStreamingRpcRecordsActiveKVProbeSummary() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
+            ],
+            backend: FakeRuntimeBackend(
+                decodedChunks: ["probe"],
+                activeKVProbeSummary: ActiveKVProbeSummary(
+                    backendCode: 1,
+                    kernelPathCode: 10,
+                    runtimeRouteCode: 1,
+                    runtimeBlockReasonCode: 2,
+                    quantizationRatioPercent: 25,
+                    prefillQuantizeMicros: 150,
+                    decodeModelTotalMicros: 900,
+                    decodeModelCallCount: 3,
+                    decodeTokenEvalTotalMicros: 1_800,
+                    decodeTokenEvalCallCount: 3,
+                    decodeModelEvalSyncTotalMicros: 1_500,
+                    decodeModelEvalSyncCallCount: 3,
+                    decodeQuantizeTotalMicros: 120,
+                    decodeLoopTotalMicros: 2_100,
+                    decodeTokenCount: 3,
+                    estimatedFP16Bytes: 4_000,
+                    estimatedQuantizedBytes: 1_000,
+                    estimatedMemorySavingsPercent: 75,
+                    fallbackCount: 0,
+                    cacheUpdateTotalMicros: 1_200,
+                    cacheUpdateCallCount: 3,
+                    cacheExpandTotalMicros: 90,
+                    cacheQuantizeTotalMicros: 540,
+                    cacheAppendTotalMicros: 360,
+                    cacheMaterializeTotalMicros: 210,
+                    cacheMaterializeCallCount: 3,
+                    fusedAttentionTotalMicros: 750,
+                    fusedAttentionCallCount: 3,
+                    fusedAttentionRouteTotalMicros: 900,
+                    fusedAttentionActiveLaneTotal: 48,
+                    fusedAttentionLaunchedLaneTotal: 96,
+                    fusedAttentionSoftmaxLaneTotal: 96,
+                    fusedAttentionSoftmaxTokenLaneTotal: 6_144
+                )
+            )
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-active-kv-probe-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.execution.acceleration.mode = .activeKvQuantized
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("active kv probe")]
+
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-active-kv-probe-decode"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.active_kv_quantization_ratio"], 25)
+        XCTAssertEqual(metrics["swift_text.active_kv_backend_code"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_kernel_path_code"], 10)
+        XCTAssertEqual(metrics["swift_text.active_kv_runtime_route_code"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_runtime_block_reason_code"], 2)
+        XCTAssertEqual(metrics["swift_text.active_kv_prefill_quantize_us"], 150)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_total_us"], 900)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_avg_us"], 300)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_total_us"], 1_800)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_eval_avg_us"], 600)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_total_us"], 1_500)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_avg_us"], 500)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_loop_total_us"], 2_100)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_fp16_bytes"], 4_000)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_quantized_bytes"], 1_000)
+        XCTAssertEqual(metrics["swift_text.active_kv_estimated_memory_savings_pct"], 75)
+        XCTAssertEqual(metrics["swift_text.active_kv_fallback_count"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_candidate_dispatch_code"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_candidate_eligibility_check_count"], 0)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_total_us"], 1_200)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_update_avg_us"], 400)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_expand_total_us"], 90)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_quantize_total_us"], 540)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_append_total_us"], 360)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_total_us"], 210)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_cache_materialize_avg_us"], 70)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_total_us"], 750)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_avg_us"], 250)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_total_us"], 900)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_route_avg_us"], 300)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_active_lane_total"], 48)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_launched_lane_total"], 96)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_inactive_lane_total"], 48)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_softmax_lane_total"], 96)
+        XCTAssertEqual(metrics["swift_text.active_kv_fused_attention_softmax_token_lane_total"], 6_144)
+    }
+
+    func testActiveKVProbeSummaryAveragesReturnZeroWithoutDecodeTokens() {
+        let summary = ActiveKVProbeSummary(
+            backendCode: 1,
+            kernelPathCode: 10,
+            prefillQuantizeMicros: 0,
+            decodeModelTotalMicros: 120,
+            decodeTokenEvalTotalMicros: 90,
+            decodeTokenEvalCallCount: 0,
+            decodeModelEvalSyncTotalMicros: 70,
+            decodeModelEvalSyncCallCount: 0,
+            decodeQuantizeTotalMicros: 80,
+            decodeLoopTotalMicros: 400,
+            decodeTokenCount: 0,
+            estimatedFP16Bytes: 0,
+            estimatedQuantizedBytes: 0,
+            estimatedMemorySavingsPercent: 0,
+            fallbackCount: 0
+        )
+
+        XCTAssertEqual(summary.decodeModelAverageMicros, 0)
+        XCTAssertEqual(summary.decodeTokenEvalAverageMicros, 0)
+        XCTAssertEqual(summary.decodeModelEvalSyncAverageMicros, 0)
+        XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
+        XCTAssertEqual(summary.cacheUpdateAverageMicros, 0)
+        XCTAssertEqual(summary.cacheMaterializeAverageMicros, 0)
     }
 
     func testCacheManagementRpcsExposeHotAndDiskTierMetadata() async throws {
@@ -5450,6 +5861,1049 @@ final class WorkerScaffoldTests: XCTestCase {
         )
     }
 
+    #if canImport(MLXLMCommon)
+    func testActiveKVDecodeQuantizationGuardSkipsWhenCacheIsAlreadyQuantized() {
+        var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        activeAcceleration.mode = .activeKvQuantized
+        activeAcceleration.activeKvQuantProfile = "q4"
+
+        let standardCache = KVCacheSimple()
+        standardCache.offset = 2
+        XCTAssertTrue(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        let quantizedCache = QuantizedKVCache(groupSize: 64, bits: 4)
+        quantizedCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [quantizedCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        standardCache.offset = 0
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        standardCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: nil,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        var baselineAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        baselineAcceleration.mode = .baseline
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [standardCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: baselineAcceleration
+            )
+        )
+    }
+
+    func testActiveKVDecodeQuantizationGuardDetectsEligibleSimpleLayerAfterMambaCache() {
+        var activeAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        activeAcceleration.mode = .activeKvQuantized
+        activeAcceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let mambaCache = MambaCache()
+        let simpleCache = KVCacheSimple()
+        simpleCache.offset = 2
+
+        XCTAssertTrue(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [mambaCache, simpleCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+
+        let quantizedCache = QuantizedKVCache(groupSize: 64, bits: 4)
+        quantizedCache.offset = 2
+        XCTAssertFalse(
+            shouldAttemptActiveKVDecodeQuantization(
+                cache: [mambaCache, quantizedCache],
+                kvBits: 4,
+                quantizedKVStart: 0,
+                acceleration: activeAcceleration
+            )
+        )
+    }
+    #endif
+
+    #if canImport(MLX) && canImport(MLXLMCommon)
+    func testMaybeQuantizeKVCacheQuantizesSimpleLayerAfterMambaCache() async throws {
+        try await withTemporaryDefaultMetallib {
+            var emptyCache: [KVCache] = []
+            maybeQuantizeKVCache(cache: &emptyCache, kvBits: 4)
+            XCTAssertTrue(emptyCache.isEmpty)
+
+            let mambaCache = MambaCache()
+            let simpleCache = KVCacheSimple()
+            let sequenceLength = 2
+            let headDimension = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { Float($0 % 11) / 11.0 }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { Float($0 % 13) / 13.0 }
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            _ = simpleCache.update(keys: keys, values: values)
+
+            var cache: [KVCache] = [mambaCache, simpleCache]
+            maybeQuantizeKVCache(cache: &cache, kvBits: nil, kvGroupSize: 32)
+            XCTAssertTrue(cache[0] is MambaCache)
+            XCTAssertTrue(cache[1] is KVCacheSimple)
+
+            maybeQuantizeKVCache(
+                cache: &cache,
+                kvBits: 4,
+                kvGroupSize: 32,
+                quantizedKVStart: 0
+            )
+
+            XCTAssertTrue(cache[0] is MambaCache)
+            let quantizedCache = try XCTUnwrap(cache[1] as? QuantizedKVCacheProtocol)
+            XCTAssertEqual(quantizedCache.bits, 4)
+            XCTAssertEqual(quantizedCache.groupSize, 32)
+            XCTAssertEqual(quantizedCache.offset, sequenceLength)
+            XCTAssertNotNil(quantizedCache.getQuantizedState())
+        }
+    }
+
+    func testQuantizedKVCacheRecordsUpdateAndMaterializeProbeTimings() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 2
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { Float(($0 % 13) - 6) / 8.0 }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { Float(($0 % 17) - 8) / 10.0 }
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 0)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 0)
+
+            _ = cache.updateQuantized(keys: keys, values: values)
+            let updateTotalAfterFirstAppend = cache.quantizedCacheUpdateTotalMicros
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 1)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheUpdateTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheExpandTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheQuantizeTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheAppendTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheMaterializeTotalMicros, 0)
+
+            let state = try XCTUnwrap(cache.getQuantizedState())
+            XCTAssertEqual(state.0.0.dtype, DType.uint32)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 2)
+
+            _ = cache.updateQuantized(
+                keys: MLXArray(Array(repeating: Float(0.25), count: headDimension), [1, 1, 1, headDimension]),
+                values: MLXArray(Array(repeating: Float(-0.25), count: headDimension), [1, 1, 1, headDimension])
+            )
+
+            XCTAssertEqual(cache.quantizedCacheUpdateCallCount, 2)
+            XCTAssertGreaterThanOrEqual(cache.quantizedCacheUpdateTotalMicros, updateTotalAfterFirstAppend)
+            XCTAssertEqual(cache.quantizedCacheMaterializeCallCount, 3)
+        }
+    }
+    #endif
+
+    #if canImport(MLX)
+    func testActiveKVModelEvalSyncProbeIsOptIn() async throws {
+        try await withTemporaryDefaultMetallib {
+            let logits = MLXArray([Float(1.0), Float(2.0)], [1, 2])
+
+            XCTAssertNil(activeKVModelEvalSyncMicrosIfNeeded(enabled: false, logits: logits))
+
+            let elapsed = activeKVModelEvalSyncMicrosIfNeeded(enabled: true, logits: logits)
+
+            XCTAssertNotNil(elapsed)
+            XCTAssertGreaterThanOrEqual(elapsed ?? -1, 0)
+        }
+    }
+
+    func testTurboQuantMetalCapabilityRunsCustomIdentityKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let input = MLXArray([Float(1.0), Float(-2.0), Float(3.5), Float(4.25)])
+
+            let output = TurboQuantMetalKernelCapability.runIdentitySmokeKernel(input)
+
+            XCTAssertEqual(output.shape, input.shape)
+            XCTAssertEqual(output.dtype, input.dtype)
+            XCTAssertTrue(allClose(output, input).all().item())
+        }
+    }
+
+    func testTurboQuantMetalCapabilityRunsMSEQ4ValueDecodeKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let packedValues = MLXArray(
+                [
+                    Int32(0x31), Int32(0x75),
+                    Int32(0x42), Int32(0x86),
+                    Int32(0x0f), Int32(0xa9),
+                ],
+                [3, 2]
+            )
+            let weights = MLXArray([Float(0.2), Float(0.3), Float(0.5)])
+            let scales = MLXArray(
+                [Float(0.5), Float(0.25), Float(1.0), Float(0.125), Float(0.2), Float(0.75)],
+                [3, 2]
+            )
+            let biases = MLXArray(
+                [Float(-1.0), Float(0.5), Float(-2.0), Float(-0.25), Float(0.0), Float(-3.0)],
+                [3, 2]
+            )
+
+            let output = TurboQuantMetalKernelCapability.runMSEQ4ValueDecodeSmokeKernel(
+                packedValues: packedValues,
+                weights: weights,
+                scales: scales,
+                biases: biases,
+                sequenceLength: 3,
+                headDimension: 4,
+                groupSize: 2
+            )
+
+            let expected = MLXArray([Float(1.4), Float(0.7), Float(2.375), Float(2.925)])
+            XCTAssertEqual(output.shape, [4])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected).all().item())
+        }
+    }
+
+    func testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionKernel() async throws {
+        try await withTemporaryDefaultMetallib {
+            let query = MLXArray([Float(0.25), Float(-0.5), Float(0.75), Float(1.0)])
+            let packedKeys = MLXArray(
+                [
+                    Int32(0x31), Int32(0x75),
+                    Int32(0x42), Int32(0x86),
+                    Int32(0x0f), Int32(0xa9),
+                ],
+                [3, 2]
+            )
+            let keyScales = MLXArray(
+                [Float(0.5), Float(0.25), Float(1.0), Float(0.125), Float(0.2), Float(0.75)],
+                [3, 2]
+            )
+            let keyBiases = MLXArray(
+                [Float(-1.0), Float(0.5), Float(-2.0), Float(-0.25), Float(0.0), Float(-3.0)],
+                [3, 2]
+            )
+            let packedValues = MLXArray(
+                [
+                    Int32(0x10), Int32(0x32),
+                    Int32(0x23), Int32(0x01),
+                    Int32(0x11), Int32(0x11),
+                ],
+                [3, 2]
+            )
+            let valueScales = MLXArray(
+                [Float(1.0), Float(0.5), Float(0.25), Float(1.0), Float(0.5), Float(0.25)],
+                [3, 2]
+            )
+            let valueBiases = MLXArray(
+                [Float(0.0), Float(-1.0), Float(0.5), Float(0.0), Float(-0.5), Float(0.25)],
+                [3, 2]
+            )
+
+            let output = TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionSmokeKernel(
+                query: query,
+                packedKeys: packedKeys,
+                keyScales: keyScales,
+                keyBiases: keyBiases,
+                packedValues: packedValues,
+                valueScales: valueScales,
+                valueBiases: valueBiases,
+                sequenceLength: 3,
+                headDimension: 4,
+                groupSize: 2
+            )
+
+            let expected = MLXArray([
+                Float(0.021352084),
+                Float(0.096066497),
+                Float(0.469048419),
+                Float(0.491459166),
+            ])
+            XCTAssertEqual(output.shape, [4])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected).all().item())
+        }
+    }
+
+    #if canImport(MLXLMCommon)
+    func testTurboQuantMetalCapabilityRunsMSEQ4FusedAttentionFromQuantizedKVCacheState() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let queryValues = (0 ..< headDimension).map { Float($0 - 12) / 16.0 }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, 1, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let output = try XCTUnwrap(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: queries[0, 0, 0, 0...],
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )[0, 0, 0, 0...]
+
+            XCTAssertEqual(quantizedKeys.0.dtype, DType.uint32)
+            XCTAssertEqual(output.shape, [headDimension])
+            XCTAssertEqual(output.dtype, DType.float32)
+            XCTAssertTrue(allClose(output, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeGQA() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 32
+            let groupSize = 32
+            let queryHeadCount = 2
+            let kvHeadCount = 1
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 31) - 15) / 17.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let fused = try XCTUnwrap(fusedQ4ScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            ))
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fused.shape, expected.shape)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testVendoredFusedQ4AttentionPreservesQueryDTypeForDecodeGQA() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 32
+            let groupSize = 32
+            let queryHeadCount = 2
+            let kvHeadCount = 1
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 31) - 15) / 17.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension]).asType(.bfloat16)
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let fused = try XCTUnwrap(fusedQ4ScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            ))
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fused.dtype, queries.dtype)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-2, atol: 1e-2).all().item())
+        }
+    }
+
+    func testAttentionWithCacheUpdateUsesFusedQuantizedStorageWithoutMaterializingForDecode()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 32
+            let groupSize = 32
+            let queryHeadCount = 4
+            let kvHeadCount = 2
+            let scale = Float(1.0 / Double(headDimension).squareRoot())
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 31) - 15) / 17.0
+            }
+            let keyValues = (0 ..< kvHeadCount * sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< kvHeadCount * sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension])
+            let fusedCache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+
+            let fused = attentionWithCacheUpdate(
+                queries: queries,
+                keys: keys,
+                values: values,
+                cache: fusedCache,
+                scale: scale,
+                mask: .causal
+            )
+            let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+            let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+            let quantizedKeys: QuantizedKVCacheTuple = (
+                referenceKeys.wq,
+                referenceKeys.scales,
+                referenceKeys.biases
+            )
+            let quantizedValues: QuantizedKVCacheTuple = (
+                referenceValues.wq,
+                referenceValues.scales,
+                referenceValues.biases
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: scale,
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fusedCache.offset, sequenceLength)
+            XCTAssertEqual(fusedCache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionDispatchCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionCallCount, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionActiveLaneTotal, 4)
+            XCTAssertEqual(fusedCache.fusedAttentionLaunchedLaneTotal, 32)
+            XCTAssertEqual(fusedCache.fusedAttentionSoftmaxLaneTotal, 1)
+            XCTAssertEqual(fusedCache.fusedAttentionSoftmaxTokenLaneTotal, 4)
+            XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionTotalMicros, 0)
+            XCTAssertGreaterThanOrEqual(fusedCache.fusedAttentionRouteTotalMicros, fusedCache.fusedAttentionTotalMicros)
+            XCTAssertEqual(fusedCache.quantizedCacheMaterializeCallCount, 0)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testAttentionWithCacheUpdateMaterializesQuantizedStorageWhenFusedRouteIsUnsupported()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let scale = Float(1.0 / Double(headDimension).squareRoot())
+            let queryValues = (0 ..< headDimension).map { index in
+                Float((index % 29) - 14) / 15.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 9.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 13) - 6) / 7.0
+            }
+            let queries = MLXArray(queryValues, [1, 1, 1, headDimension])
+            let keys = MLXArray(keyValues, [1, 1, sequenceLength, headDimension])
+            let values = MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            let fallbackCache = QuantizedKVCache(groupSize: groupSize, bits: 8)
+            let referenceCache = QuantizedKVCache(groupSize: groupSize, bits: 8)
+
+            let fallback = attentionWithCacheUpdate(
+                queries: queries,
+                keys: keys,
+                values: values,
+                cache: fallbackCache,
+                scale: scale,
+                mask: .causal
+            )
+            let (quantizedKeys, quantizedValues) = referenceCache.updateQuantized(
+                keys: keys,
+                values: values
+            )
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: scale,
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 8,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fallbackCache.fusedAttentionDispatchCount, 0)
+            XCTAssertEqual(fallbackCache.quantizedCacheUpdateCallCount, 1)
+            XCTAssertEqual(fallbackCache.quantizedCacheMaterializeCallCount, 1)
+            XCTAssertTrue(allClose(fallback, expected, rtol: 1e-4, atol: 1e-4).all().item())
+        }
+    }
+
+    func testFusedDecodeQuantizerMatchesReferenceForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            try assertFusedDecodeQuantizerMatchesReference(
+                dtype: .float32,
+                headDimension: 32,
+                groupSize: 32,
+                rtol: 1e-6,
+                atol: 1e-6
+            )
+        }
+    }
+
+    func testFusedDecodeQuantizerMatchesReferenceForSingleTokenBFloat16AffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            try assertFusedDecodeQuantizerMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    func testFusedDecodeQuantizerRejectsUnsupportedInputs() throws {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: .float32, headDimension: 32)
+
+        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: 32,
+            bits: 8,
+            mode: .affine
+        ))
+        XCTAssertNil(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: 24,
+            bits: 4,
+            mode: .affine
+        ))
+    }
+
+    func testQuantizedKVCacheUsesNativeDecodeQuantizerByDefaultForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            assertQuantizedKVCacheStorageMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                expectedFusedDecodeQuantizeCallCount: 0,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    func testFusedDecodeQuantizerDefaultReadsInjectedEnvironment() {
+        XCTAssertFalse(melixDefaultFusedDecodeQuantizeEnabled(environment: [:]))
+        XCTAssertFalse(melixDefaultFusedDecodeQuantizeEnabled(
+            environment: ["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE": "true"]
+        ))
+        XCTAssertTrue(melixDefaultFusedDecodeQuantizeEnabled(
+            environment: ["MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE": "1"]
+        ))
+    }
+
+    func testQuantizedKVCacheUsesFusedDecodeQuantizerWhenExplicitlyEnabledForSingleTokenAffineQ4()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            assertQuantizedKVCacheStorageMatchesReference(
+                dtype: .bfloat16,
+                headDimension: 128,
+                groupSize: 64,
+                fusedDecodeQuantizeEnabled: true,
+                expectedFusedDecodeQuantizeCallCount: 1,
+                rtol: 1e-2,
+                atol: 1e-2
+            )
+        }
+    }
+
+    private func assertFusedDecodeQuantizerMatchesReference(
+        dtype: DType,
+        headDimension: Int,
+        groupSize: Int,
+        rtol: Double,
+        atol: Double
+    ) throws {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: dtype, headDimension: headDimension)
+        let fused = try XCTUnwrap(fusedQ4AffineKeyValueQuantizedForDecode(
+            keys: keys,
+            values: values,
+            groupSize: groupSize,
+            bits: 4,
+            mode: .affine
+        ))
+        let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+        let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+
+        assertQuantizedTuplesMatchReference(
+            keys: fused.0,
+            values: fused.1,
+            referenceKeys: referenceKeys,
+            referenceValues: referenceValues,
+            rtol: rtol,
+            atol: atol
+        )
+    }
+
+    private func assertQuantizedKVCacheStorageMatchesReference(
+        dtype: DType,
+        headDimension: Int,
+        groupSize: Int,
+        fusedDecodeQuantizeEnabled: Bool? = nil,
+        expectedFusedDecodeQuantizeCallCount: Int,
+        rtol: Double,
+        atol: Double
+    ) {
+        let (keys, values) = makeDecodeKeyValueTensors(dtype: dtype, headDimension: headDimension)
+        let cache = QuantizedKVCache(
+            groupSize: groupSize,
+            bits: 4,
+            fusedDecodeQuantizeEnabled: fusedDecodeQuantizeEnabled
+        )
+
+        let storageState = cache.updateQuantizedStorage(keys: keys, values: values)
+        let referenceKeys = quantized(keys, groupSize: groupSize, bits: 4)
+        let referenceValues = quantized(values, groupSize: groupSize, bits: 4)
+
+        XCTAssertEqual(
+            cache.quantizedCacheFusedDecodeQuantizeCallCount,
+            expectedFusedDecodeQuantizeCallCount
+        )
+        XCTAssertEqual(storageState.sequenceLength, 1)
+        assertQuantizedTuplesMatchReference(
+            keys: (
+                storageState.keys.0[.ellipsis, ..<1, 0...],
+                storageState.keys.1[.ellipsis, ..<1, 0...],
+                storageState.keys.2![.ellipsis, ..<1, 0...]
+            ),
+            values: (
+                storageState.values.0[.ellipsis, ..<1, 0...],
+                storageState.values.1[.ellipsis, ..<1, 0...],
+                storageState.values.2![.ellipsis, ..<1, 0...]
+            ),
+            referenceKeys: referenceKeys,
+            referenceValues: referenceValues,
+            rtol: rtol,
+            atol: atol
+        )
+    }
+
+    private func makeDecodeKeyValueTensors(
+        dtype: DType,
+        headDimension: Int
+    ) -> (MLXArray, MLXArray) {
+        let kvHeadCount = 2
+        let keyValues = (0 ..< kvHeadCount * headDimension).map { index in
+            Float((index % 23) - 11) / 13.0
+        }
+        let valueValues = (0 ..< kvHeadCount * headDimension).map { index in
+            Float((index % 29) - 14) / 15.0
+        }
+        let keys = MLXArray(keyValues, [1, kvHeadCount, 1, headDimension]).asType(dtype)
+        let values = MLXArray(valueValues, [1, kvHeadCount, 1, headDimension]).asType(dtype)
+        return (keys, values)
+    }
+
+    private func assertQuantizedTuplesMatchReference(
+        keys: QuantizedKVCacheTuple,
+        values: QuantizedKVCacheTuple,
+        referenceKeys: (wq: MLXArray, scales: MLXArray, biases: MLXArray?),
+        referenceValues: (wq: MLXArray, scales: MLXArray, biases: MLXArray?),
+        rtol: Double,
+        atol: Double
+    ) {
+        XCTAssertEqual(keys.0.asArray(UInt32.self), referenceKeys.wq.asArray(UInt32.self))
+        XCTAssertTrue(allClose(keys.1, referenceKeys.scales, rtol: rtol, atol: atol).all().item())
+        XCTAssertTrue(allClose(keys.2!, referenceKeys.biases!, rtol: rtol, atol: atol).all().item())
+        XCTAssertEqual(values.0.asArray(UInt32.self), referenceValues.wq.asArray(UInt32.self))
+        XCTAssertTrue(allClose(values.1, referenceValues.scales, rtol: rtol, atol: atol).all().item())
+        XCTAssertTrue(allClose(values.2!, referenceValues.biases!, rtol: rtol, atol: atol).all().item())
+    }
+
+    func testVendoredFusedQ4AttentionLaunchPlanUsesOnlineSoftmaxAcrossValueLanes() throws {
+        let plan = try XCTUnwrap(turboQuantFusedAttentionLaunchPlan(
+            batchCount: 2,
+            queryHeadCount: 4,
+            kvHeadCount: 2,
+            sequenceLength: 64,
+            headDimension: 128,
+            groupSize: 64
+        ))
+
+        XCTAssertEqual(plan.gridX, 32)
+        XCTAssertEqual(plan.gridY, 4)
+        XCTAssertEqual(plan.gridZ, 2)
+        XCTAssertEqual(plan.threadGroupX, 32)
+        XCTAssertEqual(plan.sharedScoreCount, 0)
+        XCTAssertEqual(plan.scoreDotProductsPerQueryHead, 64)
+        XCTAssertEqual(plan.scoreReductionLaneCount, 16)
+        XCTAssertEqual(plan.scoreReductionSimdgroupCount, 1)
+        XCTAssertEqual(plan.softmaxLaneCount, 1)
+        XCTAssertFalse(plan.usesThreadgroupSharedScores)
+        XCTAssertTrue(plan.usesThreadgroupParallelScoreReduction)
+        XCTAssertTrue(plan.usesOnlineSoftmax)
+    }
+
+    func testTurboQuantMetalCapabilityRejectsUnsupportedQuantizedKVCacheStateInputs() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let query = MLXArray((0 ..< headDimension).map { Float($0 - 12) / 16.0 })
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 19) - 9) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 23) - 11) / 10.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            let int32PackedKeys = MLXArray([Int32](repeating: 0, count: sequenceLength * headDimension / 8), [
+                1, 1, sequenceLength, headDimension / 8,
+            ])
+            let rankOnePackedKeys = quantizedKeys.0[0, 0, 0, 0...]
+
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 2
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (quantizedKeys.0, quantizedKeys.1, nil),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: 0,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: 31,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (int32PackedKeys, quantizedKeys.1, quantizedKeys.2),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: (rankOnePackedKeys, quantizedKeys.1, quantizedKeys.2),
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    batchIndex: 1,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    headIndex: 1,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength + 1,
+                    headDimension: headDimension,
+                    groupSize: groupSize,
+                    bits: 4
+                )
+            )
+            XCTAssertNil(
+                TurboQuantMetalKernelCapability.runMSEQ4FusedAttentionKernelFromQuantizedState(
+                    query: query,
+                    quantizedKeys: quantizedKeys,
+                    quantizedValues: quantizedValues,
+                    sequenceLength: sequenceLength,
+                    headDimension: headDimension,
+                    groupSize: 16,
+                    bits: 4
+                )
+            )
+        }
+    }
+
+    func testTurboQuantCandidateDispatchReadsQuantizedKVCacheState() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+
+            XCTAssertTrue(dispatchTurboQuantFusedAttentionCandidateFromQuantizedCacheState(cache: [cache]))
+        }
+    }
+
+    func testTurboQuantCandidateDispatchRequiresExplicitProbeMode() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            var acceleration = Melix_Worker_V1_AccelerationPolicy()
+            acceleration.mode = .activeKvQuantized
+            acceleration.activeKvQuantProfile = "turboquant-q4"
+
+            XCTAssertFalse(shouldDispatchTurboQuantFusedAttentionCandidate(
+                cache: [cache],
+                acceleration: acceleration,
+                candidateProbeEnabled: false
+            ))
+            XCTAssertTrue(shouldDispatchTurboQuantFusedAttentionCandidate(
+                cache: [cache],
+                acceleration: acceleration,
+                candidateProbeEnabled: true
+            ))
+        }
+    }
+
+    func testTurboQuantActiveKVUsesVendoredRuntimeWithoutProbe() {
+        var q4Acceleration = Melix_Worker_V1_AccelerationPolicy()
+        q4Acceleration.mode = .activeKvQuantized
+        q4Acceleration.activeKvQuantProfile = "q4"
+        XCTAssertTrue(shouldUseActiveKVQuantization(for: q4Acceleration))
+
+        var turboQuantAcceleration = Melix_Worker_V1_AccelerationPolicy()
+        turboQuantAcceleration.mode = .activeKvQuantized
+        turboQuantAcceleration.activeKvQuantProfile = "turboquant-q4"
+        XCTAssertTrue(shouldUseActiveKVQuantization(for: turboQuantAcceleration))
+    }
+
+    func testTurboQuantRuntimeRouteReportsRoutedAfterFusedAttentionDispatch() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 3
+            let headDimension = 32
+            let groupSize = 32
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 17) - 8) / 8.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 12.0
+            }
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            _ = cache.updateQuantized(
+                keys: MLXArray(keyValues, [1, 1, sequenceLength, headDimension]),
+                values: MLXArray(valueValues, [1, 1, sequenceLength, headDimension])
+            )
+            cache.recordFusedAttentionDispatch()
+            var acceleration = Melix_Worker_V1_AccelerationPolicy()
+            acceleration.mode = .activeKvQuantized
+            acceleration.activeKvQuantProfile = "turboquant-q4"
+
+            let route = turboQuantRuntimeFusedAttentionRoute(
+                cache: [cache],
+                acceleration: acceleration
+            )
+
+            XCTAssertEqual(route, .routed)
+            XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 20)
+            XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 0)
+            XCTAssertEqual(activeKVRuntimeRouteCode(for: route), 2)
+            XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: route), 0)
+        }
+    }
+
+    func testTurboQuantRuntimeRouteReportsRoutedFromDispatchEvidenceBeforeStateRecheck() {
+        let cache = QuantizedKVCache(groupSize: 32, bits: 4)
+        cache.recordFusedAttentionDispatch()
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "turboquant-q4"
+
+        let route = turboQuantRuntimeFusedAttentionRoute(
+            cache: [KVCacheSimple(), cache],
+            acceleration: acceleration
+        )
+
+        XCTAssertEqual(route, .routed)
+        XCTAssertEqual(activeKVKernelPathCode(for: acceleration, turboQuantRuntimeRoute: route), 20)
+        XCTAssertEqual(activeKVFallbackCount(for: acceleration, turboQuantRuntimeRoute: route), 0)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: route), 2)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: route), 0)
+    }
+
+    func testTurboQuantRuntimeRouteCodeMappingsCoverInactiveUnsupportedAndRoutedStates() {
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .disabled), 0)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .disabled), 0)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .blocked(.unsupportedCacheState)), 1)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .blocked(.unsupportedCacheState)), 1)
+        XCTAssertEqual(activeKVRuntimeRouteCode(for: .routed), 2)
+        XCTAssertEqual(activeKVRuntimeBlockReasonCode(for: .routed), 0)
+    }
+    #endif
+    #endif
+
     func testMaintenanceRpcsReturnStructuredUnimplemented() async throws {
         let services = makeServices()
         let convertWriter = RecordingRPCWriter<Melix_Worker_V1_ConvertModelEvent>()
@@ -5626,6 +7080,13 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         XCTAssertGreaterThanOrEqual(bootstrap.services.metrics.counters["swift_text.spawn_to_bootstrap_ms"] ?? -1, 0)
+    }
+
+    func testSwiftBackendReceivesTurboQuantCandidateProbeConfiguration() throws {
+        let runtime = makeTextRuntime(for: WorkerConfiguration(turboQuantCandidateProbeEnabled: true))
+        let backend = try XCTUnwrap(runtime.backend as? AutoSwiftMLXBackend)
+
+        XCTAssertTrue(backend.turboQuantCandidateProbeEnabled)
     }
 
     func testDeterministicBackendModeBuildsARepeatableTextRuntime() async throws {
@@ -6055,6 +7516,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
     private let tokenDelayNanos: UInt64
     private let prefillDelayNanos: UInt64
     private let decodeDelayNanos: UInt64
+    private let activeKVProbeSummary: ActiveKVProbeSummary?
     private let storage = FakeRuntimeBackendStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
@@ -6067,7 +7529,8 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         decodedChunks: [String]? = nil,
         tokenDelayNanos: UInt64 = 0,
         prefillDelayNanos: UInt64 = 0,
-        decodeDelayNanos: UInt64 = 0
+        decodeDelayNanos: UInt64 = 0,
+        activeKVProbeSummary: ActiveKVProbeSummary? = nil
     ) {
         self.loadError = loadError
         self.prefillError = prefillError
@@ -6078,6 +7541,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         self.tokenDelayNanos = tokenDelayNanos
         self.prefillDelayNanos = prefillDelayNanos
         self.decodeDelayNanos = decodeDelayNanos
+        self.activeKVProbeSummary = activeKVProbeSummary
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -6207,7 +7671,8 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
                         completionTokens: emitted,
                         tokensPerSecond: emitted > 0 ? Double(emitted) * 8.0 : nil,
                         speculativeAcceptedTokens: speculativeAccepted,
-                        speculativeRejectedTokens: speculativeRejected
+                        speculativeRejectedTokens: speculativeRejected,
+                        activeKVProbe: activeKVProbeSummary
                     )
                 ))
                 continuation.finish()
@@ -6582,6 +8047,54 @@ private func makeQuantizableLiveSwiftMLXModelContainer(promptTokens: [Int]) -> M
         configuration: ModelConfiguration(id: "melix-tests/live-swift-mlx-quant"),
         model: model,
         processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private final class CountingLanguageModelCallCounter: @unchecked Sendable {
+    var stepCallCount = 0
+}
+
+@available(macOS 15.0, *)
+private final class CountingPreparedLogitsLanguageModel: Module, LanguageModel {
+    let counter: CountingLanguageModelCallCounter
+    let vocabularySize = 32
+
+    init(counter: CountingLanguageModelCallCounter) {
+        self.counter = counter
+        super.init()
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        .logits(LMOutput(logits: logitsForToken(2)))
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        counter.stepCallCount += 1
+        return LMOutput(logits: logitsForToken(3))
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        [KVCacheSimple()]
+    }
+
+    private func logitsForToken(_ tokenID: Int) -> MLXArray {
+        let values = (0 ..< vocabularySize).map { index in
+            index == tokenID ? Float(10) : Float(-10)
+        }
+        return MLXArray(values, [1, 1, vocabularySize])
+    }
+}
+
+@available(macOS 15.0, *)
+private func makeCountingPreparedLogitsModelContainer(counter: CountingLanguageModelCallCounter) -> ModelContainer {
+    let vocabularySize = 32
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/counting-prepared-logits"),
+        model: CountingPreparedLogitsLanguageModel(counter: counter),
+        processor: DeterministicUserInputProcessor(promptTokens: [1, 2, 3]),
         tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
     )
     return ModelContainer(context: context)

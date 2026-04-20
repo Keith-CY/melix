@@ -11,6 +11,12 @@ import pytest
 import sys
 import uuid
 
+from scripts.real_model_support import (
+    REAL_SMALL_TEXT_MODEL_E2E_ENV,
+    REAL_SMALL_TEXT_MODEL_ID,
+    REAL_SMALL_TEXT_MODEL_PATH_ENV,
+    resolve_real_small_text_model_path,
+)
 from tests.integration.helpers import LiveMelixStack
 from tests.integration.helpers import resolve_scoped_swift_product_binary
 from tests.integration.helpers import root_package_swift_command
@@ -18,9 +24,9 @@ from tests.integration.helpers import root_package_swift_environment
 from tests.integration.helpers import wait_for_worker_handshake
 
 
-_REAL_SMALL_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
-_REAL_SMALL_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
-_REAL_SMALL_MODEL_E2E_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_E2E"
+_REAL_SMALL_MODEL_ID = REAL_SMALL_TEXT_MODEL_ID
+_REAL_SMALL_MODEL_PATH_ENV = REAL_SMALL_TEXT_MODEL_PATH_ENV
+_REAL_SMALL_MODEL_E2E_ENV = REAL_SMALL_TEXT_MODEL_E2E_ENV
 
 
 @lru_cache(maxsize=1)
@@ -128,14 +134,23 @@ def require_real_small_model_e2e_opt_in() -> None:
 
 
 def resolve_real_small_model_path() -> Path | None:
-    configured_path = os.environ.get(_REAL_SMALL_MODEL_PATH_ENV, "").strip()
-    if not configured_path:
-        return None
+    return resolve_real_small_text_model_path(allow_hf_cache=True)
 
-    resolved_path = Path(configured_path).expanduser().resolve()
-    if not resolved_path.is_dir():
-        return None
-    return resolved_path
+
+def test_resolve_real_small_model_path_uses_shared_helper(tmp_path: Path, monkeypatch) -> None:
+    model_path = tmp_path / "qwen-real-small"
+
+    def fake_resolve_real_small_text_model_path(*, allow_hf_cache: bool) -> Path | None:
+        assert allow_hf_cache is True
+        return model_path
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "resolve_real_small_text_model_path",
+        fake_resolve_real_small_text_model_path,
+    )
+
+    assert resolve_real_small_model_path() == model_path
 
 
 @contextlib.contextmanager

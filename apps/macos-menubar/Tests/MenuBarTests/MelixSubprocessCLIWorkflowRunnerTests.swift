@@ -6,6 +6,20 @@ import MelixCLICore
 
 @Suite("Melix Subprocess CLI Workflow Runner", .serialized)
 struct MelixSubprocessCLIWorkflowRunnerTests {
+    @Test("lora publish exposes a stable workflow command id")
+    func loraPublishExposesStableWorkflowCommandID() {
+        #expect(
+            MelixCLICommand.loraPublish(
+                .init(
+                    modelID: "melix/derived-qwen",
+                    targetRepo: "melix/adapters/derived-qwen",
+                    exportKind: .adapterExport,
+                    artifactPath: "/tmp/adapter"
+                )
+            ).workflowCommandID == "lora.publish"
+        )
+    }
+
     @Test("eval compare export commands expose stable workflow command ids")
     func evalCompareExportCommandsExposeStableWorkflowCommandIDs() {
         #expect(
