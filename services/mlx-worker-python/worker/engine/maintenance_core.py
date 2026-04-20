@@ -1843,6 +1843,18 @@ class MaintenanceCore:
         activation_mode = str(manifest.get("activation_mode", "")).strip()
         if activation_mode:
             model_spec.ext["melix.activation_mode"] = activation_mode
+        # Propagate the typed RuntimeMode enum from the manifest so downstream
+        # consumers (runtime backend, control plane summary, CLI) see the
+        # authoritative signal — not just the legacy ext-string mirror. Falls
+        # back to mapping the activation_mode string when the manifest was
+        # written by a pre-enum activation.
+        runtime_mode_value = manifest.get("runtime_mode")
+        if isinstance(runtime_mode_value, int) and runtime_mode_value:
+            model_spec.runtime_mode = runtime_mode_value
+        elif activation_mode == "adapter_backed_runtime":
+            model_spec.runtime_mode = common_pb2.RUNTIME_MODE_ADAPTER_BACKED
+        elif activation_mode == "fused_derived_model":
+            model_spec.runtime_mode = common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL
         for manifest_key, ext_key in (
             ("adapter_manifest_path", "melix.adapter_manifest_path"),
             ("adapter_weights_path", "melix.adapter_weights_path"),

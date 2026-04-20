@@ -1624,8 +1624,12 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert snapshot_payload["adapters"][0]["activation_mode"] == "adapter_backed_runtime"
     assert snapshot_payload["adapters"][0]["activation_backend"] == "internal"
     assert snapshot_payload["adapters"][0]["adapter_weights_path"] == activation_payload["adapter_weights_path"]
+    # RuntimeMode enum flows through the snapshot alongside the legacy string.
+    # RUNTIME_MODE_ADAPTER_BACKED = 2 per worker/v1/common.proto.
+    assert snapshot_payload["adapters"][0]["runtime_mode"] == 2
     assert snapshot_payload["derived_models"][0]["activation_mode"] == "adapter_backed_runtime"
     assert snapshot_payload["derived_models"][0]["activation_backend"] == "internal"
+    assert snapshot_payload["derived_models"][0]["runtime_mode"] == 2
     assert snapshot_payload["derived_models"][0]["model_id"] == activation_payload["derived_model_id"]
 
     registered_model = service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
@@ -1633,11 +1637,16 @@ def test_activate_adapter_supports_adapter_backed_runtime_and_uses_training_alia
     assert registered_model.model_path == source_model.model_path
     assert registered_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
     assert registered_model.ext["melix.adapter_manifest_path"] == adapter_manifest_path
+    # Typed RuntimeMode enum must propagate from activation manifest through
+    # catalog registration — this is the authoritative signal the runtime
+    # backend keys off to decide adapter-aware load behavior.
+    assert registered_model.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
     loaded = service._core._registry.load_model(
         common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
     )
     assert loaded.spec.model_id == activation_payload["derived_model_id"]
     assert loaded.spec.ext["melix.adapter_weights_path"] == activation_payload["adapter_weights_path"]
+    assert loaded.spec.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
 
 
 def test_activate_adapter_rejects_unknown_activation_mode(tmp_path: Path) -> None:
@@ -1850,10 +1859,13 @@ def test_adapter_backed_runtime_catalog_registration_restores_from_jobs_root(tmp
     assert restored_model is not None
     assert restored_model.model_path == activation_payload["derived_model_path"]
     assert restored_model.ext["melix.activation_mode"] == "adapter_backed_runtime"
+    # RuntimeMode enum survives the catalog-rebuild-from-jobs-root path too.
+    assert restored_model.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
     loaded = restored_service._core._registry.load_model(
         common_pb2.ModelSpec(model_id=activation_payload["derived_model_id"])
     )
     assert loaded.spec.ext["melix.adapter_manifest_path"] == adapter_manifest_path
+    assert loaded.spec.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
 
 
 def test_remove_derived_model_requires_a_known_target(tmp_path: Path) -> None:
