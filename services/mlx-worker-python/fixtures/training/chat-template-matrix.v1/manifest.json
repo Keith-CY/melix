@@ -1,0 +1,16 @@
+{
+  "schema_version": "melix.dataset.chat_template_matrix.v1",
+  "dataset_id": "chat-template-matrix.v1",
+  "format": "chat_messages",
+  "description": "Cross-family chat-template fixture for milestone #43 phase 2 response-only boundary correctness.",
+  "sample_count": 5,
+  "template_families": [
+    "chatml",
+    "llama3",
+    "mistral_inst",
+    "gemma_model"
+  ],
+  "validation_sample_count": 0,
+  "version": "1",
+  "notes": "The same 5 chat samples are rendered under each family's Jinja chat_template. Boundaries are computed at test time using the locally cached tokenizer's apply_chat_template path; Melix helper and MLX-LM ChatDataset.process must agree bit-for-bit."
+}
