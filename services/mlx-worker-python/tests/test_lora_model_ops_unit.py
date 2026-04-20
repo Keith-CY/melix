@@ -333,7 +333,7 @@ def test_training_config_rejects_chunk_size_below_minimum() -> None:
             sample_count=1,
         )
 
-    assert exc.value.code == "invalid_argument"
+    assert exc.value.code == "invalid_chunk_size"
     assert "chunk_size" in (exc.value.message or "")
 
 

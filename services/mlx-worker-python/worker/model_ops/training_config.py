@@ -396,20 +396,33 @@ def normalize_training_config(
     chunked_training = _bool_value(ext.get("chunked_training", ""), default=False)
     chunk_size_raw = ext.get("chunk_size", "").strip()
     if chunk_size_raw:
-        chunk_size = _int_value(
-            chunk_size_raw,
-            default=max_seq_length,
-            minimum=512,
-            field_name="chunk_size",
-        )
-        if chunk_size > max_seq_length:
+        # chunk_size is always validated (even when chunked_training is off)
+        # so a mis-configured value fails fast at config time rather than
+        # silently going unused. Both the lower-bound and upper-bound checks
+        # raise ``invalid_chunk_size`` for a consistent error code.
+        try:
+            parsed_chunk_size = int(chunk_size_raw)
+        except ValueError as exc:
+            raise ModelOperationError(
+                code="invalid_chunk_size",
+                message=f"chunk_size must be an integer, got {chunk_size_raw!r}.",
+            ) from exc
+        if parsed_chunk_size < 512:
             raise ModelOperationError(
                 code="invalid_chunk_size",
                 message=(
-                    f"chunk_size {chunk_size} must be <= max_seq_length "
+                    f"chunk_size {parsed_chunk_size} must be >= 512."
+                ),
+            )
+        if parsed_chunk_size > max_seq_length:
+            raise ModelOperationError(
+                code="invalid_chunk_size",
+                message=(
+                    f"chunk_size {parsed_chunk_size} must be <= max_seq_length "
                     f"{max_seq_length}."
                 ),
             )
+        chunk_size = parsed_chunk_size
     else:
         chunk_size = max_seq_length
     steps_per_report = min(max(1, iters), 10)

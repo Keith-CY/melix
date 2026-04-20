@@ -507,6 +507,13 @@ def _maybe_chunk_training_dataset(
 ) -> ChunkStats:
     """Rewrite train.jsonl with chunked samples when chunked_training is on.
 
+    Non-destructive: the caller-supplied ``train.jsonl`` is preserved as
+    ``train.jsonl.source`` on first invocation and re-read from that source
+    on every subsequent rerun. The chunked output is materialized to
+    ``train.jsonl`` so MLX-LM's ``load_local_dataset`` finds it by its
+    canonical name. Re-running with a different ``chunk_size`` therefore
+    operates on the original samples, not a previously-chunked view.
+
     Disabled by default — returns a stats object with enabled=False and zero
     counts so the caller can forward the values unconditionally into
     TrainingMetrics without branching.
@@ -522,7 +529,8 @@ def _maybe_chunk_training_dataset(
         )
 
     train_path = request.normalized_dataset_dir / "train.jsonl"
-    if not train_path.is_file():
+    source_path = request.normalized_dataset_dir / "train.jsonl.source"
+    if not train_path.is_file() and not source_path.is_file():
         raise ModelOperationError(
             code="invalid_dataset_package",
             message=(
@@ -530,18 +538,28 @@ def _maybe_chunk_training_dataset(
                 f"{train_path}."
             ),
         )
-    samples = [
-        json.loads(line)
-        for line in train_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    # Preserve the pre-chunking source on first run; re-read from it on
+    # every subsequent rerun so chunk_size changes operate on the original.
+    if not source_path.is_file():
+        train_path.rename(source_path)
+
+    def _stream_samples():
+        with source_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                yield json.loads(line)
+
     chunked_samples, stats = chunk_long_samples(
-        samples,
+        _stream_samples(),
         chunk_size=config.chunk_size,
         tokenizer=tokenizer,
     )
-    serialized = "\n".join(json.dumps(sample) for sample in chunked_samples) + "\n"
-    train_path.write_text(serialized, encoding="utf-8")
+    with train_path.open("w", encoding="utf-8") as handle:
+        for sample in chunked_samples:
+            handle.write(json.dumps(sample))
+            handle.write("\n")
     return stats
 
 

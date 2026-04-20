@@ -12,10 +12,13 @@ tokenizer. It does NOT tokenize the output itself — MLX-LM's ``ChatDataset``
 tokenizes at training time. The chunker only uses the tokenizer to **measure**
 the rendered length of candidate chunks so it can choose a correct segmentation.
 
-Invariant: every emitted chunk ends with an assistant message so
-``compute_response_only_boundary`` (Phase 2) can derive the prompt boundary
-for every chunk. Chunks that would violate the invariant raise
-``ModelOperationError(code="chunk_size_too_small", ...)``.
+Invariant: every chunk the chunker *transforms* ends with an assistant
+message so ``compute_response_only_boundary`` (Phase 2) can derive the
+prompt boundary for every chunk. Samples whose shape the chunker does not
+transform (non-assistant-terminated, pair-extraction returns empty) pass
+through unchanged so the downstream dataset loader sees the same
+rejection it would without chunking. Chunks that *would* be transformed
+but cannot be made to fit raise ``ModelOperationError(code="chunk_size_too_small", ...)``.
 """
 
 from __future__ import annotations
@@ -61,7 +64,9 @@ def _render_len(
 
     Uses the same ``apply_chat_template(return_dict=False)`` call pattern as
     ``response_only_boundary.py`` and MLX-LM's ``ChatDataset.process`` so the
-    measurement stays bit-exact with what training sees.
+    measurement stays bit-exact with what training sees. ``tools`` is
+    forwarded so samples that carry tool schemas produce a length estimate
+    that matches the real training pass.
     """
 
     tokens = tokenizer.apply_chat_template(
@@ -81,6 +86,18 @@ def _extract_messages(sample: dict) -> list[dict[str, str]]:
             message="Chunker requires samples with a non-empty 'messages' list.",
         )
     return messages
+
+
+def _extract_tools(sample: dict) -> list[dict[str, Any]] | None:
+    tools = sample.get("tools")
+    if tools is None:
+        return None
+    if not isinstance(tools, list):
+        raise ModelOperationError(
+            code="invalid_dataset_package",
+            message="Chunker requires 'tools' to be a list when present.",
+        )
+    return tools
 
 
 def _split_messages_into_turns(
@@ -115,16 +132,24 @@ def _split_messages_into_turns(
 def _split_user_content_into_k(content: str, k: int) -> list[str]:
     """Split ``content`` into ``k`` roughly equal word-boundary segments.
 
-    Splitting on whitespace preserves word integrity; empty segments are
-    dropped (can happen when content has fewer words than ``k``, in which case
-    we return as many segments as we have words).
+    Splitting on whitespace preserves word integrity but normalizes internal
+    whitespace — tabs, newlines, and multi-spaces collapse to single spaces.
+    Acceptable for prose (the committed 3B fixtures are Alice in Wonderland
+    repetitions) but destructive for semantically-whitespace-sensitive
+    content (code, poetry, structured logs). A follow-on can substitute a
+    regex split that preserves delimiters if production datasets surface the
+    need.
+
+    Empty segments are dropped — when ``len(words) < k`` the caller's loop
+    detects the short return via ``len(segments) < k`` and moves on to the
+    next ``k`` candidate.
     """
 
     if k <= 1:
         return [content]
     words = content.split()
-    if len(words) <= k:
-        return words[:]  # degenerate: fewer words than buckets
+    if len(words) < k:
+        return words[:]  # caller detects len(segments) < k and retries
     bucket_size = len(words) // k
     extras = len(words) % k
     segments: list[str] = []
@@ -143,19 +168,28 @@ def _chunk_single_turn(
     *,
     chunk_size: int,
     tokenizer: _ChatTemplateTokenizer,
+    tools: list[dict[str, Any]] | None,
     sample_id: str,
 ) -> list[list[dict[str, str]]]:
     """Segment a single (user, assistant) pair so each chunk fits chunk_size.
 
     Holds ``system_prefix`` and ``assistant`` constant; splits the user
     content by word boundaries into the smallest K for which every rendered
-    chunk is ≤ chunk_size. Raises if no K in [1, 64] satisfies the bound —
-    which means even an empty-user chunk exceeds chunk_size (assistant text
-    alone too long).
+    chunk is ≤ chunk_size. Search strategy is linear increment from
+    ``K_floor = ceil(full_len / chunk_size)`` — the token-count function is
+    monotonic in K and ``K_floor`` is almost always the answer (or
+    off-by-one), so binary search adds complexity without meaningful latency
+    savings at typical 2k–8k context sizes.
+
+    Raises ``chunk_size_too_small`` when no valid K can be found — either
+    because the assistant / system prefix alone exceeds chunk_size, or
+    because the user content has too few words to form K non-empty segments.
+    The error message distinguishes the two cases so the operator gets
+    actionable guidance.
     """
 
     full = system_prefix + [user, assistant]
-    full_len = _render_len(full, tokenizer)
+    full_len = _render_len(full, tokenizer, tools=tools)
     if full_len <= chunk_size:
         return [full]
 
@@ -169,22 +203,36 @@ def _chunk_single_turn(
             ),
         )
 
-    # Floor estimate: at least ceil(full_len / chunk_size). Start there,
-    # increment until every emitted chunk fits. Bounded by 64 to catch
-    # degenerate cases fast.
+    # True ceiling: we can never split ``user_content`` into more segments
+    # than it has words. Above that, no K can possibly produce a non-empty
+    # segment per bucket.
+    word_count = len(user_content.split())
     k_floor = max(2, -(-full_len // chunk_size))
-    for k in range(k_floor, 65):
+    if k_floor > word_count:
+        raise ModelOperationError(
+            code="chunk_size_too_small",
+            message=(
+                f"Cannot chunk sample {sample_id!r} within chunk_size="
+                f"{chunk_size}: user content has only {word_count} words but "
+                f"at least {k_floor} segments are needed. Either raise "
+                "chunk_size or pre-reduce the assistant/system prefix."
+            ),
+        )
+    for k in range(k_floor, word_count + 1):
         segments = _split_user_content_into_k(user_content, k)
         if len(segments) < k:
-            # Ran out of splittable words — user content too short for this K.
-            # That means the overhead (system + assistant) itself breaks the
-            # budget.
+            # User content has fewer words than buckets — caller must try a
+            # smaller K. In practice this only fires when k > word_count,
+            # which the guard above already rejects.
             continue
         chunks = [
             system_prefix + [{"role": "user", "content": seg}, assistant]
             for seg in segments
         ]
-        if all(_render_len(chunk, tokenizer) <= chunk_size for chunk in chunks):
+        if all(
+            _render_len(chunk, tokenizer, tools=tools) <= chunk_size
+            for chunk in chunks
+        ):
             return chunks
 
     raise ModelOperationError(
@@ -192,7 +240,7 @@ def _chunk_single_turn(
         message=(
             f"Cannot chunk sample {sample_id!r} within chunk_size={chunk_size}"
             f" (full rendering is {full_len} tokens). The assistant message or"
-            " system prefix likely exceeds chunk_size on its own."
+            " system prefix alone likely exceeds chunk_size."
         ),
     )
 
@@ -205,21 +253,27 @@ def _chunk_sample(
 ) -> list[dict]:
     """Return one or more output samples for a single normalized input sample.
 
-    The returned samples are deep-copied from the input so the caller's
-    original data is not mutated.
+    The returned samples deep-copy only the new messages list; non-messages
+    top-level keys (id, metadata, tools, …) are shallow-copied into each
+    chunk because they are immutable-by-convention inputs the caller does
+    not expect the chunker to mutate.
+
+    Samples that lack any (user, assistant) pair (malformed shape or
+    non-assistant-terminated) pass through unchanged so the downstream
+    dataset loader sees the same rejection it would have seen without
+    chunking — the chunker's assistant-terminated invariant applies only to
+    samples whose shape the chunker actually transforms.
     """
 
+    tools = _extract_tools(sample)
     messages = _extract_messages(sample)
-    if _render_len(messages, tokenizer) <= chunk_size:
+    if _render_len(messages, tokenizer, tools=tools) <= chunk_size:
         return [copy.deepcopy(sample)]
 
     sample_id = str(sample.get("id", ""))
     system_prefix, pairs = _split_messages_into_turns(messages)
 
     if not pairs:
-        # No (user, assistant) pair we could extract. Preserve the original
-        # sample unchanged — the dataset loader will reject it downstream if
-        # it is malformed, and the chunker should not silently drop it.
         return [copy.deepcopy(sample)]
 
     # Multi-turn: emit each (user, assistant) pair as its own chunk first.
@@ -235,6 +289,7 @@ def _chunk_sample(
                     assistant,
                     chunk_size=chunk_size,
                     tokenizer=tokenizer,
+                    tools=tools,
                     sample_id=sample_id,
                 )
             )
@@ -247,15 +302,17 @@ def _chunk_sample(
                 assistant,
                 chunk_size=chunk_size,
                 tokenizer=tokenizer,
+                tools=tools,
                 sample_id=sample_id,
             )
         )
 
     chunks: list[dict] = []
     for idx, chunk in enumerate(chunked_messages):
-        # Preserve any non-messages keys from the source sample (e.g. id,
-        # metadata) but suffix the id so each chunk is individually traceable.
-        out = copy.deepcopy(sample)
+        # Preserve any non-messages keys from the source sample (id, tools,
+        # metadata) via a shallow top-level copy, then deep-copy only the
+        # new messages so each chunk has an independent message list.
+        out = {k: v for k, v in sample.items() if k != "messages"}
         out["messages"] = copy.deepcopy(chunk)
         if sample_id:
             out["id"] = f"{sample_id}#chunk-{idx}"
@@ -273,7 +330,8 @@ def chunk_long_samples(
 
     Returns ``(chunked_samples, stats)``. Samples that already fit pass
     through as one chunk each (deep-copied so downstream mutations can't leak
-    back to the caller).
+    back to the caller). Iterates ``samples`` exactly once so the caller can
+    pass a generator over a large JSONL file without materializing it.
     """
 
     if chunk_size < 1:
@@ -282,9 +340,10 @@ def chunk_long_samples(
             message=f"chunk_size must be >= 1, got {chunk_size}.",
         )
 
-    source_samples = list(samples)
+    source_sample_count = 0
     chunked: list[dict] = []
-    for sample in source_samples:
+    for sample in samples:
+        source_sample_count += 1
         chunked.extend(
             _chunk_sample(sample, chunk_size=chunk_size, tokenizer=tokenizer)
         )
@@ -293,5 +352,5 @@ def chunk_long_samples(
         enabled=True,
         chunk_size=chunk_size,
         chunk_count=len(chunked),
-        source_sample_count=len(source_samples),
+        source_sample_count=source_sample_count,
     )

@@ -304,3 +304,81 @@ def test_manifest_fields_exposes_all_stats() -> None:
         "chunk_count": 22,
         "source_sample_count": 10,
     }
+
+
+class _ToolsTrackingTokenizer(_FakeTokenizer):
+    """Same as _FakeTokenizer but records every ``tools`` value it saw.
+
+    Used to prove that the chunker forwards ``tools`` into every
+    ``apply_chat_template`` call — not just the full-sample length check.
+    If the chunker dropped ``tools`` in the segmentation loop, the recorded
+    list would contain a ``None`` entry and the assertion would fail.
+    """
+
+    def __init__(self, *, overhead_per_message: int = 5) -> None:
+        super().__init__(overhead_per_message=overhead_per_message)
+        self.tools_calls: list[Any] = []
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        add_generation_prompt: bool = False,
+        return_dict: bool = False,
+    ) -> list[int]:
+        self.tools_calls.append(tools)
+        return super().apply_chat_template(
+            messages,
+            tools=tools,
+            add_generation_prompt=add_generation_prompt,
+            return_dict=return_dict,
+        )
+
+
+def test_tools_are_forwarded_into_every_render_call() -> None:
+    tokenizer = _ToolsTrackingTokenizer()
+    tool_schema = [{"type": "function", "function": {"name": "lookup"}}]
+    sample = {
+        "id": "with-tools",
+        "tools": tool_schema,
+        "messages": [
+            {"role": "user", "content": _words(200)},
+            {"role": "assistant", "content": "ack"},
+        ],
+    }
+
+    chunked, _ = chunk_long_samples(
+        [sample], chunk_size=80, tokenizer=tokenizer
+    )
+
+    # The chunker made at least 2 render calls (initial fit check + K probes).
+    # Every one must have received the tools schema.
+    assert tokenizer.tools_calls, "chunker must render at least once"
+    assert all(
+        tools == tool_schema for tools in tokenizer.tools_calls
+    ), f"tools was dropped on some render: {tokenizer.tools_calls}"
+    # Tools survive on every emitted chunk.
+    assert all(chunk.get("tools") == tool_schema for chunk in chunked)
+
+
+def test_chunk_size_too_small_message_distinguishes_word_shortage() -> None:
+    """When user content has too few words for the required K, the error
+    names the word shortage rather than blaming the assistant prefix."""
+
+    tokenizer = _FakeTokenizer()
+    # 10 words of user content, long assistant, tiny chunk_size. K_floor
+    # will exceed the 10-word budget.
+    sample = {
+        "id": "few-words",
+        "messages": [
+            {"role": "user", "content": _words(10)},
+            {"role": "assistant", "content": _words(60)},
+        ],
+    }
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([sample], chunk_size=30, tokenizer=tokenizer)
+
+    assert exc.value.code == "chunk_size_too_small"
+    assert "few-words" in (exc.value.message or "")
