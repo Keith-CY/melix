@@ -90,6 +90,22 @@ struct TextPrefillEngine: Sendable {
                 "swift_text.cache_block_reuse_ratio",
                 value: Int((result.cacheStats.dedupRatio * 100.0).rounded())
             )
+            metrics.set(
+                "swift_text.cache_exact_hit_count",
+                value: Int(clamping: result.cacheHitTaxonomy.exactHitCount)
+            )
+            metrics.set(
+                "swift_text.cache_partial_hit_count",
+                value: Int(clamping: result.cacheHitTaxonomy.partialHitCount)
+            )
+            metrics.set(
+                "swift_text.cache_fallback_count",
+                value: Int(clamping: result.cacheHitTaxonomy.fallbackCount)
+            )
+            metrics.set(
+                "swift_text.cache_reconstruction_failure_count",
+                value: Int(clamping: result.cacheHitTaxonomy.reconstructionFailureCount)
+            )
             if !result.restoredSnapshotID.isEmpty {
                 metrics.recordMilliseconds(
                     "swift_text.cache_snapshot_restore_ms",

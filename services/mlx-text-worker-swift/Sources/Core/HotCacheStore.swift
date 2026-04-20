@@ -37,6 +37,18 @@ struct HotCacheTierMetrics: Sendable {
     let l2WriteBackCount: UInt64
 }
 
+/// Aggregate hit-taxonomy counters exposed for observability (milestone #40 phase 1).
+///
+/// Partial hits are recorded by `WorkerRuntimeRegistry` when a walked-back boundary
+/// snapshot yields an aligned shorter prefix. Reconstruction failures are recorded
+/// when a `restoreSnapshotID` was requested but no aligned restore plan could be built.
+struct HotCacheHitTaxonomy: Sendable {
+    let exactHitCount: UInt64
+    let partialHitCount: UInt64
+    let fallbackCount: UInt64
+    let reconstructionFailureCount: UInt64
+}
+
 private struct StoredHotPrefix: Sendable {
     var prefix: Melix_Worker_V1_PrefixRef
     let blockTableID: String
@@ -76,6 +88,10 @@ actor HotCacheStore {
     private var totalHits: UInt64 = 0
     private var totalReusedBlocks: UInt64 = 0
     private var totalCopyOnWriteForks: UInt64 = 0
+    private var totalExactHits: UInt64 = 0
+    private var totalPartialHits: UInt64 = 0
+    private var totalFallbacks: UInt64 = 0
+    private var totalReconstructionFailures: UInt64 = 0
 
     init(
         diskStore: DiskCacheStore = DiskCacheStore(rootPath: ".runtime/swift-text-worker-cache"),
@@ -112,6 +128,7 @@ actor HotCacheStore {
 
         if let existingID = prefixIDByKey[keyID], var existing = prefixesByID[existingID] {
             totalHits += 1
+            totalExactHits += 1
             totalReusedBlocks += UInt64(existing.blockIDs.count)
             existing.accessCount += 1
             if shouldPinPrefix(existing.prefix.prefixID, hints: execution.cacheHints) {
@@ -147,6 +164,13 @@ actor HotCacheStore {
             prefixesByID[restoredPrefix.prefixID] = stored
             prefixIDByKey[keyID] = restoredPrefix.prefixID
             registerOwnership(for: stored)
+            // Phase 1 #40: L2 restore counts as an exact hit, but we deliberately do
+            // NOT bump `totalHits` / `totalReusedBlocks` here. Those two are consumed
+            // by `CacheStats.l1HitRate` / `dedupRatio` and have a legacy semantics of
+            // "L1 cache reuse only"; changing that breaks existing release-gate and
+            // menubar consumers. Keep the legacy counters pinned to L1; expose the
+            // restore-inclusive hit count exclusively via `hitTaxonomy()`.
+            totalExactHits += 1
             return HotCacheRegistration(
                 prefix: restoredPrefix,
                 blockTableID: restored.blockTableID,
@@ -190,6 +214,7 @@ actor HotCacheStore {
         prefixesByID[prefixID] = stored
         prefixIDByKey[keyID] = prefixID
         registerOwnership(for: stored)
+        totalFallbacks += 1
         if execution.cacheHints.allowL2 || execution.cacheHints.persistL2 {
             let l2QuantizedBytes = storageBoundaryQuantizedBytes(
                 for: blockTable,
@@ -207,6 +232,27 @@ actor HotCacheStore {
             blockTableID: blockTableID,
             blockTable: blockTable,
             cacheHit: false
+        )
+    }
+
+    func recordExactHit() {
+        totalExactHits += 1
+    }
+
+    func recordPartialHit() {
+        totalPartialHits += 1
+    }
+
+    func recordReconstructionFailure() {
+        totalReconstructionFailures += 1
+    }
+
+    func hitTaxonomy() -> HotCacheHitTaxonomy {
+        HotCacheHitTaxonomy(
+            exactHitCount: totalExactHits,
+            partialHitCount: totalPartialHits,
+            fallbackCount: totalFallbacks,
+            reconstructionFailureCount: totalReconstructionFailures
         )
     }
 

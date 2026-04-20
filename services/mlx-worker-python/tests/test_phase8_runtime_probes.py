@@ -935,6 +935,7 @@ def test_collect_partial_restore_recovery_evidence_reports_restore_ratio(
     class FakeStack:
         def __init__(self, repo_root: Path) -> None:
             self.control_plane_metrics_path = tmp_path / "control-plane.json"
+            self.swift_text_worker_metrics_path = tmp_path / "swift-text-worker.json"
 
         def start(self) -> None:
             self.control_plane_metrics_path.write_text(
@@ -945,6 +946,20 @@ def test_collect_partial_restore_recovery_evidence_reports_restore_ratio(
                             "scheduler.partial_restore_walk_back_count": 1.0,
                             "scheduler.restore_plan_restored_tokens": 18.0,
                             "scheduler.restore_plan_total_tokens": 22.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.swift_text_worker_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at_unix_ms": 1,
+                        "values": {
+                            "swift_text.cache_exact_hit_count": 3.0,
+                            "swift_text.cache_partial_hit_count": 1.0,
+                            "swift_text.cache_fallback_count": 2.0,
+                            "swift_text.cache_reconstruction_failure_count": 0.0,
                         },
                     }
                 ),
@@ -974,6 +989,12 @@ def test_collect_partial_restore_recovery_evidence_reports_restore_ratio(
         "restored_tokens": 18.0,
         "total_tokens": 22.0,
         "restore_ratio_pct": 81.82,
+        "cache_hit_taxonomy": {
+            "exact_hit_count": 3.0,
+            "partial_hit_count": 1.0,
+            "fallback_count": 2.0,
+            "reconstruction_failure_count": 0.0,
+        },
     }
 
 
