@@ -259,6 +259,18 @@ def collect_cache_recovery_benchmark_evidence(repo_root: Path) -> dict[str, Any]
         "bench.recovery.partial_restore_total_tokens": round(
             float(partial_restore["total_tokens"]), 2
         ),
+        "bench.cache_hit_taxonomy.exact_hit_count": float(
+            partial_restore.get("cache_hit_taxonomy", {}).get("exact_hit_count", 0.0)
+        ),
+        "bench.cache_hit_taxonomy.partial_hit_count": float(
+            partial_restore.get("cache_hit_taxonomy", {}).get("partial_hit_count", 0.0)
+        ),
+        "bench.cache_hit_taxonomy.fallback_count": float(
+            partial_restore.get("cache_hit_taxonomy", {}).get("fallback_count", 0.0)
+        ),
+        "bench.cache_hit_taxonomy.reconstruction_failure_count": float(
+            partial_restore.get("cache_hit_taxonomy", {}).get("reconstruction_failure_count", 0.0)
+        ),
     }
 
     return {
@@ -493,6 +505,19 @@ def _collect_partial_restore_recovery_evidence(repo_root: Path) -> dict[str, flo
         total_tokens = float(control_values["scheduler.restore_plan_total_tokens"])
         ratio_pct = 0.0 if total_tokens <= 0 else (restored_tokens / total_tokens) * 100.0
 
+        # Milestone #40 Phase 1: surface the hit taxonomy counters from the worker
+        # metrics export. Presence + monotonicity only — Phase 2+ will assert ratios.
+        worker_values = read_metrics_export(stack.swift_text_worker_metrics_path).get("values", {})
+        taxonomy = {
+            key: float(worker_values.get(f"swift_text.{key}", 0.0))
+            for key in (
+                "cache_exact_hit_count",
+                "cache_partial_hit_count",
+                "cache_fallback_count",
+                "cache_reconstruction_failure_count",
+            )
+        }
+
         return {
             "walk_back_count": round(
                 float(control_values["scheduler.partial_restore_walk_back_count"]),
@@ -501,6 +526,12 @@ def _collect_partial_restore_recovery_evidence(repo_root: Path) -> dict[str, flo
             "restored_tokens": round(restored_tokens, 2),
             "total_tokens": round(total_tokens, 2),
             "restore_ratio_pct": round(ratio_pct, 2),
+            "cache_hit_taxonomy": {
+                "exact_hit_count": taxonomy["cache_exact_hit_count"],
+                "partial_hit_count": taxonomy["cache_partial_hit_count"],
+                "fallback_count": taxonomy["cache_fallback_count"],
+                "reconstruction_failure_count": taxonomy["cache_reconstruction_failure_count"],
+            },
         }
     finally:
         stack.stop()

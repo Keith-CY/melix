@@ -5706,6 +5706,320 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    // MARK: - Hit taxonomy (milestone #40 phase 1)
+
+    func testHotCacheHitTaxonomyBaselineIsZero() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+            let taxonomy = await store.hitTaxonomy()
+            XCTAssertEqual(taxonomy.exactHitCount, 0)
+            XCTAssertEqual(taxonomy.partialHitCount, 0)
+            XCTAssertEqual(taxonomy.fallbackCount, 0)
+            XCTAssertEqual(taxonomy.reconstructionFailureCount, 0)
+        }
+    }
+
+    func testHotCacheHitTaxonomyIncrementsFallbackForColdRegistration() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+            let scope = makeCacheScope(scopeID: "scope-cold", modelID: "model-cold")
+
+            for index in 0..<2 {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = makeCacheKey(
+                    scopeID: scope.scopeID,
+                    prefixSeed: "cold-\(index)",
+                    fingerprintSeed: "cold-fp-\(index)"
+                )
+                execution.cacheHints.preferredBlockSize = 16
+                _ = try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: "model-cold"),
+                    messages: [makeUserMessage("cold-\(index)")],
+                    promptTokens: 16,
+                    decodeHandle: "decode-cold-\(index)",
+                    activeKVQuantizationRatio: 25
+                )
+            }
+
+            let taxonomy = await store.hitTaxonomy()
+            XCTAssertEqual(taxonomy.fallbackCount, 2)
+            XCTAssertEqual(taxonomy.exactHitCount, 0)
+            XCTAssertEqual(taxonomy.partialHitCount, 0)
+            XCTAssertEqual(taxonomy.reconstructionFailureCount, 0)
+        }
+    }
+
+    func testHotCacheHitTaxonomyIncrementsExactHitOnKeyReuse() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+            let scope = makeCacheScope(scopeID: "scope-reuse", modelID: "model-reuse")
+            let cacheKey = makeCacheKey(
+                scopeID: scope.scopeID,
+                prefixSeed: "reuse-prefix",
+                fingerprintSeed: "reuse-fp"
+            )
+
+            func register() async throws {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = cacheKey
+                execution.cacheHints.preferredBlockSize = 16
+                _ = try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: "model-reuse"),
+                    messages: [makeUserMessage("reuse-prefix")],
+                    promptTokens: 24,
+                    decodeHandle: "decode-reuse",
+                    activeKVQuantizationRatio: 50
+                )
+            }
+
+            try await register()
+            try await register()
+            try await register()
+
+            let taxonomy = await store.hitTaxonomy()
+            XCTAssertEqual(taxonomy.fallbackCount, 1)
+            XCTAssertEqual(taxonomy.exactHitCount, 2)
+            XCTAssertEqual(taxonomy.partialHitCount, 0)
+            XCTAssertEqual(taxonomy.reconstructionFailureCount, 0)
+        }
+    }
+
+    func testHotCacheHitTaxonomyDirectRecordHooksAdvanceCounters() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+            // Accessor coverage for the registry-level hooks; end-to-end wiring is
+            // verified by `testPrefillRecordsHitTaxonomyAcrossBoundarySnapshotPaths`.
+            await store.recordExactHit()
+            await store.recordExactHit()
+            await store.recordPartialHit()
+            await store.recordReconstructionFailure()
+            let taxonomy = await store.hitTaxonomy()
+            XCTAssertEqual(taxonomy.exactHitCount, 2)
+            XCTAssertEqual(taxonomy.partialHitCount, 1)
+            XCTAssertEqual(taxonomy.reconstructionFailureCount, 1)
+            XCTAssertEqual(taxonomy.fallbackCount, 0)
+        }
+    }
+
+    func testPrefillRecordsHitTaxonomyAcrossBoundarySnapshotPaths() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let services = makeServices(
+                environment: environment,
+                backend: DeterministicTextBackend(tokenDelayNanos: 0)
+            )
+
+            // Load the test model.
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_LoadModelRequest()
+                request.model.modelID = "melix-dev-text"
+                return try await services.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            // Initial cold prefill — drives the fallback path.
+            var initialPrefill = Melix_Worker_V1_PrefillRequest()
+            initialPrefill.execution.id.requestID = "req-taxonomy-source"
+            initialPrefill.execution.modelHandle = loadResponse.modelHandle
+            initialPrefill.execution.cacheHints.allowL2 = true
+            initialPrefill.execution.cacheHints.persistL2 = true
+            initialPrefill.returnDecodeHandle = true
+            initialPrefill.messages = [makeUserMessage("alpha beta gamma delta epsilon")]
+            let initialResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: initialPrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let afterFallback = await services.registry.cacheHitTaxonomy()
+            XCTAssertEqual(afterFallback.fallbackCount, 1)
+            XCTAssertEqual(afterFallback.exactHitCount, 0)
+            XCTAssertEqual(afterFallback.partialHitCount, 0)
+            XCTAssertEqual(afterFallback.reconstructionFailureCount, 0)
+
+            // Save a boundary snapshot so we can exercise the restore paths.
+            let saved = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-taxonomy-source"
+                request.decodeHandle = initialResponse.decodeHandle
+                request.tokenBoundary = initialResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            // Invalid snapshot ID — restoreBoundarySnapshotRecord throws → reconstruction failure
+            // must be recorded AND the cache ownership must be unchanged across the throw.
+            let beforeBadRestore = await services.registry.cacheOwnershipSnapshot()
+            var badRestorePrefill = Melix_Worker_V1_PrefillRequest()
+            badRestorePrefill.execution.id.requestID = "req-taxonomy-bad"
+            badRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            badRestorePrefill.execution.cacheHints.restoreSnapshotID = "snapshot-does-not-exist"
+            badRestorePrefill.returnDecodeHandle = true
+            do {
+                _ = try await withTestServerContextRPCCancellationHandle { handle in
+                    try await services.inference.prefill(
+                        request: badRestorePrefill,
+                        context: ServerContext(
+                            descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                            remotePeer: "in-process:test",
+                            localPeer: "in-process:test",
+                            cancellation: handle
+                        )
+                    )
+                }
+            } catch {
+                // Expected: unknown snapshot id
+            }
+            let afterBadRestore = await services.registry.cacheOwnershipSnapshot()
+            let afterBadTaxonomy = await services.registry.cacheHitTaxonomy()
+            XCTAssertEqual(afterBadTaxonomy.reconstructionFailureCount, 1,
+                           "reconstruction failure must fire when restoreBoundarySnapshotRecord throws")
+            // Reference invariant: nothing should mutate the ownership snapshot on a
+            // failed reconstruction (issue #40 Phase 1 safety gate).
+            XCTAssertEqual(afterBadRestore.prefixCount, beforeBadRestore.prefixCount)
+            XCTAssertEqual(afterBadRestore.pageRefCountByPageID, beforeBadRestore.pageRefCountByPageID)
+            XCTAssertEqual(afterBadRestore.blockRefCountByBlockID, beforeBadRestore.blockRefCountByBlockID)
+
+            // Successful restore with identical messages → exact hit branch of the
+            // walked-back restore plan (`restorePlan.partial == false`).
+            var exactRestorePrefill = Melix_Worker_V1_PrefillRequest()
+            exactRestorePrefill.execution.id.requestID = "req-taxonomy-exact"
+            exactRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            exactRestorePrefill.execution.cacheHints.restoreSnapshotID = saved.snapshotID
+            exactRestorePrefill.returnDecodeHandle = true
+            // Same messages as the initial prefill → restorePlan.partial must be false.
+            exactRestorePrefill.messages = [makeUserMessage("alpha beta gamma delta epsilon")]
+            _ = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: exactRestorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let afterExactRestore = await services.registry.cacheHitTaxonomy()
+            XCTAssertEqual(afterExactRestore.exactHitCount, 1,
+                           "non-partial walked-back restore must record an exact hit, not a partial hit")
+            XCTAssertEqual(afterExactRestore.partialHitCount, 0)
+            XCTAssertEqual(afterExactRestore.fallbackCount, 1)
+            XCTAssertEqual(afterExactRestore.reconstructionFailureCount, 1)
+
+            // Diverging-messages restore — walked-back plan is `partial: true`.
+            // Recipe mirrors `testPrefillCanRestoreBoundarySnapshotsFromHints` partial case:
+            // a second scope with a long prompt followed by a shortened, diverging
+            // restore prompt so `safeReusableTokenBoundary` < cached total tokens.
+            let longSourcePrompt = (1...24).map { "tok\($0)" }.joined(separator: " ")
+            let divergedPrompt = (1...20).map { "tok\($0)" }.joined(separator: " ") + " tail-x tail-y"
+
+            var partialSourcePrefill = Melix_Worker_V1_PrefillRequest()
+            partialSourcePrefill.execution.id.requestID = "req-partial-source"
+            partialSourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            partialSourcePrefill.execution.cacheHints.allowL2 = true
+            partialSourcePrefill.execution.cacheHints.persistL2 = true
+            partialSourcePrefill.returnDecodeHandle = true
+            partialSourcePrefill.messages = [makeUserMessage(longSourcePrompt)]
+            let partialSourceResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: partialSourcePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            let partialSavedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = "req-partial-source"
+                request.decodeHandle = partialSourceResponse.decodeHandle
+                request.tokenBoundary = partialSourceResponse.promptTokens
+                return try await services.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            var partialRestorePrefill = Melix_Worker_V1_PrefillRequest()
+            partialRestorePrefill.execution.id.requestID = "req-partial-target"
+            partialRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            partialRestorePrefill.execution.cacheHints.restoreSnapshotID = partialSavedSnapshot.snapshotID
+            partialRestorePrefill.execution.cacheHints.cachePolicy = "hybrid"
+            partialRestorePrefill.prefillStepSize = 16
+            partialRestorePrefill.returnDecodeHandle = true
+            partialRestorePrefill.messages = [makeUserMessage(divergedPrompt)]
+            let partialRestoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await services.inference.prefill(
+                    request: partialRestorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertTrue(partialRestoreResponse.restorePlan.partial,
+                          "precondition: diverged messages must yield a partial restore plan")
+
+            let afterPartialRestore = await services.registry.cacheHitTaxonomy()
+            XCTAssertEqual(afterPartialRestore.partialHitCount, 1,
+                           "partial walked-back restore must record a partial hit")
+            XCTAssertEqual(afterPartialRestore.exactHitCount, 1,
+                           "partial restore must NOT double-advance exactHit")
+            XCTAssertEqual(afterPartialRestore.fallbackCount, 2,
+                           "the partial source prefill itself is a cold registration (fallback++)")
+            XCTAssertEqual(afterPartialRestore.reconstructionFailureCount, 1)
+        }
+    }
+
     func testHotCacheSnapshotIncludesDiskOnlyScopeSummary() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let diskStore = DiskCacheStore(rootPath: cacheRoot.path)

@@ -37,6 +37,7 @@ struct WorkerPrefillResult: Sendable {
     let cacheStats: Melix_Worker_V1_CacheStats
     let hotPrefixCount: Int
     let restorePlan: Melix_Worker_V1_CacheRestorePlan?
+    let cacheHitTaxonomy: HotCacheHitTaxonomy
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
@@ -47,6 +48,20 @@ struct WorkerDecodeSession: @unchecked Sendable {
 actor WorkerRuntimeRegistry {
     private static let estimatedPrefillResidentBytesPerToken: UInt64 = 2_048
     private static let estimatedMediaPartTokens = 256
+
+    /// Tuple returned by `restoreBoundarySnapshotRecord`. Extracted so the shape
+    /// stays in sync across the declaration and the `do/catch` capture site.
+    private typealias BoundarySnapshotRecord = (
+        snapshot: Melix_Worker_V1_SnapshotRef,
+        model: Melix_Worker_V1_ModelSpec,
+        messages: [Melix_Worker_V1_ChatMessage],
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        promptTokens: Int,
+        blockTableID: String,
+        blockTable: Melix_Worker_V1_BlockTable,
+        decodeHandle: String
+    )
 
     private let configuration: WorkerConfiguration
     private let modelCatalog: WorkerModelCatalog
@@ -336,9 +351,17 @@ actor WorkerRuntimeRegistry {
         }
 
         if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
-            let restored = try await restoreBoundarySnapshotRecord(snapshotID: effectiveExecution.cacheHints.restoreSnapshotID)
+            let restored: BoundarySnapshotRecord
+            do {
+                restored = try await restoreBoundarySnapshotRecord(snapshotID: effectiveExecution.cacheHints.restoreSnapshotID)
+            } catch {
+                // Operator asked for a restore, runtime could not reconstruct. Record
+                // the observability blind spot and rethrow the original error.
+                await cacheStore.recordReconstructionFailure()
+                throw error
+            }
             let requestMessages = messages.isEmpty ? restored.messages : messages
-            if let restorePlan = makeWalkedBackCacheRestorePlan(
+            let walkedBackPlan = makeWalkedBackCacheRestorePlan(
                 snapshot: restored.snapshot,
                 blockTableID: restored.blockTableID,
                 blockTable: restored.blockTable,
@@ -346,7 +369,13 @@ actor WorkerRuntimeRegistry {
                 requestMessages: requestMessages,
                 tier: "l2",
                 cacheMode: cacheMode
-            ) {
+            )
+            if let restorePlan = walkedBackPlan {
+                if restorePlan.partial {
+                    await cacheStore.recordPartialHit()
+                } else {
+                    await cacheStore.recordExactHit()
+                }
                 let restoreResumeHint = restoreResumeHint(
                     snapshotID: restored.snapshot.snapshotID,
                     restorePlan: restorePlan,
@@ -380,6 +409,7 @@ actor WorkerRuntimeRegistry {
                 )
 
                 let cacheSnapshot = await cacheStore.snapshot()
+                let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
                     decodeHandle: decodeHandle,
                     blockTableID: restorePlan.blockTableID,
@@ -391,9 +421,11 @@ actor WorkerRuntimeRegistry {
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
                     cacheStats: cacheSnapshot.stats,
                     hotPrefixCount: cacheSnapshot.hotPrefixes.count,
-                    restorePlan: restorePlan
+                    restorePlan: restorePlan,
+                    cacheHitTaxonomy: cacheHitTaxonomy
                 )
             }
+            await cacheStore.recordReconstructionFailure()
         }
 
         let result = try await runtime.prefill(
@@ -439,6 +471,7 @@ actor WorkerRuntimeRegistry {
         }
 
         let cacheSnapshot = await cacheStore.snapshot()
+        let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
         return WorkerPrefillResult(
             decodeHandle: decodeHandle,
@@ -451,7 +484,8 @@ actor WorkerRuntimeRegistry {
             activeKVQuantizationRatio: result.activeKVQuantizationRatio,
             cacheStats: cacheSnapshot.stats,
             hotPrefixCount: cacheSnapshot.hotPrefixes.count,
-            restorePlan: nil
+            restorePlan: nil,
+            cacheHitTaxonomy: cacheHitTaxonomy
         )
     }
 
@@ -478,6 +512,14 @@ actor WorkerRuntimeRegistry {
             acceleration: acceleration,
             shouldAbort: shouldAbort
         )
+    }
+
+    func cacheHitTaxonomy() async -> HotCacheHitTaxonomy {
+        await cacheStore.hitTaxonomy()
+    }
+
+    func cacheOwnershipSnapshot() async -> HotCacheOwnershipSnapshot {
+        await cacheStore.ownershipSnapshot()
     }
 
     func prefillContext(for decodeHandle: String) -> StoredPrefillContext? {
@@ -696,17 +738,7 @@ actor WorkerRuntimeRegistry {
 
     private func restoreBoundarySnapshotRecord(
         snapshotID: String
-    ) async throws -> (
-        snapshot: Melix_Worker_V1_SnapshotRef,
-        model: Melix_Worker_V1_ModelSpec,
-        messages: [Melix_Worker_V1_ChatMessage],
-        resumeHint: String,
-        acceleration: Melix_Worker_V1_AccelerationPolicy,
-        promptTokens: Int,
-        blockTableID: String,
-        blockTable: Melix_Worker_V1_BlockTable,
-        decodeHandle: String
-    ) {
+    ) async throws -> BoundarySnapshotRecord {
         guard let restored = await cacheStore.restoreBoundarySnapshot(snapshotID: snapshotID) else {
             throw WorkerRuntimeRegistryError.unknownSnapshotID
         }
