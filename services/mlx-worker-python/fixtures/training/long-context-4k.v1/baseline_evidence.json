@@ -1,0 +1,29 @@
+{
+  "fixture_id": "long-context-4k.v1",
+  "generated_at_unix_ms": 1776668684927,
+  "harness_duration_ms": 302311.98,
+  "mlx_lm_version": "0.31.1",
+  "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+  "sample_count": 10,
+  "schema_version": "melix.lora_long_context_baseline.v1",
+  "target_tokens_per_sample": 4000,
+  "template_family": "qwen",
+  "training_metrics": {
+    "checkpoint_count": 1,
+    "examples_seen": 5,
+    "job_duration_ms": 300841.17712499574,
+    "latest_checkpoint_path": "",
+    "learning_rate_final": 9.999999747378752e-05,
+    "loss_best": 4.089445877075195,
+    "loss_final": 4.089445877075195,
+    "peak_memory_gb": 7.846171710640192,
+    "response_only_boundary_max": 4117,
+    "response_only_boundary_mean": 4089.6,
+    "response_only_boundary_min": 4073,
+    "response_only_boundary_sample_count": 10,
+    "resume_ready": true,
+    "resume_source_path": "",
+    "tokens_per_second": 0.17617269187182832,
+    "tokens_seen": 53
+  }
+}
