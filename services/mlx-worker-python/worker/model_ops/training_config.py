@@ -30,6 +30,7 @@ class LoRATrainingConfig:
     max_steps: int
     response_only: bool
     gradient_checkpointing: bool
+    gradient_accumulation: int
     mask_prompt: bool
     max_seq_length: int
     steps_per_report: int
@@ -345,6 +346,12 @@ def normalize_training_config(
         ext.get("gradient_checkpointing", ""),
         default=bool(preset.get("gradient_checkpointing", False)),
     )
+    gradient_accumulation = _int_value(
+        ext.get("gradient_accumulation", ""),
+        default=int(preset.get("gradient_accumulation", 1)),
+        minimum=1,
+        field_name="gradient_accumulation",
+    )
     mask_prompt = _bool_value(ext.get("mask_prompt", ""), default=response_only)
     batch_size = min(
         max(
@@ -415,6 +422,7 @@ def normalize_training_config(
         max_steps=max_steps,
         response_only=response_only,
         gradient_checkpointing=gradient_checkpointing,
+        gradient_accumulation=gradient_accumulation,
         mask_prompt=mask_prompt,
         max_seq_length=max_seq_length,
         steps_per_report=steps_per_report,

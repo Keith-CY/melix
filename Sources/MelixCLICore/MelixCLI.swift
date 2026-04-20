@@ -1042,7 +1042,7 @@ public enum MelixCLIParser {
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix chat run --model-id MODEL_ID --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
-      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
+      melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
@@ -1499,6 +1499,7 @@ public enum MelixCLIParser {
                 "--learning-rate",
                 "--max-seq-length",
                 "--sample-limit",
+                "--gradient-accumulation",
                 "--hf-dataset-path",
                 "--hf-dataset-name",
                 "--hf-dataset-revision",
@@ -1513,6 +1514,17 @@ public enum MelixCLIParser {
                 if let value = values.single[option] {
                     parameters[normalizedParameterKey(option)] = value
                 }
+            }
+            let resumeAdapter = (values.single["--resume-adapter"] ?? "").trimmingCharacters(in: .whitespaces)
+            let resumeManifest = (values.single["--resume-from-manifest"] ?? "").trimmingCharacters(in: .whitespaces)
+            if !resumeAdapter.isEmpty, !resumeManifest.isEmpty {
+                throw MelixCLIError.usage("--resume-adapter and --resume-from-manifest are mutually exclusive.")
+            }
+            if !resumeAdapter.isEmpty {
+                parameters["resume_source_path"] = resumeAdapter
+            }
+            if !resumeManifest.isEmpty {
+                parameters["resume_manifest_path"] = resumeManifest
             }
             if let presetID = values.single["--preset"] {
                 parameters["preset_id"] = presetID
@@ -3300,6 +3312,9 @@ public actor MelixCLIRunner {
             appendOption("--learning-rate", value: ext["learning_rate"], into: &arguments)
             appendOption("--max-seq-length", value: ext["max_seq_length"], into: &arguments)
             appendOption("--sample-limit", value: ext["sample_limit"], into: &arguments)
+            appendOption("--gradient-accumulation", value: ext["gradient_accumulation"], into: &arguments)
+            appendOption("--resume-adapter", value: ext["resume_source_path"], into: &arguments)
+            appendOption("--resume-from-manifest", value: ext["resume_manifest_path"], into: &arguments)
             appendOption("--derived-model-alias", value: ext["derived_model_alias"], into: &arguments)
             appendBooleanFlag("--response-only", value: ext["response_only"], into: &arguments)
             appendBooleanFlag("--mask-prompt", value: ext["mask_prompt"], into: &arguments)

@@ -451,6 +451,9 @@ public enum MelixCLICommandCodec {
             ("completion_feature", "--completion-feature"),
             ("chat_feature", "--chat-feature"),
             ("derived_model_alias", "--derived-model-alias"),
+            ("gradient_accumulation", "--gradient-accumulation"),
+            ("resume_source_path", "--resume-adapter"),
+            ("resume_manifest_path", "--resume-from-manifest"),
         ]
         for (key, option) in mapping {
             appendOption(option, value: parameters[key], into: &arguments)

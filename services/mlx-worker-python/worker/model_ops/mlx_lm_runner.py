@@ -286,7 +286,7 @@ def _mlx_lora_namespace(request: TrainingRequest):
         learning_rate=request.config.learning_rate,
         steps_per_report=request.config.steps_per_report,
         steps_per_eval=request.config.steps_per_eval,
-        grad_accumulation_steps=1,
+        grad_accumulation_steps=request.config.gradient_accumulation,
         resume_adapter_file=(
             str(request.resume_source_path)
             if request.resume_source_path is not None

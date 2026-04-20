@@ -763,6 +763,61 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses lora train with gradient accumulation and a resume adapter")
+    func parsesLoraTrainWithGradientAccumulationAndResumeAdapter() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "train",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/data/alpaca.jsonl",
+            "--adapter-name", "demo-adapter",
+            "--gradient-accumulation", "4",
+            "--resume-adapter", "/tmp/prior/adapters",
+            "--json",
+        ])
+
+        guard case .loraTrain(let options) = command else {
+            Issue.record("Expected loraTrain command")
+            return
+        }
+
+        #expect(options.parameters["gradient_accumulation"] == "4")
+        #expect(options.parameters["resume_source_path"] == "/tmp/prior/adapters")
+        #expect(options.parameters["resume_manifest_path"] == nil)
+    }
+
+    @Test("parses lora train with a resume manifest path")
+    func parsesLoraTrainWithResumeManifest() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "train",
+            "--model-id", "melix-dev-text",
+            "--dataset-uri", "/tmp/data/alpaca.jsonl",
+            "--adapter-name", "demo-adapter",
+            "--resume-from-manifest", "/tmp/prior/manifest.json",
+        ])
+
+        guard case .loraTrain(let options) = command else {
+            Issue.record("Expected loraTrain command")
+            return
+        }
+
+        #expect(options.parameters["resume_source_path"] == nil)
+        #expect(options.parameters["resume_manifest_path"] == "/tmp/prior/manifest.json")
+    }
+
+    @Test("lora train rejects setting both resume flags")
+    func loraTrainRejectsBothResumeFlags() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "lora", "train",
+                "--model-id", "melix-dev-text",
+                "--dataset-uri", "/tmp/data.jsonl",
+                "--adapter-name", "demo",
+                "--resume-adapter", "/tmp/a",
+                "--resume-from-manifest", "/tmp/b.json",
+            ])
+        }
+    }
+
     @Test("parses lora train with a Hugging Face dataset source and feature mapping")
     func parsesLoraTrainCommandForHFDataset() throws {
         let command = try MelixCLIParser.parse([
