@@ -1,0 +1,22 @@
+{
+  "schema_version": "melix.chat_template_matrix_templates.v1",
+  "notes": "Jinja chat_template strings representing four common families. These are simplified but structurally faithful approximations of the upstream templates documented on the listed models' tokenizer_config.json. They are used only to exercise Melix's boundary helper across a variety of marker shapes; the correctness test uses each template's own output as the ground truth (via MLX-LM ChatDataset.process parity), so absolute token counts do not need to match upstream.",
+  "templates": {
+    "chatml": {
+      "source_reference": "Qwen/Qwen2.5-0.5B-Instruct (ChatML-style)",
+      "chat_template": "{% for message in messages %}<|im_start|>{{ message['role'] }}\n{{ message['content'] }}<|im_end|>\n{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}"
+    },
+    "llama3": {
+      "source_reference": "meta-llama/Meta-Llama-3-8B-Instruct (simplified)",
+      "chat_template": "{% for message in messages %}<|start_header_id|>{{ message['role'] }}<|end_header_id|>\n\n{{ message['content'] | trim }}<|eot_id|>{% endfor %}{% if add_generation_prompt %}<|start_header_id|>assistant<|end_header_id|>\n\n{% endif %}"
+    },
+    "mistral_inst": {
+      "source_reference": "mistralai/Mistral-7B-Instruct-v0.2 (simplified; system prepended to first user turn)",
+      "chat_template": "{% set ns = namespace(system='') %}{% for message in messages %}{% if message['role'] == 'system' %}{% set ns.system = message['content'] + ' ' %}{% elif message['role'] == 'user' %}[INST] {{ ns.system }}{{ message['content'] }} [/INST]{% set ns.system = '' %}{% elif message['role'] == 'assistant' %} {{ message['content'] }}</s>{% endif %}{% endfor %}"
+    },
+    "gemma_model": {
+      "source_reference": "google/gemma-2-2b-it",
+      "chat_template": "{% for message in messages %}{% if message['role'] == 'user' %}<start_of_turn>user\n{{ message['content'] }}<end_of_turn>\n{% elif message['role'] == 'assistant' %}<start_of_turn>model\n{{ message['content'] }}<end_of_turn>\n{% elif message['role'] == 'system' %}<start_of_turn>system\n{{ message['content'] }}<end_of_turn>\n{% endif %}{% endfor %}{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"
+    }
+  }
+}

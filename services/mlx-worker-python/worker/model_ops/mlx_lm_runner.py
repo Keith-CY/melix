@@ -3,13 +3,21 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass, replace
 import json
+import logging
 from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+from typing import Any
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.response_only_boundary import (
+    ResponseOnlyBoundary,
+    ResponseOnlyBoundaryAggregate,
+    aggregate_response_only_boundaries,
+    compute_response_only_boundary,
+)
 from worker.model_ops.training_config import LoRATrainingConfig
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
@@ -29,6 +37,13 @@ class TrainingMetrics:
     resume_source_path: str = ""
     tokens_per_second: float = 0.0
     peak_memory_gb: float = 0.0
+    # Milestone #43 Phase 2: template-aware response-only boundary observability.
+    # Populated for chat_messages datasets when response_only is requested. Zero
+    # when the sample format doesn't support response-only masking.
+    response_only_boundary_sample_count: int = 0
+    response_only_boundary_min: int = 0
+    response_only_boundary_max: int = 0
+    response_only_boundary_mean: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +151,13 @@ class MLXLMRunner:
             tokenizer,
             args,
         )
+        # Phase 2 observability: probe the chat-template boundary that MLX-LM
+        # uses internally so the manifest records which token range would be
+        # masked under response_only. Reuses the `train_set` produced by
+        # `load_local_dataset` and calls its `process()` method — the exact
+        # path MLX-LM uses at training time — so the aggregate is bit-exact
+        # with what MLX-LM's default_loss will see.
+        boundary_aggregate = _probe_response_only_boundary(request, train_set)
 
         try:
             train_model(args, model, train_set, valid_set, training_callback=collector)
@@ -168,6 +190,10 @@ class MLXLMRunner:
                 resume_source_path=str(request.resume_source_path) if request.resume_source_path is not None else "",
                 tokens_per_second=tokens_per_second,
                 peak_memory_gb=_mlx_peak_memory_gb(),
+                response_only_boundary_sample_count=boundary_aggregate.sample_count,
+                response_only_boundary_min=boundary_aggregate.boundary_min,
+                response_only_boundary_max=boundary_aggregate.boundary_max,
+                response_only_boundary_mean=boundary_aggregate.boundary_mean,
             ),
             execution_backend="native",
         )
@@ -367,6 +393,92 @@ def _deserialize_training_result(payload: dict) -> TrainingResult:
         metrics=TrainingMetrics(**payload["metrics"]),
         execution_backend=str(payload["execution_backend"]),
     )
+
+
+_PROBE_LOGGER = logging.getLogger("melix.lora.response_only_boundary")
+
+
+def _probe_response_only_boundary(
+    request: TrainingRequest, train_set: Any
+) -> ResponseOnlyBoundaryAggregate:
+    """Summarize MLX-LM's own (tokens, offset) output across the train set.
+
+    Delegates to the already-built `train_set` (MLX-LM's ``ChatDataset``) so
+    that the aggregate is bit-exact with what the trainer's ``default_loss``
+    will see and we don't re-read or re-tokenize the normalized dataset.
+    Streams via a generator into ``aggregate_response_only_boundaries`` so
+    there is no intermediate per-sample list.
+
+    Returns an empty aggregate when the dataset format cannot produce
+    response-only supervision, when ``response_only`` is disabled, or when the
+    train_set does not expose the ``process``/``__len__``/``__getitem__``
+    interface. Never raises — the metric stays additive. Per-sample skips
+    (tools-only turns, custom roles, tokenizer errors) are counted and logged
+    at DEBUG so operators can distinguish "empty dataset" from "every sample
+    was skipped".
+    """
+
+    if not getattr(request.config, "response_only", False):
+        return aggregate_response_only_boundaries([])
+    if request.dataset_format != "chat_messages":
+        return aggregate_response_only_boundaries([])
+    if train_set is None:
+        return aggregate_response_only_boundaries([])
+    process = getattr(train_set, "process", None)
+    try:
+        sample_count = len(train_set)
+    except TypeError:
+        return aggregate_response_only_boundaries([])
+    if process is None or sample_count == 0:
+        return aggregate_response_only_boundaries([])
+
+    skip_counter = {"count": 0}
+
+    def _iter_boundaries() -> Any:
+        for index in range(sample_count):
+            try:
+                sample = train_set[index]
+                processed = process(sample)
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                # Tools-only turns, custom roles, or samples MLX-LM chooses to
+                # skip fall through to the next sample. MLX-LM still handles
+                # them correctly at training time; we just cannot summarize.
+                skip_counter["count"] += 1
+                _PROBE_LOGGER.debug(
+                    "response_only_boundary probe skipped sample %d: %s",
+                    index,
+                    exc,
+                )
+                continue
+            if processed is None:
+                skip_counter["count"] += 1
+                continue
+            try:
+                tokens, offset = processed[0], processed[1]
+            except (IndexError, TypeError):
+                skip_counter["count"] += 1
+                continue
+            try:
+                total = len(tokens)
+            except TypeError:
+                skip_counter["count"] += 1
+                continue
+            if total <= 0:
+                skip_counter["count"] += 1
+                continue
+            yield ResponseOnlyBoundary(
+                assistant_offset=int(offset),
+                total_tokens=int(total),
+            )
+
+    aggregate = aggregate_response_only_boundaries(_iter_boundaries())
+    if skip_counter["count"]:
+        _PROBE_LOGGER.debug(
+            "response_only_boundary probe skipped %d / %d samples",
+            skip_counter["count"],
+            sample_count,
+        )
+    return aggregate
 
 
 def _reset_mlx_peak_memory_probe() -> None:

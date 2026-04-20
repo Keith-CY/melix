@@ -11,6 +11,7 @@ from typing import Any, Callable
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest
 from worker.model_ops.training_config import normalize_training_config
 from worker.model_ops.training_dataset import (
@@ -211,6 +212,23 @@ class LoRATrainingPipeline:
             manifest["resume_source_job_id"] = resume_context["resume_source_job_id"]
         if config.desired_derived_model_alias:
             manifest["desired_derived_model_alias"] = config.desired_derived_model_alias
+        # Phase 2 observability: template-aware response-only boundary stats. Only
+        # emitted when response_only was requested AND the worker produced a
+        # non-zero sample count (chat_messages + valid templates). Delegates
+        # field shape to `ResponseOnlyBoundaryAggregate.to_manifest_fields` so
+        # rounding / naming stays in one place.
+        if (
+            config.response_only
+            and training_result.metrics.response_only_boundary_sample_count > 0
+        ):
+            manifest.update(
+                ResponseOnlyBoundaryAggregate(
+                    sample_count=training_result.metrics.response_only_boundary_sample_count,
+                    boundary_min=training_result.metrics.response_only_boundary_min,
+                    boundary_max=training_result.metrics.response_only_boundary_max,
+                    boundary_mean=training_result.metrics.response_only_boundary_mean,
+                ).to_manifest_fields()
+            )
         if dataset.hf_reference is not None:
             manifest.update(
                 {
