@@ -26,15 +26,27 @@ SEED_PARAGRAPH = (
     "pink eyes ran close by her."
 )
 
-TOKENIZER_PATH = os.environ["MELIX_TOKENIZER_PATH"]
-tok = AutoTokenizer.from_pretrained(TOKENIZER_PATH, use_fast=True)
+def _load_tokenizer():
+    """Load the Qwen tokenizer from ``MELIX_TOKENIZER_PATH``.
+
+    Deferred so importing this module (e.g., during pytest collection or a
+    linter scan) has no side effects and does not crash when the env var is
+    unset.
+    """
+    tokenizer_path = os.environ.get("MELIX_TOKENIZER_PATH")
+    if not tokenizer_path:
+        raise RuntimeError(
+            "MELIX_TOKENIZER_PATH must point at a cached "
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit snapshot."
+        )
+    return AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
 
 
-def render_tokens(messages):
+def render_tokens(tok, messages):
     return tok.apply_chat_template(messages, add_generation_prompt=False, return_dict=False)
 
 
-def build_long_user_content(target_user_tokens: int) -> str:
+def build_long_user_content(tok, target_user_tokens: int) -> str:
     """Build a user-content string that, when token-counted alone, yields ~target tokens."""
     content = ""
     while True:
@@ -45,7 +57,7 @@ def build_long_user_content(target_user_tokens: int) -> str:
     return content
 
 
-def build_samples(target_total: int, variants: list[dict]) -> list[dict]:
+def build_samples(tok, target_total: int, variants: list[dict]) -> list[dict]:
     """Produce samples whose full chat-template rendering yields ~target_total tokens."""
     samples = []
     for variant in variants:
@@ -61,18 +73,18 @@ def build_samples(target_total: int, variants: list[dict]) -> list[dict]:
             messages.append({"role": "system", "content": system})
         # Seed turns
         for user_target, asst_text in turns:
-            messages.append({"role": "user", "content": build_long_user_content(user_target)})
+            messages.append({"role": "user", "content": build_long_user_content(tok, user_target)})
             messages.append({"role": "assistant", "content": asst_text})
         # Grow last user turn until the full rendering hits target
         while True:
-            total = len(render_tokens(messages))
+            total = len(render_tokens(tok, messages))
             if total >= target_total:
                 break
             # Grow the first user turn
             messages[1 if system else 0]["content"] = (
                 messages[1 if system else 0]["content"] + " " + SEED_PARAGRAPH
             )
-        total = len(render_tokens(messages))
+        total = len(render_tokens(tok, messages))
         samples.append({
             "id": variant["id"],
             "rendered_tokens": total,
@@ -138,9 +150,9 @@ EIGHT_K_VARIANTS = [
 ]
 
 
-def dump_fixture(out_dir: Path, fixture_id: str, target_total: int, variants: list[dict]):
+def dump_fixture(tok, out_dir: Path, fixture_id: str, target_total: int, variants: list[dict]):
     out_dir.mkdir(parents=True, exist_ok=True)
-    samples = build_samples(target_total, variants)
+    samples = build_samples(tok, target_total, variants)
     samples_path = out_dir / "samples.jsonl"
     samples_path.write_text(
         "\n".join(json.dumps({"id": s["id"], "messages": s["messages"]}) for s in samples) + "\n",
@@ -170,7 +182,13 @@ def dump_fixture(out_dir: Path, fixture_id: str, target_total: int, variants: li
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-ROOT = Path("services/mlx-worker-python/fixtures/training")
-dump_fixture(ROOT / "long-context-4k.v1", "long-context-4k.v1", 4000, FOUR_K_VARIANTS)
-dump_fixture(ROOT / "long-context-8k.v1", "long-context-8k.v1", 8000, EIGHT_K_VARIANTS)
-print("fixtures built")
+def main() -> None:
+    tok = _load_tokenizer()
+    root = Path("services/mlx-worker-python/fixtures/training")
+    dump_fixture(tok, root / "long-context-4k.v1", "long-context-4k.v1", 4000, FOUR_K_VARIANTS)
+    dump_fixture(tok, root / "long-context-8k.v1", "long-context-8k.v1", 8000, EIGHT_K_VARIANTS)
+    print("fixtures built")
+
+
+if __name__ == "__main__":
+    main()
