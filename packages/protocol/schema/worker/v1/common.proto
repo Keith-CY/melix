@@ -24,6 +24,13 @@ message ModelSpec {
   WorkerRouteClass route_class = 12;
   ModelSettings settings = 13;
   repeated string features = 14;
+  RuntimeMode runtime_mode = 15;
+}
+
+enum RuntimeMode {
+  RUNTIME_MODE_UNSPECIFIED = 0;
+  RUNTIME_MODE_FUSED_DERIVED_MODEL = 1;
+  RUNTIME_MODE_ADAPTER_BACKED = 2;
 }
 
 enum ModelCapabilityClass {

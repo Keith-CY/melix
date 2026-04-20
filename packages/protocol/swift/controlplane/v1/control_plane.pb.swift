@@ -5428,6 +5428,16 @@ public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
   /// Clears the value of `cachePolicy`. Subsequent reads from it will return its default value.
   public mutating func clearCachePolicy() {_uniqueStorage()._cachePolicy = nil}
 
+  /// Free-form runtime mode label: "base", "fused_derived_model",
+  /// "adapter_backed_runtime", or "" when unknown. The typed equivalent on
+  /// worker.v1.ModelSpec.runtime_mode is the authoritative signal for
+  /// backend behavior; this string is the operator-facing human-readable
+  /// surface for CLI and summary consumers.
+  public var runtimeMode: String {
+    get {_storage._runtimeMode}
+    set {_uniqueStorage()._runtimeMode = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -14771,7 +14781,7 @@ extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProto
 
 extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0")
 
   fileprivate class _StorageClass {
     var _modelID: String = String()
@@ -14790,6 +14800,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
     var _supportedTasks: [String] = []
     var _residency: Melix_Controlplane_V1_ResidencySummary? = nil
     var _cachePolicy: Melix_Controlplane_V1_CachePolicySummary? = nil
+    var _runtimeMode: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -14816,6 +14827,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       _supportedTasks = source._supportedTasks
       _residency = source._residency
       _cachePolicy = source._cachePolicy
+      _runtimeMode = source._runtimeMode
     }
   }
 
@@ -14850,6 +14862,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         case 14: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedTasks) }()
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._residency) }()
         case 16: try { try decoder.decodeSingularMessageField(value: &_storage._cachePolicy) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._runtimeMode) }()
         default: break
         }
       }
@@ -14910,6 +14923,9 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
       try { if let v = _storage._cachePolicy {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
       } }()
+      if !_storage._runtimeMode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._runtimeMode, fieldNumber: 17)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -14935,6 +14951,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
         if _storage._supportedTasks != rhs_storage._supportedTasks {return false}
         if _storage._residency != rhs_storage._residency {return false}
         if _storage._cachePolicy != rhs_storage._cachePolicy {return false}
+        if _storage._runtimeMode != rhs_storage._runtimeMode {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -25,6 +25,44 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+public enum Melix_Worker_V1_RuntimeMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case fusedDerivedModel // = 1
+  case adapterBacked // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .fusedDerivedModel
+    case 2: self = .adapterBacked
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .fusedDerivedModel: return 1
+    case .adapterBacked: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Worker_V1_RuntimeMode] = [
+    .unspecified,
+    .fusedDerivedModel,
+    .adapterBacked,
+  ]
+
+}
+
 public enum Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -744,6 +782,8 @@ public struct Melix_Worker_V1_ModelSpec: Sendable {
   public mutating func clearSettings() {self._settings = nil}
 
   public var features: [String] = []
+
+  public var runtimeMode: Melix_Worker_V1_RuntimeMode = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1678,6 +1718,10 @@ public struct Melix_Worker_V1_CacheRestorePlan: @unchecked Sendable {
 
 fileprivate let _protobuf_package = "melix.worker.v1"
 
+extension Melix_Worker_V1_RuntimeMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RUNTIME_MODE_UNSPECIFIED\0\u{1}RUNTIME_MODE_FUSED_DERIVED_MODEL\0\u{1}RUNTIME_MODE_ADAPTER_BACKED\0")
+}
+
 extension Melix_Worker_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0\u{1}MODEL_CAPABILITY_IMAGE_GENERATION\0")
 }
@@ -1777,7 +1821,7 @@ extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSpec"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}model_path\0\u{3}model_kind\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}max_context\0\u{1}ext\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{1}features\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}model_path\0\u{3}model_kind\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}max_context\0\u{1}ext\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{1}features\0\u{3}runtime_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1799,6 +1843,7 @@ extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._Messa
       case 12: try { try decoder.decodeSingularEnumField(value: &self.routeClass) }()
       case 13: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
       case 14: try { try decoder.decodeRepeatedStringField(value: &self.features) }()
+      case 15: try { try decoder.decodeSingularEnumField(value: &self.runtimeMode) }()
       default: break
       }
     }
@@ -1851,6 +1896,9 @@ extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if !self.features.isEmpty {
       try visitor.visitRepeatedStringField(value: self.features, fieldNumber: 14)
     }
+    if self.runtimeMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.runtimeMode, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1869,6 +1917,7 @@ extension Melix_Worker_V1_ModelSpec: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if lhs.routeClass != rhs.routeClass {return false}
     if lhs._settings != rhs._settings {return false}
     if lhs.features != rhs.features {return false}
+    if lhs.runtimeMode != rhs.runtimeMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

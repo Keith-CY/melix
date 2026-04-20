@@ -1199,6 +1199,12 @@ message ModelSummary {
   repeated string supported_tasks = 14;
   ResidencySummary residency = 15;
   CachePolicySummary cache_policy = 16;
+  // Free-form runtime mode label: "base", "fused_derived_model",
+  // "adapter_backed_runtime", or "" when unknown. The typed equivalent on
+  // worker.v1.ModelSpec.runtime_mode is the authoritative signal for
+  // backend behavior; this string is the operator-facing human-readable
+  // surface for CLI and summary consumers.
+  string runtime_mode = 17;
 }
 
 message ModelInfo {
