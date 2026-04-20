@@ -333,6 +333,12 @@ enum RegistrySnapshotSync {
         model.routeClass = routeClass(routeKind: metadata["melix.capability.route_kind"], kind: model.kind)
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
+        // Mirror the activation mode onto the ModelSummary.runtime_mode
+        // field so operator surfaces (CLI, menubar) see the authoritative
+        // serving mode without re-parsing ext strings.
+        if let activationMode = metadata["melix.activation_mode"], !activationMode.isEmpty {
+            model.runtimeMode = activationMode
+        }
         return model
     }
 
