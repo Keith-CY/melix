@@ -275,6 +275,68 @@ def test_training_config_rejects_non_numeric_gradient_accumulation() -> None:
         )
 
 
+def test_training_config_defaults_chunked_training_off() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=1,
+    )
+
+    assert config.chunked_training is False
+    assert config.chunk_size == config.max_seq_length
+
+
+def test_training_config_accepts_chunked_training_with_explicit_chunk_size() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={
+            "chunked_training": "true",
+            "chunk_size": "2048",
+            "max_seq_length": "4096",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=1,
+    )
+
+    assert config.chunked_training is True
+    assert config.chunk_size == 2048
+    assert config.max_seq_length == 4096
+
+
+def test_training_config_rejects_chunk_size_larger_than_max_seq_length() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={
+                "chunked_training": "true",
+                "chunk_size": "8192",
+                "max_seq_length": "4096",
+            },
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "invalid_chunk_size"
+
+
+def test_training_config_rejects_chunk_size_below_minimum() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={"chunk_size": "256"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "invalid_chunk_size"
+    assert "chunk_size" in (exc.value.message or "")
+
+
 def test_mlx_lora_namespace_forwards_gradient_accumulation() -> None:
     config = training_config_module.normalize_training_config(
         source_model=_text_model(),

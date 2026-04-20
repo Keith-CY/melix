@@ -156,7 +156,15 @@ struct RequestCoordinatorTests {
             metricsStore: metricsStore,
             lifecyclePolicy: ConnectionLifecyclePolicy(
                 keepaliveInterval: 15,
-                disconnectGracePeriod: 0.02
+                // 20 ms was too tight under macOS GHA runner load — the grace
+                // timer and the disconnect handler's scheduling jitter race
+                // the polling loop, producing intermittent nil from
+                // waitForProgress. 200 ms keeps the test well under a second
+                // wall-time while giving the grace-expiry path enough slack
+                // to be consistently observable on CI. The test validates
+                // that the grace period expires and triggers abort; the
+                // exact duration is not part of the contract under test.
+                disconnectGracePeriod: 0.2
             )
         )
 

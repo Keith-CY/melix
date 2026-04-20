@@ -890,6 +890,8 @@ def _deterministic_training_config() -> LoRATrainingConfig:
         desired_derived_model_alias="deterministic-derived",
         adapter_name="phase8-acceptance",
         target_repo="",
+        chunked_training=False,
+        chunk_size=2048,
     )
 
 
