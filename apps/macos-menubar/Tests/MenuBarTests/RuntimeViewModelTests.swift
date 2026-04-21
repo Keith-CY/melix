@@ -1545,8 +1545,8 @@ struct RuntimeViewModelTests {
         let reboundServer = try #require(viewModel.selectedServerSession)
         let reboundExport = try #require(viewModel.selectedAgentIntegrationExport)
         #expect(reboundServer.port == 9090)
-        #expect(reboundExport.baseURL == "http://0.0.0.0:9090/v1")
-        #expect(reboundExport.configFragment.contains("http://0.0.0.0:9090/v1"))
+        #expect(reboundExport.baseURL == reboundServer.effectiveBaseURL)
+        #expect(reboundExport.configFragment.contains(reboundServer.effectiveBaseURL))
         #expect(reboundExport.configFragment.contains("not-required"))
     }
 
@@ -1850,6 +1850,15 @@ struct RuntimeViewModelTests {
 
         viewModel.selectChatSession(id: "missing-chat-session")
         #expect(viewModel.selectedChatSession?.id == originalSession.id)
+
+        viewModel.deleteChatSession(id: originalSession.id)
+        #expect(viewModel.chatSessions.count == 1)
+        #expect(viewModel.selectedChatSession?.id == forkedSession.id)
+
+        viewModel.deleteChatSession(id: forkedSession.id)
+        #expect(viewModel.chatSessions.isEmpty)
+        #expect(viewModel.selectedChatSession == nil)
+        #expect(viewModel.chatTranscript.isEmpty)
     }
 
     @Test("chat export sanitizes transcript markdown without mutating stored transcript state")
@@ -1932,7 +1941,7 @@ struct RuntimeViewModelTests {
         drainingEvent.state = .serverDraining
         await client.sendServerStateChanged(state: .serverDraining)
         try await waitForRuntimeViewModelCondition("warning banner should surface draining runtime state") {
-            viewModel.desktopBannerState?.severity == .warning
+            viewModel.desktopBannerState?.title == "Runtime Needs Monitoring"
         }
         #expect(viewModel.desktopBannerState?.title == "Runtime Needs Monitoring")
 
@@ -1992,9 +2001,9 @@ struct RuntimeViewModelTests {
         #expect(banner.detail == viewModel.connectionDetailText)
     }
 
-    @Test("audio setup banner and download actions surface missing audio assets")
+    @Test("audio setup remediation stays contextual instead of becoming a desktop banner")
     @MainActor
-    func audioSetupBannerAndDownloadActionsSurfaceMissingAudioAssets() async throws {
+    func audioSetupRemediationStaysContextualInsteadOfBecomingDesktopBanner() async throws {
         let client = FakeControlPlaneXPCClient()
         var whisper = ModelCatalog.mlxWhisperModel()
         whisper.settings.ext["melix.audio.runtime_pack_state"] = "missing"
@@ -2009,14 +2018,69 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        let banner = try #require(viewModel.desktopBannerState)
         let action = try #require(viewModel.audioSetupActions.first)
 
-        #expect(banner.severity == .warning)
-        #expect(banner.title == "Audio Setup Required")
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Audio Setup Required" } == false)
+        #expect(viewModel.pendingAudioSetupPrompt == nil)
         #expect(action.modelID == "melix-whisper-mlx")
         #expect(action.actionTitle == "Install Audio Support")
         #expect(action.detail.contains("melix-audio-runtime-pack"))
+
+        viewModel.presentAudioSetupPrompt(action)
+
+        let prompt = try #require(viewModel.pendingAudioSetupPrompt)
+        #expect(prompt.title == "Audio Support Required")
+        #expect(prompt.primaryActionTitle == "Install Audio Support")
+        #expect(prompt.modelID == "melix-whisper-mlx")
+    }
+
+    @Test("runtime endpoint projection drives primary model and integration exports")
+    @MainActor
+    func runtimeEndpointProjectionDrivesPrimaryModelAndIntegrationExports() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let baseModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-text",
+            kind: "text",
+            state: .modelWarm,
+            features: ["chat"]
+        )
+        let selectedModel = makeCapabilityModelSummary(
+            modelID: "melix-selected-text",
+            kind: "text",
+            state: .modelWarm,
+            features: ["chat"]
+        )
+        let listener = makeGatewayConfigListener(
+            serverSessionID: "server-session-1",
+            requestedHost: "127.0.0.1",
+            requestedPort: 8080,
+            effectiveHost: "127.0.0.1",
+            effectivePort: 12434,
+            servedModelID: "melix-selected-text",
+            rateLimitPerMinute: 120,
+            timeoutSeconds: 120,
+            source: .environmentDefaults,
+            activeBinding: true,
+            requiresRestart: false
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [baseModel, selectedModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")],
+                gatewayConfig: makeGatewayConfigSummary(listener: listener)
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.primaryModel?.modelID == "melix-selected-text")
+        #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:12434/v1")
+        #expect(viewModel.desktopRuntimeEndpointState.requestedBaseURL == "http://127.0.0.1:8080/v1")
+        #expect(viewModel.agentIntegrationExports.isEmpty == false)
+        #expect(viewModel.agentIntegrationExports.allSatisfy { $0.baseURL == "http://127.0.0.1:12434/v1" })
+        #expect(viewModel.agentIntegrationExports.allSatisfy { $0.modelID == "melix-selected-text" })
     }
 
     @Test("audio setup actions dispatch install and download operations then refresh snapshot")
@@ -2865,6 +2929,30 @@ struct RuntimeViewModelTests {
 
         #expect(upgradedViewModel.desktopBannerState == nil)
         #expect(upgradedViewModel.desktopSignalStates.contains { $0.title == "Update available: 0.3.0" })
+    }
+
+    @Test("failed update checks stay out of the top banner")
+    @MainActor
+    func failedUpdateChecksStayOutOfTopBanner() async throws {
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update: check failed",
+                    detail: "Could not read /tmp/missing-stable.json",
+                    isAvailable: false,
+                    checkSucceeded: false
+                ),
+                startupDiagnosticResponse: nil
+            )
+        )
+
+        await viewModel.start()
+
+        let signal = try #require(viewModel.desktopSignalStates.first { $0.title == "Update: check failed" })
+        #expect(signal.severity == .info)
+        #expect(signal.isDismissible)
+        #expect(viewModel.desktopBannerState == nil)
     }
 
     @Test("critical runtime banners ignore dismiss requests")
@@ -4029,7 +4117,8 @@ struct RuntimeViewModelTests {
         #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cachePolicyText == "Disabled • Hybrid")
         #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cacheSettingsText == "/var/melix/cache-vlm • cache 16 KB • multimodal 4 KB")
         #expect(rows.first(where: { $0.modelID == "melix-dev-unknown" })?.cachePolicyText == "Unknown • Unspecified")
-        #expect(viewModel.modelSettingsCacheModeDraft == "tiered")
+        #expect(viewModel.primaryModel?.modelID == "melix-dev-hybrid")
+        #expect(viewModel.modelSettingsCacheModeDraft == "hybrid")
 
         await viewModel.fetchModelInfo(modelID: "melix-dev-rotate")
         #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Limited")

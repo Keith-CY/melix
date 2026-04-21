@@ -19,20 +19,115 @@ struct DesktopWorkspaceShellView: View {
             Group {
                 switch viewModel.selectedSurface {
                 case .chat:
-                    DesktopChatTabView(viewModel: viewModel)
+                    DesktopChatTabView(
+                        viewModel: viewModel,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .chat),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .chat)
+                    )
                 case .image:
-                    DesktopImageTabView(viewModel: viewModel)
+                    DesktopImageTabView(
+                        viewModel: viewModel,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .image),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .image)
+                    )
                 case .server:
-                    DesktopServerWorkspaceView(viewModel: viewModel)
+                    DesktopServerWorkspaceView(
+                        viewModel: viewModel,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .server),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .server)
+                    )
                 case .tools:
-                    DesktopToolsWorkspaceView(viewModel: viewModel, foundation: foundation)
+                    DesktopToolsWorkspaceView(
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .tools),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .tools)
+                    )
                 case .api:
-                    DesktopAPIWorkspaceView(viewModel: viewModel, foundation: foundation)
+                    DesktopAPIWorkspaceView(
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .api),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .api)
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(DesktopWorkspacePaneAnimation.animation, value: viewModel.desktopPaneVisibility)
+        }
+        .sheet(item: Binding(
+            get: { viewModel.pendingAudioSetupPrompt },
+            set: { newValue in
+                if newValue == nil {
+                    viewModel.dismissAudioSetupPrompt()
+                }
+            }
+        )) { prompt in
+            DesktopAudioSetupPromptView(
+                prompt: prompt,
+                openDownloads: {
+                    viewModel.selectToolSection(.downloads)
+                },
+                cancel: viewModel.dismissAudioSetupPrompt,
+                performPrimaryAction: {
+                    Task { await viewModel.performPendingAudioSetupAction() }
+                }
+            )
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func paneVisibilityBinding(
+        _ role: DesktopPaneRole,
+        for surface: DesktopSurface
+    ) -> Binding<Bool> {
+        Binding(
+            get: { viewModel.isDesktopPaneVisible(role, for: surface) },
+            set: { viewModel.setDesktopPaneVisible(role, visible: $0, for: surface) }
+        )
+    }
+}
+
+private struct DesktopAudioSetupPromptView: View {
+    let prompt: RuntimeAudioSetupPromptState
+    let openDownloads: @MainActor () -> Void
+    let cancel: @MainActor () -> Void
+    let performPrimaryAction: @MainActor () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "waveform.badge.exclamationmark")
+                    .font(.title2)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(prompt.title)
+                        .font(.title2.weight(.semibold))
+                    Text(prompt.detail)
+                        .foregroundStyle(.secondary)
+                    Text(prompt.alias)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack {
+                Button("Open Downloads") {
+                    openDownloads()
+                    cancel()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Not Now", action: cancel)
+                    .buttonStyle(.bordered)
+                Button(prompt.primaryActionTitle, action: performPrimaryAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 460)
     }
 }
 
@@ -332,7 +427,7 @@ struct DesktopCommandCenterView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(session.title)
                                         .font(.headline)
-                                    Text("\(session.lifecycle.rawValue) • \(session.baseURL)")
+                                    Text("\(session.lifecycle.rawValue) • \(session.effectiveBaseURL)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     if !session.lastError.isEmpty {
@@ -397,7 +492,7 @@ struct DesktopCommandCenterView: View {
                                 .font(.headline)
                             Text("\(serverSessions.count)")
                                 .font(.title3.weight(.semibold))
-                            Text(serverSessions.first?.listenerLabel ?? "No listener configured")
+                            Text(serverSessions.first?.effectiveListenerLabel ?? "No listener configured")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -424,15 +519,31 @@ struct DesktopCommandCenterView: View {
 
 private struct DesktopServerWorkspaceView: View {
     let viewModel: RuntimeViewModel
-    @State private var showsSidebar = true
-    @State private var showsInspector = true
+    @Binding var showsSidebar: Bool
+    @Binding var showsInspector: Bool
     @State private var showsAdvanced = DesktopServerWorkspaceDefaults.showsAdvancedServingDefaults
 
+    init(
+        viewModel: RuntimeViewModel,
+        showsSidebar: Binding<Bool>,
+        showsInspector: Binding<Bool>
+    ) {
+        self.viewModel = viewModel
+        _showsSidebar = showsSidebar
+        _showsInspector = showsInspector
+    }
+
     var body: some View {
-        HSplitView {
-            if showsSidebar {
+        HStack(spacing: 0) {
+            DesktopWorkspacePaneSlot(
+                role: .sidebar,
+                isVisible: showsSidebar,
+                idealWidth: 260
+            ) {
                 DesktopServerSessionSidebar(viewModel: viewModel)
-                    .frame(minWidth: 240, idealWidth: 260)
+            }
+            if showsSidebar {
+                Divider()
             }
 
             DesktopServerSessionEditor(
@@ -441,10 +552,17 @@ private struct DesktopServerWorkspaceView: View {
                 showsInspector: $showsInspector,
                 showsAdvanced: $showsAdvanced
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if showsInspector {
+                Divider()
+            }
+            DesktopWorkspacePaneSlot(
+                role: .inspector,
+                isVisible: showsInspector,
+                idealWidth: 300
+            ) {
                 DesktopServerSessionInspector(viewModel: viewModel)
-                    .frame(minWidth: 280, idealWidth: 300)
             }
         }
     }
@@ -453,6 +571,43 @@ private struct DesktopServerWorkspaceView: View {
 enum DesktopServerWorkspaceDefaults {
     static let showsAdvancedServingDefaults = false
     static let advancedServingDefaultsTitle = "Advanced Serving Defaults"
+}
+
+private struct DesktopServerOverviewCardsView: View {
+    let session: DesktopServerSessionState
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+            DesktopServerMetricCard(title: "Port", value: "\(session.effectivePort)", detail: session.gatewayConfigSourceText)
+            DesktopServerMetricCard(title: "Context", value: "\(session.servingDefaults.effectiveMaxTokens)", detail: "max tokens")
+            DesktopServerMetricCard(title: "Acceleration", value: session.servingDefaults.effectiveAccelerationMode, detail: "serving mode")
+            DesktopServerMetricCard(title: "State", value: session.lifecycle.rawValue, detail: session.powerState.rawValue)
+            DesktopServerMetricCard(title: "Base URL", value: session.effectiveBaseURL, detail: "effective listener")
+        }
+    }
+}
+
+private struct DesktopServerMetricCard: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).melixSectionLabel()
+            Text(value)
+                .font(title == "Base URL" ? .caption.monospaced() : .headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixCard()
+    }
 }
 
 private struct DesktopServerSessionSidebar: View {
@@ -538,29 +693,16 @@ private struct DesktopServerSessionEditor: View {
                 DesktopWorkspaceHeader(
                     title: "Server",
                     subtitle: "Choose model, configure listener, then start the server session."
-                ) {
-                    DesktopPaneToggleButton(
-                        role: .sidebar,
-                        isVisible: showsSidebar,
-                        shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
-                    ) {
-                        showsSidebar.toggle()
-                    }
-                    DesktopPaneToggleButton(
-                        role: .inspector,
-                        isVisible: showsInspector,
-                        shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
-                    ) {
-                        showsInspector.toggle()
-                    }
-                }
+                ) {}
 
                 if let session = viewModel.selectedServerSession {
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
 
-                    GroupBox("Basic Configuration") {
+                    DesktopServerOverviewCardsView(session: session)
+
+                    MelixSectionCard("Basic Configuration") {
                         VStack(alignment: .leading, spacing: 12) {
                             Picker(
                                 "Served Model",
@@ -620,25 +762,18 @@ private struct DesktopServerSessionEditor: View {
                                 .textFieldStyle(.roundedBorder)
                             }
 
-                            HStack {
-                                Button("Apply Gateway Config") {
-                                    Task { await viewModel.applySelectedServerGatewayConfig() }
-                                }
-                                .buttonStyle(.bordered)
-
-                                Text(
-                                    session.gatewayConfigRequiresRestart
-                                        ? "Requested listener differs from the active binding. Restart required."
-                                        : "Listener config source: \(session.gatewayConfigSourceText)"
-                                )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
+                            Text(
+                                session.gatewayConfigRequiresRestart
+                                    ? "Requested listener differs from the active binding. Restart required."
+                                    : "Listener config source: \(session.gatewayConfigSourceText)"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    GroupBox {
+                    MelixSectionCard("Serving Defaults") {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(servingDefaultsCompactSummary(for: session))
                                 .font(.caption)
@@ -650,7 +785,7 @@ private struct DesktopServerSessionEditor: View {
                         }
                     }
 
-                    GroupBox("Lifecycle Controls") {
+                    MelixSectionCard("Lifecycle Controls") {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(session.runtimeDetailText)
                                 .font(.caption)
@@ -663,29 +798,37 @@ private struct DesktopServerSessionEditor: View {
                                 .buttonStyle(.borderedProminent)
                                 .disabled(session.canStart == false)
 
-                                Button("Pause") {
-                                    Task { await viewModel.pauseSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canPause == false)
-
-                                Button("Resume") {
-                                    Task { await viewModel.resumeSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canResume == false)
-
-                                Button("Wake") {
-                                    Task { await viewModel.wakeSelectedServerSession() }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(session.canWake == false)
-
                                 Button("Stop") {
                                     Task { await viewModel.stopSelectedServerSession() }
                                 }
                                 .buttonStyle(.bordered)
                                 .disabled(session.canStop == false)
+
+                                Menu {
+                                    Button("Pause") {
+                                        Task { await viewModel.pauseSelectedServerSession() }
+                                    }
+                                    .disabled(session.canPause == false)
+                                    Button("Resume") {
+                                        Task { await viewModel.resumeSelectedServerSession() }
+                                    }
+                                    .disabled(session.canResume == false)
+                                    Button("Wake") {
+                                        Task { await viewModel.wakeSelectedServerSession() }
+                                    }
+                                    .disabled(session.canWake == false)
+                                    Button("Apply Gateway Config") {
+                                        Task { await viewModel.applySelectedServerGatewayConfig() }
+                                    }
+                                    Button("Apply Idle Policy") {
+                                        Task { await viewModel.applySelectedServerIdlePolicy() }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .help("More Server Actions")
+                                .accessibilityLabel("More Server Actions")
                             }
 
                             Toggle(
@@ -717,10 +860,6 @@ private struct DesktopServerSessionEditor: View {
                                 )
                                 .textFieldStyle(.roundedBorder)
 
-                                Button("Apply Idle Policy") {
-                                    Task { await viewModel.applySelectedServerIdlePolicy() }
-                                }
-                                .buttonStyle(.bordered)
                             }
 
                             Text(session.idlePolicySummaryText)
@@ -965,42 +1104,51 @@ private struct DesktopServerSessionInspector: View {
 private struct DesktopToolsWorkspaceView: View {
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
-    @State private var showsSidebar = true
-    @State private var showsInspector = true
+    @Binding var showsSidebar: Bool
+    @Binding var showsInspector: Bool
+
+    init(
+        viewModel: RuntimeViewModel,
+        foundation: DesktopFoundationState,
+        showsSidebar: Binding<Bool>,
+        showsInspector: Binding<Bool>
+    ) {
+        self.viewModel = viewModel
+        self.foundation = foundation
+        _showsSidebar = showsSidebar
+        _showsInspector = showsInspector
+    }
 
     var body: some View {
-        HSplitView {
-            if showsSidebar {
+        HStack(spacing: 0) {
+            DesktopWorkspacePaneSlot(
+                role: .sidebar,
+                isVisible: showsSidebar,
+                idealWidth: 250
+            ) {
                 DesktopToolsCategorySidebarView(
                     selectedToolSection: viewModel.selectedToolSection,
                     selectToolSection: viewModel.selectToolSection
                 )
                 .padding(20)
-                .frame(minWidth: 240, idealWidth: 250)
+            }
+            if showsSidebar {
+                Divider()
             }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    DesktopWorkspaceHeader(title: viewModel.selectedToolSection.rawValue) {
-                        DesktopPaneToggleButton(
-                            role: .sidebar,
-                            isVisible: showsSidebar,
-                            shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
-                        ) {
-                            showsSidebar.toggle()
-                        }
-                        DesktopPaneToggleButton(
-                            role: .inspector,
-                            isVisible: showsInspector,
-                            shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
-                        ) {
-                            showsInspector.toggle()
-                        }
-                    }
+                    DesktopWorkspaceHeader(title: viewModel.selectedToolSection.rawValue) {}
 
                     switch viewModel.selectedToolSection {
                     case .modelsLibrary:
-                        DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
+                        VStack(alignment: .leading, spacing: 18) {
+                            DesktopToolsTabView(viewModel: viewModel)
+                            DisclosureGroup("Models Library") {
+                                DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
+                                    .padding(.top, 10)
+                            }
+                        }
                     case .downloads:
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:
@@ -1015,8 +1163,16 @@ private struct DesktopToolsWorkspaceView: View {
                 }
                 .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if showsInspector {
+                Divider()
+            }
+            DesktopWorkspacePaneSlot(
+                role: .inspector,
+                isVisible: showsInspector,
+                idealWidth: 300
+            ) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Inspector")
                         .font(.headline)
@@ -1052,7 +1208,6 @@ private struct DesktopToolsWorkspaceView: View {
                     Spacer()
                 }
                 .padding(20)
-                .frame(minWidth: 280, idealWidth: 300)
             }
         }
     }
@@ -1115,7 +1270,7 @@ struct DesktopDownloadsToolSectionView: View {
                     ForEach(viewModel.audioSetupActions) { action in
                         DesktopAudioSetupNoticeRow(
                             action: action,
-                            performAction: makeAudioSetupAction(for: action)
+                            performAction: { viewModel.presentAudioSetupPrompt(action) }
                         )
                     }
                 }
@@ -1142,7 +1297,7 @@ struct DesktopDownloadsToolSectionView: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
 
-            GroupBox("Download Queue") {
+            MelixSectionCard("Download Queue") {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Registry-backed queue state survives shell restart and can resume partial transfers.")
@@ -1201,7 +1356,7 @@ struct DesktopDownloadsToolSectionView: View {
             }
 
             if let operation = viewModel.lastModelOperation {
-                GroupBox("Recent Transfer") {
+                MelixSectionCard("Recent Transfer") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(operation.operation) • \(operation.modelID)")
                             .font(.headline)
@@ -1227,9 +1382,6 @@ struct DesktopDownloadsToolSectionView: View {
         }
     }
 
-    private func makeAudioSetupAction(for action: RuntimeAudioSetupActionState) -> () -> Void {
-        { Task { await viewModel.performAudioSetupAction(action) } }
-    }
 }
 
 enum DesktopDownloadsLayoutMetrics {
@@ -1821,54 +1973,49 @@ struct DesktopDiagnosticsToolSectionView: View {
         Task { await refreshTooling() }
     }
 
+    private var benchmarkRunDisabled: Bool {
+        (
+            viewModel.selectedBenchmarkTargetMode == .catalogModel
+            && viewModel.benchmarkModels.isEmpty
+        ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
+    }
+
+    private var evaluationRunDisabled: Bool {
+        (
+            viewModel.selectedEvaluationTargetMode == .catalogModel
+            && viewModel.evaluationModels.isEmpty
+        ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            GroupBox("Diagnostics Actions") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Button("Inspect", action: startInspectTask)
-                        Button("Doctor", action: startDoctorTask)
+            MelixSectionCard("Diagnostics Actions") {
+                HStack(spacing: 8) {
+                    Button("Inspect", action: startInspectTask)
+                    Button("Doctor", action: startDoctorTask)
+                    if viewModel.selectedBenchmarkPresentationMode == .standard {
+                        Button("Run Benchmark", action: startBenchmarkTask)
+                            .disabled(benchmarkRunDisabled)
+                    } else {
+                        Button("Run Matrix", action: startBenchmarkMatrixTask)
+                            .disabled(benchmarkRunDisabled)
+                    }
+                    Button("Run Evaluation", action: startEvaluationTask)
+                        .disabled(evaluationRunDisabled)
+                    Button("Run Comparison", action: startEvaluationCompareTask)
+                        .disabled(evaluationRunDisabled)
+                    Menu {
                         if viewModel.selectedBenchmarkPresentationMode == .standard {
-                            Button("Run Benchmark", action: startBenchmarkTask)
-                                .disabled(
-                                    (
-                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
-                                        && viewModel.benchmarkModels.isEmpty
-                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
-                                )
                             Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
                             Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
                                 .disabled(viewModel.benchmarkHistory.isEmpty)
                         } else {
-                            Button("Run Matrix", action: startBenchmarkMatrixTask)
-                                .disabled(
-                                    (
-                                        viewModel.selectedBenchmarkTargetMode == .catalogModel
-                                        && viewModel.benchmarkModels.isEmpty
-                                    ) || viewModel.selectedBenchmarkSuiteIDs.isEmpty
-                                )
                             Button("Refresh Matrix", action: startRefreshBenchmarkMatrixResultsTask)
                             Button("Export Matrix Summary", action: startExportBenchmarkMatrixSummaryCSVTask)
                                 .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
                             Button("Export Matrix Requests", action: startExportBenchmarkMatrixRequestsCSVTask)
                                 .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
                         }
-                    }
-                    HStack {
-                        Button("Run Evaluation", action: startEvaluationTask)
-                            .disabled(
-                                (
-                                    viewModel.selectedEvaluationTargetMode == .catalogModel
-                                    && viewModel.evaluationModels.isEmpty
-                                ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
-                            )
-                        Button("Run Comparison", action: startEvaluationCompareTask)
-                            .disabled(
-                                (
-                                    viewModel.selectedEvaluationTargetMode == .catalogModel
-                                    && viewModel.evaluationModels.isEmpty
-                                ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
-                            )
                         Button("Refresh Eval", action: startRefreshEvaluationResultsTask)
                         Button("Export Eval Summary", action: startExportEvaluationSummaryCSVTask)
                             .disabled(viewModel.evaluationHistory.isEmpty)
@@ -1877,18 +2024,23 @@ struct DesktopDiagnosticsToolSectionView: View {
                         Button("Export Eval JSONL", action: startExportEvaluationSamplesJSONLTask)
                             .disabled(viewModel.evaluationHistory.isEmpty)
                         Button("Refresh Tooling", action: startRefreshToolingTask)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
+                    .menuStyle(.borderlessButton)
+                    .help("More Diagnostics Actions")
+                    .accessibilityLabel("More Diagnostics Actions")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let info = viewModel.selectedModelInfo {
-                GroupBox("Model Info") {
+                MelixSectionCard("Model Info") {
                     DesktopModelInfoSummaryView(info: info)
                 }
             }
 
-            GroupBox("Benchmark Configuration") {
+            MelixSectionCard("Benchmark Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker(
                         "Benchmark Mode",
@@ -2387,12 +2539,12 @@ struct DesktopDiagnosticsToolSectionView: View {
             }
 
             if let report = viewModel.lastDoctorReport {
-                GroupBox("Doctor Report") {
+                MelixSectionCard("Doctor Report") {
                     DesktopDoctorReportSummaryView(report: report)
                 }
             }
 
-            GroupBox("Benchmark Results") {
+            MelixSectionCard("Benchmark Results") {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.selectedBenchmarkPresentationMode == .standard {
                         if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
@@ -2554,7 +2706,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Benchmark History") {
+            MelixSectionCard("Benchmark History") {
                 VStack(alignment: .leading, spacing: 10) {
                     if viewModel.selectedBenchmarkPresentationMode == .standard {
                         ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
@@ -2640,7 +2792,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Evaluation Configuration") {
+            MelixSectionCard("Evaluation Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker(
                         "Evaluation Target",
@@ -3020,7 +3172,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Evaluation Results") {
+            MelixSectionCard("Evaluation Results") {
                 VStack(alignment: .leading, spacing: 8) {
                     if let selectedEntry = viewModel.selectedEvaluationHistoryEntry {
                         Text("Selected eval \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
@@ -3051,7 +3203,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Evaluation History") {
+            MelixSectionCard("Evaluation History") {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(viewModel.evaluationHistory.prefix(12)) { entry in
                         Button {
@@ -3098,7 +3250,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Runtime Metrics Snapshot") {
+            MelixSectionCard("Runtime Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
                         HStack {
@@ -3126,7 +3278,7 @@ struct DesktopAgentIntegrationExportsPanel: View {
     @Binding var selectedTarget: AgentIntegrationExportTarget
 
     var body: some View {
-        GroupBox("Agent Integrations") {
+        MelixSectionCard("Agent Integrations") {
             VStack(alignment: .leading, spacing: 12) {
                 if let export = selectedExport {
                     Picker(
@@ -3149,21 +3301,19 @@ struct DesktopAgentIntegrationExportsPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                    GroupBox(export.target.configTitle) {
-                        Text(export.configFragment)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    DesktopCodeSnippetBlock(
+                        title: export.target.configTitle,
+                        body: export.configFragment,
+                        copyAccessibilityLabel: "Copy Config",
+                        accessibilityID: "agent.\(export.target.id).config"
+                    )
 
-                    GroupBox("Shell Snippet") {
-                        Text(export.shellSnippet)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    DesktopAgentIntegrationCopyButtons(export: export)
+                    DesktopCodeSnippetBlock(
+                        title: "Shell Snippet",
+                        body: export.shellSnippet,
+                        copyAccessibilityLabel: "Copy Shell",
+                        accessibilityID: "agent.\(export.target.id).shell"
+                    )
                 } else {
                     ContentUnavailableView(
                         "No Integration Export",
@@ -3178,6 +3328,61 @@ struct DesktopAgentIntegrationExportsPanel: View {
 
     private var selectedExport: AgentIntegrationExport? {
         exports.first(where: { $0.target == selectedTarget }) ?? exports.first
+    }
+}
+
+private struct DesktopCodeSnippetBlock: View {
+    let title: String
+    let snippetText: String
+    var copyAccessibilityLabel: String?
+    var accessibilityID: String?
+
+    init(
+        title: String,
+        body: String,
+        copyAccessibilityLabel: String? = nil,
+        accessibilityID: String? = nil
+    ) {
+        self.title = title
+        self.snippetText = body
+        self.copyAccessibilityLabel = copyAccessibilityLabel
+        self.accessibilityID = accessibilityID
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(title).melixSectionLabel()
+                Spacer()
+                if let copyAccessibilityLabel {
+                    Button(action: copyBody) {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(copyAccessibilityLabel)
+                    .accessibilityLabel(copyAccessibilityLabel)
+                    .accessibilityIdentifier("desktop.code-snippet.copy.\(stableAccessibilityID)")
+                }
+            }
+            Text(snippetText)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("desktop.code-snippet.\(stableAccessibilityID)")
+    }
+
+    private var stableAccessibilityID: String {
+        let source = accessibilityID ?? title
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        return source.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }.joined()
+    }
+
+    private func copyBody() {
+        copyToPasteboard(snippetText)
     }
 }
 
@@ -3246,7 +3451,8 @@ struct DesktopAPIQuickStartPanel: View {
     let selectedSession: DesktopServerSessionState?
 
     var body: some View {
-        GroupBox("Product Quick Starts") {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Product Quick Starts").melixSectionLabel()
             if let selectedSession {
                 let groups = desktopAPIQuickStartGroups(
                     foundation: foundation,
@@ -3257,7 +3463,7 @@ struct DesktopAPIQuickStartPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(groups) { group in
-                        GroupBox(group.title) {
+                        MelixSectionCard(group.title) {
                             VStack(alignment: .leading, spacing: 10) {
                                 HStack {
                                     Text(group.summary)
@@ -3273,12 +3479,12 @@ struct DesktopAPIQuickStartPanel: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 ForEach(group.snippets) { snippet in
-                                    GroupBox(snippet.title) {
-                                        Text(snippet.body)
-                                            .font(.caption.monospaced())
-                                            .textSelection(.enabled)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
+                                    DesktopCodeSnippetBlock(
+                                        title: snippet.title,
+                                        body: snippet.body,
+                                        copyAccessibilityLabel: "Copy \(snippet.title)",
+                                        accessibilityID: "quick-start.\(group.id).\(snippet.id)"
+                                    )
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3298,6 +3504,8 @@ struct DesktopAPIQuickStartPanel: View {
                 )
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -3799,22 +4007,30 @@ struct DesktopAPIWorkspaceView: View {
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
     @State private var selectedSection: DesktopAPISection
-    @State private var showsSidebar = true
-    @State private var showsInspector = true
+    @Binding var showsSidebar: Bool
+    @Binding var showsInspector: Bool
 
     init(
         viewModel: RuntimeViewModel,
         foundation: DesktopFoundationState,
-        initialSection: DesktopAPISection = .overview
+        initialSection: DesktopAPISection = .overview,
+        showsSidebar: Binding<Bool>,
+        showsInspector: Binding<Bool>
     ) {
         self.viewModel = viewModel
         self.foundation = foundation
         _selectedSection = State(initialValue: initialSection)
+        _showsSidebar = showsSidebar
+        _showsInspector = showsInspector
     }
 
     var body: some View {
-        HSplitView {
-            if showsSidebar {
+        HStack(spacing: 0) {
+            DesktopWorkspacePaneSlot(
+                role: .sidebar,
+                isVisible: showsSidebar,
+                idealWidth: 240
+            ) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("API")
                         .font(.headline)
@@ -3836,27 +4052,14 @@ struct DesktopAPIWorkspaceView: View {
                     Spacer()
                 }
                 .padding(20)
-                .frame(minWidth: 220, idealWidth: 240)
+            }
+            if showsSidebar {
+                Divider()
             }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    DesktopWorkspaceHeader(title: "API") {
-                        DesktopPaneToggleButton(
-                            role: .sidebar,
-                            isVisible: showsSidebar,
-                            shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
-                        ) {
-                            showsSidebar.toggle()
-                        }
-                        DesktopPaneToggleButton(
-                            role: .inspector,
-                            isVisible: showsInspector,
-                            shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
-                        ) {
-                            showsInspector.toggle()
-                        }
-                    }
+                    DesktopWorkspaceHeader(title: "API") {}
 
                     switch selectedSection {
                     case .overview:
@@ -3886,8 +4089,16 @@ struct DesktopAPIWorkspaceView: View {
                 }
                 .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if showsInspector {
+                Divider()
+            }
+            DesktopWorkspacePaneSlot(
+                role: .inspector,
+                isVisible: showsInspector,
+                idealWidth: 300
+            ) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Inspector")
                         .font(.headline)
@@ -3907,7 +4118,7 @@ struct DesktopAPIWorkspaceView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(session.title)
                                     .font(.headline)
-                                Text(session.baseURL)
+                                Text(session.effectiveBaseURL)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Text(session.sharedAccessSummaryText)
@@ -3923,13 +4134,12 @@ struct DesktopAPIWorkspaceView: View {
                     Spacer()
                 }
                 .padding(20)
-                .frame(minWidth: 280, idealWidth: 300)
             }
         }
     }
 
     private var defaultBaseURL: String {
-        viewModel.selectedServerSession?.effectiveBaseURL ?? "http://127.0.0.1:8080/v1"
+        viewModel.desktopRuntimeEndpointState.effectiveBaseURL
     }
 }
 

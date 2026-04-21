@@ -522,6 +522,40 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
+    public let modelID: String
+    public let alias: String
+    public let detail: String
+    public let primaryActionTitle: String
+    public let kind: RuntimeAudioSetupActionKind
+
+    public var id: String {
+        "\(modelID):\(kind.rawValue)"
+    }
+
+    public var title: String {
+        "Audio Support Required"
+    }
+
+    public var action: RuntimeAudioSetupActionState {
+        RuntimeAudioSetupActionState(
+            modelID: modelID,
+            alias: alias,
+            detail: detail,
+            actionTitle: primaryActionTitle,
+            kind: kind
+        )
+    }
+
+    public init(action: RuntimeAudioSetupActionState) {
+        self.modelID = action.modelID
+        self.alias = action.alias
+        self.detail = action.detail
+        self.primaryActionTitle = action.actionTitle
+        self.kind = action.kind
+    }
+}
+
 public struct RuntimeDoctorFindingState: Equatable, Sendable, Identifiable {
     public let code: String
     public let severityText: String
@@ -1244,6 +1278,7 @@ public final class RuntimeViewModel {
     public private(set) var connectionDetailText = "Awaiting handshake"
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
+    public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = []
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
@@ -1290,6 +1325,7 @@ public final class RuntimeViewModel {
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
+    public private(set) var pendingAudioSetupPrompt: RuntimeAudioSetupPromptState?
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
@@ -1697,6 +1733,62 @@ public final class RuntimeViewModel {
         selectedSurface = .tools
         selectedToolSection = section
         notifyStateChanged()
+    }
+
+    public func openPreferences() {
+        selectedSurface = .tools
+        selectedToolSection = .settings
+        notifyStateChanged()
+    }
+
+    public func desktopPaneVisibilityState(for surface: DesktopSurface? = nil) -> DesktopPaneVisibilityState {
+        let resolvedSurface = surface ?? selectedSurface
+        return desktopPaneVisibility.first { $0.surface == resolvedSurface }
+            ?? DesktopPaneVisibilityState.defaultState(for: resolvedSurface)
+    }
+
+    public func isDesktopPaneVisible(
+        _ role: DesktopPaneRole,
+        for surface: DesktopSurface? = nil
+    ) -> Bool {
+        let state = desktopPaneVisibilityState(for: surface)
+        switch role {
+        case .sidebar:
+            return state.showsSidebar
+        case .inspector:
+            return state.showsInspector
+        }
+    }
+
+    public func setDesktopPaneVisible(
+        _ role: DesktopPaneRole,
+        visible: Bool,
+        for surface: DesktopSurface? = nil
+    ) {
+        updateDesktopPaneVisibility(role, visible: visible, for: surface ?? selectedSurface)
+        notifyStateChanged()
+    }
+
+    public func toggleDesktopPane(_ role: DesktopPaneRole) {
+        setDesktopPaneVisible(role, visible: isDesktopPaneVisible(role) == false)
+    }
+
+    private func updateDesktopPaneVisibility(
+        _ role: DesktopPaneRole,
+        visible: Bool,
+        for surface: DesktopSurface
+    ) {
+        var states = DesktopPaneVisibilityState.mergedWithDefaults(desktopPaneVisibility)
+        guard let index = states.firstIndex(where: { $0.surface == surface }) else {
+            return
+        }
+        switch role {
+        case .sidebar:
+            states[index].showsSidebar = visible
+        case .inspector:
+            states[index].showsInspector = visible
+        }
+        desktopPaneVisibility = states
     }
 
     public func toggleBenchmarkSuite(_ suiteID: String) {
@@ -2296,6 +2388,29 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func deleteChatSession(id: String) {
+        guard let index = chatSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let deletingSelectedSession = selectedChatSession?.id == id
+        chatSessions.remove(at: index)
+
+        if chatSessions.isEmpty {
+            selectedChatSessionID = ""
+            chatTranscript = []
+            chatConversationMessages = []
+            chatComposerText = ""
+            chatStatusText = "Idle"
+            lastChatUsageText = ""
+            lastChatRequestID = ""
+            isChatStreaming = false
+        } else if deletingSelectedSession {
+            let nextIndex = min(index, chatSessions.count - 1)
+            loadChatSession(chatSessions[nextIndex])
+        }
+        notifyStateChanged()
+    }
+
     @discardableResult
     public func exportSelectedChatSession() -> String? {
         guard let session = selectedChatSession else {
@@ -2340,7 +2455,26 @@ public final class RuntimeViewModel {
     }
 
     public var primaryModel: RuntimeModelRow? {
-        models.first { $0.modelID == "melix-dev-text" } ?? models.first
+        if let selectedModelID = selectedServerSession?.modelID,
+           let selectedModel = models.first(where: { $0.modelID == selectedModelID })
+        {
+            return selectedModel
+        }
+        return models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    public var desktopRuntimeEndpointState: DesktopRuntimeEndpointState {
+        guard let session = selectedServerSession else {
+            return .fallback
+        }
+        return DesktopRuntimeEndpointState(
+            serverSessionID: session.id,
+            serverTitle: session.title,
+            modelID: session.modelID,
+            requestedBaseURL: session.baseURL,
+            effectiveBaseURL: session.effectiveBaseURL,
+            sharedAccessSummaryText: session.sharedAccessSummaryText
+        )
     }
 
     private var primaryModelSummary: Melix_Controlplane_V1_ModelSummary? {
@@ -2449,16 +2583,6 @@ public final class RuntimeViewModel {
            selectedServerSession?.lifecycle != .unavailable
         {
             signals.append(selectedServerBanner)
-        }
-        if let audioSetupAction = audioSetupActions.first {
-            signals.append(
-                DesktopBannerState(
-                    id: "audio-setup-\(audioSetupAction.modelID)",
-                    title: "Audio Setup Required",
-                    detail: audioSetupAction.detail,
-                    severity: .warning
-                )
-            )
         }
         if let recoverableDownload = recoverableDownloads.first {
             let detail = recoverableDownloads.count == 1
@@ -4159,6 +4283,25 @@ public final class RuntimeViewModel {
         }
     }
 
+    public func presentAudioSetupPrompt(_ action: RuntimeAudioSetupActionState) {
+        pendingAudioSetupPrompt = RuntimeAudioSetupPromptState(action: action)
+        notifyStateChanged()
+    }
+
+    public func dismissAudioSetupPrompt() {
+        pendingAudioSetupPrompt = nil
+        notifyStateChanged()
+    }
+
+    public func performPendingAudioSetupAction() async {
+        guard let prompt = pendingAudioSetupPrompt else {
+            return
+        }
+        pendingAudioSetupPrompt = nil
+        notifyStateChanged()
+        await performAudioSetupAction(prompt.action)
+    }
+
     public func uploadPrimaryModel() async {
         guard let modelID = primaryModel?.modelID else {
             return
@@ -5657,6 +5800,7 @@ public final class RuntimeViewModel {
             selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
             registryHasConfiguredRootOverride = registryConfiguredRootPaths.isEmpty == false
@@ -5679,7 +5823,8 @@ public final class RuntimeViewModel {
             serverSessions: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
-            registryRoots: registryConfiguredRootPaths
+            registryRoots: registryConfiguredRootPaths,
+            paneVisibility: desktopPaneVisibility
         )
     }
 
@@ -8058,7 +8203,7 @@ public final class RuntimeViewModel {
             id: Self.productUpdateBannerID(summary: productUpdateSummary, detail: productUpdateDetail ?? ""),
             title: productUpdateSummary,
             detail: productUpdateDetail ?? "",
-            severity: productUpdateCheckSucceeded ? .info : .warning,
+            severity: .info,
             isDismissible: true
         )
     }
