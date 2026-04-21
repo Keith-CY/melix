@@ -3904,12 +3904,50 @@ public actor MelixCLIRunner {
         guard models.isEmpty == false else {
             return "No models found.\n"
         }
-        let rows = models
+        // Fixed-width table: each column padded to the max width of the
+        // header + all rows in that column so the output aligns cleanly in
+        // terminals. Columns separated by two spaces. Consumers that need
+        // the column-boundary-stable JSON shape should pass ``--json``;
+        // this renderer is for human reading.
+        let header = ["MODEL_ID", "KIND", "STATE", "RUNTIME"]
+        let dataRows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
-                "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))"
+                [
+                    model.modelID,
+                    model.kind,
+                    modelStateLabel(model.state),
+                    runtimeModeLabel(model),
+                ]
             }
-        return (["model_id\tkind\tstate\truntime"] + rows).joined(separator: "\n") + "\n"
+        let allRows = [header] + dataRows
+        // allRows always has the header row so `.max()` is non-nil; we still
+        // pass a 0 fallback to satisfy the compiler without a force-unwrap.
+        let widths = (0..<header.count).map { columnIndex in
+            allRows.map { $0[columnIndex].count }.max() ?? 0
+        }
+        let formatted = allRows.map { row -> String in
+            row.enumerated()
+                .map { index, cell in
+                    // Grapheme-safe padding: ``String.count`` returns
+                    // grapheme-cluster count but Foundation's
+                    // ``padding(toLength:)`` operates on UTF‑16 code units,
+                    // so they disagree for any non-BMP character (emoji) or
+                    // multi-code-unit grapheme. Today every cell in this
+                    // table is ASCII, but padding with
+                    // ``String(repeating:)`` keeps the two length notions
+                    // aligned so a future non-ASCII runtime tag (or an
+                    // emoji-laden model_id) still produces correctly-aligned
+                    // columns.
+                    if index == row.count - 1 {
+                        return cell
+                    }
+                    let padding = max(0, widths[index] - cell.count)
+                    return cell + String(repeating: " ", count: padding)
+                }
+                .joined(separator: "  ")
+        }
+        return formatted.joined(separator: "\n") + "\n"
     }
 
     private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {

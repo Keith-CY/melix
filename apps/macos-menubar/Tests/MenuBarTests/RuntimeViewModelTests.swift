@@ -8118,6 +8118,47 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["desktop.image_refresh_ms"] != nil)
     }
+
+    @Test("runtime model row pairs the badge tag with its VoiceOver phrasing")
+    func runtimeModelRowPairsBadgeTagWithAccessibilityLabel() {
+        // Adapter-backed derived model: short "adapter" tag + explicit a11y.
+        let adapterBacked = makeModelSummary(
+            modelID: "melix-dev-text-lora-runtime",
+            state: .modelWarm,
+            runtimeMode: "adapter_backed_runtime"
+        )
+        let adapterRow = makeRuntimeModelRow(adapterBacked)
+        #expect(adapterRow.runtimeModeText == "adapter")
+        #expect(adapterRow.runtimeModeAccessibilityLabel == "Runtime mode: adapter-backed")
+
+        // Fused derived model: short "fused" tag + explicit a11y.
+        let fused = makeModelSummary(
+            modelID: "melix-dev-text-lora-fused",
+            state: .modelWarm,
+            runtimeMode: "fused_derived_model"
+        )
+        let fusedRow = makeRuntimeModelRow(fused)
+        #expect(fusedRow.runtimeModeText == "fused")
+        #expect(fusedRow.runtimeModeAccessibilityLabel == "Runtime mode: fused derived model")
+
+        // Base / legacy models: both fields empty so the view hides the
+        // badge and VoiceOver announces nothing for this element.
+        let base = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        let baseRow = makeRuntimeModelRow(base)
+        #expect(baseRow.runtimeModeText == "")
+        #expect(baseRow.runtimeModeAccessibilityLabel == "")
+
+        // Unknown values degrade gracefully to "?" with a screen-reader
+        // friendly phrasing so VoiceOver doesn't read "question mark".
+        let unknown = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: .modelWarm,
+            runtimeMode: "adapter_backed_runtime_v2"
+        )
+        let unknownRow = makeRuntimeModelRow(unknown)
+        #expect(unknownRow.runtimeModeText == "?")
+        #expect(unknownRow.runtimeModeAccessibilityLabel == "Runtime mode: unrecognized")
+    }
 }
 
 @MainActor
@@ -8559,7 +8600,8 @@ private func makeModelSummary(
     memoryHeadroomBytes: UInt64 = 0,
     requiredBytes: UInt64 = 0,
     adaptiveThinkingMode: String = "",
-    adaptiveThinkingBudgetTokens: UInt32 = 0
+    adaptiveThinkingBudgetTokens: UInt32 = 0,
+    runtimeMode: String = ""
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
@@ -8570,6 +8612,7 @@ private func makeModelSummary(
     model.pinned = pinned
     model.inflightRequests = inflightRequests
     model.estimatedBytes = estimatedBytes
+    model.runtimeMode = runtimeMode
     model.settings.pinOnLoad = pinRequested
     model.settings.ttlSeconds = ttlSeconds
     model.settings.memoryPolicy = memoryPolicy

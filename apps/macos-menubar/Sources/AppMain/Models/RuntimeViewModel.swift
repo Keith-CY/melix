@@ -64,6 +64,16 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let imageDefaultWorkflowRole: String
     public let imageSupportsGeneration: Bool
     public let imageSupportsEdit: Bool
+    /// Short human-readable runtime-mode tag: "adapter", "fused", or "" for
+    /// base/unknown. Mirrors the serving signal promoted in PR #52
+    /// (issue #12 Module 1) so the menubar list distinguishes adapter-backed
+    /// derived models from fused derived models at a glance.
+    public let runtimeModeText: String
+    /// VoiceOver-friendly phrasing paired with ``runtimeModeText``. Populated
+    /// alongside the tag by the same mapper helper so a future rename of the
+    /// short tag can't silently cause the a11y label to fall through to a
+    /// generic default — both fields travel together through the view.
+    public let runtimeModeAccessibilityLabel: String
 
     public init(
         modelID: String,
@@ -90,7 +100,9 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         imageFamilyID: String = "",
         imageDefaultWorkflowRole: String = "",
         imageSupportsGeneration: Bool = false,
-        imageSupportsEdit: Bool = false
+        imageSupportsEdit: Bool = false,
+        runtimeModeText: String = "",
+        runtimeModeAccessibilityLabel: String = ""
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -117,6 +129,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.imageDefaultWorkflowRole = imageDefaultWorkflowRole
         self.imageSupportsGeneration = imageSupportsGeneration
         self.imageSupportsEdit = imageSupportsEdit
+        self.runtimeModeText = runtimeModeText
+        self.runtimeModeAccessibilityLabel = runtimeModeAccessibilityLabel
     }
 
     public var id: String {
@@ -9319,9 +9333,55 @@ private func runtimeTrainingPerformanceText(tokensPerSecond: Double, peakMemoryG
     return "\(throughputSummary) • \(peakMemorySummary)"
 }
 
+/// Paired runtime-mode presentation fields produced together so the visible
+/// badge tag and its VoiceOver phrasing can't drift. ``text`` is "" when the
+/// caller should hide the badge entirely (base models / legacy entries).
+struct RuntimeModeBadgeFields {
+    let text: String
+    let accessibilityLabel: String
+}
+
+private func runtimeModeBadgeFields(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModeBadgeFields {
+    // Map the proto's free-form runtime_mode string into a short badge label
+    // suitable for the menubar list, paired with the VoiceOver phrasing used
+    // when the badge is rendered. Producing both fields in one switch is the
+    // structural prevention for the a11y-vs-tag drift concern raised in
+    // PR #53 review — a future rename of a short tag has to land the a11y
+    // phrasing in the same case by construction, rather than silently
+    // falling through to a default in a different file.
+    //
+    // Cross-reference: the CLI equivalent is ``runtimeModeLabel`` in
+    // ``Sources/MelixCLICore/MelixCLI.swift``. The two functions diverge
+    // intentionally on the empty / base-model case: the CLI table renders
+    // ``"-"`` in a fixed-width column so every row has a runtime cell,
+    // while the menubar hides the badge entirely so base models render
+    // without a visual tag. Any future backend that adds a new runtime_mode
+    // string must land in both mappers for consistent operator UX.
+    switch model.runtimeMode {
+    case "adapter_backed_runtime":
+        return RuntimeModeBadgeFields(
+            text: "adapter",
+            accessibilityLabel: "Runtime mode: adapter-backed"
+        )
+    case "fused_derived_model":
+        return RuntimeModeBadgeFields(
+            text: "fused",
+            accessibilityLabel: "Runtime mode: fused derived model"
+        )
+    case "":
+        return RuntimeModeBadgeFields(text: "", accessibilityLabel: "")
+    default:
+        return RuntimeModeBadgeFields(
+            text: "?",
+            accessibilityLabel: "Runtime mode: unrecognized"
+        )
+    }
+}
+
 func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModelRow {
     let imageSupportsGeneration = runtimeImageSupportsGeneration(model)
     let imageSupportsEdit = runtimeImageSupportsEdit(model)
+    let runtimeModeBadge = runtimeModeBadgeFields(model)
     return RuntimeModelRow(
         modelID: model.modelID,
         kind: model.kind,
@@ -9350,7 +9410,9 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         imageFamilyID: model.settings.ext["melix.image.family_id"] ?? "",
         imageDefaultWorkflowRole: model.settings.ext["melix.image.default_workflow_role"] ?? "",
         imageSupportsGeneration: imageSupportsGeneration,
-        imageSupportsEdit: imageSupportsEdit
+        imageSupportsEdit: imageSupportsEdit,
+        runtimeModeText: runtimeModeBadge.text,
+        runtimeModeAccessibilityLabel: runtimeModeBadge.accessibilityLabel
     )
 }
 

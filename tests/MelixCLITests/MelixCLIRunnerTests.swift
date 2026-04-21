@@ -2251,15 +2251,44 @@ struct MelixCLIRunnerTests {
         // is omitted from the payload rather than blank-strung.
         #expect(byID["melix-base-text"]?["activation_mode"] == nil)
 
-        // Text output: short-form tags ("-", "fused", "adapter") appear in
-        // the new runtime column. Header exposes the column.
+        // Text output: fixed-width table with header row and short-form
+        // runtime tags. Header column names are upper-case for legibility;
+        // columns are padded to max width with two-space separators.
         let textOutput = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
             .modelList(.init(json: false))
         )
-        #expect(textOutput.contains("model_id\tkind\tstate\truntime"))
-        #expect(textOutput.contains("melix-base-text\ttext\t") && textOutput.contains("\t-\n"))
-        #expect(textOutput.contains("\tfused\n"))
-        #expect(textOutput.contains("\tadapter\n"))
+        let lines = textOutput.split(separator: "\n").map(String.init)
+        let header = try #require(lines.first)
+        // Header exposes all four columns in padded fixed-width order.
+        #expect(header.contains("MODEL_ID"))
+        #expect(header.contains("KIND"))
+        #expect(header.contains("STATE"))
+        #expect(header.contains("RUNTIME"))
+        // Each short-form runtime tag appears exactly once on a data row.
+        // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
+        // pick each row even if another id were a superstring.
+        let dataRows = lines.dropFirst()
+        let baseRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-") })
+        )
+        let fusedRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused") })
+        )
+        let adapterRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter") })
+        )
+        // The first column is padded to the widest model_id
+        // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
+        // column actually starts at the column-separator offset. A
+        // regression that dropped padding would collapse the gap.
+        let firstColumnWidth = "melix-base-text-lora-runtime".count
+        let separator = "  "
+        let kindColumnOffset = firstColumnWidth + separator.count
+        for row in [baseRow, fusedRow, adapterRow] {
+            let indexAtKindStart = row.index(row.startIndex, offsetBy: kindColumnOffset)
+            let kindPrefix = row[indexAtKindStart...].prefix(4)
+            #expect(kindPrefix == "text", "row not padded at column offset: \(row)")
+        }
     }
 
     @Test("model list primes configured registry roots before fetching the server snapshot")

@@ -130,8 +130,23 @@ struct DesktopModelsTabView: View {
             List(foundation.models, id: \.modelID) { model in
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(model.modelID)
-                            .font(.headline)
+                        HStack(spacing: 6) {
+                            Text(model.modelID)
+                                .font(.headline)
+                            if !model.runtimeModeText.isEmpty {
+                                // Capsule badge matching the pattern used in
+                                // DesktopChatView and DesktopWorkspaceShellView
+                                // for metadata tags. Adapter-backed and fused
+                                // derived models get a visible runtime tag;
+                                // base models render without a badge.
+                                Text(model.runtimeModeText)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(.quaternary, in: Capsule())
+                                    .accessibilityLabel(model.runtimeModeAccessibilityLabel)
+                            }
+                        }
                         Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
                             .font(.caption)
                             .foregroundStyle(.secondary)
