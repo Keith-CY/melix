@@ -1466,6 +1466,92 @@ struct MelixCLIParserTests {
         #expect(options.json)
     }
 
+    @Test("parses eval compare with adapter-manifest targets (Module 2)")
+    func parsesEvalCompareWithAdapterTargets() throws {
+        // Module 2 admits repeatable --target-adapter alongside the
+        // existing --target-model-id flag. A compare invocation with
+        // adapter targets only (no registered-model targets) must parse
+        // successfully.
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-adapter", "/tmp/melix-adapters/alpha.adapter.json",
+            "--target-adapter", "/tmp/melix-adapters/beta.adapter.json",
+            "--suite", "mmlu",
+            "--dataset-id", "mmlu.dev.v1",
+            "--sample-size", "4",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.targetModelIDs.isEmpty)
+        #expect(options.targetAdapterManifestPaths == [
+            "/tmp/melix-adapters/alpha.adapter.json",
+            "/tmp/melix-adapters/beta.adapter.json",
+        ])
+        #expect(options.suites == ["mmlu"])
+    }
+
+    @Test("parses eval compare mixing registered and adapter targets")
+    func parsesEvalCompareMixedTargets() throws {
+        // Module 2 lets a single compare target both registered models
+        // (via --target-model-id) and adapter manifests (via
+        // --target-adapter). The runner sends both sets as distinct
+        // request parameters; the worker combines them per target.
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-model-id", "melix-dev-text-lora-registered",
+            "--target-adapter", "/tmp/melix-adapters/fresh.adapter.json",
+            "--suite", "mmlu",
+            "--dataset-id", "mmlu.dev.v1",
+            "--sample-size", "2",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.targetModelIDs == ["melix-dev-text-lora-registered"])
+        #expect(options.targetAdapterManifestPaths == ["/tmp/melix-adapters/fresh.adapter.json"])
+    }
+
+    @Test("eval compare rejects invocations missing both target types")
+    func parsesEvalCompareRejectsMissingTargets() {
+        // Neither --target-model-id nor --target-adapter — must surface a
+        // missingRequired error with a message that names both flags so
+        // the operator knows adapter targets are an option now.
+        do {
+            _ = try MelixCLIParser.parse([
+                "eval",
+                "compare",
+                "--model-id", "melix-dev-text",
+                "--suite", "mmlu",
+                "--dataset-id", "mmlu.dev.v1",
+                "--sample-size", "1",
+                "--json",
+            ])
+            Issue.record("Expected missingRequired error")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("--target-model-id"))
+                #expect(message.contains("--target-adapter"))
+            } else {
+                Issue.record("Expected missingRequired, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected MelixCLIError.missingRequired, got \(error)")
+        }
+    }
+
     @Test("parses eval compare with custom JSONL source mapping and profile controls")
     func parsesEvalCompareWithCustomJSONLSource() throws {
         let command = try MelixCLIParser.parse([
@@ -1811,7 +1897,7 @@ struct MelixCLIParserTests {
         )
         try assertError(
             for: ["eval", "compare", "--model-id", "melix-dev-text"],
-            equals: .missingRequired("At least one --target-model-id is required for melix eval compare.")
+            equals: .missingRequired("At least one --target-model-id or --target-adapter is required for melix eval compare.")
         )
         try assertError(
             for: [

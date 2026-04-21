@@ -328,6 +328,11 @@ public struct EvalCompareOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
     public let targetModelIDs: [String]
+    /// Adapter-manifest paths to materialize as ephemeral compare targets.
+    /// Each is a path to a ``melix.lora_adapter_package.v1`` manifest; the
+    /// worker loads the adapter for the compare run and unloads it before
+    /// returning (Module 2 from the LoRA capability plan).
+    public let targetAdapterManifestPaths: [String]
     public let suites: [String]
     public let datasetID: String
     public let sampleSize: UInt32
@@ -341,6 +346,7 @@ public struct EvalCompareOptions: Equatable, Sendable {
         modelID: String = "",
         hfRepoID: String = "",
         targetModelIDs: [String] = [],
+        targetAdapterManifestPaths: [String] = [],
         suites: [String] = [],
         datasetID: String = "",
         sampleSize: UInt32 = 0,
@@ -353,6 +359,7 @@ public struct EvalCompareOptions: Equatable, Sendable {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
         self.targetModelIDs = targetModelIDs.filter { $0.isEmpty == false }
+        self.targetAdapterManifestPaths = targetAdapterManifestPaths.filter { $0.isEmpty == false }
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
@@ -1056,7 +1063,7 @@ public enum MelixCLIParser {
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
       melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) --target-model-id MODEL_ID ... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -2005,7 +2012,7 @@ public enum MelixCLIParser {
         }
 
         let values = try ArgumentCursor(arguments: arguments).parse(
-            multiValueOptions: ["--suite", "--target-model-id", "--ignored-path"]
+            multiValueOptions: ["--suite", "--target-model-id", "--target-adapter", "--ignored-path"]
         )
         let modelID = values.single["--model-id"] ?? ""
         let hfRepoID = values.single["--repo-id"] ?? ""
@@ -2014,8 +2021,14 @@ public enum MelixCLIParser {
             throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval compare.")
         }
         let targetModelIDs = values.multi["--target-model-id"] ?? []
-        guard targetModelIDs.isEmpty == false else {
-            throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+        let targetAdapterManifestPaths = values.multi["--target-adapter"] ?? []
+        // Module 2 admits either registered-model targets (via --target-model-id)
+        // or adapter-manifest targets (via --target-adapter), or both. At least
+        // one must be provided.
+        guard !targetModelIDs.isEmpty || !targetAdapterManifestPaths.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "At least one --target-model-id or --target-adapter is required for melix eval compare."
+            )
         }
         let sourceConfiguration = try parseEvaluationSourceConfiguration(
             values,
@@ -2026,6 +2039,7 @@ public enum MelixCLIParser {
                 modelID: modelID,
                 hfRepoID: hfRepoID,
                 targetModelIDs: targetModelIDs,
+                targetAdapterManifestPaths: targetAdapterManifestPaths,
                 suites: values.multi["--suite"] ?? [],
                 datasetID: values.single["--dataset-id"] ?? "",
                 sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
@@ -2582,8 +2596,12 @@ public actor MelixCLIRunner {
     }
 
     public func runEvaluationCompare(_ options: EvalCompareOptions) async throws -> [ControlPlaneEvaluationResult] {
-        guard options.targetModelIDs.isEmpty == false else {
-            throw MelixCLIError.missingRequired("At least one --target-model-id is required for melix eval compare.")
+        // Module 2 admits either registered-model targets or
+        // adapter-manifest targets (or both). Reject only if both are empty.
+        guard !options.targetModelIDs.isEmpty || !options.targetAdapterManifestPaths.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "At least one --target-model-id or --target-adapter is required for melix eval compare."
+            )
         }
         if let commandExecutor {
             let output = try await commandExecutor(Self.evalCompareArguments(options))
@@ -2596,9 +2614,17 @@ public actor MelixCLIRunner {
         for targetModelID in options.targetModelIDs {
             _ = try await client.loadModel(modelID: targetModelID)
         }
+        // Adapter targets are materialized ephemerally by the worker — no
+        // client-side load here; the worker's _run_compare_suite handles
+        // load + unload via the adapter manifest paths in `parameters`.
         var parameters = options.parameters
         parameters["compare_mode"] = "base_vs_targets"
-        parameters["compare_target_model_ids"] = options.targetModelIDs.joined(separator: ",")
+        if !options.targetModelIDs.isEmpty {
+            parameters["compare_target_model_ids"] = options.targetModelIDs.joined(separator: ",")
+        }
+        if !options.targetAdapterManifestPaths.isEmpty {
+            parameters["compare_target_adapter_manifest_paths"] = options.targetAdapterManifestPaths.joined(separator: ",")
+        }
         return try await runEvaluations(
             EvalRunOptions(
                 modelID: options.modelID,
@@ -3432,6 +3458,9 @@ public actor MelixCLIRunner {
         }
         for targetModelID in options.targetModelIDs {
             arguments.append(contentsOf: ["--target-model-id", targetModelID])
+        }
+        for adapterManifestPath in options.targetAdapterManifestPaths {
+            arguments.append(contentsOf: ["--target-adapter", adapterManifestPath])
         }
         for suite in options.suites {
             arguments.append(contentsOf: ["--suite", suite])

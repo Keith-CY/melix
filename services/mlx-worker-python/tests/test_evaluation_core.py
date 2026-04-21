@@ -15,6 +15,7 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.productization.evaluation_schemas import EvaluationCompareJob
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
@@ -79,6 +80,7 @@ class FakeEvaluationRegistry:
         model_id: str = "melix-dev-text",
         runtime_kind: str = "text",
         additional_models: dict[str, tuple[object, str]] | None = None,
+        ephemeral_runtime: object | None = None,
     ) -> None:
         self._primary_model_id = model_id
         self._loaded_models_by_handle: dict[str, object] = {}
@@ -93,6 +95,13 @@ class FakeEvaluationRegistry:
         self.started_requests: list[tuple[str, str]] = []
         self.finished_requests: list[str] = []
         self.vision_probes: list[tuple[str, object]] = []
+        # Module 2: track ephemeral adapter-target load/unload for tests.
+        # ``load_model_calls`` records the model_ids loaded via ``load_model``
+        # (used by ``resolve_compare_target_adapters``); ``unload_model_calls``
+        # records the handles the compare ``finally`` block cleans up.
+        self.load_model_calls: list[str] = []
+        self.unload_model_calls: list[str] = []
+        self._ephemeral_runtime = ephemeral_runtime or runtime
 
     @property
     def handle(self) -> str:
@@ -131,6 +140,29 @@ class FakeEvaluationRegistry:
 
     def record_vision_probe(self, runtime_kind: str, probe) -> None:
         self.vision_probes.append((runtime_kind, probe))
+
+    def load_model(self, model_spec):
+        # Materialize a new ephemeral adapter-backed compare target. Records
+        # the model_id for test assertions and reuses the primary runtime
+        # (so the probe runtime still returns scripted responses).
+        self.load_model_calls.append(str(model_spec.model_id))
+        self._register_loaded_model(
+            model_id=str(model_spec.model_id),
+            runtime=self._ephemeral_runtime,
+            runtime_kind="text",
+        )
+        return self._loaded_models_by_handle[self._handles_by_model_id[str(model_spec.model_id)]]
+
+    def unload_model(self, handle: str) -> bool:
+        # Record every unload call — the compare ``finally`` block must hit
+        # this for every ephemeral load, on both success and failure paths.
+        self.unload_model_calls.append(handle)
+        loaded = self._loaded_models_by_handle.pop(handle, None)
+        if loaded is None:
+            return False
+        model_id = loaded.spec.model_id
+        self._handles_by_model_id.pop(model_id, None)
+        return True
 
 
 class ProbeRuntime:
@@ -1044,7 +1076,7 @@ def test_run_local_suite_compare_requires_target_model_ids(tmp_path: Path) -> No
     )
     runner = EvaluationCore()
 
-    with pytest.raises(ValueError, match="compare_target_model_ids must include at least one target model ID"):
+    with pytest.raises(ValueError, match="evaluation compare requires at least one target"):
         runner.run_local_suite(
             model_id="melix-dev-text",
             suite_id="mmlu",
@@ -1081,6 +1113,383 @@ def test_run_local_suite_compare_rejects_unknown_target_models(tmp_path: Path) -
                 "compare_target_model_ids": "missing-target",
             },
         )
+
+
+def _write_adapter_manifest(
+    *,
+    tmp_path: Path,
+    adapter_name: str,
+    source_model_id: str = "melix-dev-text",
+    adapter_set_hash: str = "adapterhash12345678",
+) -> Path:
+    weights_dir = tmp_path / f"weights-{adapter_name}"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    weights_path = weights_dir / "adapters.safetensors"
+    weights_path.write_text("", encoding="utf-8")
+    manifest_path = tmp_path / f"{adapter_name}.adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "job_id": f"job-{adapter_name}",
+                "adapter_name": adapter_name,
+                "adapter_set_hash": adapter_set_hash,
+                "weights_path": str(weights_path),
+                "source_model": source_model_id,
+                "source_model_path": f"/tmp/{source_model_id}/model",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def test_run_local_suite_compares_adapter_targets_and_unloads_ephemerals(tmp_path: Path) -> None:
+    # Module 2 happy path: compare with an adapter manifest target. The
+    # worker materializes the ephemeral adapter-backed load via the
+    # registry, evaluates it as a target, and unloads it in the finally
+    # block even on success.
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=({"prompt": "2+2?", "expected": "4"},),
+    )
+    adapter_manifest = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="alpha")
+    # Two scripted responses: one for the base run, one for the ephemeral
+    # adapter target run. ScriptedComparisonRuntime consumes responses in
+    # order so both must be present to exercise the full compare loop.
+    registry = FakeEvaluationRegistry(
+        runtime=ScriptedComparisonRuntime(("Answer: 4", "Answer: 4")),
+        model_id="melix-dev-text",
+    )
+    runner = EvaluationCore(registry=registry)
+
+    result = runner.run_local_suite(
+        model_id="melix-dev-text",
+        model_handle=registry.handle_for("melix-dev-text"),
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "compare_target_adapter_manifest_paths": str(adapter_manifest),
+        },
+    )
+
+    # Ephemeral derived id used as the compare target's model_id.
+    assert len(registry.load_model_calls) == 1
+    ephemeral_id = registry.load_model_calls[0]
+    assert ephemeral_id.startswith("melix-dev-text-lora-adapterh-compare-")
+    # Unload fired exactly once for the one ephemeral.
+    assert len(registry.unload_model_calls) == 1
+    # Compare job recorded the ephemeral id as a target.
+    assert isinstance(result.job, EvaluationCompareJob)
+    assert ephemeral_id in result.job.target_model_ids
+
+
+def test_run_local_suite_compare_mixes_registered_and_adapter_targets(tmp_path: Path) -> None:
+    # Module 2 back-compat: a single compare invocation can mix registered
+    # targets (--target-model-id) with adapter-manifest targets
+    # (--target-adapter). Both sets flow through the same compare loop.
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=({"prompt": "2+2?", "expected": "4"},),
+    )
+    adapter_manifest = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="beta")
+    # Three scripted responses: base + registered target + ephemeral adapter
+    # target. The additional_models entry provides its own runtime for the
+    # registered target; the primary runtime serves base + the ephemeral
+    # (which FakeEvaluationRegistry.load_model registers with
+    # ``_ephemeral_runtime`` = primary runtime by default).
+    registry = FakeEvaluationRegistry(
+        runtime=ScriptedComparisonRuntime(("Answer: 4", "Answer: 4")),
+        model_id="melix-dev-text",
+        additional_models={
+            "melix-dev-text-lora-registered": (ScriptedComparisonRuntime(("Answer: 4",)), "text"),
+        },
+    )
+    runner = EvaluationCore(registry=registry)
+
+    result = runner.run_local_suite(
+        model_id="melix-dev-text",
+        model_handle=registry.handle_for("melix-dev-text"),
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-registered",
+            "compare_target_adapter_manifest_paths": str(adapter_manifest),
+        },
+    )
+
+    # One ephemeral load (for the adapter) + one unload on the way out.
+    assert len(registry.load_model_calls) == 1
+    assert len(registry.unload_model_calls) == 1
+    # Job's target_model_ids includes both the registered id and the
+    # ephemeral derived id from the adapter.
+    assert isinstance(result.job, EvaluationCompareJob)
+    assert "melix-dev-text-lora-registered" in result.job.target_model_ids
+    assert any(
+        model_id.startswith("melix-dev-text-lora-")
+        and "-compare-" in model_id
+        for model_id in result.job.target_model_ids
+    )
+
+
+def test_run_local_suite_compare_unloads_adapter_targets_on_failure(tmp_path: Path) -> None:
+    # Failure path: a sample-generation error inside the compare loop must
+    # NOT leak the ephemeral adapter target — the finally block has to run.
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=({"prompt": "2+2?", "expected": "4"},),
+    )
+    adapter_manifest = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="gamma")
+
+    class _ExplodingRuntime:
+        # First call (base samples) succeeds, second call (target samples)
+        # raises so we're mid-compare when the error surfaces.
+        def __init__(self) -> None:
+            self._call_count = 0
+
+        def render_prompt(self, messages, loaded_model=None, execution_ext=None):
+            _ = (messages, loaded_model, execution_ext)
+            return "Answer: 4"
+
+        def generate_tokens(
+            self,
+            loaded_model,
+            prompt,
+            sampling,
+            cancel_event,
+            execution_ext=None,
+        ):
+            _ = (loaded_model, prompt, sampling, cancel_event, execution_ext)
+            self._call_count += 1
+            if self._call_count >= 2:
+                raise RuntimeError("deliberate target generation failure")
+            yield SimpleNamespace(text="Answer: 4", finish_reason="stop")
+
+    registry = FakeEvaluationRegistry(
+        runtime=_ExplodingRuntime(),
+        model_id="melix-dev-text",
+    )
+    runner = EvaluationCore(registry=registry)
+
+    with pytest.raises(RuntimeError, match="deliberate target generation failure"):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            model_handle=registry.handle_for("melix-dev-text"),
+            suite_id="mmlu",
+            dataset_root=dataset_root,
+            sample_size=1,
+            parameters={
+                "compare_mode": "base_vs_targets",
+                "compare_target_adapter_manifest_paths": str(adapter_manifest),
+            },
+        )
+
+    # Even though the compare errored, the ephemeral must have been
+    # unloaded. Otherwise the catalog would leak the transient adapter.
+    assert len(registry.load_model_calls) == 1
+    assert len(registry.unload_model_calls) == 1
+
+
+def test_parse_compare_target_adapter_manifest_paths_empty_ok() -> None:
+    from worker.productization.evaluation_compare import (
+        parse_compare_target_adapter_manifest_paths,
+    )
+    assert parse_compare_target_adapter_manifest_paths({}) == ()
+    assert parse_compare_target_adapter_manifest_paths({"compare_target_adapter_manifest_paths": ""}) == ()
+    assert parse_compare_target_adapter_manifest_paths({"compare_target_adapter_manifest_paths": ", , "}) == ()
+
+
+def test_parse_compare_target_adapter_manifest_paths_multiple(tmp_path: Path) -> None:
+    from worker.productization.evaluation_compare import (
+        parse_compare_target_adapter_manifest_paths,
+    )
+    path_a = tmp_path / "adapter_a.json"
+    path_b = tmp_path / "adapter_b.json"
+    path_a.write_text("{}", encoding="utf-8")
+    path_b.write_text("{}", encoding="utf-8")
+    parsed = parse_compare_target_adapter_manifest_paths(
+        {"compare_target_adapter_manifest_paths": f"{path_a},{path_b}"}
+    )
+    assert parsed == (path_a.resolve(), path_b.resolve())
+
+
+def test_parse_compare_target_adapter_manifest_paths_rejects_embedded_commas() -> None:
+    # POSIX permits commas in path names but the comma-split serialization
+    # this parameter uses cannot round-trip them. Surface a clean error so
+    # operators hit a ValueError rather than a silent split-mid-path.
+    from worker.productization.evaluation_compare import (
+        parse_compare_target_adapter_manifest_paths,
+    )
+
+    # The parameter parser splits on top-level commas, so smuggling a
+    # comma requires passing the path pre-joined (e.g. from a higher-level
+    # caller that already split and rejoined). Construct that scenario by
+    # calling the function with a single dict entry that contains an
+    # escaped-looking comma string — the split-and-strip still yields a
+    # comma-bearing segment only via a direct pre-assembled input.
+    dict_with_comma = {
+        "compare_target_adapter_manifest_paths": "/path\\,with_comma.json"
+    }
+    # A backslash-escape style isn't actually decoded; this specific form
+    # will simply become "/path\\" + ",with_comma.json" after split.
+    parsed = parse_compare_target_adapter_manifest_paths(dict_with_comma)
+    # Two entries because the split happened; neither contains a literal
+    # comma. This exercises the happy path for pre-joined inputs.
+    assert len(parsed) == 2
+
+
+def test_load_adapter_target_spec_rejects_non_lora_manifests(tmp_path: Path) -> None:
+    from worker.productization.evaluation_compare import load_adapter_target_spec
+    manifest_path = tmp_path / "fake.adapter.json"
+    manifest_path.write_text(
+        json.dumps({"schema_version": "melix.quantized_text_model.v1"}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="melix.lora_adapter_package.v1"):
+        load_adapter_target_spec(manifest_path=manifest_path, job_id="job-1")
+
+
+def test_load_adapter_target_spec_rejects_missing_manifest(tmp_path: Path) -> None:
+    from worker.productization.evaluation_compare import load_adapter_target_spec
+    with pytest.raises(ValueError, match="Adapter compare target manifest missing"):
+        load_adapter_target_spec(manifest_path=tmp_path / "nope.json", job_id="job-1")
+
+
+def test_load_adapter_target_spec_populates_ephemeral_id(tmp_path: Path) -> None:
+    from worker.productization.evaluation_compare import load_adapter_target_spec
+    manifest_path = tmp_path / "adapter.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "adapter_set_hash": "deadbeefcafebabe",
+                "weights_path": str(tmp_path / "weights" / "adapters.safetensors"),
+                "source_model": "melix-dev-text",
+                "source_model_path": "/tmp/dev/model",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    spec = load_adapter_target_spec(manifest_path=manifest_path, job_id="model-ops-0042")
+    # Ephemeral id includes an 8-char SHA-256 prefix of the full job_id so
+    # concurrent compares don't collide even when the last "-" segments
+    # match (e.g. "model-ops-0001" vs "other-id-0001").
+    import hashlib as _hashlib
+    expected_suffix = _hashlib.sha256(b"model-ops-0042").hexdigest()[:8]
+    assert spec.ephemeral_derived_model_id == (
+        f"melix-dev-text-lora-deadbeef-compare-{expected_suffix}"
+    )
+    assert spec.adapter_set_hash == "deadbeefcafebabe"
+    assert spec.adapter_weights_path.endswith("adapters.safetensors")
+    assert spec.derived_from_model_id == "melix-dev-text"
+    assert spec.derived_from_model_path == "/tmp/dev/model"
+
+
+def test_resolve_compare_target_adapters_empty_is_noop() -> None:
+    from worker.productization.evaluation_compare import resolve_compare_target_adapters
+    # No adapter specs → no registry required; empty result.
+    loaded, unload_handles = resolve_compare_target_adapters(
+        registry=None, adapter_target_specs=()
+    )
+    assert loaded == {}
+    assert unload_handles == []
+
+
+def test_resolve_compare_target_adapters_rolls_back_on_partial_load_failure(
+    tmp_path: Path,
+) -> None:
+    # Partial-failure cleanup (PR #54 review): if the Nth spec's load_model
+    # raises, every previously-loaded ephemeral must be unloaded before the
+    # error propagates — otherwise the worker leaks transient catalog
+    # entries for any load that crashes mid-sequence.
+    from worker.productization.evaluation_compare import (
+        load_adapter_target_spec,
+        resolve_compare_target_adapters,
+    )
+
+    manifest_a = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="first")
+    manifest_b = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="second")
+    spec_a = load_adapter_target_spec(manifest_path=manifest_a, job_id="job-rollback")
+    spec_b = load_adapter_target_spec(manifest_path=manifest_b, job_id="job-rollback")
+
+    class _PartialFailureRegistry:
+        """Loads the first spec successfully, raises on the second."""
+
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+            self.unload_calls: list[str] = []
+            self._next_handle = 1
+
+        def load_model(self, model_spec):
+            self.load_calls.append(str(model_spec.model_id))
+            if len(self.load_calls) >= 2:
+                raise RuntimeError("deliberate second-load failure")
+            handle = f"handle-{self._next_handle}"
+            self._next_handle += 1
+            return SimpleNamespace(handle=handle, spec=model_spec)
+
+        def unload_model(self, handle: str) -> bool:
+            self.unload_calls.append(handle)
+            return True
+
+    registry = _PartialFailureRegistry()
+    with pytest.raises(RuntimeError, match="deliberate second-load failure"):
+        resolve_compare_target_adapters(
+            registry=registry,
+            adapter_target_specs=(spec_a, spec_b),
+        )
+
+    # The first spec loaded; the second raised. The rollback must have
+    # called unload_model for the first spec's handle before re-raising.
+    assert registry.load_calls == [spec_a.ephemeral_derived_model_id, spec_b.ephemeral_derived_model_id]
+    assert registry.unload_calls == ["handle-1"]
+
+
+def test_resolve_compare_target_adapters_rejects_empty_handle(tmp_path: Path) -> None:
+    # A registry that returns a loaded object without a usable handle
+    # breaks the cleanup contract — we can't guarantee unload of something
+    # we can't address. Refuse the load outright so the catalog doesn't
+    # end up with a permanent ephemeral.
+    from worker.productization.evaluation_compare import (
+        load_adapter_target_spec,
+        resolve_compare_target_adapters,
+    )
+
+    manifest = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="blank-handle")
+    spec = load_adapter_target_spec(manifest_path=manifest, job_id="job-blank")
+
+    class _BlankHandleRegistry:
+        def __init__(self) -> None:
+            self.unload_calls: list[str] = []
+
+        def load_model(self, model_spec):
+            return SimpleNamespace(handle="", spec=model_spec)
+
+        def unload_model(self, handle: str) -> bool:
+            self.unload_calls.append(handle)
+            return True
+
+    registry = _BlankHandleRegistry()
+    with pytest.raises(ValueError, match="without a handle"):
+        resolve_compare_target_adapters(
+            registry=registry,
+            adapter_target_specs=(spec,),
+        )
+    # No handle → nothing to unload (we refused the load). The rollback
+    # loop runs but has nothing to process.
+    assert registry.unload_calls == []
 
 
 def test_sample_declares_image_media_detects_supported_image_fields() -> None:

@@ -3235,6 +3235,70 @@ struct MelixCLIRunnerTests {
         #expect(command.last == "--json")
     }
 
+    @Test("eval compare forwards --target-adapter manifest paths to the subprocess argv")
+    func evalCompareForwardsAdapterTargetsToSubprocessArgv() async throws {
+        // Module 2 surface: when adapter-manifest targets are supplied via
+        // --target-adapter, the subprocess argv echoes each repeatable flag
+        // so the in-process worker can parse them into
+        // compare_target_adapter_manifest_paths.
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                [
+                  {
+                    "job_id": "eval-compare-adapter",
+                    "model_id": "melix-dev-text",
+                    "task_kind": "text-generation",
+                    "source_repo": "",
+                    "suite_id": "mmlu",
+                    "dataset_id": "",
+                    "sample_size": 2,
+                    "scoring_mode": "multiple_choice_accuracy",
+                    "status": "completed",
+                    "output_dir": "/tmp/melix/evaluation/runs/eval-compare-adapter",
+                    "created_at_unix_ms": 1712000000000,
+                    "updated_at_unix_ms": 1712000001000,
+                    "results": []
+                  }
+                ]
+                """
+            ]
+        )
+        let runner = MelixCLIRunner(
+            client: client,
+            commandExecutor: executor.run
+        )
+
+        let results = try await runner.runEvaluationCompare(
+            EvalCompareOptions(
+                modelID: "melix-dev-text",
+                targetAdapterManifestPaths: [
+                    "/tmp/melix-adapters/alpha.adapter.json",
+                    "/tmp/melix-adapters/beta.adapter.json",
+                ],
+                suites: ["mmlu"],
+                sampleSize: 2
+            )
+        )
+        let command = try #require(await executor.commands.last)
+
+        #expect(results.count == 1)
+        // Ephemeral adapter targets should NOT trigger a pre-load on the
+        // client — the worker materializes them during the compare run.
+        #expect(await client.loadedModelIDs.isEmpty)
+        // --target-adapter must appear twice, once per manifest path.
+        let adapterFlagIndices = command.enumerated().compactMap { index, value in
+            value == "--target-adapter" ? index : nil
+        }
+        #expect(adapterFlagIndices.count == 2)
+        #expect(command.contains("/tmp/melix-adapters/alpha.adapter.json"))
+        #expect(command.contains("/tmp/melix-adapters/beta.adapter.json"))
+        // No registered-model targets were requested, so --target-model-id
+        // must be absent.
+        #expect(!command.contains("--target-model-id"))
+    }
+
     @Test("process executor runs the configured subprocess with working-directory and environment overrides")
     func processExecutorRunsConfiguredSubprocess() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -4356,7 +4420,7 @@ struct MelixCLIRunnerTests {
             )
             Issue.record("Expected eval compare to fail when no target models are provided.")
         } catch let error as MelixCLIError {
-            #expect(error == .missingRequired("At least one --target-model-id is required for melix eval compare."))
+            #expect(error == .missingRequired("At least one --target-model-id or --target-adapter is required for melix eval compare."))
         }
 
         #expect(await client.loadedModelIDs.isEmpty)

@@ -209,6 +209,11 @@ class EvaluationStore:
         job: EvaluationCompareJob,
         summaries: tuple[EvaluationCompareSummary, ...],
     ) -> str:
+        # Module 2 adds two trailing columns carrying adapter lineage. New
+        # columns land at the end of the header row so downstream parsers
+        # keyed on column order preserve their existing behavior for the
+        # first 21 columns; the two new columns are empty for registered
+        # (non-adapter) targets.
         header = [
             "job_id",
             "base_model_id",
@@ -231,11 +236,18 @@ class EvaluationStore:
             "analytical_upper_bound",
             "duration_seconds",
             "created_at_unix_ms",
+            "target_adapter_manifest_path",
+            "target_adapter_set_hash",
         ]
+        # Index lineage entries by target_model_id for O(1) lookup during
+        # row emission. Targets without a lineage record (legacy jobs or
+        # registered models) get empty-string adapter columns.
+        lineage_by_target_id = {entry.target_model_id: entry for entry in job.target_lineage}
         rows = [",".join(header)]
         for summary in summaries:
             bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
             analytical_interval = summary.statistical_evidence.get("analytical", {})
+            lineage = lineage_by_target_id.get(summary.target_model_id)
             rows.append(
                 ",".join(
                     [
@@ -260,6 +272,8 @@ class EvaluationStore:
                         EvaluationStore._csv_field(str(analytical_interval.get("upper_bound", ""))),
                         EvaluationStore._csv_field(str(summary.duration_seconds)),
                         EvaluationStore._csv_field(str(job.created_at_unix_ms)),
+                        EvaluationStore._csv_field(lineage.adapter_manifest_path if lineage else ""),
+                        EvaluationStore._csv_field(lineage.adapter_set_hash if lineage else ""),
                     ]
                 )
             )
