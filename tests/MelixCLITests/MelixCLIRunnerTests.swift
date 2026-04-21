@@ -2265,15 +2265,29 @@ struct MelixCLIRunnerTests {
         #expect(header.contains("STATE"))
         #expect(header.contains("RUNTIME"))
         // Each short-form runtime tag appears exactly once on a data row.
+        // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
+        // pick each row even if another id were a superstring.
         let dataRows = lines.dropFirst()
-        #expect(dataRows.contains { $0.hasSuffix("-") && $0.contains("melix-base-text ") })
-        #expect(dataRows.contains { $0.hasSuffix("fused") })
-        #expect(dataRows.contains { $0.hasSuffix("adapter") })
-        // The three model_ids align in the first column (padded to the
-        // widest id: "melix-base-text-lora-runtime" is 28 chars).
-        let firstColumnWidth = 28
-        for row in dataRows where !row.isEmpty {
-            #expect(row.count > firstColumnWidth + 2, "row not padded as expected: \(row)")
+        let baseRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text ") && $0.hasSuffix("-") })
+        )
+        let fusedRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-fused ") && $0.hasSuffix("fused") })
+        )
+        let adapterRow = try #require(
+            dataRows.first(where: { $0.hasPrefix("melix-base-text-lora-runtime") && $0.hasSuffix("adapter") })
+        )
+        // The first column is padded to the widest model_id
+        // ("melix-base-text-lora-runtime" = 28 chars); assert the "KIND"
+        // column actually starts at the column-separator offset. A
+        // regression that dropped padding would collapse the gap.
+        let firstColumnWidth = "melix-base-text-lora-runtime".count
+        let separator = "  "
+        let kindColumnOffset = firstColumnWidth + separator.count
+        for row in [baseRow, fusedRow, adapterRow] {
+            let indexAtKindStart = row.index(row.startIndex, offsetBy: kindColumnOffset)
+            let kindPrefix = row[indexAtKindStart...].prefix(4)
+            #expect(kindPrefix == "text", "row not padded at column offset: \(row)")
         }
     }
 

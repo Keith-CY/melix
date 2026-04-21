@@ -3921,15 +3921,29 @@ public actor MelixCLIRunner {
                 ]
             }
         let allRows = [header] + dataRows
+        // allRows always has the header row so `.max()` is non-nil; we still
+        // pass a 0 fallback to satisfy the compiler without a force-unwrap.
         let widths = (0..<header.count).map { columnIndex in
             allRows.map { $0[columnIndex].count }.max() ?? 0
         }
         let formatted = allRows.map { row -> String in
             row.enumerated()
                 .map { index, cell in
-                    index == row.count - 1
-                        ? cell
-                        : cell.padding(toLength: widths[index], withPad: " ", startingAt: 0)
+                    // Grapheme-safe padding: ``String.count`` returns
+                    // grapheme-cluster count but Foundation's
+                    // ``padding(toLength:)`` operates on UTF‑16 code units,
+                    // so they disagree for any non-BMP character (emoji) or
+                    // multi-code-unit grapheme. Today every cell in this
+                    // table is ASCII, but padding with
+                    // ``String(repeating:)`` keeps the two length notions
+                    // aligned so a future non-ASCII runtime tag (or an
+                    // emoji-laden model_id) still produces correctly-aligned
+                    // columns.
+                    if index == row.count - 1 {
+                        return cell
+                    }
+                    let padding = max(0, widths[index] - cell.count)
+                    return cell + String(repeating: " ", count: padding)
                 }
                 .joined(separator: "  ")
         }

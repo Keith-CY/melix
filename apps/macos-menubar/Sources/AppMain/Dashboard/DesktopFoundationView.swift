@@ -89,6 +89,22 @@ struct DesktopDashboardTabView: View {
     }
 }
 
+/// Map a short runtime-mode badge tag to a screen-reader-friendly label so
+/// VoiceOver announces "Runtime mode: adapter-backed" rather than letting a
+/// literal "?" sentinel be spoken as "question mark" on unknown values.
+private func runtimeModeAccessibilityLabel(_ badgeText: String) -> String {
+    switch badgeText {
+    case "adapter":
+        return "Runtime mode: adapter-backed"
+    case "fused":
+        return "Runtime mode: fused derived model"
+    case "?":
+        return "Runtime mode: unrecognized"
+    default:
+        return "Runtime mode: \(badgeText)"
+    }
+}
+
 struct DesktopModelsTabView: View {
     let foundation: DesktopFoundationState
     let viewModel: RuntimeViewModel
@@ -144,7 +160,7 @@ struct DesktopModelsTabView: View {
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 3)
                                     .background(.quaternary, in: Capsule())
-                                    .accessibilityLabel("Runtime mode: \(model.runtimeModeText)")
+                                    .accessibilityLabel(runtimeModeAccessibilityLabel(model.runtimeModeText))
                             }
                         }
                         Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")

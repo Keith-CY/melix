@@ -9326,11 +9326,19 @@ private func runtimeTrainingPerformanceText(tokensPerSecond: Double, peakMemoryG
     return "\(throughputSummary) • \(peakMemorySummary)"
 }
 
-private func runtimeRuntimeModeText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+private func runtimeModeBadgeText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
     // Map the proto's free-form runtime_mode string into a short badge label
     // suitable for the menubar list. Empty for base models and legacy
     // entries; unknown values map to "?" so a future backend that populates
     // a longer value can't blow out the row's visual footprint.
+    //
+    // Cross-reference: the CLI equivalent is ``runtimeModeLabel`` in
+    // ``Sources/MelixCLICore/MelixCLI.swift``. The two functions diverge
+    // intentionally on the empty / base-model case: the CLI table renders
+    // ``"-"`` in a fixed-width column so every row has a runtime cell,
+    // while the menubar hides the badge entirely so base models render
+    // without a visual tag. Any future backend that adds a new runtime_mode
+    // string must land in both mappers for consistent operator UX.
     switch model.runtimeMode {
     case "adapter_backed_runtime":
         return "adapter"
@@ -9375,7 +9383,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         imageDefaultWorkflowRole: model.settings.ext["melix.image.default_workflow_role"] ?? "",
         imageSupportsGeneration: imageSupportsGeneration,
         imageSupportsEdit: imageSupportsEdit,
-        runtimeModeText: runtimeRuntimeModeText(model)
+        runtimeModeText: runtimeModeBadgeText(model)
     )
 }
 
