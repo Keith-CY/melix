@@ -2193,6 +2193,75 @@ struct MelixCLIRunnerTests {
         #expect(call.ext["melix.registry_roots_json"] == nil)
     }
 
+    @Test("model list surfaces runtime_mode as a first-class column in JSON and text output")
+    func modelListSurfacesRuntimeModeColumn() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"{"model_registry":{"models":[],"roots":[]}}"#
+        ))
+        // Seed a mix of base, fused, and adapter-backed models to prove the
+        // list renderer distinguishes all three via the runtime_mode column.
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "melix-base-text", kind: "text"),
+            makeModelSummary(
+                id: "melix-base-text-lora-fused",
+                kind: "text",
+                runtimeMode: "fused_derived_model",
+                activationMode: "fused_derived_model"
+            ),
+            makeModelSummary(
+                id: "melix-base-text-lora-runtime",
+                kind: "text",
+                runtimeMode: "adapter_backed_runtime",
+                activationMode: "adapter_backed_runtime"
+            ),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedServerSessionID: "",
+                serverSessions: [],
+                registryRoots: []
+            )
+        )
+
+        // JSON output: every entry carries runtime_mode, and adapter-backed
+        // entries additionally echo activation_mode for backward compat.
+        let jsonOutput = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .modelList(.init(json: true))
+        )
+        let jsonData = try #require(jsonOutput.data(using: .utf8))
+        let entries = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]])
+        let byID = Dictionary(uniqueKeysWithValues: entries.compactMap { entry -> (String, [String: Any])? in
+            guard let id = entry["model_id"] as? String else { return nil }
+            return (id, entry)
+        })
+        #expect(byID["melix-base-text"]?["runtime_mode"] as? String == "")
+        #expect(byID["melix-base-text-lora-fused"]?["runtime_mode"] as? String == "fused_derived_model")
+        #expect(byID["melix-base-text-lora-runtime"]?["runtime_mode"] as? String == "adapter_backed_runtime")
+        #expect(byID["melix-base-text-lora-runtime"]?["activation_mode"] as? String == "adapter_backed_runtime")
+        // Base models have no activation_mode in settings.ext so the field
+        // is omitted from the payload rather than blank-strung.
+        #expect(byID["melix-base-text"]?["activation_mode"] == nil)
+
+        // Text output: short-form tags ("-", "fused", "adapter") appear in
+        // the new runtime column. Header exposes the column.
+        let textOutput = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .modelList(.init(json: false))
+        )
+        #expect(textOutput.contains("model_id\tkind\tstate\truntime"))
+        #expect(textOutput.contains("melix-base-text\ttext\t") && textOutput.contains("\t-\n"))
+        #expect(textOutput.contains("\tfused\n"))
+        #expect(textOutput.contains("\tadapter\n"))
+    }
+
     @Test("model list primes configured registry roots before fetching the server snapshot")
     func modelListPrimesConfiguredRegistryRootsBeforeFetchingServerSnapshot() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -5415,11 +5484,17 @@ private func makeRuntimeSession(
 
 private func makeModelSummary(
     id: String,
-    kind: String
+    kind: String,
+    runtimeMode: String = "",
+    activationMode: String = ""
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = id
     model.kind = kind
+    model.runtimeMode = runtimeMode
+    if !activationMode.isEmpty {
+        model.settings.ext["melix.activation_mode"] = activationMode
+    }
     return model
 }
 

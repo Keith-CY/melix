@@ -7,7 +7,25 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from packages.protocol.python.worker.v1 import common_pb2
+
 from worker.productization.lora_experiment_store import LoraExperimentStore
+
+
+def _runtime_mode_from_activation(activation_mode: str) -> int:
+    """Map the manifest activation_mode string to a ``RuntimeMode`` enum int.
+
+    The on-disk manifest keeps the string as its canonical form; consumers
+    that need the typed enum derive it at read time so the JSON format stays
+    decoupled from proto wire encoding. Unknown or empty strings resolve to
+    ``RUNTIME_MODE_UNSPECIFIED`` (0).
+    """
+    normalized = (activation_mode or "").strip()
+    if normalized == "adapter_backed_runtime":
+        return int(common_pb2.RUNTIME_MODE_ADAPTER_BACKED)
+    if normalized == "fused_derived_model":
+        return int(common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL)
+    return int(common_pb2.RUNTIME_MODE_UNSPECIFIED)
 
 
 @dataclass
@@ -217,6 +235,7 @@ class ModelOpsJobRegistry:
                 "derived_model_path": str(manifest.get("derived_model_path", "")),
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_mode": str(manifest.get("activation_mode", "")),
+                "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
                 "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
             }
@@ -347,6 +366,7 @@ class ModelOpsJobRegistry:
                 "derived_model_path": str(manifest.get("derived_model_path", "")),
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "activation_mode": str(manifest.get("activation_mode", "")),
+                "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
                 "activation_backend": str(manifest.get("activation_backend", "")),
                 "activation_duration_ms": float(manifest.get("activation_duration_ms", 0.0)),
                 "adapter_manifest_path": str(manifest.get("adapter_manifest_path", "")),
@@ -426,6 +446,7 @@ class ModelOpsJobRegistry:
                     "derived_model_alias": "" if removal_applied else activation["derived_model_alias"] if activation else "",
                     "activation_job_id": "" if removal_applied else activation["job_id"] if activation else "",
                     "activation_mode": "" if removal_applied else activation["activation_mode"] if activation else "",
+                    "runtime_mode": 0 if removal_applied else (activation.get("runtime_mode", 0) if activation else 0),
                     "activation_backend": "" if removal_applied else activation["activation_backend"] if activation else "",
                     "adapter_manifest_path": activation["adapter_manifest_path"] if activation else output_path,
                     "adapter_weights_path": "" if removal_applied else activation["adapter_weights_path"] if activation else "",
@@ -539,6 +560,7 @@ class ModelOpsJobRegistry:
                     "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                     "source_model": str(manifest.get("source_model", "")),
                     "activation_mode": str(manifest.get("activation_mode", "")),
+                    "runtime_mode": _runtime_mode_from_activation(str(manifest.get("activation_mode", ""))),
                     "activation_backend": str(manifest.get("activation_backend", "")),
                     "activation_manifest_path": activation_manifest_path,
                     "published_repo": publish["target_repo"] if publish else "",

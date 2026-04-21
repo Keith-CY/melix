@@ -217,6 +217,80 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].generation_tps == 123.0
 
 
+def test_adapter_backed_contract_exposes_typed_fields_from_ext_metadata() -> None:
+    """Typed contract resolves all required fields from ext + manifest."""
+    from worker.runtime.mlx_text_runtime import (
+        AdapterBackedLoadContract,
+        _resolve_adapter_backed_contract,
+    )
+
+    model_spec = WorkerModelCatalog.dev_text_model(
+        environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"}
+    )
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix-train/train_lora.adapter.json"
+    model_spec.ext["melix.adapter_weights_path"] = "/tmp/melix-train/weights/adapters.safetensors"
+    model_spec.ext["melix.adapter_set_hash"] = "hash-1234"
+    model_spec.ext["melix.derived_from_model_id"] = "melix-dev-text"
+
+    contract = _resolve_adapter_backed_contract(model_spec)
+
+    assert isinstance(contract, AdapterBackedLoadContract)
+    assert contract.adapter_manifest_path == "/tmp/melix-train/train_lora.adapter.json"
+    assert contract.adapter_weights_path == "/tmp/melix-train/weights/adapters.safetensors"
+    assert contract.adapter_dir == str(Path("/tmp/melix-train/weights").resolve())
+    assert contract.adapter_set_hash == "hash-1234"
+    assert contract.derived_from_model_id == "melix-dev-text"
+
+
+def test_adapter_backed_contract_returns_none_for_fused_models() -> None:
+    from worker.runtime.mlx_text_runtime import _resolve_adapter_backed_contract
+
+    model_spec = WorkerModelCatalog.dev_text_model()
+    # Fused and base models produce no contract.
+    assert _resolve_adapter_backed_contract(model_spec) is None
+
+
+def test_adapter_backed_contract_honors_runtime_mode_enum_over_ext_string() -> None:
+    """Proto RuntimeMode enum is authoritative when set."""
+    from worker.runtime.mlx_text_runtime import _resolve_adapter_backed_contract
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    # Spec with the typed enum but NO ext string — contract still resolves.
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.runtime_mode = common_pb2.RUNTIME_MODE_ADAPTER_BACKED
+    model_spec.ext["melix.adapter_manifest_path"] = "/tmp/melix/manifest.json"
+    model_spec.ext["melix.adapter_weights_path"] = "/tmp/melix/weights/adapters.safetensors"
+
+    contract = _resolve_adapter_backed_contract(model_spec)
+    assert contract is not None
+    assert contract.adapter_manifest_path == "/tmp/melix/manifest.json"
+
+
+def test_adapter_backed_contract_ignores_ext_string_when_enum_says_fused() -> None:
+    """When runtime_mode is FUSED, stale ext strings don't drag us back into adapter-backed."""
+    from worker.runtime.mlx_text_runtime import _resolve_adapter_backed_contract
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.runtime_mode = common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL
+    # Stale ext values left over from an earlier run.
+    model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+
+    assert _resolve_adapter_backed_contract(model_spec) is None
+
+
+def test_adapter_backed_contract_rejects_missing_manifest_when_enum_set() -> None:
+    from worker.runtime.mlx_text_runtime import _resolve_adapter_backed_contract
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.runtime_mode = common_pb2.RUNTIME_MODE_ADAPTER_BACKED
+
+    with pytest.raises(RuntimeError, match="adapter_manifest_path"):
+        _resolve_adapter_backed_contract(model_spec)
+
+
 def test_auto_backend_loads_adapter_backed_runtime_with_adapter_path() -> None:
     seen: dict[str, object] = {}
 

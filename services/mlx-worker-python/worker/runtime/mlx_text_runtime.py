@@ -36,10 +36,89 @@ def _normalized_ext_value(model_spec, key: str) -> str:
     return str(getattr(model_spec, "ext", {}).get(key, "") or "").strip()
 
 
-def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
-    activation_mode = _normalized_ext_value(model_spec, "melix.activation_mode")
-    if activation_mode != "adapter_backed_runtime":
-        return {}
+# String constants for the ext-field activation_mode signal. Kept as the
+# backward-compatible surface — existing manifests, CLI ext overrides, and
+# external callers can keep passing these strings. The new authoritative
+# signal is the typed ``worker.v1.RuntimeMode`` enum on ``ModelSpec``; this
+# module reads the enum first and falls back to the ext string only when the
+# enum is unspecified.
+ACTIVATION_MODE_ADAPTER_BACKED = "adapter_backed_runtime"
+ACTIVATION_MODE_FUSED_DERIVED = "fused_derived_model"
+
+
+def _runtime_mode_adapter_backed_value() -> int:
+    """Return ``worker.v1.RuntimeMode.RUNTIME_MODE_ADAPTER_BACKED`` at call time.
+
+    Lazy import avoids paying a proto dependency at runtime-module load for
+    the non-LoRA inference path, and — crucially — avoids the drift hazard
+    of hardcoding the enum integer: if the proto ever renumbers the enum,
+    this function stays correct without test scaffolding.
+    """
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    return int(common_pb2.RUNTIME_MODE_ADAPTER_BACKED)
+
+
+def _runtime_mode_fused_value() -> int:
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    return int(common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL)
+
+
+@dataclass(frozen=True)
+class AdapterBackedLoadContract:
+    """Typed adapter-backed load spec resolved from a ModelSpec.
+
+    All fields are required. Callers that need adapter-backed inference get a
+    fully-validated contract or a ``RuntimeError`` describing the missing
+    piece. This is the replacement for the prior dict-of-strings return from
+    ``_resolve_adapter_backed_metadata``.
+    """
+
+    adapter_manifest_path: str
+    adapter_weights_path: str
+    adapter_dir: str
+    adapter_set_hash: str
+    derived_from_model_id: str
+
+    def to_runtime_metadata(self) -> dict[str, str]:
+        """Return the legacy flat dict shape consumed by ``load_model`` callers."""
+        return {
+            "activation_mode": ACTIVATION_MODE_ADAPTER_BACKED,
+            "adapter_manifest_path": self.adapter_manifest_path,
+            "adapter_weights_path": self.adapter_weights_path,
+            "adapter_dir": self.adapter_dir,
+            "derived_from_model_id": self.derived_from_model_id,
+            "adapter_set_hash": self.adapter_set_hash,
+        }
+
+
+def _is_adapter_backed_spec(model_spec) -> bool:
+    """Return True iff the ModelSpec declares adapter-backed runtime.
+
+    Prefers the typed ``runtime_mode`` enum when set. Falls back to the
+    legacy ``ext["melix.activation_mode"]`` string only when the enum is
+    ``RUNTIME_MODE_UNSPECIFIED`` — that is, on pre-enum payloads.
+    """
+    runtime_mode = int(getattr(model_spec, "runtime_mode", 0) or 0)
+    if runtime_mode == _runtime_mode_adapter_backed_value():
+        return True
+    if runtime_mode == _runtime_mode_fused_value():
+        return False
+    # Enum unspecified — fall back to the ext string.
+    return _normalized_ext_value(model_spec, "melix.activation_mode") == ACTIVATION_MODE_ADAPTER_BACKED
+
+
+def _resolve_adapter_backed_contract(model_spec) -> AdapterBackedLoadContract | None:
+    """Build a validated ``AdapterBackedLoadContract`` from the ModelSpec.
+
+    Returns ``None`` when the spec is NOT adapter-backed (fused or base
+    models). Raises ``RuntimeError`` when the spec declares adapter-backed
+    mode but is missing required metadata — the error is treated as a hard
+    contract violation rather than a silent fallback to base-only load.
+    """
+    if not _is_adapter_backed_spec(model_spec):
+        return None
 
     adapter_manifest_path = _normalized_ext_value(model_spec, "melix.adapter_manifest_path")
     if not adapter_manifest_path:
@@ -63,14 +142,26 @@ def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
         )
 
     adapter_dir = Path(adapter_weights_path).expanduser().resolve().parent
-    return {
-        "activation_mode": activation_mode,
-        "adapter_manifest_path": adapter_manifest_path,
-        "adapter_weights_path": adapter_weights_path,
-        "adapter_dir": str(adapter_dir),
-        "derived_from_model_id": _normalized_ext_value(model_spec, "melix.derived_from_model_id"),
-        "adapter_set_hash": _normalized_ext_value(model_spec, "melix.adapter_set_hash"),
-    }
+    return AdapterBackedLoadContract(
+        adapter_manifest_path=adapter_manifest_path,
+        adapter_weights_path=adapter_weights_path,
+        adapter_dir=str(adapter_dir),
+        adapter_set_hash=_normalized_ext_value(model_spec, "melix.adapter_set_hash"),
+        derived_from_model_id=_normalized_ext_value(model_spec, "melix.derived_from_model_id"),
+    )
+
+
+def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
+    """Legacy flat-dict surface kept for backward compatibility.
+
+    New callers should prefer ``_resolve_adapter_backed_contract`` to get
+    typed fields; this wrapper returns ``{}`` for non-adapter-backed specs
+    and the legacy dict shape otherwise.
+    """
+    contract = _resolve_adapter_backed_contract(model_spec)
+    if contract is None:
+        return {}
+    return contract.to_runtime_metadata()
 
 
 class AutoMLXBackend:

@@ -3881,6 +3881,25 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func runtimeModeLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+        // Render the runtime_mode field as a short tag for the list column:
+        // "adapter" for adapter-backed, "fused" for fused derived, "-" when
+        // the field isn't populated (base models and legacy entries). Unknown
+        // values fall through to a bounded-width sentinel ("?") so a future
+        // backend that populates a longer string cannot blow out the
+        // tab-column width that downstream tooling relies on.
+        switch model.runtimeMode {
+        case "adapter_backed_runtime":
+            return "adapter"
+        case "fused_derived_model":
+            return "fused"
+        case "":
+            return "-"
+        default:
+            return "?"
+        }
+    }
+
     private func renderModelList(_ models: [Melix_Controlplane_V1_ModelSummary]) -> String {
         guard models.isEmpty == false else {
             return "No models found.\n"
@@ -3888,13 +3907,13 @@ public actor MelixCLIRunner {
         let rows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
-                "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))"
+                "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))"
             }
-        return (["model_id\tkind\tstate"] + rows).joined(separator: "\n") + "\n"
+        return (["model_id\tkind\tstate\truntime"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
-        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\n"
+        "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\n"
     }
 
     private func renderModelInfo(_ info: Melix_Controlplane_V1_ModelInfo, modelID: String) -> String {
@@ -3949,12 +3968,31 @@ public actor MelixCLIRunner {
     }
 
     private func makeModelSummaryPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
-        [
+        var payload: [String: Any] = [
             "model_id": model.modelID,
             "kind": model.kind,
             "state": modelStateLabel(model.state),
             "features": model.features,
+            // runtime_mode — "base", "fused_derived_model",
+            // "adapter_backed_runtime", or "" when the backend didn't set
+            // the field. Module 1 promotes this from ext[melix.activation_mode]
+            // into a first-class summary field so operators see at a glance
+            // whether a loaded model is fused or adapter-backed.
+            "runtime_mode": model.runtimeMode,
         ]
+        let activationMode = model.settings.ext["melix.activation_mode"] ?? ""
+        if !activationMode.isEmpty {
+            payload["activation_mode"] = activationMode
+        }
+        let adapterManifestPath = model.settings.ext["melix.adapter_manifest_path"] ?? ""
+        if !adapterManifestPath.isEmpty {
+            payload["adapter_manifest_path"] = adapterManifestPath
+        }
+        let adapterWeightsPath = model.settings.ext["melix.adapter_weights_path"] ?? ""
+        if !adapterWeightsPath.isEmpty {
+            payload["adapter_weights_path"] = adapterWeightsPath
+        }
+        return payload
     }
 
     private func makeModelListPayload(_ models: [Melix_Controlplane_V1_ModelSummary]) -> [[String: Any]] {

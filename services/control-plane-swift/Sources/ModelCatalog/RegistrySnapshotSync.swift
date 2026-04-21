@@ -333,6 +333,21 @@ enum RegistrySnapshotSync {
         model.routeClass = routeClass(routeKind: metadata["melix.capability.route_kind"], kind: model.kind)
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
+        // Mirror the activation mode onto the ModelSummary.runtime_mode
+        // field so operator surfaces (CLI, menubar) see the authoritative
+        // serving mode without re-parsing ext strings.
+        //
+        // Precedence contract (see also ControlPlaneService.execute for
+        // the freshly-activated path): snapshot sync is the authoritative
+        // writer on control-plane startup and whenever the worker
+        // re-materializes its registry from `jobs_root`. During an active
+        // session, ControlPlaneService.execute overwrites the summary with
+        // the freshly-activated payload when an activate_adapter RPC
+        // completes. Both sides read `melix.activation_mode` from the
+        // manifest → ModelSpec.ext, so they agree by construction.
+        if let activationMode = metadata["melix.activation_mode"], !activationMode.isEmpty {
+            model.runtimeMode = activationMode
+        }
         return model
     }
 

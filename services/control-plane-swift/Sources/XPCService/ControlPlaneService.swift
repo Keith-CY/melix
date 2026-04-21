@@ -3323,6 +3323,14 @@ public actor ControlPlaneService {
         model.settings.ext["melix.derived_from_model_id"] = sourceModelID
         model.settings.ext["melix.derived_from_model_revision"] = (payload["source_model_revision"] as? String) ?? ""
         model.settings.ext["melix.activation_mode"] = activationMode
+        // Mirror the typed RuntimeMode onto the operator-facing ModelSummary
+        // string field so CLI `models list` and `models show` can render the
+        // authoritative serving mode without re-parsing ext strings. See
+        // RegistrySnapshotSync for the corresponding startup/restore path;
+        // both sides read the same `melix.activation_mode` signal, so they
+        // agree by construction — this writer is authoritative during the
+        // active session as an activate_adapter RPC completes.
+        model.runtimeMode = activationMode
         if let adapterSetHash = payload["adapter_set_hash"] as? String, !adapterSetHash.isEmpty {
             model.settings.ext["melix.adapter_set_hash"] = adapterSetHash
         }

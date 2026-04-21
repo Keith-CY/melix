@@ -1598,6 +1598,10 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.derived_model_alias"] == "melix-qwen35-acceptance")
         #expect(derived.settings.ext["melix.adapter_set_hash"] == "acbb330795d89f65")
         #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
+        // Module 1 promotes the activation mode onto ModelSummary.runtime_mode
+        // so CLI models list + show can render the serving mode as a
+        // first-class summary field rather than digging through ext strings.
+        #expect(derived.runtimeMode == "adapter_backed_runtime")
         #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-adapters/train_lora.adapter.json")
         #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-adapters/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_from_model_revision"] == "registry")
@@ -3220,6 +3224,10 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.ext["melix.adapter_set_hash"] == "adapter-alpha")
         #expect(derived.settings.ext["melix.derived_from_adapter"] == "true")
         #expect(derived.settings.ext["melix.derived_from_model_id"] == "melix-dev-text")
+        // Fused derived models surface as runtime_mode="fused_derived_model"
+        // on the ModelSummary so CLI listings distinguish them from
+        // adapter-backed derived models at a glance.
+        #expect(derived.runtimeMode == "fused_derived_model")
     }
 
     @Test("execute registers adapter-backed derived models into the catalog with compatibility routing")
@@ -3279,6 +3287,7 @@ struct ControlPlaneServiceTests {
         #expect(derived.settings.alias == "Runtime Alias")
         #expect(derived.settings.ext["melix.model_path"] == "models/dev-text")
         #expect(derived.settings.ext["melix.activation_mode"] == "adapter_backed_runtime")
+        #expect(derived.runtimeMode == "adapter_backed_runtime")
         #expect(derived.settings.ext["melix.adapter_manifest_path"] == "/tmp/melix-train/train_lora.adapter.json")
         #expect(derived.settings.ext["melix.adapter_weights_path"] == "/tmp/melix-train/weights/adapters.safetensors")
         #expect(derived.settings.ext["melix.derived_model_alias"] == "Runtime Alias")
