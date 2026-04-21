@@ -109,9 +109,11 @@ def test_adapter_activation_pipeline_emits_explicit_adapter_backed_runtime_load_
     )
 
     assert result.manifest["activation_mode"] == "adapter_backed_runtime"
-    # Typed RuntimeMode enum is written alongside the ext-string for every
-    # activation — ``RUNTIME_MODE_ADAPTER_BACKED = 2`` per common.proto.
-    assert result.manifest["runtime_mode"] == 2
+    # The manifest schema keeps ``activation_mode`` as the on-disk
+    # authoritative signal; consumers derive the typed RuntimeMode enum at
+    # registration time so the JSON format stays decoupled from proto wire
+    # encoding. No "runtime_mode" int is written to disk.
+    assert "runtime_mode" not in result.manifest
     assert result.manifest["adapter_manifest_path"] == str(manifest_path)
     assert result.manifest["adapter_weights_path"] == str(weights_dir / "adapters.safetensors")
     assert result.manifest["source_model_kind"] == "text"

@@ -115,17 +115,11 @@ class AdapterActivationPipeline:
             if activation_mode == "adapter_backed_runtime"
             else str(derived_model_dir)
         )
-        runtime_mode_enum = (
-            common_pb2.RUNTIME_MODE_ADAPTER_BACKED
-            if activation_mode == "adapter_backed_runtime"
-            else common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL
-        )
         manifest = {
             "schema_version": "melix.derived_text_model.v1",
             "job_id": job_id,
             "operation": "activate_adapter",
             "activation_mode": activation_mode,
-            "runtime_mode": int(runtime_mode_enum),
             "activation_backend": execution_backend,
             "source_model": source_model.model_id,
             "source_model_revision": source_model.revision,

@@ -236,7 +236,6 @@ def test_adapter_backed_contract_exposes_typed_fields_from_ext_metadata() -> Non
     contract = _resolve_adapter_backed_contract(model_spec)
 
     assert isinstance(contract, AdapterBackedLoadContract)
-    assert contract.base_model_path == "mlx-community/test-model"
     assert contract.adapter_manifest_path == "/tmp/melix-train/train_lora.adapter.json"
     assert contract.adapter_weights_path == "/tmp/melix-train/weights/adapters.safetensors"
     assert contract.adapter_dir == str(Path("/tmp/melix-train/weights").resolve())

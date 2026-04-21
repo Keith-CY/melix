@@ -3884,7 +3884,10 @@ public actor MelixCLIRunner {
     private func runtimeModeLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
         // Render the runtime_mode field as a short tag for the list column:
         // "adapter" for adapter-backed, "fused" for fused derived, "-" when
-        // the field isn't populated (base models and legacy entries).
+        // the field isn't populated (base models and legacy entries). Unknown
+        // values fall through to a bounded-width sentinel ("?") so a future
+        // backend that populates a longer string cannot blow out the
+        // tab-column width that downstream tooling relies on.
         switch model.runtimeMode {
         case "adapter_backed_runtime":
             return "adapter"
@@ -3893,7 +3896,7 @@ public actor MelixCLIRunner {
         case "":
             return "-"
         default:
-            return model.runtimeMode
+            return "?"
         }
     }
 

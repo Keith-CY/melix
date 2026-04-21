@@ -45,13 +45,24 @@ def _normalized_ext_value(model_spec, key: str) -> str:
 ACTIVATION_MODE_ADAPTER_BACKED = "adapter_backed_runtime"
 ACTIVATION_MODE_FUSED_DERIVED = "fused_derived_model"
 
-# Proto enum values for ``worker.v1.RuntimeMode``. Hardcoded here to avoid
-# importing the generated pb2 at module load time (keeps the runtime module
-# light for non-LoRA inference paths). The values match the proto definition
-# and the test suite pins them.
-_RUNTIME_MODE_UNSPECIFIED = 0
-_RUNTIME_MODE_FUSED_DERIVED_MODEL = 1
-_RUNTIME_MODE_ADAPTER_BACKED = 2
+
+def _runtime_mode_adapter_backed_value() -> int:
+    """Return ``worker.v1.RuntimeMode.RUNTIME_MODE_ADAPTER_BACKED`` at call time.
+
+    Lazy import avoids paying a proto dependency at runtime-module load for
+    the non-LoRA inference path, and — crucially — avoids the drift hazard
+    of hardcoding the enum integer: if the proto ever renumbers the enum,
+    this function stays correct without test scaffolding.
+    """
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    return int(common_pb2.RUNTIME_MODE_ADAPTER_BACKED)
+
+
+def _runtime_mode_fused_value() -> int:
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    return int(common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL)
 
 
 @dataclass(frozen=True)
@@ -64,7 +75,6 @@ class AdapterBackedLoadContract:
     ``_resolve_adapter_backed_metadata``.
     """
 
-    base_model_path: str
     adapter_manifest_path: str
     adapter_weights_path: str
     adapter_dir: str
@@ -88,12 +98,12 @@ def _is_adapter_backed_spec(model_spec) -> bool:
 
     Prefers the typed ``runtime_mode`` enum when set. Falls back to the
     legacy ``ext["melix.activation_mode"]`` string only when the enum is
-    ``RUNTIME_MODE_UNSPECIFIED`` (= 0) — that is, on pre-enum payloads.
+    ``RUNTIME_MODE_UNSPECIFIED`` — that is, on pre-enum payloads.
     """
     runtime_mode = int(getattr(model_spec, "runtime_mode", 0) or 0)
-    if runtime_mode == _RUNTIME_MODE_ADAPTER_BACKED:
+    if runtime_mode == _runtime_mode_adapter_backed_value():
         return True
-    if runtime_mode == _RUNTIME_MODE_FUSED_DERIVED_MODEL:
+    if runtime_mode == _runtime_mode_fused_value():
         return False
     # Enum unspecified — fall back to the ext string.
     return _normalized_ext_value(model_spec, "melix.activation_mode") == ACTIVATION_MODE_ADAPTER_BACKED
@@ -133,7 +143,6 @@ def _resolve_adapter_backed_contract(model_spec) -> AdapterBackedLoadContract | 
 
     adapter_dir = Path(adapter_weights_path).expanduser().resolve().parent
     return AdapterBackedLoadContract(
-        base_model_path=str(getattr(model_spec, "model_path", "") or ""),
         adapter_manifest_path=adapter_manifest_path,
         adapter_weights_path=adapter_weights_path,
         adapter_dir=str(adapter_dir),
