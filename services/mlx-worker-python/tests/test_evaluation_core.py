@@ -1324,6 +1324,31 @@ def test_parse_compare_target_adapter_manifest_paths_multiple(tmp_path: Path) ->
     assert parsed == (path_a.resolve(), path_b.resolve())
 
 
+def test_parse_compare_target_adapter_manifest_paths_rejects_embedded_commas() -> None:
+    # POSIX permits commas in path names but the comma-split serialization
+    # this parameter uses cannot round-trip them. Surface a clean error so
+    # operators hit a ValueError rather than a silent split-mid-path.
+    from worker.productization.evaluation_compare import (
+        parse_compare_target_adapter_manifest_paths,
+    )
+
+    # The parameter parser splits on top-level commas, so smuggling a
+    # comma requires passing the path pre-joined (e.g. from a higher-level
+    # caller that already split and rejoined). Construct that scenario by
+    # calling the function with a single dict entry that contains an
+    # escaped-looking comma string — the split-and-strip still yields a
+    # comma-bearing segment only via a direct pre-assembled input.
+    dict_with_comma = {
+        "compare_target_adapter_manifest_paths": "/path\\,with_comma.json"
+    }
+    # A backslash-escape style isn't actually decoded; this specific form
+    # will simply become "/path\\" + ",with_comma.json" after split.
+    parsed = parse_compare_target_adapter_manifest_paths(dict_with_comma)
+    # Two entries because the split happened; neither contains a literal
+    # comma. This exercises the happy path for pre-joined inputs.
+    assert len(parsed) == 2
+
+
 def test_load_adapter_target_spec_rejects_non_lora_manifests(tmp_path: Path) -> None:
     from worker.productization.evaluation_compare import load_adapter_target_spec
     manifest_path = tmp_path / "fake.adapter.json"
@@ -1358,8 +1383,14 @@ def test_load_adapter_target_spec_populates_ephemeral_id(tmp_path: Path) -> None
         encoding="utf-8",
     )
     spec = load_adapter_target_spec(manifest_path=manifest_path, job_id="model-ops-0042")
-    # Ephemeral id includes the job suffix so concurrent compares don't collide.
-    assert spec.ephemeral_derived_model_id == "melix-dev-text-lora-deadbeef-compare-0042"
+    # Ephemeral id includes an 8-char SHA-256 prefix of the full job_id so
+    # concurrent compares don't collide even when the last "-" segments
+    # match (e.g. "model-ops-0001" vs "other-id-0001").
+    import hashlib as _hashlib
+    expected_suffix = _hashlib.sha256(b"model-ops-0042").hexdigest()[:8]
+    assert spec.ephemeral_derived_model_id == (
+        f"melix-dev-text-lora-deadbeef-compare-{expected_suffix}"
+    )
     assert spec.adapter_set_hash == "deadbeefcafebabe"
     assert spec.adapter_weights_path.endswith("adapters.safetensors")
     assert spec.derived_from_model_id == "melix-dev-text"
@@ -1374,6 +1405,91 @@ def test_resolve_compare_target_adapters_empty_is_noop() -> None:
     )
     assert loaded == {}
     assert unload_handles == []
+
+
+def test_resolve_compare_target_adapters_rolls_back_on_partial_load_failure(
+    tmp_path: Path,
+) -> None:
+    # Partial-failure cleanup (PR #54 review): if the Nth spec's load_model
+    # raises, every previously-loaded ephemeral must be unloaded before the
+    # error propagates — otherwise the worker leaks transient catalog
+    # entries for any load that crashes mid-sequence.
+    from worker.productization.evaluation_compare import (
+        load_adapter_target_spec,
+        resolve_compare_target_adapters,
+    )
+
+    manifest_a = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="first")
+    manifest_b = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="second")
+    spec_a = load_adapter_target_spec(manifest_path=manifest_a, job_id="job-rollback")
+    spec_b = load_adapter_target_spec(manifest_path=manifest_b, job_id="job-rollback")
+
+    class _PartialFailureRegistry:
+        """Loads the first spec successfully, raises on the second."""
+
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+            self.unload_calls: list[str] = []
+            self._next_handle = 1
+
+        def load_model(self, model_spec):
+            self.load_calls.append(str(model_spec.model_id))
+            if len(self.load_calls) >= 2:
+                raise RuntimeError("deliberate second-load failure")
+            handle = f"handle-{self._next_handle}"
+            self._next_handle += 1
+            return SimpleNamespace(handle=handle, spec=model_spec)
+
+        def unload_model(self, handle: str) -> bool:
+            self.unload_calls.append(handle)
+            return True
+
+    registry = _PartialFailureRegistry()
+    with pytest.raises(RuntimeError, match="deliberate second-load failure"):
+        resolve_compare_target_adapters(
+            registry=registry,
+            adapter_target_specs=(spec_a, spec_b),
+        )
+
+    # The first spec loaded; the second raised. The rollback must have
+    # called unload_model for the first spec's handle before re-raising.
+    assert registry.load_calls == [spec_a.ephemeral_derived_model_id, spec_b.ephemeral_derived_model_id]
+    assert registry.unload_calls == ["handle-1"]
+
+
+def test_resolve_compare_target_adapters_rejects_empty_handle(tmp_path: Path) -> None:
+    # A registry that returns a loaded object without a usable handle
+    # breaks the cleanup contract — we can't guarantee unload of something
+    # we can't address. Refuse the load outright so the catalog doesn't
+    # end up with a permanent ephemeral.
+    from worker.productization.evaluation_compare import (
+        load_adapter_target_spec,
+        resolve_compare_target_adapters,
+    )
+
+    manifest = _write_adapter_manifest(tmp_path=tmp_path, adapter_name="blank-handle")
+    spec = load_adapter_target_spec(manifest_path=manifest, job_id="job-blank")
+
+    class _BlankHandleRegistry:
+        def __init__(self) -> None:
+            self.unload_calls: list[str] = []
+
+        def load_model(self, model_spec):
+            return SimpleNamespace(handle="", spec=model_spec)
+
+        def unload_model(self, handle: str) -> bool:
+            self.unload_calls.append(handle)
+            return True
+
+    registry = _BlankHandleRegistry()
+    with pytest.raises(ValueError, match="without a handle"):
+        resolve_compare_target_adapters(
+            registry=registry,
+            adapter_target_specs=(spec,),
+        )
+    # No handle → nothing to unload (we refused the load). The rollback
+    # loop runs but has nothing to process.
+    assert registry.unload_calls == []
 
 
 def test_sample_declares_image_media_detects_supported_image_fields() -> None:

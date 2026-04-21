@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,8 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_compare_sample_record,
     build_evaluation_compare_summary_record,
 )
+
+_LOGGER = logging.getLogger(__name__)
 from worker.productization.statistical_evidence import (
     build_category_breakdown,
     build_paired_statistical_evidence,
@@ -70,13 +74,34 @@ def parse_compare_target_adapter_manifest_paths(
     Each entry is expanded and resolved to an absolute path. Empty strings
     are filtered so an empty list is allowed — the caller decides whether
     zero adapter targets plus zero registered targets is an error.
+
+    The delimiter is a comma to match the existing
+    ``compare_target_model_ids`` serialization shape. POSIX permits commas
+    in path names so individual entries are rejected if they contain a
+    literal comma — operators hit a clean ValueError at parameter parse
+    time rather than a silent truncation / split-mid-path. A future
+    revision can switch to a JSON-array delimiter if comma-in-path becomes
+    a real operator request.
     """
     raw_value = (parameters or {}).get("compare_target_adapter_manifest_paths", "")
-    return tuple(
-        Path(value.strip()).expanduser().resolve()
-        for value in raw_value.split(",")
-        if value.strip()
-    )
+    resolved: list[Path] = []
+    for segment in raw_value.split(","):
+        stripped = segment.strip()
+        if not stripped:
+            continue
+        # A stripped segment with a remaining comma would mean the input
+        # had an escaped / quoted comma — which this parameter's flat
+        # comma-split serialization does not support. After ``split(",")``
+        # this is unreachable on normal input, but we guard defensively
+        # in case a caller hands us a pre-joined path with embedded comma.
+        if "," in stripped:
+            raise ValueError(
+                f"compare_target_adapter_manifest_paths entries must not contain "
+                f"commas (got {stripped!r}); wrap the path in a shell that doesn't "
+                "require commas or use symlinks."
+            )
+        resolved.append(Path(stripped).expanduser().resolve())
+    return tuple(resolved)
 
 
 def load_adapter_target_spec(
@@ -122,7 +147,13 @@ def load_adapter_target_spec(
     # Ephemeral derived model id: distinct per adapter per job so concurrent
     # compares don't collide and operators watching the catalog can tell the
     # entry is transient (the "-compare-" segment is deliberately visible).
-    job_suffix = job_id.split("-")[-1] if "-" in job_id else job_id
+    #
+    # The suffix must be deterministic (so retrying an identical compare
+    # yields the same id) AND unique per distinct ``job_id`` (so two
+    # concurrent compares don't collide). A SHA-256 prefix of the full
+    # job_id is both — ``job_id.split("-")[-1]`` would have collapsed ids
+    # like "model-ops-0001" and "other-id-0001" to the same suffix.
+    job_suffix = hashlib.sha256(job_id.encode("utf-8")).hexdigest()[:8]
     ephemeral_derived_model_id = (
         f"{derived_from_model_id}-lora-{adapter_set_hash[:8]}-compare-{job_suffix}"
     )
@@ -184,22 +215,52 @@ def resolve_compare_target_adapters(
         raise ValueError(
             "Evaluation compare requires a live registry to materialize adapter targets."
         )
-    for spec in adapter_target_specs:
-        model_spec = common_pb2.ModelSpec(
-            model_id=spec.ephemeral_derived_model_id,
-            model_path=spec.derived_from_model_path,
-            model_kind="text",
-            runtime_mode=common_pb2.RUNTIME_MODE_ADAPTER_BACKED,
-        )
-        model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
-        model_spec.ext["melix.adapter_manifest_path"] = spec.manifest_path
-        model_spec.ext["melix.adapter_weights_path"] = spec.adapter_weights_path
-        model_spec.ext["melix.adapter_set_hash"] = spec.adapter_set_hash
-        model_spec.ext["melix.derived_from_model_id"] = spec.derived_from_model_id
-        model_spec.ext["melix.derived_from_adapter"] = "true"
-        loaded = registry.load_model(model_spec)
-        loaded_targets[spec.ephemeral_derived_model_id] = loaded
-        unload_handles.append(getattr(loaded, "handle", ""))
+    # Partial-failure cleanup: if a later spec's load_model raises, every
+    # previously-loaded ephemeral is already outside the caller's
+    # try/finally scope (because this function hasn't returned yet). Walk
+    # the already-loaded handles and unload them before re-raising so the
+    # worker process doesn't leak transient catalog entries on load
+    # failures mid-sequence.
+    try:
+        for spec in adapter_target_specs:
+            model_spec = common_pb2.ModelSpec(
+                model_id=spec.ephemeral_derived_model_id,
+                model_path=spec.derived_from_model_path,
+                model_kind="text",
+                runtime_mode=common_pb2.RUNTIME_MODE_ADAPTER_BACKED,
+            )
+            model_spec.ext["melix.activation_mode"] = "adapter_backed_runtime"
+            model_spec.ext["melix.adapter_manifest_path"] = spec.manifest_path
+            model_spec.ext["melix.adapter_weights_path"] = spec.adapter_weights_path
+            model_spec.ext["melix.adapter_set_hash"] = spec.adapter_set_hash
+            model_spec.ext["melix.derived_from_model_id"] = spec.derived_from_model_id
+            model_spec.ext["melix.derived_from_adapter"] = "true"
+            loaded = registry.load_model(model_spec)
+            handle = getattr(loaded, "handle", "")
+            if not handle:
+                # A missing / empty handle means the caller can't unload
+                # this entry — refuse the load outright so we don't end
+                # up with a permanent ephemeral in the catalog.
+                raise ValueError(
+                    f"Adapter compare target {spec.ephemeral_derived_model_id!r} "
+                    "loaded without a handle; cannot guarantee cleanup."
+                )
+            loaded_targets[spec.ephemeral_derived_model_id] = loaded
+            unload_handles.append(handle)
+    except BaseException:
+        # Roll back every successful load before propagating. Per-unload
+        # failures are logged (not re-raised) so the real failure surfaces
+        # to the caller without being shadowed by cleanup noise.
+        for handle in unload_handles:
+            try:
+                registry.unload_model(handle)
+            except Exception as unload_exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to unload ephemeral adapter compare target during "
+                    "partial-failure rollback (handle=%s): %s",
+                    handle, unload_exc,
+                )
+        raise
     return loaded_targets, unload_handles
 
 

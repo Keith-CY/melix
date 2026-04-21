@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -11,6 +12,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from packages.protocol.python.worker.v1 import common_pb2
+
+_logger = logging.getLogger(__name__)
 from worker.engine.code_eval_runner import (
     extract_candidate_code,
     is_code_execution_policy_supported,
@@ -40,6 +43,7 @@ from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
     EvaluationCompareSample,
     EvaluationCompareSummary,
+    EvaluationCompareTargetLineage,
     EvaluationJob,
     EvaluationResult,
     EvaluationSample,
@@ -508,16 +512,25 @@ class EvaluationCore:
                 ephemeral_targets=ephemeral_targets,
             )
         finally:
+            # Unload every ephemeral adapter target the resolver handed us.
+            # ``resolve_compare_target_adapters`` refuses to return an empty
+            # handle (raises at load time instead), so every entry in
+            # ``ephemeral_unload_handles`` is expected to be a non-empty
+            # registry handle. Unload is best-effort: per-handle failures
+            # are logged so operators have visibility without shadowing
+            # the real compare error (if any) that surfaces from the try
+            # block.
             for handle in ephemeral_unload_handles:
-                if handle and self._registry is not None:
-                    try:
-                        self._registry.unload_model(handle)
-                    except Exception:  # noqa: BLE001 - best-effort cleanup
-                        # Unload is a best-effort cleanup — if a registry
-                        # implementation raises on unknown handles or similar,
-                        # we don't want the compare's real error (if any) to
-                        # be shadowed by a finally exception.
-                        pass
+                if self._registry is None:
+                    continue
+                try:
+                    self._registry.unload_model(handle)
+                except Exception as unload_exc:  # noqa: BLE001
+                    _logger.warning(
+                        "Failed to unload ephemeral adapter compare target "
+                        "(handle=%s): %s",
+                        handle, unload_exc,
+                    )
 
     def _execute_compare_suite(
         self,
@@ -656,7 +669,6 @@ class EvaluationCore:
         # adapter produced which target column. Registered targets flow
         # through with empty adapter fields; adapter targets record the
         # full provenance.
-        from worker.productization.evaluation_schemas import EvaluationCompareTargetLineage
         target_lineage_entries: list[EvaluationCompareTargetLineage] = [
             EvaluationCompareTargetLineage(
                 target_model_id=target_model_id,

@@ -28,6 +28,6 @@ def test_phase8_lora_cli_smoke_exercises_positive_and_negative_acceptance_paths(
     negative = payload["negative"]
     assert negative["train_missing_adapter_name"] == "--adapter-name is required for melix lora train."
     assert negative["activate_missing_adapter_path"] == "--adapter-path is required for melix lora activate."
-    assert negative["compare_missing_target"] == "At least one --target-model-id is required for melix eval compare."
+    assert negative["compare_missing_target"] == "At least one --target-model-id or --target-adapter is required for melix eval compare."
     assert negative["export_missing_job"] == "No evaluation rows were found for job eval-missing."
     assert negative["remove_missing_target"] == "Either --derived-model-id or --manifest-path is required for melix lora remove-derived."
