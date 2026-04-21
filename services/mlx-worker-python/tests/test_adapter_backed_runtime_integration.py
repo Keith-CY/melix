@@ -211,9 +211,14 @@ def test_adapter_backed_runtime_end_to_end(tmp_path: Path) -> None:
     )
 
     assert manifest["activation_mode"] == "adapter_backed_runtime"
-    assert manifest["runtime_mode"] == int(common_pb2.RUNTIME_MODE_ADAPTER_BACKED)
+    # The manifest keeps ``activation_mode`` string as the on-disk
+    # authoritative signal — consumers derive the typed RuntimeMode enum at
+    # read time. The enum propagation is asserted below after
+    # ``_build_derived_spec`` promotes the string into the typed field.
+    assert "runtime_mode" not in manifest
 
     derived_spec = _build_derived_spec(source_model, manifest)
+    assert derived_spec.runtime_mode == common_pb2.RUNTIME_MODE_ADAPTER_BACKED
     backend = AutoMLXBackend()
     loaded = backend.load_model(derived_spec)
 
