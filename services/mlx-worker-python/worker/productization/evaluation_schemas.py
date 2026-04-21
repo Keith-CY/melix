@@ -216,6 +216,36 @@ class EvaluationSample:
 
 
 @dataclass(frozen=True)
+class EvaluationCompareTargetLineage:
+    """Module 2 — per-target provenance for compare jobs.
+
+    Records how each compare target came into being so downstream exports
+    preserve which adapter produced which target column. ``materialization_kind``
+    is ``"registered"`` for traditional pre-loaded model_id targets (where
+    the adapter fields stay empty) or ``"ephemeral_adapter"`` for targets
+    materialized on-demand from a ``melix.lora_adapter_package.v1`` manifest
+    during the compare run.
+    """
+
+    target_model_id: str
+    materialization_kind: str
+    adapter_manifest_path: str = ""
+    adapter_weights_path: str = ""
+    adapter_set_hash: str = ""
+    derived_from_model_id: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "target_model_id": self.target_model_id,
+            "materialization_kind": self.materialization_kind,
+            "adapter_manifest_path": self.adapter_manifest_path,
+            "adapter_weights_path": self.adapter_weights_path,
+            "adapter_set_hash": self.adapter_set_hash,
+            "derived_from_model_id": self.derived_from_model_id,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationCompareJob:
     schema_version: str
     job_id: str
@@ -232,6 +262,10 @@ class EvaluationCompareJob:
     output_dir: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    # Module 2 — optional per-target lineage. Empty tuple for legacy jobs
+    # that pre-date the adapter-native compare surface; ``to_dict``/``from_dict``
+    # handle that as a clean default.
+    target_lineage: tuple[EvaluationCompareTargetLineage, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -250,6 +284,7 @@ class EvaluationCompareJob:
             "output_dir": self.output_dir,
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
+            "target_lineage": [entry.to_dict() for entry in self.target_lineage],
         }
 
 
@@ -609,6 +644,7 @@ def build_evaluation_compare_job_record(
     output_dir: str = "",
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    target_lineage: tuple[EvaluationCompareTargetLineage, ...] = (),
 ) -> EvaluationCompareJob:
     return EvaluationCompareJob(
         schema_version=_EVALUATION_COMPARE_JOB_SCHEMA_VERSION,
@@ -626,6 +662,7 @@ def build_evaluation_compare_job_record(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        target_lineage=tuple(target_lineage),
     )
 
 

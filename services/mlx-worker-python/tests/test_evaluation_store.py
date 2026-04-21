@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from worker.productization.evaluation_schemas import (
+    EvaluationCompareTargetLineage,
     build_evaluation_compare_job_record,
     build_evaluation_compare_sample_record,
     build_evaluation_compare_summary_record,
@@ -371,7 +372,7 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
     )
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == compare_sample.to_dict()
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
-        "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n"
+        "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms,target_adapter_manifest_path,target_adapter_set_hash\n"
     )
     assert persisted["report_markdown"].read_text(encoding="utf-8").startswith("# Melix Evaluation Compare\n")
     report_markdown = persisted["report_markdown"].read_text(encoding="utf-8")
@@ -515,3 +516,170 @@ def test_persist_compare_result_preserves_code_execution_evidence(tmp_path: Path
     assert sample_payload["base_code_test_status"] == "failed"
     assert sample_payload["target_code_test_status"] == "passed"
     assert sample_payload["base_code_failure_detail"] == "AssertionError"
+
+
+def test_compare_job_persists_adapter_target_lineage(tmp_path: Path) -> None:
+    # Module 2 — a compare job mixing a registered target with an adapter
+    # target persists per-target lineage so downstream consumers know
+    # which adapter produced which target column.
+    store = EvaluationStore()
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-compare-adapter"
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-adapter",
+        base_model_id="melix-dev-text",
+        target_model_ids=(
+            "melix-dev-text-lora-registered",
+            "melix-dev-text-lora-abcd1234-compare-0042",
+        ),
+        task_kind="text-generation",
+        source_repo="mmlu",
+        suite_id="mmlu",
+        dataset_id="mmlu.dev.v1",
+        sample_size=2,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={
+            "compare_mode": "base_vs_targets",
+            "compare_target_model_ids": "melix-dev-text-lora-registered",
+            "compare_target_adapter_manifest_paths": "/tmp/melix-adapters/demo.adapter.json",
+        },
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=1000,
+        updated_at_unix_ms=2000,
+        target_lineage=(
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-registered",
+                materialization_kind="registered",
+            ),
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-abcd1234-compare-0042",
+                materialization_kind="ephemeral_adapter",
+                adapter_manifest_path="/tmp/melix-adapters/demo.adapter.json",
+                adapter_weights_path="/tmp/melix-adapters/weights/adapters.safetensors",
+                adapter_set_hash="abcd1234efg5678",
+                derived_from_model_id="melix-dev-text",
+            ),
+        ),
+    )
+
+    persisted = store.persist_compare_result(
+        jobs_root=jobs_root,
+        job=compare_job,
+        summaries=(),
+        samples=(),
+    )
+
+    # Job JSON round-trips the lineage entries.
+    job_payload = json.loads(persisted["job"].read_text(encoding="utf-8"))
+    assert "target_lineage" in job_payload
+    assert len(job_payload["target_lineage"]) == 2
+    registered, ephemeral = job_payload["target_lineage"]
+    assert registered["materialization_kind"] == "registered"
+    assert registered["adapter_manifest_path"] == ""
+    assert ephemeral["materialization_kind"] == "ephemeral_adapter"
+    assert ephemeral["adapter_manifest_path"] == "/tmp/melix-adapters/demo.adapter.json"
+    assert ephemeral["adapter_set_hash"] == "abcd1234efg5678"
+    assert ephemeral["derived_from_model_id"] == "melix-dev-text"
+
+
+def test_compare_summary_csv_carries_adapter_columns_per_target(tmp_path: Path) -> None:
+    # Module 2 — the compare summary CSV gains two trailing columns
+    # (target_adapter_manifest_path, target_adapter_set_hash) that are
+    # empty for registered targets and populated for adapter targets.
+    store = EvaluationStore()
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-compare-csv"
+    adapter_target_id = "melix-dev-text-lora-beefface-compare-0003"
+    compare_job = build_evaluation_compare_job_record(
+        job_id="eval-compare-csv",
+        base_model_id="melix-dev-text",
+        target_model_ids=("melix-dev-text-lora-registered", adapter_target_id),
+        task_kind="text-generation",
+        source_repo="mmlu",
+        suite_id="mmlu",
+        dataset_id="mmlu.dev.v1",
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+        parameters={},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=1000,
+        updated_at_unix_ms=1000,
+        target_lineage=(
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-registered",
+                materialization_kind="registered",
+            ),
+            EvaluationCompareTargetLineage(
+                target_model_id=adapter_target_id,
+                materialization_kind="ephemeral_adapter",
+                adapter_manifest_path="/tmp/melix-adapters/bee.adapter.json",
+                adapter_set_hash="beefface12345678",
+            ),
+        ),
+    )
+    registered_summary = build_evaluation_compare_summary_record(
+        job_id="eval-compare-csv",
+        base_model_id="melix-dev-text",
+        target_model_id="melix-dev-text-lora-registered",
+        suite_id="mmlu",
+        dataset_id="mmlu.dev.v1",
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=0,
+        loss_count=0,
+        tie_count=1,
+        regression_count=0,
+        base_accuracy=1.0,
+        target_accuracy=1.0,
+        delta_accuracy=0.0,
+        effect_threshold=0.1,
+        verdict="tie",
+        category_breakdown={},
+        statistical_evidence={"bootstrap": {}, "analytical": {}},
+        release_gate_summary={"verdict": "tie"},
+        duration_seconds=0.1,
+        metrics={},
+        units={},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+    adapter_summary = build_evaluation_compare_summary_record(
+        job_id="eval-compare-csv",
+        base_model_id="melix-dev-text",
+        target_model_id=adapter_target_id,
+        suite_id="mmlu",
+        dataset_id="mmlu.dev.v1",
+        sample_size=1,
+        scoring_mode="multiple_choice_accuracy",
+        win_count=0,
+        loss_count=0,
+        tie_count=1,
+        regression_count=0,
+        base_accuracy=1.0,
+        target_accuracy=1.0,
+        delta_accuracy=0.0,
+        effect_threshold=0.1,
+        verdict="tie",
+        category_breakdown={},
+        statistical_evidence={"bootstrap": {}, "analytical": {}},
+        release_gate_summary={"verdict": "tie"},
+        duration_seconds=0.1,
+        metrics={},
+        units={},
+        report_path=str(run_root / "evaluation-compare-report.md"),
+    )
+
+    persisted = store.persist_compare_result(
+        jobs_root=jobs_root,
+        job=compare_job,
+        summaries=(registered_summary, adapter_summary),
+        samples=(),
+    )
+
+    csv_body = persisted["summary_csv"].read_text(encoding="utf-8")
+    lines = csv_body.strip().split("\n")
+    header, registered_row, adapter_row = lines[0], lines[1], lines[2]
+    assert header.endswith("target_adapter_manifest_path,target_adapter_set_hash")
+    assert registered_row.endswith(",,")  # both adapter columns empty
+    assert adapter_row.endswith(",/tmp/melix-adapters/bee.adapter.json,beefface12345678")

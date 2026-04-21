@@ -22,9 +22,13 @@ from worker.productization.evaluation_compare import (
     _DEFAULT_COMPARE_BOOTSTRAP_SEED,
     _DEFAULT_COMPARE_CONFIDENCE_LEVEL,
     _DEFAULT_COMPARE_EFFECT_THRESHOLD,
+    AdapterTargetSpec,
     build_compare_samples,
     build_compare_summary,
+    load_adapter_target_spec,
+    parse_compare_target_adapter_manifest_paths,
     parse_compare_target_model_ids,
+    resolve_compare_target_adapters,
     resolve_compare_target_models,
 )
 from worker.productization.evaluation_final_result import (
@@ -460,9 +464,93 @@ class EvaluationCore:
         resolved_seed: int,
     ) -> EvaluationRun:
         target_model_ids = parse_compare_target_model_ids(job_parameters)
-        target_models = resolve_compare_target_models(
+        adapter_manifest_paths = parse_compare_target_adapter_manifest_paths(job_parameters)
+        if not target_model_ids and not adapter_manifest_paths:
+            raise ValueError(
+                "evaluation compare requires at least one target — pass "
+                "compare_target_model_ids and/or compare_target_adapter_manifest_paths."
+            )
+        adapter_target_specs: tuple[AdapterTargetSpec, ...] = tuple(
+            load_adapter_target_spec(manifest_path=path, job_id=job_id)
+            for path in adapter_manifest_paths
+        )
+        registered_targets = resolve_compare_target_models(
             registry=self._registry,
             target_model_ids=target_model_ids,
+        )
+        ephemeral_targets, ephemeral_unload_handles = resolve_compare_target_adapters(
+            registry=self._registry,
+            adapter_target_specs=adapter_target_specs,
+        )
+        try:
+            return self._execute_compare_suite(
+                model_id=model_id,
+                resolved_model_id=resolved_model_id,
+                suite_id=suite_id,
+                dataset_id=dataset_id,
+                profile=profile,
+                resolved_scoring_mode=resolved_scoring_mode,
+                resolved_task_kind=resolved_task_kind,
+                manifest_input_modalities=manifest_input_modalities,
+                dataset_root=dataset_root,
+                few_shot_examples=few_shot_examples,
+                selected=selected,
+                loaded_model=loaded_model,
+                job_id=job_id,
+                run_root=run_root,
+                job_parameters=job_parameters,
+                created_at_unix_ms=created_at_unix_ms,
+                resolved_code_exec_policy=resolved_code_exec_policy,
+                resolved_seed=resolved_seed,
+                target_model_ids=target_model_ids,
+                registered_targets=registered_targets,
+                adapter_target_specs=adapter_target_specs,
+                ephemeral_targets=ephemeral_targets,
+            )
+        finally:
+            for handle in ephemeral_unload_handles:
+                if handle and self._registry is not None:
+                    try:
+                        self._registry.unload_model(handle)
+                    except Exception:  # noqa: BLE001 - best-effort cleanup
+                        # Unload is a best-effort cleanup — if a registry
+                        # implementation raises on unknown handles or similar,
+                        # we don't want the compare's real error (if any) to
+                        # be shadowed by a finally exception.
+                        pass
+
+    def _execute_compare_suite(
+        self,
+        *,
+        model_id: str,
+        resolved_model_id: str,
+        suite_id: str,
+        dataset_id: str,
+        profile: EvaluationProfileDefinition,
+        resolved_scoring_mode: str,
+        resolved_task_kind: str,
+        manifest_input_modalities: tuple[str, ...],
+        dataset_root: Path,
+        few_shot_examples: tuple[dict[str, object], ...],
+        selected: list[dict[str, object]],
+        loaded_model,
+        job_id: str,
+        run_root: Path,
+        job_parameters: dict[str, str],
+        created_at_unix_ms: int,
+        resolved_code_exec_policy: str,
+        resolved_seed: int,
+        target_model_ids: tuple[str, ...],
+        registered_targets: dict[str, Any],
+        adapter_target_specs: tuple[AdapterTargetSpec, ...],
+        ephemeral_targets: dict[str, Any],
+    ) -> EvaluationRun:
+        # Flatten registered + ephemeral adapter targets into a single
+        # ordered mapping; the compare loop treats them identically.
+        target_models: dict[str, Any] = {**registered_targets, **ephemeral_targets}
+        combined_target_ids: tuple[str, ...] = (
+            target_model_ids
+            + tuple(spec.ephemeral_derived_model_id for spec in adapter_target_specs)
         )
         for target_model in target_models.values():
             self._validate_live_multimodal_execution(
@@ -493,7 +581,7 @@ class EvaluationCore:
         compare_samples: list[EvaluationCompareSample] = []
         compare_summaries: list[EvaluationCompareSummary] = []
         report_path = run_root / "evaluation-compare-report.md" if self._jobs_root is not None else dataset_root / "evaluation-compare-report.md"
-        for target_model_id in target_model_ids:
+        for target_model_id in combined_target_ids:
             target_loaded_model = target_models[target_model_id]
             target_samples = self._sample_records_for_model(
                 job_id=job_id,
@@ -564,10 +652,34 @@ class EvaluationCore:
         compare_job_parameters = dict(job_parameters)
         compare_job_parameters.setdefault("sample_size", str(len(base_samples)))
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
+        # Module 2 — assemble per-target lineage so exports preserve which
+        # adapter produced which target column. Registered targets flow
+        # through with empty adapter fields; adapter targets record the
+        # full provenance.
+        from worker.productization.evaluation_schemas import EvaluationCompareTargetLineage
+        target_lineage_entries: list[EvaluationCompareTargetLineage] = [
+            EvaluationCompareTargetLineage(
+                target_model_id=target_model_id,
+                materialization_kind="registered",
+            )
+            for target_model_id in target_model_ids
+        ]
+        for adapter_spec in adapter_target_specs:
+            target_lineage_entries.append(
+                EvaluationCompareTargetLineage(
+                    target_model_id=adapter_spec.ephemeral_derived_model_id,
+                    materialization_kind="ephemeral_adapter",
+                    adapter_manifest_path=adapter_spec.manifest_path,
+                    adapter_weights_path=adapter_spec.adapter_weights_path,
+                    adapter_set_hash=adapter_spec.adapter_set_hash,
+                    derived_from_model_id=adapter_spec.derived_from_model_id,
+                )
+            )
         compare_job = build_evaluation_compare_job_record(
             job_id=job_id,
             base_model_id=resolved_model_id,
-            target_model_ids=target_model_ids,
+            target_model_ids=combined_target_ids,
+            target_lineage=tuple(target_lineage_entries),
             task_kind=compare_job_parameters.get("task_kind", resolved_task_kind),
             source_repo=compare_job_parameters.get("source_repo", ""),
             suite_id=suite_id,
