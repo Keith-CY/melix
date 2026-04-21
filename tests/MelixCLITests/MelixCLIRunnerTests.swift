@@ -2251,15 +2251,30 @@ struct MelixCLIRunnerTests {
         // is omitted from the payload rather than blank-strung.
         #expect(byID["melix-base-text"]?["activation_mode"] == nil)
 
-        // Text output: short-form tags ("-", "fused", "adapter") appear in
-        // the new runtime column. Header exposes the column.
+        // Text output: fixed-width table with header row and short-form
+        // runtime tags. Header column names are upper-case for legibility;
+        // columns are padded to max width with two-space separators.
         let textOutput = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
             .modelList(.init(json: false))
         )
-        #expect(textOutput.contains("model_id\tkind\tstate\truntime"))
-        #expect(textOutput.contains("melix-base-text\ttext\t") && textOutput.contains("\t-\n"))
-        #expect(textOutput.contains("\tfused\n"))
-        #expect(textOutput.contains("\tadapter\n"))
+        let lines = textOutput.split(separator: "\n").map(String.init)
+        let header = try #require(lines.first)
+        // Header exposes all four columns in padded fixed-width order.
+        #expect(header.contains("MODEL_ID"))
+        #expect(header.contains("KIND"))
+        #expect(header.contains("STATE"))
+        #expect(header.contains("RUNTIME"))
+        // Each short-form runtime tag appears exactly once on a data row.
+        let dataRows = lines.dropFirst()
+        #expect(dataRows.contains { $0.hasSuffix("-") && $0.contains("melix-base-text ") })
+        #expect(dataRows.contains { $0.hasSuffix("fused") })
+        #expect(dataRows.contains { $0.hasSuffix("adapter") })
+        // The three model_ids align in the first column (padded to the
+        // widest id: "melix-base-text-lora-runtime" is 28 chars).
+        let firstColumnWidth = 28
+        for row in dataRows where !row.isEmpty {
+            #expect(row.count > firstColumnWidth + 2, "row not padded as expected: \(row)")
+        }
     }
 
     @Test("model list primes configured registry roots before fetching the server snapshot")

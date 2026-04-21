@@ -64,6 +64,11 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let imageDefaultWorkflowRole: String
     public let imageSupportsGeneration: Bool
     public let imageSupportsEdit: Bool
+    /// Short human-readable runtime-mode tag: "adapter", "fused", or "" for
+    /// base/unknown. Mirrors the serving signal promoted in PR #52
+    /// (issue #12 Module 1) so the menubar list distinguishes adapter-backed
+    /// derived models from fused derived models at a glance.
+    public let runtimeModeText: String
 
     public init(
         modelID: String,
@@ -90,7 +95,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         imageFamilyID: String = "",
         imageDefaultWorkflowRole: String = "",
         imageSupportsGeneration: Bool = false,
-        imageSupportsEdit: Bool = false
+        imageSupportsEdit: Bool = false,
+        runtimeModeText: String = ""
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -117,6 +123,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.imageDefaultWorkflowRole = imageDefaultWorkflowRole
         self.imageSupportsGeneration = imageSupportsGeneration
         self.imageSupportsEdit = imageSupportsEdit
+        self.runtimeModeText = runtimeModeText
     }
 
     public var id: String {
@@ -9319,6 +9326,23 @@ private func runtimeTrainingPerformanceText(tokensPerSecond: Double, peakMemoryG
     return "\(throughputSummary) • \(peakMemorySummary)"
 }
 
+private func runtimeRuntimeModeText(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
+    // Map the proto's free-form runtime_mode string into a short badge label
+    // suitable for the menubar list. Empty for base models and legacy
+    // entries; unknown values map to "?" so a future backend that populates
+    // a longer value can't blow out the row's visual footprint.
+    switch model.runtimeMode {
+    case "adapter_backed_runtime":
+        return "adapter"
+    case "fused_derived_model":
+        return "fused"
+    case "":
+        return ""
+    default:
+        return "?"
+    }
+}
+
 func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> RuntimeModelRow {
     let imageSupportsGeneration = runtimeImageSupportsGeneration(model)
     let imageSupportsEdit = runtimeImageSupportsEdit(model)
@@ -9350,7 +9374,8 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         imageFamilyID: model.settings.ext["melix.image.family_id"] ?? "",
         imageDefaultWorkflowRole: model.settings.ext["melix.image.default_workflow_role"] ?? "",
         imageSupportsGeneration: imageSupportsGeneration,
-        imageSupportsEdit: imageSupportsEdit
+        imageSupportsEdit: imageSupportsEdit,
+        runtimeModeText: runtimeRuntimeModeText(model)
     )
 }
 

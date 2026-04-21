@@ -8118,6 +8118,39 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.foundation_refresh_ms"] != nil)
         #expect(await metrics.snapshot()["desktop.image_refresh_ms"] != nil)
     }
+
+    @Test("runtime model row maps ModelSummary.runtime_mode to a short badge tag")
+    func runtimeModelRowMapsRuntimeModeToBadgeTag() {
+        // Adapter-backed derived model: short "adapter" tag.
+        let adapterBacked = makeModelSummary(
+            modelID: "melix-dev-text-lora-runtime",
+            state: .modelWarm,
+            runtimeMode: "adapter_backed_runtime"
+        )
+        #expect(makeRuntimeModelRow(adapterBacked).runtimeModeText == "adapter")
+
+        // Fused derived model: short "fused" tag.
+        let fused = makeModelSummary(
+            modelID: "melix-dev-text-lora-fused",
+            state: .modelWarm,
+            runtimeMode: "fused_derived_model"
+        )
+        #expect(makeRuntimeModelRow(fused).runtimeModeText == "fused")
+
+        // Base / legacy models: empty string so the view hides the badge.
+        let base = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
+        #expect(makeRuntimeModelRow(base).runtimeModeText == "")
+
+        // Unknown values degrade gracefully to "?" so a longer future value
+        // can't blow out the row's visual footprint — matches the CLI
+        // column-width contract.
+        let unknown = makeModelSummary(
+            modelID: "melix-dev-text",
+            state: .modelWarm,
+            runtimeMode: "adapter_backed_runtime_v2"
+        )
+        #expect(makeRuntimeModelRow(unknown).runtimeModeText == "?")
+    }
 }
 
 @MainActor
@@ -8559,7 +8592,8 @@ private func makeModelSummary(
     memoryHeadroomBytes: UInt64 = 0,
     requiredBytes: UInt64 = 0,
     adaptiveThinkingMode: String = "",
-    adaptiveThinkingBudgetTokens: UInt32 = 0
+    adaptiveThinkingBudgetTokens: UInt32 = 0,
+    runtimeMode: String = ""
 ) -> Melix_Controlplane_V1_ModelSummary {
     var model = Melix_Controlplane_V1_ModelSummary()
     model.modelID = modelID
@@ -8570,6 +8604,7 @@ private func makeModelSummary(
     model.pinned = pinned
     model.inflightRequests = inflightRequests
     model.estimatedBytes = estimatedBytes
+    model.runtimeMode = runtimeMode
     model.settings.pinOnLoad = pinRequested
     model.settings.ttlSeconds = ttlSeconds
     model.settings.memoryPolicy = memoryPolicy

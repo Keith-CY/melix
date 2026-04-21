@@ -3904,12 +3904,36 @@ public actor MelixCLIRunner {
         guard models.isEmpty == false else {
             return "No models found.\n"
         }
-        let rows = models
+        // Fixed-width table: each column padded to the max width of the
+        // header + all rows in that column so the output aligns cleanly in
+        // terminals. Columns separated by two spaces. Consumers that need
+        // the column-boundary-stable JSON shape should pass ``--json``;
+        // this renderer is for human reading.
+        let header = ["MODEL_ID", "KIND", "STATE", "RUNTIME"]
+        let dataRows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
-                "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))"
+                [
+                    model.modelID,
+                    model.kind,
+                    modelStateLabel(model.state),
+                    runtimeModeLabel(model),
+                ]
             }
-        return (["model_id\tkind\tstate\truntime"] + rows).joined(separator: "\n") + "\n"
+        let allRows = [header] + dataRows
+        let widths = (0..<header.count).map { columnIndex in
+            allRows.map { $0[columnIndex].count }.max() ?? 0
+        }
+        let formatted = allRows.map { row -> String in
+            row.enumerated()
+                .map { index, cell in
+                    index == row.count - 1
+                        ? cell
+                        : cell.padding(toLength: widths[index], withPad: " ", startingAt: 0)
+                }
+                .joined(separator: "  ")
+        }
+        return formatted.joined(separator: "\n") + "\n"
     }
 
     private func renderModelSummary(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
