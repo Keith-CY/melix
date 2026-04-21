@@ -8119,37 +8119,45 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["desktop.image_refresh_ms"] != nil)
     }
 
-    @Test("runtime model row maps ModelSummary.runtime_mode to a short badge tag")
-    func runtimeModelRowMapsRuntimeModeToBadgeTag() {
-        // Adapter-backed derived model: short "adapter" tag.
+    @Test("runtime model row pairs the badge tag with its VoiceOver phrasing")
+    func runtimeModelRowPairsBadgeTagWithAccessibilityLabel() {
+        // Adapter-backed derived model: short "adapter" tag + explicit a11y.
         let adapterBacked = makeModelSummary(
             modelID: "melix-dev-text-lora-runtime",
             state: .modelWarm,
             runtimeMode: "adapter_backed_runtime"
         )
-        #expect(makeRuntimeModelRow(adapterBacked).runtimeModeText == "adapter")
+        let adapterRow = makeRuntimeModelRow(adapterBacked)
+        #expect(adapterRow.runtimeModeText == "adapter")
+        #expect(adapterRow.runtimeModeAccessibilityLabel == "Runtime mode: adapter-backed")
 
-        // Fused derived model: short "fused" tag.
+        // Fused derived model: short "fused" tag + explicit a11y.
         let fused = makeModelSummary(
             modelID: "melix-dev-text-lora-fused",
             state: .modelWarm,
             runtimeMode: "fused_derived_model"
         )
-        #expect(makeRuntimeModelRow(fused).runtimeModeText == "fused")
+        let fusedRow = makeRuntimeModelRow(fused)
+        #expect(fusedRow.runtimeModeText == "fused")
+        #expect(fusedRow.runtimeModeAccessibilityLabel == "Runtime mode: fused derived model")
 
-        // Base / legacy models: empty string so the view hides the badge.
+        // Base / legacy models: both fields empty so the view hides the
+        // badge and VoiceOver announces nothing for this element.
         let base = makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)
-        #expect(makeRuntimeModelRow(base).runtimeModeText == "")
+        let baseRow = makeRuntimeModelRow(base)
+        #expect(baseRow.runtimeModeText == "")
+        #expect(baseRow.runtimeModeAccessibilityLabel == "")
 
-        // Unknown values degrade gracefully to "?" so a longer future value
-        // can't blow out the row's visual footprint — matches the CLI
-        // column-width contract.
+        // Unknown values degrade gracefully to "?" with a screen-reader
+        // friendly phrasing so VoiceOver doesn't read "question mark".
         let unknown = makeModelSummary(
             modelID: "melix-dev-text",
             state: .modelWarm,
             runtimeMode: "adapter_backed_runtime_v2"
         )
-        #expect(makeRuntimeModelRow(unknown).runtimeModeText == "?")
+        let unknownRow = makeRuntimeModelRow(unknown)
+        #expect(unknownRow.runtimeModeText == "?")
+        #expect(unknownRow.runtimeModeAccessibilityLabel == "Runtime mode: unrecognized")
     }
 }
 
