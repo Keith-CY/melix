@@ -103,7 +103,7 @@ jobs:
 
     steps:
       - name: Download packaged app artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.package-app.outputs.artifact_name }}
           path: ${{ runner.temp }}
