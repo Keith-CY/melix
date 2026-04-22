@@ -6755,6 +6755,61 @@ struct RuntimeViewModelTests {
         #expect(viewModel.loraGradientCheckpointing)
     }
 
+    @Test("experiment group state surfaces resume-ready run ids and checkpoint lineage")
+    @MainActor
+    func experimentGroupStateSurfacesResumeReadyAndLineage() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeExperimentLineageRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let group = try #require(viewModel.loraExperimentGroups.first)
+        #expect(group.bestRunID == "model-ops-0012")
+        #expect(group.resumeReadyRunIDs == ["model-ops-0012", "model-ops-0009"])
+        #expect(group.resumeReadySummaryText == "2 of 3 runs resume-ready")
+        #expect(group.checkpointLineage.count == 3)
+        #expect(group.checkpointLineage.first?.runID == "model-ops-0012")
+        #expect(group.checkpointLineage.first?.checkpointCount == 5)
+        #expect(group.checkpointLineage.first?.resumeReady == true)
+        #expect(group.checkpointLineage.last?.resumeReady == false)
+    }
+
+    @Test("resume-from-manifest path flows into the lora training request ext and is cleared after training")
+    @MainActor
+    func resumeFromManifestFlowsIntoTrainingExt() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/resume.adapter.json",
+                manifestJSON: #"{"operation":"train_lora"}"#
+            ),
+            forNamedOperation: "train_lora"
+        )
+
+        await viewModel.start()
+        viewModel.loraExperimentGroupID = "nightly-qwen35"
+        viewModel.loraResumeFromManifestPath = "/tmp/prior/manifest.json"
+        await viewModel.trainPrimaryModel()
+
+        let call = try #require(
+            await client.recordedModelOperationRequests.last(where: { $0.operation == "train_lora" })
+        )
+        #expect(call.ext["experiment_group_id"] == "nightly-qwen35")
+        #expect(call.ext["resume_manifest_path"] == "/tmp/prior/manifest.json")
+        #expect(viewModel.loraResumeFromManifestPath == "")
+    }
+
     @Test("model tooling snapshot skips invalid experiment groups and parses string-backed doubles")
     @MainActor
     func modelToolingSnapshotSkipsInvalidExperimentGroupsAndParsesStringBackedDoubles() async throws {
@@ -8921,6 +8976,38 @@ private func makePendingRegistrySnapshotManifest() -> String {
           "best_run_id": "model-ops-0008",
           "best_loss": 0.42,
           "recommended_manifest_path": "/tmp/melix-train-lora/pending.adapter.json"
+        }
+      ],
+      "derived_models": []
+    }
+    """#
+}
+
+private func makeExperimentLineageRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "experiment_groups": [
+        {
+          "group_id": "nightly-qwen35",
+          "title": "Nightly Qwen35",
+          "adapter_name": "nightly-qwen35",
+          "source_model": "melix-dev-text",
+          "run_count": 3,
+          "latest_preset_title": "Balanced Adapter",
+          "latest_resume_ready": true,
+          "latest_checkpoint_count": 5,
+          "best_run_id": "model-ops-0012",
+          "best_loss": 0.3287,
+          "recommended_manifest_path": "/tmp/melix-train-lora/model-ops-0012/train_lora.adapter.json",
+          "resume_ready_run_ids": ["model-ops-0012", "model-ops-0009"],
+          "checkpoint_lineage": [
+            {"run_id": "model-ops-0012", "checkpoint_count": 5, "resume_ready": true},
+            {"run_id": "model-ops-0009", "checkpoint_count": 3, "resume_ready": true},
+            {"run_id": "model-ops-0007", "checkpoint_count": 1, "resume_ready": false}
+          ]
         }
       ],
       "derived_models": []

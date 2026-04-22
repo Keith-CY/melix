@@ -1559,9 +1559,17 @@ struct DesktopTrainingToolSectionView: View {
                                     Spacer()
                                     Button("Use Group") {
                                         viewModel.loraExperimentGroupID = group.groupID
+                                        viewModel.loraResumeFromManifestPath = ""
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
+                                    Button("Resume From Best") {
+                                        viewModel.loraExperimentGroupID = group.groupID
+                                        viewModel.loraResumeFromManifestPath = group.recommendedManifestPath
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(group.recommendedManifestPath.isEmpty)
                                 }
                                 Text(group.experimentSummaryText)
                                     .font(.caption)
@@ -1572,6 +1580,22 @@ struct DesktopTrainingToolSectionView: View {
                                 Text("Best loss \(String(format: "%.3f", group.bestLoss)) • \(group.recommendedManifestPath)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                Text(group.resumeReadySummaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if !group.checkpointLineage.isEmpty {
+                                    DisclosureGroup("Checkpoint lineage") {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            ForEach(group.checkpointLineage) { entry in
+                                                Text("\(entry.runID) • \(entry.checkpointCount) checkpoints • \(entry.resumeReady ? "resume ready" : "resume unavailable")")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        .padding(.top, 4)
+                                    }
+                                    .font(.caption)
+                                }
                             }
                             .padding(.vertical, 4)
                         }

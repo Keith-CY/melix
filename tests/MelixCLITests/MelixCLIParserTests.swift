@@ -250,6 +250,9 @@ struct MelixCLIParserTests {
             (.loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)), "lora.activate"),
             (.loraRemoveDerived(.init(modelID: "model", derivedModelID: "derived", json: true)), "lora.remove-derived"),
             (.loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)), "lora.publish"),
+            (.loraExperimentsList(.init(modelID: "model", json: true)), "lora.experiments.list"),
+            (.loraExperimentsShow(.init(modelID: "model", groupID: "nightly-qwen35", json: true)), "lora.experiments.show"),
+            (.loraResume(.init(modelID: "model", groupID: "nightly-qwen35", presetID: "balanced_adapter", adapterName: "resumed", datasetURI: "/tmp/data.jsonl", json: true)), "lora.resume"),
             (.benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)), "bench.run"),
             (.benchList(.init(json: true)), "bench.list"),
             (.benchExportCSV(.init(jobID: "bench-1", outputPath: "/tmp/bench.csv", json: true)), "bench.export-csv"),
@@ -922,6 +925,79 @@ struct MelixCLIParserTests {
         #expect(options.parameters["hf_valid_split"] == "test_sft")
         #expect(options.parameters["template"] == "chat_messages")
         #expect(options.parameters["dataset_id"] == "melix-ultrachat-built")
+    }
+
+    @Test("parses lora experiments list with optional model id")
+    func parsesLoraExperimentsListCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "experiments", "list",
+            "--model-id", "melix-dev-text",
+            "--json",
+        ])
+
+        guard case .loraExperimentsList(let options) = command else {
+            Issue.record("Expected loraExperimentsList command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.json)
+    }
+
+    @Test("parses lora experiments show with explicit group id")
+    func parsesLoraExperimentsShowCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "experiments", "show",
+            "--group-id", "nightly-qwen35",
+            "--json",
+        ])
+
+        guard case .loraExperimentsShow(let options) = command else {
+            Issue.record("Expected loraExperimentsShow command")
+            return
+        }
+
+        #expect(options.groupID == "nightly-qwen35")
+        #expect(options.json)
+    }
+
+    @Test("lora experiments show requires a group id")
+    func loraExperimentsShowRequiresGroupID() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["lora", "experiments", "show"])
+        }
+    }
+
+    @Test("parses lora resume with overrides")
+    func parsesLoraResumeCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "resume",
+            "--group-id", "nightly-qwen35",
+            "--model-id", "melix-dev-text",
+            "--preset", "quality_adapter",
+            "--adapter-name", "resumed",
+            "--dataset-uri", "/tmp/new-dataset.jsonl",
+            "--json",
+        ])
+
+        guard case .loraResume(let options) = command else {
+            Issue.record("Expected loraResume command")
+            return
+        }
+
+        #expect(options.groupID == "nightly-qwen35")
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.presetID == "quality_adapter")
+        #expect(options.adapterName == "resumed")
+        #expect(options.datasetURI == "/tmp/new-dataset.jsonl")
+        #expect(options.json)
+    }
+
+    @Test("lora resume requires a group id")
+    func loraResumeRequiresGroupID() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["lora", "resume"])
+        }
     }
 
     @Test("parses bench run with an explicit model target suites and tuning parameters")

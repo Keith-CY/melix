@@ -80,6 +80,12 @@ public enum MelixCLICommandCodec {
             return "lora.remove-derived"
         case .loraPublish:
             return "lora.publish"
+        case .loraExperimentsList:
+            return "lora.experiments.list"
+        case .loraExperimentsShow:
+            return "lora.experiments.show"
+        case .loraResume:
+            return "lora.resume"
         case .benchRun:
             return "bench.run"
         case .benchList:
