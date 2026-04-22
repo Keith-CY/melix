@@ -835,6 +835,20 @@ public struct RuntimeTrainingHistoryEntryState: Identifiable, Equatable, Sendabl
     }
 }
 
+public struct RuntimeLoraCheckpointLineageEntry: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let runID: String
+    public let checkpointCount: Int
+    public let resumeReady: Bool
+
+    public init(runID: String, checkpointCount: Int, resumeReady: Bool) {
+        self.id = runID
+        self.runID = runID
+        self.checkpointCount = checkpointCount
+        self.resumeReady = resumeReady
+    }
+}
+
 public struct RuntimeLoraExperimentGroupState: Identifiable, Equatable, Sendable {
     public let id: String
     public let groupID: String
@@ -849,6 +863,9 @@ public struct RuntimeLoraExperimentGroupState: Identifiable, Equatable, Sendable
     public let latestResumeReady: Bool
     public let bestLoss: Double
     public let recommendedManifestPath: String
+    public let bestRunID: String
+    public let resumeReadyRunIDs: [String]
+    public let checkpointLineage: [RuntimeLoraCheckpointLineageEntry]
 
     public var experimentSummaryText: String {
         runtimeExperimentSummaryText(
@@ -862,6 +879,12 @@ public struct RuntimeLoraExperimentGroupState: Identifiable, Equatable, Sendable
             tokensPerSecond: latestTokensPerSecond,
             peakMemoryGB: latestPeakMemoryGB
         )
+    }
+
+    public var resumeReadySummaryText: String {
+        let ready = resumeReadyRunIDs.count
+        let total = max(runCount, ready)
+        return "\(ready) of \(total) runs resume-ready"
     }
 }
 
@@ -1412,6 +1435,7 @@ public final class RuntimeViewModel {
     public var loraAdapterName = "melix-dev-adapter"
     public var loraTargetRepo = "melix/adapters/melix-dev-adapter"
     public var loraExperimentGroupID = ""
+    public var loraResumeFromManifestPath = ""
     public var loraRank = "8"
     public var loraAlpha = "16"
     public var loraDropout = "0.0"
@@ -7662,6 +7686,7 @@ public final class RuntimeViewModel {
 
         Self.assignOptional(loraTargetRepo, for: "target_repo", into: &ext)
         Self.assignOptional(loraExperimentGroupID, for: "experiment_group_id", into: &ext)
+        Self.assignOptional(loraResumeFromManifestPath, for: "resume_manifest_path", into: &ext)
         Self.assignOptional(loraRank, for: "rank", into: &ext)
         Self.assignOptional(loraAlpha, for: "alpha", into: &ext)
         Self.assignOptional(loraDropout, for: "dropout", into: &ext)
@@ -8384,6 +8409,21 @@ public final class RuntimeViewModel {
         guard groupID.isEmpty == false else {
             return nil
         }
+        let resumeReadyRunIDs = (payload["resume_ready_run_ids"] as? [Any] ?? [])
+            .compactMap { $0 as? String }
+            .filter { $0.isEmpty == false }
+        let lineagePayloads = (payload["checkpoint_lineage"] as? [[String: Any]]) ?? []
+        let checkpointLineage: [RuntimeLoraCheckpointLineageEntry] = lineagePayloads.compactMap { entry in
+            let runID = stringValue("run_id", from: entry)
+            guard runID.isEmpty == false else {
+                return nil
+            }
+            return RuntimeLoraCheckpointLineageEntry(
+                runID: runID,
+                checkpointCount: intValue("checkpoint_count", from: entry),
+                resumeReady: boolValue("resume_ready", from: entry)
+            )
+        }
         return RuntimeLoraExperimentGroupState(
             id: groupID,
             groupID: groupID,
@@ -8397,7 +8437,10 @@ public final class RuntimeViewModel {
             latestCheckpointCount: intValue("latest_checkpoint_count", from: payload),
             latestResumeReady: boolValue("latest_resume_ready", from: payload),
             bestLoss: doubleValue("best_loss", from: payload),
-            recommendedManifestPath: stringValue("recommended_manifest_path", from: payload)
+            recommendedManifestPath: stringValue("recommended_manifest_path", from: payload),
+            bestRunID: stringValue("best_run_id", from: payload),
+            resumeReadyRunIDs: resumeReadyRunIDs,
+            checkpointLineage: checkpointLineage
         )
     }
 

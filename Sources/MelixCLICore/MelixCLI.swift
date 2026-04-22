@@ -161,6 +161,53 @@ public struct LoraPublishOptions: Equatable, Sendable {
     }
 }
 
+public struct LoraExperimentsListOptions: Equatable, Sendable {
+    public let modelID: String
+    public let json: Bool
+
+    public init(modelID: String = "", json: Bool = false) {
+        self.modelID = modelID
+        self.json = json
+    }
+}
+
+public struct LoraExperimentsShowOptions: Equatable, Sendable {
+    public let modelID: String
+    public let groupID: String
+    public let json: Bool
+
+    public init(modelID: String = "", groupID: String, json: Bool = false) {
+        self.modelID = modelID
+        self.groupID = groupID
+        self.json = json
+    }
+}
+
+public struct LoraResumeOptions: Equatable, Sendable {
+    public let modelID: String
+    public let groupID: String
+    public let presetID: String
+    public let adapterName: String
+    public let datasetURI: String
+    public let json: Bool
+
+    public init(
+        modelID: String = "",
+        groupID: String,
+        presetID: String = "",
+        adapterName: String = "",
+        datasetURI: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.groupID = groupID
+        self.presetID = presetID
+        self.adapterName = adapterName
+        self.datasetURI = datasetURI
+        self.json = json
+    }
+}
+
 public struct BenchRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
@@ -918,6 +965,9 @@ public enum MelixCLICommand: Equatable, Sendable {
     case loraActivate(LoraActivateOptions)
     case loraRemoveDerived(LoraRemoveDerivedOptions)
     case loraPublish(LoraPublishOptions)
+    case loraExperimentsList(LoraExperimentsListOptions)
+    case loraExperimentsShow(LoraExperimentsShowOptions)
+    case loraResume(LoraResumeOptions)
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
     case benchExportCSV(BenchExportCSVOptions)
@@ -1055,6 +1105,9 @@ public enum MelixCLIParser {
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
       melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--json]
+      melix lora experiments list [--model-id MODEL_ID] [--json]
+      melix lora experiments show --group-id GROUP_ID [--model-id MODEL_ID] [--json]
+      melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
@@ -1645,6 +1698,54 @@ public enum MelixCLIParser {
                     exportKind: exportKind,
                     artifactPath: artifactPath,
                     artifactManifestPath: artifactManifestPath,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "experiments":
+            return try parseLoraExperiments(Array(arguments.dropFirst()))
+        case "resume":
+            let values = try cursor.parse()
+            guard let groupID = values.single["--group-id"], !groupID.isEmpty else {
+                throw MelixCLIError.missingRequired("--group-id is required for melix lora resume.")
+            }
+            return .loraResume(
+                LoraResumeOptions(
+                    modelID: values.single["--model-id"] ?? "",
+                    groupID: groupID,
+                    presetID: values.single["--preset"] ?? "",
+                    adapterName: values.single["--adapter-name"] ?? "",
+                    datasetURI: values.single["--dataset-uri"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseLoraExperiments(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "list":
+            return .loraExperimentsList(
+                LoraExperimentsListOptions(
+                    modelID: values.single["--model-id"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            guard let groupID = values.single["--group-id"], !groupID.isEmpty else {
+                throw MelixCLIError.missingRequired(
+                    "--group-id is required for melix lora experiments show."
+                )
+            }
+            return .loraExperimentsShow(
+                LoraExperimentsShowOptions(
+                    modelID: values.single["--model-id"] ?? "",
+                    groupID: groupID,
                     json: values.flags.contains("--json")
                 )
             )
@@ -3119,6 +3220,12 @@ public actor MelixCLIRunner {
                 ext: ext
             )
             return options.json ? result.manifestJson : result.outputPath
+        case .loraExperimentsList(let options):
+            return try await runLoraExperimentsList(options)
+        case .loraExperimentsShow(let options):
+            return try await runLoraExperimentsShow(options)
+        case .loraResume(let options):
+            return try await runLoraResume(options)
         case .benchRun(let options):
             let result = try await runBenchmark(options)
             if options.json {
@@ -3680,6 +3787,9 @@ public actor MelixCLIRunner {
              .loraTrain,
              .loraActivate,
              .loraRemoveDerived,
+             .loraExperimentsList,
+             .loraExperimentsShow,
+             .loraResume,
              .benchRun,
              .benchMatrixRun,
              .evalRun,
@@ -4272,6 +4382,256 @@ public actor MelixCLIRunner {
         }
 
         return sections.joined(separator: "\n\n") + "\n"
+    }
+
+    private func runLoraExperimentsList(_ options: LoraExperimentsListOptions) async throws -> String {
+        let modelID = try await resolveModelID(preferred: options.modelID)
+        let result = try await performModelOperation(
+            modelID: modelID,
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let groups = extractExperimentGroups(fromManifestJson: result.manifestJson)
+        if options.json {
+            return try prettyJSON(["experiment_groups": groups])
+        }
+        return renderExperimentsList(groups)
+    }
+
+    private func runLoraExperimentsShow(_ options: LoraExperimentsShowOptions) async throws -> String {
+        let modelID = try await resolveModelID(preferred: options.modelID)
+        let result = try await performModelOperation(
+            modelID: modelID,
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let groups = extractExperimentGroups(fromManifestJson: result.manifestJson)
+        guard let group = groups.first(where: { ($0["group_id"] as? String) == options.groupID }) else {
+            throw MelixCLIError.missingRequired(experimentGroupNotFoundMessage(groupID: options.groupID, groups: groups))
+        }
+        if options.json {
+            return try prettyJSON(group)
+        }
+        return renderExperimentsShow(group)
+    }
+
+    private func runLoraResume(_ options: LoraResumeOptions) async throws -> String {
+        let modelID = try await resolveModelID(preferred: options.modelID)
+        let snapshot = try await performModelOperation(
+            modelID: modelID,
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let groups = extractExperimentGroups(fromManifestJson: snapshot.manifestJson)
+        guard let group = groups.first(where: { ($0["group_id"] as? String) == options.groupID }) else {
+            throw MelixCLIError.missingRequired(experimentGroupNotFoundMessage(groupID: options.groupID, groups: groups))
+        }
+        let best = group["best_known_adapter"] as? [String: Any] ?? [:]
+        let manifestPath = (best["manifest_path"] as? String) ?? ""
+        guard !manifestPath.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "Group \(options.groupID) has no recommended adapter; use `melix lora experiments show --group-id \(options.groupID)` to inspect runs."
+            )
+        }
+        let manifest = try readAdapterManifestPayload(at: manifestPath)
+        let resolvedDatasetURI = options.datasetURI.isEmpty
+            ? ((manifest["dataset_uri"] as? String) ?? "")
+            : options.datasetURI
+        let resolvedAdapterName = options.adapterName.isEmpty
+            ? ((manifest["adapter_name"] as? String) ?? "")
+            : options.adapterName
+        let resolvedPresetID = options.presetID.isEmpty
+            ? ((manifest["preset_id"] as? String) ?? "")
+            : options.presetID
+        guard !resolvedDatasetURI.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "Recommended manifest for \(options.groupID) did not carry a dataset_uri; pass --dataset-uri explicitly."
+            )
+        }
+        guard !resolvedAdapterName.isEmpty else {
+            throw MelixCLIError.missingRequired(
+                "Recommended manifest for \(options.groupID) did not carry an adapter_name; pass --adapter-name explicitly."
+            )
+        }
+        var ext: [String: String] = [
+            "adapter_name": resolvedAdapterName,
+            "dataset_source_kind": "local_package",
+            "dataset_uri": resolvedDatasetURI,
+            "resume_manifest_path": manifestPath,
+            "experiment_group_id": options.groupID,
+        ]
+        if !resolvedPresetID.isEmpty {
+            ext["preset_id"] = resolvedPresetID
+        }
+        if let groupTitle = manifest["experiment_group_title"] as? String, !groupTitle.isEmpty {
+            ext["experiment_group_title"] = groupTitle
+        }
+        let result = try await performModelOperation(
+            modelID: modelID,
+            operation: "train_lora",
+            outputDir: "",
+            ext: ext
+        )
+        if options.json {
+            return try prettyJSON([
+                "group_id": options.groupID,
+                "resume_manifest_path": manifestPath,
+                "dataset_uri": resolvedDatasetURI,
+                "adapter_name": resolvedAdapterName,
+                "preset_id": resolvedPresetID,
+                "training_manifest_path": result.outputPath,
+                "training_manifest_json": result.manifestJson,
+            ])
+        }
+        return result.outputPath
+    }
+
+    private func extractExperimentGroups(fromManifestJson manifestJson: String) -> [[String: Any]] {
+        guard
+            let data = manifestJson.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return []
+        }
+        return payload["experiment_groups"] as? [[String: Any]] ?? []
+    }
+
+    private func readAdapterManifestPayload(at path: String) throws -> [String: Any] {
+        let url = URL(fileURLWithPath: path)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw MelixCLIError.runtime("Unable to read adapter manifest at \(path): \(error.localizedDescription)")
+        }
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw MelixCLIError.runtime("Adapter manifest at \(path) was not a JSON object.")
+        }
+        return payload
+    }
+
+    private func experimentGroupNotFoundMessage(groupID: String, groups: [[String: Any]]) -> String {
+        let knownIDs = groups.compactMap { $0["group_id"] as? String }.filter { $0.isEmpty == false }
+        if knownIDs.isEmpty {
+            return "Unknown experiment group \(groupID); no groups are recorded yet."
+        }
+        return "Unknown experiment group \(groupID). Known groups: \(knownIDs.joined(separator: ", "))."
+    }
+
+    private func renderExperimentsList(_ groups: [[String: Any]]) -> String {
+        if groups.isEmpty {
+            return "No experiment groups found.\n"
+        }
+        let header = ["GROUP_ID", "TITLE", "RUNS", "BEST_LOSS", "RESUME_READY"]
+        let rows: [[String]] = groups.map { group in
+            let groupID = (group["group_id"] as? String) ?? ""
+            let title = (group["title"] as? String) ?? ""
+            let runCount = (group["run_count"] as? Int) ?? 0
+            let bestLoss = coerceDouble(group["best_loss"]) ?? 0.0
+            let resumeReadyIDs = (group["resume_ready_run_ids"] as? [Any] ?? []).count
+            return [
+                groupID,
+                title,
+                String(runCount),
+                String(format: "%.4f", bestLoss),
+                "\(resumeReadyIDs) of \(runCount)",
+            ]
+        }
+        return renderFixedWidthTable(header: header, rows: rows) + "\n"
+    }
+
+    private func renderExperimentsShow(_ group: [String: Any]) -> String {
+        let groupID = (group["group_id"] as? String) ?? ""
+        let title = (group["title"] as? String) ?? ""
+        let sourceModel = (group["source_model"] as? String) ?? ""
+        let adapterName = (group["adapter_name"] as? String) ?? ""
+        let runCount = (group["run_count"] as? Int) ?? 0
+        let resumeReadyIDs = (group["resume_ready_run_ids"] as? [Any] ?? []).compactMap { $0 as? String }
+        let lineage = (group["checkpoint_lineage"] as? [[String: Any]]) ?? []
+        let best = group["best_known_adapter"] as? [String: Any] ?? [:]
+
+        var lines: [String] = []
+        lines.append("Group: \(groupID)")
+        if !title.isEmpty {
+            lines.append("Title: \(title)")
+        }
+        if !sourceModel.isEmpty {
+            lines.append("Source model: \(sourceModel)")
+        }
+        if !adapterName.isEmpty {
+            lines.append("Adapter name: \(adapterName)")
+        }
+        lines.append("")
+        lines.append("Runs (\(runCount)):")
+        if lineage.isEmpty {
+            lines.append("  (no per-run detail available)")
+        } else {
+            for entry in lineage {
+                let runID = (entry["run_id"] as? String) ?? ""
+                let checkpointCount = (entry["checkpoint_count"] as? Int) ?? 0
+                let resumeReady = (entry["resume_ready"] as? Bool) ?? false
+                lines.append("  \(runID)\tcheckpoints=\(checkpointCount)\tresume_ready=\(resumeReady ? "yes" : "no")")
+            }
+        }
+        if !resumeReadyIDs.isEmpty {
+            lines.append("")
+            lines.append("Resume-ready runs: \(resumeReadyIDs.joined(separator: ", "))")
+        }
+
+        let bestRunID = (best["run_id"] as? String) ?? ""
+        let bestManifestPath = (best["manifest_path"] as? String) ?? ""
+        let bestLoss = coerceDouble(best["loss_best"]) ?? 0.0
+        if !bestRunID.isEmpty, !bestManifestPath.isEmpty {
+            lines.append("")
+            lines.append("Best known adapter:")
+            lines.append("  Run \(bestRunID) (loss \(String(format: "%.4f", bestLoss)))")
+            lines.append("  Manifest: \(bestManifestPath)")
+            lines.append("  Resume via: melix lora resume --group-id \(groupID)")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func renderFixedWidthTable(header: [String], rows: [[String]]) -> String {
+        let columnCount = header.count
+        var widths = header.map { $0.count }
+        for row in rows {
+            for (index, cell) in row.enumerated() where index < columnCount {
+                widths[index] = max(widths[index], cell.count)
+            }
+        }
+        func pad(_ row: [String]) -> String {
+            var segments: [String] = []
+            for index in 0..<columnCount {
+                let value = index < row.count ? row[index] : ""
+                if index == columnCount - 1 {
+                    segments.append(value)
+                } else {
+                    segments.append(value.padding(toLength: widths[index], withPad: " ", startingAt: 0))
+                }
+            }
+            return segments.joined(separator: "  ")
+        }
+        var lines = [pad(header)]
+        for row in rows {
+            lines.append(pad(row))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func coerceDouble(_ value: Any?) -> Double? {
+        if let number = value as? Double {
+            return number
+        }
+        if let number = value as? Int {
+            return Double(number)
+        }
+        if let string = value as? String, let number = Double(string) {
+            return number
+        }
+        return nil
     }
 
     private func renderTrainingDatasetManifest(_ manifestJSON: String) -> String {

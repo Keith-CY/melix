@@ -2705,6 +2705,229 @@ struct MelixCLIRunnerTests {
         #expect(output == "No adapters or derived models found.\n")
     }
 
+    @Test("lora experiments list renders a fixed-width table")
+    func loraExperimentsListRendersFixedWidthTable() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makeExperimentsRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraExperimentsList(.init(modelID: "melix-dev-text"))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+
+        #expect(call.operation == "registry_snapshot")
+        #expect(output.contains("GROUP_ID"))
+        #expect(output.contains("TITLE"))
+        #expect(output.contains("RUNS"))
+        #expect(output.contains("BEST_LOSS"))
+        #expect(output.contains("RESUME_READY"))
+        #expect(output.contains("nightly-qwen35"))
+        #expect(output.contains("Nightly Qwen35"))
+        #expect(output.contains("2 of 3"))
+    }
+
+    @Test("lora experiments list emits JSON when requested")
+    func loraExperimentsListEmitsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makeExperimentsRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraExperimentsList(.init(modelID: "melix-dev-text", json: true))
+        )
+
+        let payload = try #require(parseJSONObject(output))
+        let groups = try #require(payload["experiment_groups"] as? [[String: Any]])
+        #expect(groups.count == 1)
+        #expect(groups.first?["group_id"] as? String == "nightly-qwen35")
+    }
+
+    @Test("lora experiments show renders detail for a known group")
+    func loraExperimentsShowRendersDetail() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makeExperimentsRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraExperimentsShow(.init(modelID: "melix-dev-text", groupID: "nightly-qwen35"))
+        )
+
+        #expect(output.contains("Group: nightly-qwen35"))
+        #expect(output.contains("Title: Nightly Qwen35"))
+        #expect(output.contains("Runs (3):"))
+        #expect(output.contains("model-ops-0012"))
+        #expect(output.contains("resume_ready=yes"))
+        #expect(output.contains("Best known adapter:"))
+        #expect(output.contains("Manifest: /tmp/melix-train-lora/model-ops-0012/train_lora.adapter.json"))
+        #expect(output.contains("Resume via: melix lora resume --group-id nightly-qwen35"))
+    }
+
+    @Test("lora experiments show errors for an unknown group and lists known ids")
+    func loraExperimentsShowErrorsForUnknownGroup() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makeExperimentsRegistryManifest()
+        ))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraExperimentsShow(.init(modelID: "melix-dev-text", groupID: "missing"))
+            )
+            Issue.record("Expected experiments show to throw for an unknown group")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("missing"))
+                #expect(message.contains("nightly-qwen35"))
+            } else {
+                Issue.record("Expected missingRequired error, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora resume resolves the best adapter manifest and invokes train_lora")
+    func loraResumeResolvesBestAdapterAndTrains() async throws {
+        let client = StubControlPlaneXPCClient()
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-resume-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "adapter_name": "nightly-qwen35",
+                "dataset_uri": "/tmp/datasets/nightly.jsonl",
+                "preset_id": "balanced_adapter",
+                "experiment_group_id": "nightly-qwen35",
+                "experiment_group_title": "Nightly Qwen35",
+            ],
+            to: manifestURL
+        )
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(manifestJSON: makeExperimentsRegistryManifest(bestManifestPath: manifestURL.path)),
+            forOperation: "registry_snapshot"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(
+                outputPath: "/tmp/melix-train-lora/resume-out/train_lora.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","resume_manifest_path":"\#(manifestURL.path)"}"#
+            ),
+            forOperation: "train_lora"
+        )
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraResume(.init(modelID: "melix-dev-text", groupID: "nightly-qwen35"))
+        )
+
+        let calls = await client.modelOperationCalls.filter { $0.ext["melix.registry_rescan"] != "true" }
+        #expect(calls.count == 2)
+        #expect(calls.first?.operation == "registry_snapshot")
+        let trainCall = try #require(calls.last)
+        #expect(trainCall.operation == "train_lora")
+        #expect(trainCall.ext["resume_manifest_path"] == manifestURL.path)
+        #expect(trainCall.ext["dataset_uri"] == "/tmp/datasets/nightly.jsonl")
+        #expect(trainCall.ext["adapter_name"] == "nightly-qwen35")
+        #expect(trainCall.ext["preset_id"] == "balanced_adapter")
+        #expect(trainCall.ext["experiment_group_id"] == "nightly-qwen35")
+        #expect(output == "/tmp/melix-train-lora/resume-out/train_lora.adapter.json")
+    }
+
+    @Test("lora resume applies CLI overrides over manifest defaults")
+    func loraResumeAppliesCLIOverrides() async throws {
+        let client = StubControlPlaneXPCClient()
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-resume-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "adapter_name": "nightly-qwen35",
+                "dataset_uri": "/tmp/datasets/nightly.jsonl",
+                "preset_id": "balanced_adapter",
+            ],
+            to: manifestURL
+        )
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(manifestJSON: makeExperimentsRegistryManifest(bestManifestPath: manifestURL.path)),
+            forOperation: "registry_snapshot"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/resume.adapter.json"),
+            forOperation: "train_lora"
+        )
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraResume(.init(
+                modelID: "melix-dev-text",
+                groupID: "nightly-qwen35",
+                presetID: "quality_adapter",
+                adapterName: "resumed-adapter",
+                datasetURI: "/tmp/datasets/new.jsonl"
+            ))
+        )
+
+        let calls = await client.modelOperationCalls
+        let trainCall = try #require(calls.last)
+        #expect(trainCall.ext["dataset_uri"] == "/tmp/datasets/new.jsonl")
+        #expect(trainCall.ext["adapter_name"] == "resumed-adapter")
+        #expect(trainCall.ext["preset_id"] == "quality_adapter")
+    }
+
+    @Test("lora resume surfaces error when the group has no recommended adapter")
+    func loraResumeErrorsWhenGroupHasNoBestAdapter() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(
+            makeModelOperationResult(manifestJSON: makeExperimentsRegistryManifest(bestManifestPath: "")),
+            forOperation: "registry_snapshot"
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraResume(.init(modelID: "melix-dev-text", groupID: "nightly-qwen35"))
+            )
+            Issue.record("Expected resume to throw when no best adapter exists")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("no recommended adapter"))
+            } else {
+                Issue.record("Expected missingRequired error, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora resume surfaces a readable error when the manifest path is missing on disk")
+    func loraResumeErrorsWhenManifestMissing() async throws {
+        let client = StubControlPlaneXPCClient()
+        let missingPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-missing-\(UUID().uuidString).json")
+            .path
+        await client.setModelOperationResult(
+            makeModelOperationResult(manifestJSON: makeExperimentsRegistryManifest(bestManifestPath: missingPath)),
+            forOperation: "registry_snapshot"
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraResume(.init(modelID: "melix-dev-text", groupID: "nightly-qwen35"))
+            )
+            Issue.record("Expected resume to throw for a missing manifest")
+        } catch let error as MelixCLIError {
+            if case .runtime(let message) = error {
+                #expect(message.contains(missingPath))
+            } else {
+                Issue.record("Expected runtime error, got \(error)")
+            }
+        }
+    }
+
     @Test("lora train forwards dataset, adapter, repo, and tuning parameters")
     func loraTrainForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()
@@ -5185,6 +5408,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private var snapshot = makeServerSnapshot(models: [makeModelSummary(id: "melix-dev-text", kind: "text")])
     private var modelOperationResult = makeModelOperationResult()
+    private var modelOperationResultsByOperation: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
+    private(set) var modelOperationCalls: [ModelOperationCall] = []
     private var benchResult = ControlPlaneBenchResult(reportPath: "", reportMarkdown: "", metrics: [:])
     private var benchMatrixResult = ControlPlaneBenchMatrixResult(
         job: makeBenchmarkMatrixJobSummary(jobID: "", modelID: "", taskKind: "", sourceRepo: ""),
@@ -5207,6 +5432,13 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setModelOperationResult(_ result: Melix_Controlplane_V1_ModelOperationResult) {
         self.modelOperationResult = result
+    }
+
+    func setModelOperationResult(
+        _ result: Melix_Controlplane_V1_ModelOperationResult,
+        forOperation operation: String
+    ) {
+        modelOperationResultsByOperation[operation] = result
     }
 
     func setModelOperationError(_ error: Error?) {
@@ -5391,7 +5623,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         if let modelOperationError {
             throw modelOperationError
         }
-        lastModelOperationCall = ModelOperationCall(
+        let call = ModelOperationCall(
             modelID: modelID,
             operation: operation,
             outputDir: outputDir,
@@ -5400,6 +5632,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
             kvQuant: kvQuant,
             ext: ext
         )
+        lastModelOperationCall = call
+        modelOperationCalls.append(call)
+        if let perOperation = modelOperationResultsByOperation[operation] {
+            return perOperation
+        }
         return modelOperationResult
     }
 
@@ -5618,6 +5855,54 @@ private func makeDoctorReport(
         return item
     }
     return report
+}
+
+private func makeExperimentsRegistryManifest(
+    bestManifestPath: String = "/tmp/melix-train-lora/model-ops-0012/train_lora.adapter.json"
+) -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "adapters": [],
+      "derived_models": [],
+      "experiment_groups": [
+        {
+          "group_id": "nightly-qwen35",
+          "title": "Nightly Qwen35",
+          "adapter_name": "nightly-qwen35",
+          "source_model": "melix-dev-text",
+          "run_count": 3,
+          "latest_run_id": "model-ops-0012",
+          "latest_status": "activated",
+          "latest_dataset_uri": "/tmp/datasets/nightly.jsonl",
+          "latest_preset_id": "balanced_adapter",
+          "latest_preset_title": "Balanced Adapter",
+          "latest_tokens_per_second": 128.5,
+          "latest_peak_memory_gb": 5.25,
+          "latest_checkpoint_count": 5,
+          "latest_resume_ready": true,
+          "resume_ready_run_ids": ["model-ops-0012", "model-ops-0009"],
+          "checkpoint_lineage": [
+            { "run_id": "model-ops-0012", "checkpoint_count": 5, "resume_ready": true },
+            { "run_id": "model-ops-0009", "checkpoint_count": 3, "resume_ready": true },
+            { "run_id": "model-ops-0007", "checkpoint_count": 1, "resume_ready": false }
+          ],
+          "best_run_id": "model-ops-0012",
+          "best_loss": 0.3287,
+          "recommended_manifest_path": "\#(bestManifestPath)",
+          "best_known_adapter": {
+            "run_id": "model-ops-0012",
+            "manifest_path": "\#(bestManifestPath)",
+            "adapter_name": "nightly-qwen35",
+            "checkpoint_count": 5,
+            "latest_checkpoint_path": "/tmp/melix-train-lora/model-ops-0012/checkpoint",
+            "resume_ready": true,
+            "loss_best": 0.3287
+          }
+        }
+      ]
+    }
+    """#
 }
 
 private func parseJSONObject(_ text: String) -> [String: Any]? {
