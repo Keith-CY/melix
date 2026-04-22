@@ -812,6 +812,21 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public var summaryText: String {
         transcript.last?.body.isEmpty == false ? transcript.last?.body ?? "" : statusText
     }
+
+    public var hasServerBinding: Bool {
+        serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    public var displayBranchTitle: String? {
+        let trimmedTitle = branchTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.isEmpty == false else {
+            return nil
+        }
+        guard branchID != "main" else {
+            return nil
+        }
+        return trimmedTitle
+    }
 }
 
 public enum DesktopBannerSeverity: Sendable {

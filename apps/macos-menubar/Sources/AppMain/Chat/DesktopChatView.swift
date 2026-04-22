@@ -13,11 +13,6 @@ enum DesktopChatLayoutMetrics {
     static let composerMinHeight: CGFloat = 76
 }
 
-enum DesktopChatEmptyTranscriptCopy {
-    static let title = "Start a conversation"
-    static let detail = "Type a prompt below. Messages will appear here after you send."
-}
-
 enum DesktopChatComposerKeyPolicy {
     enum Action: Equatable {
         case submit
@@ -133,6 +128,7 @@ struct DesktopChatSessionSidebar: View {
                 .buttonStyle(.plain)
                 .help("New Chat Session")
                 .accessibilityLabel("New Chat Session")
+                .focusable(false)
             }
 
             if viewModel.chatSessions.isEmpty {
@@ -196,20 +192,14 @@ struct DesktopChatSessionWorkspace: View {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
                         .font(.title2.weight(.semibold))
                     HStack(spacing: 8) {
-                        if let branch = viewModel.selectedChatSession?.branchTitle {
+                        if let branch = viewModel.selectedChatSession?.displayBranchTitle {
                             Text(branch)
                                 .font(.caption2)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(.quaternary, in: Capsule())
                         }
-                        if let server = viewModel.selectedChatServerSession {
-                            Text(server.title)
-                                .font(.caption2)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(.quaternary, in: Capsule())
-                        }
+                        DesktopChatServerPicker(viewModel: viewModel)
                     }
                 }
                 Spacer()
@@ -265,15 +255,7 @@ struct DesktopChatSessionWorkspace: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if viewModel.chatTranscript.isEmpty {
-                        MelixSectionCard(DesktopChatEmptyTranscriptCopy.title) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(DesktopChatEmptyTranscriptCopy.detail)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else {
+                    if viewModel.chatTranscript.isEmpty == false {
                         ForEach(viewModel.chatTranscript) { entry in
                             DesktopChatTranscriptRowView(entry: entry)
                         }
@@ -345,6 +327,10 @@ struct DesktopChatSessionInspector: View {
                         Text(server.effectiveBaseURL)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
+                    } else {
+                        Text("Choose a Server Session")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     if let exportPath = viewModel.selectedChatSession?.exportPath, !exportPath.isEmpty {
                         Text(exportPath)
@@ -354,44 +340,109 @@ struct DesktopChatSessionInspector: View {
                 }
             }
 
-            MelixSectionCard("Analysis Routes") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.chatCapabilities) { capability in
-                        HStack(alignment: .top) {
-                            Image(systemName: capability.isReady ? "checkmark.circle.fill" : "circle.dotted")
-                                .foregroundStyle(capability.isReady ? .green : .secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(capability.title)
-                                    .font(.headline)
-                                Text(capability.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !viewModel.lastChatRequestID.isEmpty || !viewModel.lastChatUsageText.isEmpty {
-                MelixSectionCard("Runtime") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !viewModel.lastChatRequestID.isEmpty {
-                            Text("request \(viewModel.lastChatRequestID)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                        if !viewModel.lastChatUsageText.isEmpty {
-                            Text(viewModel.lastChatUsageText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            MelixSectionCard("Model Capabilities") {
+                DesktopChatCapabilityIconGrid(capabilities: viewModel.chatCapabilities)
             }
 
             Spacer()
         }
         .padding(14)
+    }
+}
+
+private struct DesktopChatServerPicker: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedServerBinding: Binding<String> {
+        Binding(
+            get: { viewModel.selectedChatSession?.serverSessionID ?? "" },
+            set: { viewModel.bindSelectedChatSessionToServer(serverSessionID: $0) }
+        )
+    }
+
+    var body: some View {
+        if viewModel.serverSessions.isEmpty {
+            Button {
+                viewModel.selectSurface(.server)
+            } label: {
+                Label("Choose Server", systemImage: "server.rack")
+                    .labelStyle(.titleAndIcon)
+            }
+            .font(.caption2)
+            .buttonStyle(.borderless)
+            .help("Open Server to create a chat provider")
+            .accessibilityLabel("Choose Chat Server")
+        } else {
+            Picker("Server", selection: selectedServerBinding) {
+                Text("Choose Server").tag("")
+                ForEach(viewModel.serverSessions) { session in
+                    Text(session.title).tag(session.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(maxWidth: 180)
+            .help("Choose the server or provider for this chat session")
+            .accessibilityLabel("Chat Server")
+        }
+    }
+}
+
+private struct DesktopChatCapabilityIconGrid: View {
+    let capabilities: [DesktopChatCapabilityRow]
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 74), spacing: 8, alignment: .top),
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            ForEach(capabilities) { capability in
+                DesktopChatCapabilityIconTile(capability: capability)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model Capabilities")
+    }
+}
+
+private struct DesktopChatCapabilityIconTile: View {
+    let capability: DesktopChatCapabilityRow
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: capability.systemImageName)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 34, height: 28)
+                    .foregroundStyle(capability.isReady ? Color.accentColor : Color.secondary)
+
+                Circle()
+                    .fill(capability.isReady ? Color.green : Color.secondary.opacity(0.45))
+                    .frame(width: 7, height: 7)
+                    .offset(x: 2, y: -1)
+            }
+
+            Text(capability.shortTitle)
+                .font(.caption2.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(minWidth: 64, minHeight: 58)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help("\(capability.title): \(capability.detail)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
     }
 }
 
@@ -412,10 +463,12 @@ private struct DesktopChatSessionRow: View {
                             .font(.headline)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(session.branchTitle)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if let branch = session.displayBranchTitle {
+                            Text(branch)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     Text(session.summaryText)
                         .font(.caption)

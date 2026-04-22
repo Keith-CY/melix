@@ -540,6 +540,69 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.prefill_chunk_count", default: -1] >= 1)
     }
 
+    @Test("python text compatibility sessions use generate instead of phase-aware prefill")
+    func pythonTextCompatibilitySessionsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        var model = ModelCatalog.devTextModel()
+        model.modelID = "local-python-text"
+        model.routeClass = .workerRoutePythonTextCompatibility
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonCompatibility.rawValue
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: "local-python-text", dispatchHandle: "local-python-text::python")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-python-text-session",
+                modelID: "local-python-text",
+                sessionID: "session-python-text",
+                branchID: "branch-main",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in execution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        for _ in 0..<100 where await workerClient.generatedRequestIDs.isEmpty {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await workerClient.generatedRequestIDs == ["req-python-text-session"])
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
+
+        await workerClient.emitToken(requestID: "req-python-text-session", text: "local answer")
+        await workerClient.finish(requestID: "req-python-text-session")
+        let events = try await consumer.value
+        let progress = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-python-text-session",
+            phase: .requestCompleted
+        )
+
+        #expect(events.contains { event in
+            guard case .tokenDelta(let delta) = event.payload else {
+                return false
+            }
+            return delta.text == "local answer"
+        })
+        #expect(progress?.phase == .requestCompleted)
+    }
+
     @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
     func videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout() async throws {
         let workerClient = BlockingWorkerClient()

@@ -237,6 +237,10 @@ enum RegistrySnapshotSync {
         let routeKind = metadata["melix.capability.route_kind"]
         model.capabilityClass = capabilityClass(identifier: capabilityIdentifier, kind: model.kind)
         model.routeClass = routeClass(routeKind: routeKind, kind: model.kind)
+        if model.settings.ext["melix.capability.route_kind"] == nil,
+           let resolvedRouteKind = routeKindIdentifier(for: model.routeClass) {
+            model.settings.ext["melix.capability.route_kind"] = resolvedRouteKind
+        }
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
         return model
@@ -431,6 +435,7 @@ enum RegistrySnapshotSync {
             "python_speech": .workerRoutePythonSpeech,
             "python_image": .workerRoutePythonImage,
             "python_text_compatibility": .workerRoutePythonTextCompatibility,
+            "python_compatibility": .workerRoutePythonTextCompatibility,
             "swift_text": .workerRouteSwiftText,
             "embedding": .workerRoutePythonEmbedding,
             "rerank": .workerRoutePythonRerank,
@@ -440,9 +445,38 @@ enum RegistrySnapshotSync {
             "transcription": .workerRoutePythonTranscription,
             "speech": .workerRoutePythonSpeech,
             "image": .workerRoutePythonImage,
-            "text": .workerRouteSwiftText,
+            "text": .workerRoutePythonTextCompatibility,
         ]
         return mapping[normalizedMetadataValue(routeKind)] ?? mapping[normalizedMetadataValue(kind)] ?? .workerRouteSwiftText
+    }
+
+    private static func routeKindIdentifier(
+        for routeClass: Melix_Controlplane_V1_WorkerRouteClass
+    ) -> String? {
+        switch routeClass {
+        case .workerRouteSwiftText:
+            return "swift_text"
+        case .workerRoutePythonTextCompatibility:
+            return "python_text_compatibility"
+        case .workerRoutePythonEmbedding:
+            return "python_embedding"
+        case .workerRoutePythonRerank:
+            return "python_rerank"
+        case .workerRoutePythonModelOperations:
+            return "python_model_operations"
+        case .workerRoutePythonOcr:
+            return "python_ocr"
+        case .workerRoutePythonVlm:
+            return "python_vlm"
+        case .workerRoutePythonTranscription:
+            return "python_transcription"
+        case .workerRoutePythonSpeech:
+            return "python_speech"
+        case .workerRoutePythonImage:
+            return "python_image"
+        default:
+            return nil
+        }
     }
 
     private static func supportedModalities(

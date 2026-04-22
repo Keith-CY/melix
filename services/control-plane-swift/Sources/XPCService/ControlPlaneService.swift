@@ -313,12 +313,13 @@ public actor ControlPlaneService {
         _ request: ControlPlaneChatRequest
     ) async throws -> ControlPlaneChatExecution {
         guard let requestCoordinator else {
-            throw ControlPlaneChatExecutionError.unavailable
+            throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: request coordinator is not configured")
         }
 
         switch await prepareDefaultServerSessionForServingActivity() {
-        case .blocked:
-            throw ControlPlaneChatExecutionError.unavailable
+        case .blocked(let code, let message):
+            let detail = message.isEmpty ? code : "\(code): \(message)"
+            throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: \(detail)")
         case .ready(let publishStateChanged):
             if publishStateChanged {
                 await publishCurrentServerState(source: "server_runtime")
@@ -331,7 +332,7 @@ public actor ControlPlaneService {
             do {
                 execution = try await requestCoordinator.resumeChatCompletion(requestID: resumeRequestID)
             } catch {
-                throw ControlPlaneChatExecutionError.unavailable
+                throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: resume failed: \(error)")
             }
             return ControlPlaneChatExecution(
                 requestID: execution.requestID,
@@ -340,6 +341,8 @@ public actor ControlPlaneService {
                 lifecycle: execution.lifecycle
             )
         }
+
+        await syncRegistryModelsFromWorkerIfAvailable(rescan: true)
 
         let normalized = try chatTranslator.normalize(
             OpenAIChatCompletionsRequest(
@@ -362,7 +365,7 @@ public actor ControlPlaneService {
                 metricsStore: metricsStore
             )
         } catch {
-            throw ControlPlaneChatExecutionError.unavailable
+            throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: lazy text load failed for \(normalized.model): \(error)")
         }
         let resolvedModel = await modelCatalog.model(id: normalized.model)
         let modelToolParser: ToolParserSelection? = if let resolvedModel {

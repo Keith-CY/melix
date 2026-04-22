@@ -2928,6 +2928,7 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
 
         let tab = DesktopChatTabView(viewModel: viewModel)
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Hello from SwiftUI"
         await viewModel.submitChatPrompt()
         viewModel.clearChatTranscript()
@@ -2945,6 +2946,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Render the transcript"
 
         await viewModel.submitChatPrompt()
@@ -2969,6 +2971,7 @@ struct DesktopFoundationViewTests {
         ])
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Render the error path"
 
         await viewModel.submitChatPrompt()
@@ -2990,6 +2993,9 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        for session in viewModel.chatSessions {
+            viewModel.deleteChatSession(id: session.id)
+        }
 
         let view = hostView(DesktopChatSessionSidebar(viewModel: viewModel))
 
@@ -3028,9 +3034,9 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Inspector") == false)
     }
 
-    @Test("chat session workspace explains empty transcript state")
+    @Test("chat session workspace leaves empty transcript visually quiet")
     @MainActor
-    func chatSessionWorkspaceExplainsEmptyTranscriptState() async throws {
+    func chatSessionWorkspaceLeavesEmptyTranscriptVisuallyQuiet() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -3047,11 +3053,79 @@ struct DesktopFoundationViewTests {
                 showsInspector: .constant(false)
             )
         )
+        let renderedTexts = renderedTextValues(in: hosted)
 
         #expect(hosted.subviews.isEmpty == false)
         #expect(viewModel.chatTranscript.isEmpty)
-        #expect(DesktopChatEmptyTranscriptCopy.title == "Start a conversation")
-        #expect(DesktopChatEmptyTranscriptCopy.detail.contains("Messages will appear here after you send."))
+        #expect(renderedTexts.contains("Start a conversation") == false)
+        #expect(renderedTexts.contains { $0.contains("Messages will appear here after you send.") } == false)
+
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+        #expect(source.contains("Start a conversation") == false)
+        #expect(source.contains("Messages will appear here after you send.") == false)
+    }
+
+    @Test("new chat session button opts out of launch focus highlight")
+    @MainActor
+    func newChatSessionButtonOptsOutOfLaunchFocusHighlight() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains(".accessibilityLabel(\"New Chat Session\")"))
+        #expect(source.contains(".focusable(false)"))
+    }
+
+    @Test("chat session branch display hides main but keeps fork labels")
+    @MainActor
+    func chatSessionBranchDisplayHidesMainButKeepsForkLabels() throws {
+        let mainSession = DesktopChatSessionState(
+            id: "chat-main",
+            title: "Chat 1",
+            serverSessionID: "server-main",
+            branchID: "main",
+            branchTitle: "Main"
+        )
+        let forkSession = DesktopChatSessionState(
+            id: "chat-fork",
+            title: "Chat 2",
+            serverSessionID: "server-main",
+            branchID: "branch-2",
+            branchTitle: "Branch 2"
+        )
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(mainSession.displayBranchTitle == nil)
+        #expect(forkSession.displayBranchTitle == "Branch 2")
+        #expect(source.contains("selectedChatSession?.displayBranchTitle"))
+    }
+
+    @Test("chat session inspector labels snapshot capabilities without claiming route traces")
+    @MainActor
+    func chatSessionInspectorLabelsSnapshotCapabilitiesWithoutClaimingRouteTraces() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("DesktopChatServerPicker"))
+        #expect(source.contains("bindSelectedChatSessionToServer"))
+        #expect(source.contains("MelixSectionCard(\"Model Capabilities\")"))
+        #expect(source.contains("DesktopChatCapabilityIconGrid"))
+        #expect(source.contains("MelixSectionCard(\"Runtime\")") == false)
+        #expect(source.contains("Text(\"request \\(") == false)
+        #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
     }
 
     @Test("chat composer keyboard policy submits only command return")
@@ -3197,6 +3271,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         await viewModel.stopSelectedServerSession()
         viewModel.chatComposerText = "Need a running server"
         await viewModel.submitChatPrompt()
@@ -3256,6 +3331,7 @@ struct DesktopFoundationViewTests {
         await client.configureSnapshot(pausedSnapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
 
         let pausedView = hostView(
             DesktopChatSessionWorkspace(
@@ -3349,6 +3425,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Export the transcript"
         await viewModel.submitChatPrompt()
         let exportPath = try #require(viewModel.exportSelectedChatSession())
@@ -4798,6 +4875,12 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
 
     visit(rootView)
     return values
+}
+
+@MainActor
+private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
+    let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+    viewModel.bindSelectedChatSessionToServer(serverSessionID: serverSessionID)
 }
 
 @MainActor

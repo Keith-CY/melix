@@ -754,7 +754,7 @@ struct AppMainBootstrapTests {
         #expect(recordedRuntimeDirectory == "/tmp/melix-runtime")
     }
 
-    @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")
+    @Test("MelixHome defaults to HOME/.melix when MELIX_HOME and app support are unset")
     @MainActor
     func melixHomeDefaultsToHomeDotMelix() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -763,9 +763,34 @@ struct AppMainBootstrapTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         await withEnvironmentValue("MELIX_HOME", nil) {
-            await withEnvironmentValue("HOME", temporaryRoot.path) {
-                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
-                #expect(melixHome.rootURL.path == temporaryRoot.appendingPathComponent(".melix").path)
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", nil) {
+                await withEnvironmentValue("HOME", temporaryRoot.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == temporaryRoot.appendingPathComponent(".melix").path)
+                }
+            }
+        }
+    }
+
+    @Test("MelixHome uses app support as packaged app home when MELIX_HOME is unset")
+    @MainActor
+    func melixHomeUsesAppSupportWhenMelixHomeUnset() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tests-app-support-\(UUID().uuidString)")
+        let appSupportHome = temporaryRoot.appendingPathComponent("Application Support/Melix", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupportHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await withEnvironmentValue("MELIX_HOME", nil) {
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", appSupportHome.path) {
+                await withEnvironmentValue("HOME", temporaryRoot.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == appSupportHome.path)
+                    #expect(
+                        melixHome.operatorSessionFileURL.path
+                            == appSupportHome.appendingPathComponent("state/operator-session.json").path
+                    )
+                }
             }
         }
     }
@@ -780,9 +805,11 @@ struct AppMainBootstrapTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         await withEnvironmentValue("HOME", temporaryRoot.path) {
-            await withEnvironmentValue("MELIX_HOME", overrideHome.path) {
-                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
-                #expect(melixHome.rootURL.path == overrideHome.path)
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", temporaryRoot.appendingPathComponent("ignored").path) {
+                await withEnvironmentValue("MELIX_HOME", overrideHome.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == overrideHome.path)
+                }
             }
         }
     }

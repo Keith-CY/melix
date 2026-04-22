@@ -1186,6 +1186,14 @@ public actor RequestCoordinator {
             || resolvedPrefillChunkTarget(for: request.messages) > 0
     }
 
+    private func canUsePhaseAwareExecution(
+        routeKind: WorkerRouteKind,
+        request: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        routeKind.supportsPhaseAwareExecution
+            && shouldUsePhaseAwareExecution(for: request)
+    }
+
     private func resolvedRecoveryRequest(
         _ translatedRequest: TranslatedChatRequest
     ) async -> TranslatedChatRequest {
@@ -1229,10 +1237,12 @@ public actor RequestCoordinator {
         let request = await resolvedModelAccelerationRequest(recoveredRequest)
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
+        let phaseAwareEligible = canUsePhaseAwareExecution(
+            routeKind: routeKind,
+            request: request.workerRequest
+        )
         if routeKind.isMultimodalBackgroundRoute {
             let lane = routeKind.defaultSchedulingLane
-            let usesPhaseAwareExecution = routeKind.supportsPhaseAwareExecution
-                && shouldUsePhaseAwareExecution(for: request.workerRequest)
             return SchedulingPlan(
                 translatedRequest: request,
                 routeKind: routeKind,
@@ -1240,7 +1250,7 @@ public actor RequestCoordinator {
                 prefillLane: lane,
                 decodeLane: lane,
                 cacheRouteClass: .cold,
-                cacheRouteEligible: usesPhaseAwareExecution,
+                cacheRouteEligible: phaseAwareEligible,
                 prefixAffinityEligible: false,
                 prefixAffinityHit: false,
                 continuousBatchEligible: false,
@@ -1255,7 +1265,7 @@ public actor RequestCoordinator {
             let decodeLane = request.workerRequest.execution.scheduling.lane.isEmpty
                 ? "text.decode.interactive"
                 : request.workerRequest.execution.scheduling.lane
-            let prefillLane = shouldUsePhaseAwareExecution(for: request.workerRequest)
+            let prefillLane = phaseAwareEligible
                 ? "text.prefill.background"
                 : decodeLane
             return SchedulingPlan(
@@ -1265,7 +1275,7 @@ public actor RequestCoordinator {
                 prefillLane: prefillLane,
                 decodeLane: decodeLane,
                 cacheRouteClass: .cold,
-                cacheRouteEligible: shouldUsePhaseAwareExecution(for: request.workerRequest),
+                cacheRouteEligible: phaseAwareEligible,
                 prefixAffinityEligible: false,
                 prefixAffinityHit: false,
                 continuousBatchEligible: isContinuousBatchEligible(
@@ -1296,18 +1306,18 @@ public actor RequestCoordinator {
         let activeBranchID = session?.activeBranchID ?? branchID
         let branch = session?.branches.first(where: { $0.branchID == branchID })
             ?? session?.branches.first(where: { $0.branchID == activeBranchID })
-        let prefixAffinityEligible = isPrefixAffinityEligible(
+        let prefixAffinityEligible = phaseAwareEligible && isPrefixAffinityEligible(
             request: request,
             branch: branch
         )
-        let prefixAffinityHit = shouldRecordPrefixAffinity(
+        let prefixAffinityHit = phaseAwareEligible && shouldRecordPrefixAffinity(
             request: request,
             headCacheKey: branch?.headCacheKey,
             branch: branch
         )
 
         let cacheRouteClass: CacheRouteClass
-        if !request.workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty {
+        if phaseAwareEligible, !request.workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty {
             cacheRouteClass = .restored
         } else if prefixAffinityHit {
             cacheRouteClass = .warm
@@ -1318,10 +1328,9 @@ public actor RequestCoordinator {
         let decodeLane = request.workerRequest.execution.scheduling.lane.isEmpty
             ? "text.decode.interactive"
             : request.workerRequest.execution.scheduling.lane
-        let cacheRouteEligible = shouldUsePhaseAwareExecution(for: request.workerRequest)
-            || prefixAffinityEligible
+        let cacheRouteEligible = phaseAwareEligible || prefixAffinityEligible
         let prefillLane: String
-        if shouldUsePhaseAwareExecution(for: request.workerRequest) {
+        if phaseAwareEligible {
             prefillLane = cacheRouteClass == .cold ? "text.prefill.background" : "text.prefill.hot"
         } else {
             prefillLane = decodeLane

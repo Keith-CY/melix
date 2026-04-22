@@ -1286,16 +1286,22 @@ struct ControlPlaneServiceTests {
         var pausedSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
         pausedSession.lifecycleState = .paused
         let pausedService = ControlPlaneService(
-            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 })
+            serverSessionRuntimeStore: ServerSessionRuntimeStore(runtimeSessions: [pausedSession], nowUnixMS: { 2_000 }),
+            workerRegistry: WorkerRegistry(defaultTextClient: NullWorkerClient())
         )
 
-        await #expect(throws: ControlPlaneChatExecutionError.unavailable) {
-            try await pausedService.startChat(
+        do {
+            _ = try await pausedService.startChat(
                 ControlPlaneChatRequest(
                     modelID: "melix-dev-text",
                     messages: [.init(role: "user", content: "hello")]
                 )
             )
+            Issue.record("Expected paused Server Session to block chat dispatch")
+        } catch let error as ControlPlaneChatExecutionError {
+            #expect(String(describing: error).contains("server_paused"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
         }
 
         var sleepingSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
@@ -1333,6 +1339,83 @@ struct ControlPlaneServiceTests {
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("startChat syncs managed registry models before lazy load")
+    func startChatSyncsManagedRegistryModelsBeforeLazyLoad() async throws {
+        let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let importedModelPath = "/tmp/managed-root/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": importedModelID,
+                    "model_path": importedModelPath,
+                    "model_kind": "text",
+                    "revision": "main",
+                    "tokenizer_hash": "hf.mlx-community.Qwen3.5-0.8B-OptiQ-4bit",
+                    "quant_profile_id": "",
+                    "parser_mode": "text",
+                    "reasoning_mode": "off",
+                    "max_context": 8192,
+                    "ext": [
+                        "melix.registry_root_id": "root-1",
+                        "melix.registry_root_path": "/tmp/managed-root",
+                        "melix.registry_relative_path": "huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                        "melix.model_path": importedModelPath,
+                        "melix.hf_repo_id": importedModelID,
+                        "melix.capability.class": "text",
+                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.supported_modalities": "text",
+                        "melix.capability.supported_tasks": "generate",
+                    ],
+                ],
+            ]
+        )
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-managed-registry"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-managed-registry",
+                finishReason: "stop",
+                assistant: "managed local response",
+                reasoning: ""
+            ),
+        ])
+        let catalog = ModelCatalog(seedModels: [])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: textClient,
+                modelOperationsClient: modelOpsClient,
+                modelCatalog: catalog
+            ),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-managed-registry" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: importedModelID,
+                messages: [.init(role: "user", content: "test")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let lastConvertRequest = try #require(await modelOpsClient.lastConvertRequest)
+        let lastLoadRequest = try #require(await textClient.lastLoadModelRequest)
+
+        #expect(lastConvertRequest.ext["operation"] == "registry_snapshot")
+        #expect(lastConvertRequest.ext["melix.registry_rescan"] == "true")
+        #expect(lastLoadRequest.model.modelID == importedModelID)
+        #expect(lastLoadRequest.model.modelPath == importedModelPath)
+        #expect(await catalog.dispatchHandle(for: importedModelID) == importedModelID)
     }
 
     @Test("server pause and stop require quiescence while requests are active")
@@ -1524,6 +1607,8 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.ext["melix.registry_rescan"] == "true")
         #expect(lastRequest.generateManifest)
         #expect(discovered.state == .modelDiscovered)
+        #expect(discovered.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(discovered.settings.ext["melix.capability.route_kind"] == "python_text_compatibility")
         #expect(discovered.maxContext == 16384)
         #expect(discovered.settings.ext["melix.registry_root_id"] == "root-1")
         #expect(discovered.settings.ext["melix.registry_relative_path"] == "mlx-community/Qwen2.5-7B-Instruct/4bit")
@@ -2665,13 +2750,18 @@ struct ControlPlaneServiceTests {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
         let service = ControlPlaneService(modelCatalog: catalog)
 
-        await #expect(throws: ControlPlaneChatExecutionError.unavailable) {
-            try await service.startChat(
+        do {
+            _ = try await service.startChat(
                 ControlPlaneChatRequest(
                     modelID: "melix-dev-text",
                     messages: [.init(role: "user", content: "hello")]
                 )
             )
+            Issue.record("Expected missing request coordinator to block chat dispatch")
+        } catch let error as ControlPlaneChatExecutionError {
+            #expect(String(describing: error).contains("request coordinator is not configured"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
         }
     }
 
@@ -2850,7 +2940,6 @@ struct ControlPlaneServiceTests {
                         "melix.model_path": importedModelPath,
                         "melix.hf_repo_id": importedModelID,
                         "melix.capability.class": "text",
-                        "melix.capability.route_kind": "python_text_compatibility",
                         "melix.capability.supported_modalities": "text",
                         "melix.capability.supported_tasks": "generate",
                     ],

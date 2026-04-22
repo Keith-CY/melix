@@ -74,11 +74,13 @@ public actor WorkerRegistry {
         guard let rawValue else {
             return nil
         }
-        return WorkerRouteKind(
-            rawValue: rawValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-        )
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "python_text_compatibility":
+            return .pythonCompatibility
+        default:
+            return WorkerRouteKind(rawValue: normalized)
+        }
     }
 
     private func routeKind(fromCapabilityIdentifier identifier: String?) -> WorkerRouteKind? {

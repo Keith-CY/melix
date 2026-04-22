@@ -3,6 +3,19 @@ import MelixWorkerProtocol
 
 public enum ControlPlaneChatExecutionError: Error, Equatable {
     case unavailable
+    case unavailableReason(String)
+}
+
+extension ControlPlaneChatExecutionError: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .unavailable:
+            return "unavailable"
+        case .unavailableReason(let reason):
+            let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "unavailable" : trimmed
+        }
+    }
 }
 
 public struct ControlPlaneChatRequest: Sendable, Equatable {

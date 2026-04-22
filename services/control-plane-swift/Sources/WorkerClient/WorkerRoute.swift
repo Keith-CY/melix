@@ -78,7 +78,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var isPhaseAwareTextRoute: Bool {
         switch self {
-        case .swiftText, .pythonCompatibility:
+        case .swiftText:
             return true
         default:
             return false
@@ -87,7 +87,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var supportsPhaseAwareExecution: Bool {
         switch self {
-        case .swiftText, .pythonCompatibility, .pythonVLM:
+        case .swiftText, .pythonVLM:
             return true
         default:
             return false
