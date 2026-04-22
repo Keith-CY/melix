@@ -542,9 +542,6 @@ private struct DesktopServerWorkspaceView: View {
             ) {
                 DesktopServerSessionSidebar(viewModel: viewModel)
             }
-            if showsSidebar {
-                Divider()
-            }
 
             DesktopServerSessionEditor(
                 viewModel: viewModel,
@@ -554,9 +551,6 @@ private struct DesktopServerWorkspaceView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
-                Divider()
-            }
             DesktopWorkspacePaneSlot(
                 role: .inspector,
                 isVisible: showsInspector,
@@ -1132,9 +1126,6 @@ private struct DesktopToolsWorkspaceView: View {
                 )
                 .padding(20)
             }
-            if showsSidebar {
-                Divider()
-            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -1165,9 +1156,6 @@ private struct DesktopToolsWorkspaceView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
-                Divider()
-            }
             DesktopWorkspacePaneSlot(
                 role: .inspector,
                 isVisible: showsInspector,
@@ -4053,9 +4041,6 @@ struct DesktopAPIWorkspaceView: View {
                 }
                 .padding(20)
             }
-            if showsSidebar {
-                Divider()
-            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -4091,9 +4076,6 @@ struct DesktopAPIWorkspaceView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
-                Divider()
-            }
             DesktopWorkspacePaneSlot(
                 role: .inspector,
                 isVisible: showsInspector,

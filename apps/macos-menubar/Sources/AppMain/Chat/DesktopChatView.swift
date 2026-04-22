@@ -97,9 +97,6 @@ struct DesktopChatTabView: View {
             ) {
                 DesktopChatSessionSidebar(viewModel: viewModel)
             }
-            if showsSidebar {
-                Divider()
-            }
 
             DesktopChatSessionWorkspace(
                 viewModel: viewModel,
@@ -108,9 +105,6 @@ struct DesktopChatTabView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
-                Divider()
-            }
             DesktopWorkspacePaneSlot(
                 role: .inspector,
                 isVisible: showsInspector,

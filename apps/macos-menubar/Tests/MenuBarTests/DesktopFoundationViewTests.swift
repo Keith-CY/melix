@@ -171,6 +171,33 @@ struct DesktopFoundationViewTests {
         #expect(DesktopWorkspacePaneSlotMetrics.alignment(for: .inspector) == .trailing)
     }
 
+    @Test("workspace pane dividers are clipped by the owning pane slot")
+    func workspacePaneDividersAreClippedByTheOwningPaneSlot() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellChrome = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let shellSource = try String(contentsOf: shellChrome, encoding: .utf8)
+
+        #expect(shellSource.contains("struct DesktopWorkspacePaneBoundary"))
+        #expect(DesktopWorkspacePaneSlotMetrics.boundaryAlignment(for: .sidebar) == .trailing)
+        #expect(DesktopWorkspacePaneSlotMetrics.boundaryAlignment(for: .inspector) == .leading)
+
+        let workspaceSources = [
+            "apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift",
+            "apps/macos-menubar/Sources/AppMain/Image/DesktopImageView.swift",
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift",
+        ]
+
+        for relativePath in workspaceSources {
+            let sourceURL = root.appendingPathComponent(relativePath)
+            let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+            #expect(source.contains("if showsSidebar {\n                Divider()") == false)
+            #expect(source.contains("if showsInspector {\n                Divider()") == false)
+        }
+    }
+
     @Test("chat submit shortcut is not double-owned by the SwiftUI send button")
     func chatSubmitShortcutIsNotDoubleOwnedByTheSwiftUISendButton() throws {
         let root = try repositoryRootForDesktopFoundationTests()

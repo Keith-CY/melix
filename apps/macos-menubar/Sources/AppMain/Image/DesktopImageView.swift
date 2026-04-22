@@ -53,9 +53,6 @@ struct DesktopImageTabView: View {
             ) {
                 DesktopImageJobsSidebar(viewModel: viewModel)
             }
-            if showsSidebar {
-                Divider()
-            }
 
             DesktopImageWorkspace(
                 viewModel: viewModel,
@@ -65,9 +62,6 @@ struct DesktopImageTabView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
-                Divider()
-            }
             DesktopWorkspacePaneSlot(
                 role: .inspector,
                 isVisible: showsInspector,
