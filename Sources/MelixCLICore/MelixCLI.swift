@@ -4392,7 +4392,7 @@ public actor MelixCLIRunner {
             outputDir: "",
             ext: [:]
         )
-        let groups = extractExperimentGroups(fromManifestJson: result.manifestJson)
+        let groups = try extractExperimentGroups(fromManifestJson: result.manifestJson)
         if options.json {
             return try prettyJSON(["experiment_groups": groups])
         }
@@ -4407,7 +4407,7 @@ public actor MelixCLIRunner {
             outputDir: "",
             ext: [:]
         )
-        let groups = extractExperimentGroups(fromManifestJson: result.manifestJson)
+        let groups = try extractExperimentGroups(fromManifestJson: result.manifestJson)
         guard let group = groups.first(where: { ($0["group_id"] as? String) == options.groupID }) else {
             throw MelixCLIError.missingRequired(experimentGroupNotFoundMessage(groupID: options.groupID, groups: groups))
         }
@@ -4425,7 +4425,7 @@ public actor MelixCLIRunner {
             outputDir: "",
             ext: [:]
         )
-        let groups = extractExperimentGroups(fromManifestJson: snapshot.manifestJson)
+        let groups = try extractExperimentGroups(fromManifestJson: snapshot.manifestJson)
         guard let group = groups.first(where: { ($0["group_id"] as? String) == options.groupID }) else {
             throw MelixCLIError.missingRequired(experimentGroupNotFoundMessage(groupID: options.groupID, groups: groups))
         }
@@ -4437,18 +4437,29 @@ public actor MelixCLIRunner {
             )
         }
         let manifest = try readAdapterManifestPayload(at: manifestPath)
-        let resolvedDatasetURI = options.datasetURI.isEmpty
-            ? ((manifest["dataset_uri"] as? String) ?? "")
-            : options.datasetURI
+        let manifestDatasetURI = (manifest["dataset_uri"] as? String) ?? ""
+        let manifestHFDatasetPath = (manifest["hf_dataset_path"] as? String) ?? ""
+        let inheritedSourceKind = (manifest["dataset_source_kind"] as? String) ?? ""
         let resolvedAdapterName = options.adapterName.isEmpty
             ? ((manifest["adapter_name"] as? String) ?? "")
             : options.adapterName
         let resolvedPresetID = options.presetID.isEmpty
             ? ((manifest["preset_id"] as? String) ?? "")
             : options.presetID
-        guard !resolvedDatasetURI.isEmpty else {
+        let resolvedDatasetURI: String
+        let resolvedSourceKind: String
+        if options.datasetURI.isEmpty == false {
+            resolvedDatasetURI = options.datasetURI
+            resolvedSourceKind = inheritedSourceKind.isEmpty ? "local_package" : inheritedSourceKind
+        } else if manifestDatasetURI.isEmpty == false {
+            resolvedDatasetURI = manifestDatasetURI
+            resolvedSourceKind = inheritedSourceKind.isEmpty ? "local_package" : inheritedSourceKind
+        } else if manifestHFDatasetPath.isEmpty == false {
+            resolvedDatasetURI = manifestHFDatasetPath
+            resolvedSourceKind = "hf_dataset"
+        } else {
             throw MelixCLIError.missingRequired(
-                "Recommended manifest for \(options.groupID) did not carry a dataset_uri; pass --dataset-uri explicitly."
+                "Recommended manifest for \(options.groupID) did not carry a dataset_uri or hf_dataset_path; pass --dataset-uri explicitly."
             )
         }
         guard !resolvedAdapterName.isEmpty else {
@@ -4458,7 +4469,7 @@ public actor MelixCLIRunner {
         }
         var ext: [String: String] = [
             "adapter_name": resolvedAdapterName,
-            "dataset_source_kind": "local_package",
+            "dataset_source_kind": resolvedSourceKind,
             "dataset_uri": resolvedDatasetURI,
             "resume_manifest_path": manifestPath,
             "experiment_group_id": options.groupID,
@@ -4468,6 +4479,23 @@ public actor MelixCLIRunner {
         }
         if let groupTitle = manifest["experiment_group_title"] as? String, !groupTitle.isEmpty {
             ext["experiment_group_title"] = groupTitle
+        }
+        if resolvedSourceKind == "hf_dataset" {
+            for key in [
+                "hf_dataset_path",
+                "hf_dataset_name",
+                "hf_dataset_revision",
+                "hf_train_split",
+                "hf_valid_split",
+                "text_feature",
+                "prompt_feature",
+                "completion_feature",
+                "chat_feature",
+            ] {
+                if let value = manifest[key] as? String, !value.isEmpty {
+                    ext[key] = value
+                }
+            }
         }
         let result = try await performModelOperation(
             modelID: modelID,
@@ -4489,12 +4517,18 @@ public actor MelixCLIRunner {
         return result.outputPath
     }
 
-    private func extractExperimentGroups(fromManifestJson manifestJson: String) -> [[String: Any]] {
-        guard
-            let data = manifestJson.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return []
+    private func extractExperimentGroups(fromManifestJson manifestJson: String) throws -> [[String: Any]] {
+        guard let data = manifestJson.data(using: .utf8) else {
+            throw MelixCLIError.runtime("registry_snapshot payload was not valid UTF-8.")
+        }
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.runtime("registry_snapshot payload was not valid JSON: \(error.localizedDescription)")
+        }
+        guard let payload = parsed as? [String: Any] else {
+            throw MelixCLIError.runtime("registry_snapshot payload was not a JSON object.")
         }
         return payload["experiment_groups"] as? [[String: Any]] ?? []
     }
@@ -4530,14 +4564,14 @@ public actor MelixCLIRunner {
             let groupID = (group["group_id"] as? String) ?? ""
             let title = (group["title"] as? String) ?? ""
             let runCount = (group["run_count"] as? Int) ?? 0
-            let bestLoss = coerceDouble(group["best_loss"]) ?? 0.0
-            let resumeReadyIDs = (group["resume_ready_run_ids"] as? [Any] ?? []).count
+            let bestLossText = coerceDouble(group["best_loss"]).map { String(format: "%.4f", $0) } ?? "n/a"
+            let resumeReadyCount = (group["resume_ready_run_ids"] as? [Any] ?? []).count
             return [
                 groupID,
                 title,
                 String(runCount),
-                String(format: "%.4f", bestLoss),
-                "\(resumeReadyIDs) of \(runCount)",
+                bestLossText,
+                "\(resumeReadyCount) of \(runCount)",
             ]
         }
         return renderFixedWidthTable(header: header, rows: rows) + "\n"
@@ -4569,11 +4603,16 @@ public actor MelixCLIRunner {
         if lineage.isEmpty {
             lines.append("  (no per-run detail available)")
         } else {
-            for entry in lineage {
+            let lineageHeader = ["RUN_ID", "CHECKPOINTS", "RESUME_READY"]
+            let lineageRows: [[String]] = lineage.map { entry in
                 let runID = (entry["run_id"] as? String) ?? ""
                 let checkpointCount = (entry["checkpoint_count"] as? Int) ?? 0
                 let resumeReady = (entry["resume_ready"] as? Bool) ?? false
-                lines.append("  \(runID)\tcheckpoints=\(checkpointCount)\tresume_ready=\(resumeReady ? "yes" : "no")")
+                return [runID, String(checkpointCount), resumeReady ? "yes" : "no"]
+            }
+            let table = renderFixedWidthTable(header: lineageHeader, rows: lineageRows)
+            for tableLine in table.split(separator: "\n", omittingEmptySubsequences: false) {
+                lines.append("  " + String(tableLine))
             }
         }
         if !resumeReadyIDs.isEmpty {
@@ -4583,11 +4622,11 @@ public actor MelixCLIRunner {
 
         let bestRunID = (best["run_id"] as? String) ?? ""
         let bestManifestPath = (best["manifest_path"] as? String) ?? ""
-        let bestLoss = coerceDouble(best["loss_best"]) ?? 0.0
+        let bestLossText = coerceDouble(best["loss_best"]).map { String(format: "%.4f", $0) } ?? "n/a"
         if !bestRunID.isEmpty, !bestManifestPath.isEmpty {
             lines.append("")
             lines.append("Best known adapter:")
-            lines.append("  Run \(bestRunID) (loss \(String(format: "%.4f", bestLoss)))")
+            lines.append("  Run \(bestRunID) (loss \(bestLossText))")
             lines.append("  Manifest: \(bestManifestPath)")
             lines.append("  Resume via: melix lora resume --group-id \(groupID)")
         }

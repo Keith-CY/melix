@@ -6783,7 +6783,7 @@ struct RuntimeViewModelTests {
         #expect(group.checkpointLineage.last?.resumeReady == false)
     }
 
-    @Test("resume-from-manifest path flows into the lora training request ext")
+    @Test("resume-from-manifest path flows into the lora training request ext and is cleared after training")
     @MainActor
     func resumeFromManifestFlowsIntoTrainingExt() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -6807,6 +6807,7 @@ struct RuntimeViewModelTests {
         )
         #expect(call.ext["experiment_group_id"] == "nightly-qwen35")
         #expect(call.ext["resume_manifest_path"] == "/tmp/prior/manifest.json")
+        #expect(viewModel.loraResumeFromManifestPath == "")
     }
 
     @Test("model tooling snapshot skips invalid experiment groups and parses string-backed doubles")

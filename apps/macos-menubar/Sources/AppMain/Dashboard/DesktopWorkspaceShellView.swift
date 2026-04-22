@@ -1559,6 +1559,7 @@ struct DesktopTrainingToolSectionView: View {
                                     Spacer()
                                     Button("Use Group") {
                                         viewModel.loraExperimentGroupID = group.groupID
+                                        viewModel.loraResumeFromManifestPath = ""
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)

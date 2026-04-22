@@ -882,9 +882,7 @@ public struct RuntimeLoraExperimentGroupState: Identifiable, Equatable, Sendable
     }
 
     public var resumeReadySummaryText: String {
-        let ready = resumeReadyRunIDs.count
-        let total = max(runCount, ready)
-        return "\(ready) of \(total) runs resume-ready"
+        "\(resumeReadyRunIDs.count) of \(runCount) runs resume-ready"
     }
 }
 
@@ -4248,6 +4246,7 @@ public final class RuntimeViewModel {
                     metricName: "menu.model_operation_ms",
                     refreshProductToolingState: true
                 )
+                loraResumeFromManifestPath = ""
                 return
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
@@ -4263,6 +4262,7 @@ public final class RuntimeViewModel {
             ext: loraTrainingExt(),
             refreshProductToolingState: true
         )
+        loraResumeFromManifestPath = ""
     }
 
     public func activateLatestAdapter() async {

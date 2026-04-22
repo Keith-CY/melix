@@ -2759,11 +2759,92 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("Group: nightly-qwen35"))
         #expect(output.contains("Title: Nightly Qwen35"))
         #expect(output.contains("Runs (3):"))
+        #expect(output.contains("RUN_ID"))
+        #expect(output.contains("CHECKPOINTS"))
+        #expect(output.contains("RESUME_READY"))
         #expect(output.contains("model-ops-0012"))
-        #expect(output.contains("resume_ready=yes"))
         #expect(output.contains("Best known adapter:"))
         #expect(output.contains("Manifest: /tmp/melix-train-lora/model-ops-0012/train_lora.adapter.json"))
         #expect(output.contains("Resume via: melix lora resume --group-id nightly-qwen35"))
+        #expect(output.contains("\t") == false)
+    }
+
+    @Test("lora experiments list renders n/a when best loss is missing")
+    func loraExperimentsListRendersNotAvailableBestLoss() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makeExperimentsRegistryManifestWithoutBestLoss()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraExperimentsList(.init(modelID: "melix-dev-text"))
+        )
+
+        #expect(output.contains("n/a"))
+        #expect(output.contains("0.0000") == false)
+    }
+
+    @Test("lora experiments list surfaces a runtime error when snapshot JSON is malformed")
+    func loraExperimentsListErrorsOnMalformedSnapshot() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: "not-json-at-all"))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraExperimentsList(.init(modelID: "melix-dev-text"))
+            )
+            Issue.record("Expected experiments list to throw for malformed JSON")
+        } catch let error as MelixCLIError {
+            if case .runtime(let message) = error {
+                #expect(message.contains("registry_snapshot payload"))
+            } else {
+                Issue.record("Expected runtime error, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora resume inherits hf dataset fields from the manifest when dataset_uri is absent")
+    func loraResumeInheritsHFDatasetFields() async throws {
+        let client = StubControlPlaneXPCClient()
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-resume-hf-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "adapter_name": "nightly-qwen35",
+                "dataset_source_kind": "hf_dataset",
+                "hf_dataset_path": "HuggingFaceH4/ultrachat_200k",
+                "hf_dataset_name": "default",
+                "hf_train_split": "train_sft",
+                "preset_id": "balanced_adapter",
+            ],
+            to: manifestURL
+        )
+
+        await client.setModelOperationResult(
+            makeModelOperationResult(manifestJSON: makeExperimentsRegistryManifest(bestManifestPath: manifestURL.path)),
+            forOperation: "registry_snapshot"
+        )
+        await client.setModelOperationResult(
+            makeModelOperationResult(outputPath: "/tmp/resume-hf.adapter.json"),
+            forOperation: "train_lora"
+        )
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraResume(.init(modelID: "melix-dev-text", groupID: "nightly-qwen35"))
+        )
+
+        let calls = await client.modelOperationCalls.filter { $0.ext["melix.registry_rescan"] != "true" }
+        let trainCall = try #require(calls.last)
+        #expect(trainCall.operation == "train_lora")
+        #expect(trainCall.ext["dataset_source_kind"] == "hf_dataset")
+        #expect(trainCall.ext["dataset_uri"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(trainCall.ext["hf_dataset_path"] == "HuggingFaceH4/ultrachat_200k")
+        #expect(trainCall.ext["hf_dataset_name"] == "default")
+        #expect(trainCall.ext["hf_train_split"] == "train_sft")
     }
 
     @Test("lora experiments show errors for an unknown group and lists known ids")
@@ -5855,6 +5936,30 @@ private func makeDoctorReport(
         return item
     }
     return report
+}
+
+private func makeExperimentsRegistryManifestWithoutBestLoss() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "adapters": [],
+      "derived_models": [],
+      "experiment_groups": [
+        {
+          "group_id": "cold-start",
+          "title": "Cold Start",
+          "adapter_name": "cold-start-adapter",
+          "source_model": "melix-dev-text",
+          "run_count": 1,
+          "latest_preset_title": "Debug Fast",
+          "resume_ready_run_ids": [],
+          "checkpoint_lineage": [
+            {"run_id": "model-ops-9999", "checkpoint_count": 0, "resume_ready": false}
+          ]
+        }
+      ]
+    }
+    """#
 }
 
 private func makeExperimentsRegistryManifest(
