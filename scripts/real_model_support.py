@@ -10,6 +10,11 @@ REAL_SMALL_TEXT_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
 REAL_SMALL_TEXT_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
 REAL_SMALL_TEXT_MODEL_E2E_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_E2E"
 _MANAGED_MODEL_ROOT_ENV = "MELIX_MANAGED_MODEL_ROOT"
+_REAL_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".mlx")
+_REAL_MODEL_WEIGHT_FILENAMES = {
+    "model.safetensors.index.json",
+    "pytorch_model.bin.index.json",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +28,30 @@ class RealSmallTextModelSource:
     @property
     def model_path_for_runtime(self) -> str:
         return self.local_model_path or self.model_id
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeModelPreflight:
+    model_id: str
+    runtime_model_class: str
+    real_local_model: bool
+    deterministic_dev_model: bool
+    hub_required: bool
+    local_model_path: str
+    source_resolution_mode: str
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "model_id": self.model_id,
+            "runtime_model_class": self.runtime_model_class,
+            "real_local_model": self.real_local_model,
+            "deterministic_dev_model": self.deterministic_dev_model,
+            "hub_required": self.hub_required,
+            "local_model_path": self.local_model_path,
+            "source_resolution_mode": self.source_resolution_mode,
+            "warnings": list(self.warnings),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +151,77 @@ def resolve_real_small_text_model_path(
     return Path(source.local_model_path)
 
 
+def build_runtime_model_preflight(
+    *,
+    model_id: str,
+    live: bool,
+    local_model_path: str,
+    source_resolution_mode: str,
+) -> RuntimeModelPreflight:
+    resolved_model_id = model_id.strip()
+    resolved_source_mode = source_resolution_mode.strip()
+    resolved_local_path = _resolved_optional_path(local_model_path)
+    normalized_local_path = str(resolved_local_path) if resolved_local_path is not None else ""
+
+    if live:
+        return RuntimeModelPreflight(
+            model_id=resolved_model_id,
+            runtime_model_class="hub_required",
+            real_local_model=False,
+            deterministic_dev_model=False,
+            hub_required=True,
+            local_model_path=normalized_local_path,
+            source_resolution_mode=resolved_source_mode,
+        )
+
+    if resolved_local_path is not None and _has_recognized_model_weight_files(resolved_local_path):
+        return RuntimeModelPreflight(
+            model_id=resolved_model_id,
+            runtime_model_class="real_local_model",
+            real_local_model=True,
+            deterministic_dev_model=False,
+            hub_required=False,
+            local_model_path=normalized_local_path,
+            source_resolution_mode=resolved_source_mode,
+        )
+
+    if _is_deterministic_development_model(resolved_model_id):
+        warnings: tuple[str, ...] = (
+            "Model id uses a Melix deterministic development model; evidence is not real local model performance.",
+        )
+        return RuntimeModelPreflight(
+            model_id=resolved_model_id,
+            runtime_model_class="deterministic_dev_model",
+            real_local_model=False,
+            deterministic_dev_model=True,
+            hub_required=False,
+            local_model_path=normalized_local_path,
+            source_resolution_mode=resolved_source_mode,
+            warnings=warnings,
+        )
+
+    warnings_list: list[str] = []
+    if resolved_local_path is None:
+        warnings_list.append("No local model path was configured for a non-live model run.")
+    elif not resolved_local_path.is_dir():
+        warnings_list.append(f"Local model path does not exist: {resolved_local_path}")
+    else:
+        warnings_list.append(
+            f"Local model path does not contain recognized model weight files: {resolved_local_path}"
+        )
+
+    return RuntimeModelPreflight(
+        model_id=resolved_model_id,
+        runtime_model_class="missing_real_local_model",
+        real_local_model=False,
+        deterministic_dev_model=False,
+        hub_required=False,
+        local_model_path=normalized_local_path,
+        source_resolution_mode=resolved_source_mode,
+        warnings=tuple(warnings_list),
+    )
+
+
 def _managed_huggingface_model_path(model_id: str, environment: Mapping[str, str]) -> Path | None:
     managed_root = environment.get(_MANAGED_MODEL_ROOT_ENV, "").strip()
     if not managed_root:
@@ -169,3 +269,27 @@ def _huggingface_cache_root(environment: Mapping[str, str]) -> Path:
     if hf_home:
         return (Path(hf_home).expanduser().resolve() / "hub")
     return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+
+
+def _resolved_optional_path(path: str) -> Path | None:
+    stripped = path.strip()
+    if not stripped:
+        return None
+    return Path(stripped).expanduser().resolve()
+
+
+def _is_deterministic_development_model(model_id: str) -> bool:
+    return model_id.startswith("melix-dev-")
+
+
+def _has_recognized_model_weight_files(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    for child in path.iterdir():
+        if not child.is_file():
+            continue
+        if child.name in _REAL_MODEL_WEIGHT_FILENAMES:
+            return True
+        if child.suffix.lower() in _REAL_MODEL_WEIGHT_SUFFIXES:
+            return True
+    return False

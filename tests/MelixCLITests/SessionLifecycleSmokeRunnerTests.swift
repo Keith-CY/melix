@@ -72,6 +72,19 @@ struct SessionLifecycleSmokeRunnerTests {
         }
     }
 
+    @Test("runner records reasoned server paused chat rejection as pause evidence")
+    func runnerRecordsReasonedServerPausedChatRejection() async throws {
+        let report = try await SessionLifecycleSmokeRunner(
+            client: LifecycleSmokeStubClient(
+                pausedChatErrorReason: "chat_unavailable: server_paused: paused for smoke verification"
+            ),
+            sleep: { _ in try await Task.sleep(for: .milliseconds(1)) }
+        ).run()
+
+        #expect(report.scenarios["pause"]?.blockedStatus == "unavailable")
+        #expect(report.scenarios["wake"]?.assistantText.contains("Echo: wake") == true)
+    }
+
     @Test("command parser accepts explicit smoke arguments")
     func commandParserAcceptsExplicitArguments() throws {
         let options = try SessionLifecycleSmokeCommand.parseArguments([
@@ -284,6 +297,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     nonisolated let serverSessionID: String
     private let allowSleepTransition: Bool
     private let chatModes: [String: LifecycleSmokeChatMode]
+    private let pausedChatErrorReason: String?
     private var snapshot: Melix_Controlplane_V1_ServerSnapshot
     private var sleepPollCount = 0
     private var awakeGraceSnapshots = 0
@@ -294,11 +308,13 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         allowSleepTransition: Bool = true,
         chatModes: [String: LifecycleSmokeChatMode] = [:],
+        pausedChatErrorReason: String? = nil,
         stopConflictCount: Int = 0
     ) {
         self.serverSessionID = serverSessionID
         self.allowSleepTransition = allowSleepTransition
         self.chatModes = chatModes
+        self.pausedChatErrorReason = pausedChatErrorReason
         self.remainingStopConflicts = stopConflictCount
         self.snapshot = LifecycleSmokeStubClient.makeSnapshot(
             serverSessionID: serverSessionID,
@@ -326,6 +342,9 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
         let session = snapshot.runtimeSessions[0]
         if session.lifecycleState == .paused {
+            if let pausedChatErrorReason {
+                throw ControlPlaneChatExecutionError.unavailableReason(pausedChatErrorReason)
+            }
             throw ControlPlaneChatExecutionError.unavailable
         }
         if session.lifecycleState == .sleeping {

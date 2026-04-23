@@ -17,9 +17,7 @@ public struct DesktopFoundationRootView: View {
                 }
 
                 ToolbarItem(placement: .primaryAction) {
-                    DesktopWorkspaceTitleBarCommandCenterButton(
-                        openCommandCenter: viewModel.openCommandCenter
-                    )
+                    DesktopWorkspaceTitleBarActionsView(viewModel: viewModel)
                 }
             }
     }
@@ -725,7 +723,7 @@ struct DesktopToolsTabView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let primaryModel = viewModel.primaryModel {
-                GroupBox("Primary Model") {
+                MelixSectionCard("Primary Model") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(primaryModel.modelID)
                             .font(.headline)
@@ -749,12 +747,9 @@ struct DesktopToolsTabView: View {
                             .pickerStyle(.menu)
                             .frame(maxWidth: 120)
                         }
-                        HStack {
+                        HStack(spacing: 8) {
                             Button("Inspect") {
                                 Task { await inspectPrimaryModel() }
-                            }
-                            Button("Refresh Tooling") {
-                                Task { await refreshModelOpsProductState() }
                             }
                             Button("Doctor") {
                                 Task { await runDoctor() }
@@ -762,29 +757,39 @@ struct DesktopToolsTabView: View {
                             Button("Bench") {
                                 Task { await runBench() }
                             }
-                            Button("Convert") {
-                                Task { await convertPrimaryModel() }
+                            Menu {
+                                Button("Refresh Tooling") {
+                                    Task { await refreshModelOpsProductState() }
+                                }
+                                Button("Convert") {
+                                    Task { await convertPrimaryModel() }
+                                }
+                                Button("Quantize") {
+                                    Task { await quantizePrimaryModel() }
+                                }
+                                Button("Train LoRA") {
+                                    Task { await trainPrimaryModel() }
+                                }
+                                Button("Activate Adapter") {
+                                    Task { await activateLatestAdapter() }
+                                }
+                                .disabled(viewModel.latestAdapterPackage == nil)
+                                Button("Publish Adapter") {
+                                    Task { await publishLatestAdapter() }
+                                }
+                                .disabled(viewModel.latestAdapterPackage == nil)
+                                Button("Download") {
+                                    Task { await downloadPrimaryModel() }
+                                }
+                                Button("Upload") {
+                                    Task { await uploadPrimaryModel() }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
                             }
-                            Button("Quantize") {
-                                Task { await quantizePrimaryModel() }
-                            }
-                            Button("Train LoRA") {
-                                Task { await trainPrimaryModel() }
-                            }
-                            Button("Activate Adapter") {
-                                Task { await activateLatestAdapter() }
-                            }
-                            .disabled(viewModel.latestAdapterPackage == nil)
-                            Button("Publish Adapter") {
-                                Task { await publishLatestAdapter() }
-                            }
-                            .disabled(viewModel.latestAdapterPackage == nil)
-                            Button("Download") {
-                                Task { await downloadPrimaryModel() }
-                            }
-                            Button("Upload") {
-                                Task { await uploadPrimaryModel() }
-                            }
+                            .menuStyle(.borderlessButton)
+                            .help("More Model Actions")
+                            .accessibilityLabel("More Model Actions")
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -792,13 +797,13 @@ struct DesktopToolsTabView: View {
             }
 
             if let info = viewModel.selectedModelInfo {
-                GroupBox("Model Info") {
+                MelixSectionCard("Model Info") {
                     DesktopModelInfoSummaryView(info: info)
                 }
             }
 
             if let operation = viewModel.lastModelOperation {
-                GroupBox("Last Operation") {
+                MelixSectionCard("Last Operation") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(operation.operation) • \(operation.modelID)")
                             .font(.headline)
@@ -860,7 +865,7 @@ struct DesktopToolsTabView: View {
                 }
             }
 
-            GroupBox("Adapter Registry") {
+            MelixSectionCard("Adapter Registry") {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.adapterPackages.isEmpty {
                         Text("No adapter packages discovered yet.")
@@ -904,7 +909,7 @@ struct DesktopToolsTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox("Training History") {
+            MelixSectionCard("Training History") {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.trainingHistory.isEmpty {
                         Text("No training jobs recorded yet.")
@@ -933,13 +938,13 @@ struct DesktopToolsTabView: View {
             }
 
             if let report = viewModel.lastDoctorReport {
-                GroupBox("Doctor Report") {
+                MelixSectionCard("Doctor Report") {
                     DesktopDoctorReportSummaryView(report: report)
                 }
             }
 
             if let report = viewModel.lastBenchReport {
-                GroupBox("Bench Report") {
+                MelixSectionCard("Bench Report") {
                     VStack(alignment: .leading, spacing: 6) {
                         if !report.reportPath.isEmpty {
                             Text(report.reportPath)

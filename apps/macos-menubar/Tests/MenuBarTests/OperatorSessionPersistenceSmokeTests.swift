@@ -106,7 +106,11 @@ struct OperatorSessionPersistenceSmokeTests {
                 ],
                 dismissedBannerIDs: ["banner-1"],
                 downloadQueue: [],
-                registryRoots: ["/tmp/models-a", "/tmp/models-b"]
+                registryRoots: ["/tmp/models-a", "/tmp/models-b"],
+                paneVisibility: [
+                    DesktopPaneVisibilityState(surface: .server, showsSidebar: true, showsInspector: true),
+                    DesktopPaneVisibilityState(surface: .api, showsSidebar: false, showsInspector: false),
+                ]
             )
         )
 
@@ -120,6 +124,8 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.serverSessions.first?.lightSleepAfterSeconds == 60)
         #expect(sharedState.serverSessions.first?.deepSleepAfterSeconds == 600)
         #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
+        #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "server" })?.showsInspector == true)
+        #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "api" })?.showsSidebar == false)
     }
 }
 

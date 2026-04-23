@@ -71,6 +71,12 @@ public struct MelixHome: Equatable, Sendable {
             return overriddenPath
         }
 
+        if let appSupportPath = environment["MELIX_APP_SUPPORT_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           appSupportPath.isEmpty == false
+        {
+            return appSupportPath
+        }
+
         let homePath = environment["HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let homePath, homePath.isEmpty == false {
             return URL(fileURLWithPath: homePath, isDirectory: true)

@@ -108,6 +108,123 @@ public enum DesktopPaneRole: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public struct DesktopPaneVisibilityState: Identifiable, Codable, Equatable, Sendable {
+    public var surface: DesktopSurface
+    public var showsSidebar: Bool
+    public var showsInspector: Bool
+
+    public var id: DesktopSurface { surface }
+
+    public init(
+        surface: DesktopSurface,
+        showsSidebar: Bool = true,
+        showsInspector: Bool = false
+    ) {
+        self.surface = surface
+        self.showsSidebar = showsSidebar
+        self.showsInspector = showsInspector
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case surfaceID = "surface"
+        case showsSidebar = "shows_sidebar"
+        case showsInspector = "shows_inspector"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            surface: DesktopSurface(paneVisibilityID: try container.decodeIfPresent(String.self, forKey: .surfaceID) ?? "chat"),
+            showsSidebar: try container.decodeIfPresent(Bool.self, forKey: .showsSidebar) ?? true,
+            showsInspector: try container.decodeIfPresent(Bool.self, forKey: .showsInspector) ?? false
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(surface.paneVisibilityID, forKey: .surfaceID)
+        try container.encode(showsSidebar, forKey: .showsSidebar)
+        try container.encode(showsInspector, forKey: .showsInspector)
+    }
+
+    public static func defaultState(for surface: DesktopSurface) -> DesktopPaneVisibilityState {
+        DesktopPaneVisibilityState(surface: surface)
+    }
+
+    public static var defaultStates: [DesktopPaneVisibilityState] {
+        DesktopSurface.allCases.map(defaultState(for:))
+    }
+
+    public static func mergedWithDefaults(
+        _ states: [DesktopPaneVisibilityState]
+    ) -> [DesktopPaneVisibilityState] {
+        var bySurface = Dictionary(uniqueKeysWithValues: defaultStates.map { ($0.surface, $0) })
+        for state in states {
+            bySurface[state.surface] = state
+        }
+        return DesktopSurface.allCases.map { surface in
+            bySurface[surface] ?? defaultState(for: surface)
+        }
+    }
+}
+
+public struct DesktopRuntimeEndpointState: Equatable, Sendable {
+    public let serverSessionID: String
+    public let serverTitle: String
+    public let modelID: String
+    public let requestedBaseURL: String
+    public let effectiveBaseURL: String
+    public let sharedAccessSummaryText: String
+
+    public static let fallback = DesktopRuntimeEndpointState(
+        serverSessionID: "",
+        serverTitle: "No Server",
+        modelID: "",
+        requestedBaseURL: "http://127.0.0.1:8080/v1",
+        effectiveBaseURL: "http://127.0.0.1:8080/v1",
+        sharedAccessSummaryText: "No server session selected."
+    )
+}
+
+extension DesktopSurface {
+    init(paneVisibilityID rawValue: String) {
+        switch Self.normalizedPaneVisibilityID(rawValue) {
+        case "image":
+            self = .image
+        case "server":
+            self = .server
+        case "tools":
+            self = .tools
+        case "api":
+            self = .api
+        default:
+            self = .chat
+        }
+    }
+
+    var paneVisibilityID: String {
+        switch self {
+        case .chat:
+            return "chat"
+        case .image:
+            return "image"
+        case .server:
+            return "server"
+        case .tools:
+            return "tools"
+        case .api:
+            return "api"
+        }
+    }
+
+    private static func normalizedPaneVisibilityID(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter(\.isLetter)
+    }
+}
+
 @MainActor
 public enum DesktopWorkspaceCommand: Equatable, Sendable {
     case selectSurface(DesktopSurface)
@@ -694,6 +811,21 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
 
     public var summaryText: String {
         transcript.last?.body.isEmpty == false ? transcript.last?.body ?? "" : statusText
+    }
+
+    public var hasServerBinding: Bool {
+        serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    public var displayBranchTitle: String? {
+        let trimmedTitle = branchTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.isEmpty == false else {
+            return nil
+        }
+        guard branchID != "main" else {
+            return nil
+        }
+        return trimmedTitle
     }
 }
 

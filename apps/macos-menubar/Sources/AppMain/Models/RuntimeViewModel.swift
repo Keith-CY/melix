@@ -536,6 +536,40 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
+    public let modelID: String
+    public let alias: String
+    public let detail: String
+    public let primaryActionTitle: String
+    public let kind: RuntimeAudioSetupActionKind
+
+    public var id: String {
+        "\(modelID):\(kind.rawValue)"
+    }
+
+    public var title: String {
+        "Audio Support Required"
+    }
+
+    public var action: RuntimeAudioSetupActionState {
+        RuntimeAudioSetupActionState(
+            modelID: modelID,
+            alias: alias,
+            detail: detail,
+            actionTitle: primaryActionTitle,
+            kind: kind
+        )
+    }
+
+    public init(action: RuntimeAudioSetupActionState) {
+        self.modelID = action.modelID
+        self.alias = action.alias
+        self.detail = action.detail
+        self.primaryActionTitle = action.actionTitle
+        self.kind = action.kind
+    }
+}
+
 public struct RuntimeDoctorFindingState: Equatable, Sendable, Identifiable {
     public let code: String
     public let severityText: String
@@ -1185,6 +1219,40 @@ public struct DesktopChatCapabilityRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let detail: String
     public let isReady: Bool
+
+    public var shortTitle: String {
+        switch id {
+        case "text":
+            return "Text"
+        case "ocr":
+            return "OCR"
+        case "vlm":
+            return "Vision"
+        case "transcription":
+            return "Audio In"
+        case "speech":
+            return "Audio Out"
+        default:
+            return title
+        }
+    }
+
+    public var systemImageName: String {
+        switch id {
+        case "text":
+            return "text.bubble"
+        case "ocr":
+            return "doc.text.viewfinder"
+        case "vlm":
+            return "eye"
+        case "transcription":
+            return "waveform.badge.mic"
+        case "speech":
+            return "speaker.wave.2"
+        default:
+            return "square.grid.2x2"
+        }
+    }
 }
 
 private struct GatewayAccessProjection: Equatable, Sendable {
@@ -1279,6 +1347,7 @@ public final class RuntimeViewModel {
     public private(set) var connectionDetailText = "Awaiting handshake"
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
+    public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = []
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
@@ -1325,6 +1394,7 @@ public final class RuntimeViewModel {
     public private(set) var chatTranscript: [DesktopChatTranscriptEntry] = []
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
+    public private(set) var pendingAudioSetupPrompt: RuntimeAudioSetupPromptState?
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
@@ -1733,6 +1803,62 @@ public final class RuntimeViewModel {
         selectedSurface = .tools
         selectedToolSection = section
         notifyStateChanged()
+    }
+
+    public func openPreferences() {
+        selectedSurface = .tools
+        selectedToolSection = .settings
+        notifyStateChanged()
+    }
+
+    public func desktopPaneVisibilityState(for surface: DesktopSurface? = nil) -> DesktopPaneVisibilityState {
+        let resolvedSurface = surface ?? selectedSurface
+        return desktopPaneVisibility.first { $0.surface == resolvedSurface }
+            ?? DesktopPaneVisibilityState.defaultState(for: resolvedSurface)
+    }
+
+    public func isDesktopPaneVisible(
+        _ role: DesktopPaneRole,
+        for surface: DesktopSurface? = nil
+    ) -> Bool {
+        let state = desktopPaneVisibilityState(for: surface)
+        switch role {
+        case .sidebar:
+            return state.showsSidebar
+        case .inspector:
+            return state.showsInspector
+        }
+    }
+
+    public func setDesktopPaneVisible(
+        _ role: DesktopPaneRole,
+        visible: Bool,
+        for surface: DesktopSurface? = nil
+    ) {
+        updateDesktopPaneVisibility(role, visible: visible, for: surface ?? selectedSurface)
+        notifyStateChanged()
+    }
+
+    public func toggleDesktopPane(_ role: DesktopPaneRole) {
+        setDesktopPaneVisible(role, visible: isDesktopPaneVisible(role) == false)
+    }
+
+    private func updateDesktopPaneVisibility(
+        _ role: DesktopPaneRole,
+        visible: Bool,
+        for surface: DesktopSurface
+    ) {
+        var states = DesktopPaneVisibilityState.mergedWithDefaults(desktopPaneVisibility)
+        guard let index = states.firstIndex(where: { $0.surface == surface }) else {
+            return
+        }
+        switch role {
+        case .sidebar:
+            states[index].showsSidebar = visible
+        case .inspector:
+            states[index].showsInspector = visible
+        }
+        desktopPaneVisibility = states
     }
 
     public func toggleBenchmarkSuite(_ suiteID: String) {
@@ -2278,7 +2404,7 @@ public final class RuntimeViewModel {
     }
 
     public func createChatSession() {
-        guard let serverSession = selectedServerSession ?? serverSessions.first else {
+        guard operatorStateRestored || serverSessions.isEmpty == false else {
             setLastError("Create a Server Session before opening chat.")
             chatStatusText = "No Server Session"
             selectedSurface = .server
@@ -2290,7 +2416,8 @@ public final class RuntimeViewModel {
         let session = DesktopChatSessionState(
             id: "chat-session-\(UUID().uuidString)",
             title: nextIndex == 1 ? "Chat 1" : "Chat \(nextIndex)",
-            serverSessionID: serverSession.id
+            serverSessionID: "",
+            statusText: "Choose Server"
         )
         chatSessions.append(session)
         loadChatSession(session)
@@ -2329,6 +2456,57 @@ public final class RuntimeViewModel {
             return
         }
         loadChatSession(session)
+        notifyStateChanged()
+    }
+
+    public func deleteChatSession(id: String) {
+        guard let index = chatSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let deletingSelectedSession = selectedChatSession?.id == id
+        chatSessions.remove(at: index)
+
+        if chatSessions.isEmpty {
+            selectedChatSessionID = ""
+            chatTranscript = []
+            chatConversationMessages = []
+            chatComposerText = ""
+            chatStatusText = "Idle"
+            lastChatUsageText = ""
+            lastChatRequestID = ""
+            isChatStreaming = false
+        } else if deletingSelectedSession {
+            let nextIndex = min(index, chatSessions.count - 1)
+            loadChatSession(chatSessions[nextIndex])
+        }
+        notifyStateChanged()
+    }
+
+    public func bindSelectedChatSessionToServer(serverSessionID: String) {
+        guard
+            let selectedChatSession,
+            let serverSession = serverSession(id: serverSessionID)
+        else {
+            return
+        }
+
+        replaceChatSession(id: selectedChatSession.id) { session in
+            session.serverSessionID = serverSession.id
+            if session.statusText == "Choose Server" || session.statusText == "No Server Session" {
+                session.statusText = "Idle"
+            }
+            session.updatedAt = Date()
+        }
+        selectedServerSessionID = serverSession.id
+        selectedChatModelID = serverSession.modelID
+        if selectedChatSessionID == selectedChatSession.id {
+            chatStatusText = chatStatusText == "Choose Server" || chatStatusText == "No Server Session"
+                ? "Idle"
+                : chatStatusText
+        }
+        if let updatedSession = self.selectedChatSession {
+            loadChatSession(updatedSession)
+        }
         notifyStateChanged()
     }
 
@@ -2376,7 +2554,26 @@ public final class RuntimeViewModel {
     }
 
     public var primaryModel: RuntimeModelRow? {
-        models.first { $0.modelID == "melix-dev-text" } ?? models.first
+        if let selectedModelID = selectedServerSession?.modelID,
+           let selectedModel = models.first(where: { $0.modelID == selectedModelID })
+        {
+            return selectedModel
+        }
+        return models.first { $0.modelID == "melix-dev-text" } ?? models.first
+    }
+
+    public var desktopRuntimeEndpointState: DesktopRuntimeEndpointState {
+        guard let session = selectedServerSession else {
+            return .fallback
+        }
+        return DesktopRuntimeEndpointState(
+            serverSessionID: session.id,
+            serverTitle: session.title,
+            modelID: session.modelID,
+            requestedBaseURL: session.baseURL,
+            effectiveBaseURL: session.effectiveBaseURL,
+            sharedAccessSummaryText: session.sharedAccessSummaryText
+        )
     }
 
     private var primaryModelSummary: Melix_Controlplane_V1_ModelSummary? {
@@ -2401,10 +2598,13 @@ public final class RuntimeViewModel {
     }
 
     public var selectedChatServerSession: DesktopServerSessionState? {
-        guard let selectedChatSession else {
-            return selectedServerSession
+        guard
+            let selectedChatSession,
+            selectedChatSession.hasServerBinding
+        else {
+            return nil
         }
-        return serverSession(id: selectedChatSession.serverSessionID) ?? selectedServerSession
+        return serverSession(id: selectedChatSession.serverSessionID)
     }
 
     public var selectedAgentIntegrationExport: AgentIntegrationExport? {
@@ -2485,16 +2685,6 @@ public final class RuntimeViewModel {
            selectedServerSession?.lifecycle != .unavailable
         {
             signals.append(selectedServerBanner)
-        }
-        if let audioSetupAction = audioSetupActions.first {
-            signals.append(
-                DesktopBannerState(
-                    id: "audio-setup-\(audioSetupAction.modelID)",
-                    title: "Audio Setup Required",
-                    detail: audioSetupAction.detail,
-                    severity: .warning
-                )
-            )
         }
         if let recoverableDownload = recoverableDownloads.first {
             let detail = recoverableDownloads.count == 1
@@ -2937,9 +3127,22 @@ public final class RuntimeViewModel {
         }
 
         guard let serverSession = selectedChatServerSession else {
-            chatStatusText = "No Server Session"
-            setLastError("Create and start a Server Session before sending chat prompts.")
-            selectedSurface = .server
+            guard selectedChatSession != nil || serverSessions.isEmpty == false else {
+                chatStatusText = "No Server Session"
+                setLastError("Create a Server Session before sending chat prompts.")
+                selectedSurface = .server
+                notifyStateChanged()
+                return
+            }
+            chatStatusText = "Choose Server"
+            setLastError("Choose a Server Session before sending chat prompts.")
+            selectedSurface = .chat
+            if let selectedChatSession {
+                replaceChatSession(id: selectedChatSession.id) { session in
+                    session.statusText = "Choose Server"
+                    session.updatedAt = Date()
+                }
+            }
             notifyStateChanged()
             return
         }
@@ -2962,14 +3165,17 @@ public final class RuntimeViewModel {
             kind: .user,
             title: "User",
             body: prompt,
-            detail: modelID
+            detail: ""
         )
         chatStatusText = "Preparing"
         lastChatUsageText = ""
         isChatStreaming = true
         notifyStateChanged()
 
-        if models.contains(where: { $0.modelID == modelID && $0.isLoaded }) == false {
+        if models.contains(where: { $0.modelID == modelID }) == false {
+            await refreshDesktopFoundation()
+        }
+        if shouldPreloadChatModel(modelID: modelID) {
             await loadModel(modelID: modelID)
         }
 
@@ -3074,7 +3280,7 @@ public final class RuntimeViewModel {
                 kind: .error,
                 title: "Error",
                 body: String(describing: error),
-                detail: modelID
+                detail: ""
             )
         }
 
@@ -3104,6 +3310,13 @@ public final class RuntimeViewModel {
             session.updatedAt = Date()
         }
         notifyStateChanged()
+    }
+
+    private func shouldPreloadChatModel(modelID: String) -> Bool {
+        guard let model = models.first(where: { $0.modelID == modelID }) else {
+            return false
+        }
+        return model.isLoaded == false
     }
 
     public func selectImageJob(jobID: String) {
@@ -4193,6 +4406,25 @@ public final class RuntimeViewModel {
         case .downloadModel:
             await downloadAudioModel(modelID: action.modelID)
         }
+    }
+
+    public func presentAudioSetupPrompt(_ action: RuntimeAudioSetupActionState) {
+        pendingAudioSetupPrompt = RuntimeAudioSetupPromptState(action: action)
+        notifyStateChanged()
+    }
+
+    public func dismissAudioSetupPrompt() {
+        pendingAudioSetupPrompt = nil
+        notifyStateChanged()
+    }
+
+    public func performPendingAudioSetupAction() async {
+        guard let prompt = pendingAudioSetupPrompt else {
+            return
+        }
+        pendingAudioSetupPrompt = nil
+        notifyStateChanged()
+        await performAudioSetupAction(prompt.action)
     }
 
     public func uploadPrimaryModel() async {
@@ -5520,7 +5752,8 @@ public final class RuntimeViewModel {
 
     private func loadChatSession(_ session: DesktopChatSessionState) {
         selectedChatSessionID = session.id
-        if selectedServerSessionID.isEmpty || serverSession(id: session.serverSessionID) != nil {
+        if session.hasServerBinding,
+           (selectedServerSessionID.isEmpty || serverSession(id: session.serverSessionID) != nil) {
             selectedServerSessionID = session.serverSessionID
         }
         chatTranscript = session.transcript
@@ -5544,21 +5777,16 @@ public final class RuntimeViewModel {
     }
 
     private func ensureChatSessionsBoundToServerSessions() {
-        if serverSessions.isEmpty {
-            chatSessions = []
-            selectedChatSessionID = ""
-            return
-        }
-
         if selectedServerSession == nil {
             selectedServerSessionID = serverSessions.first?.id ?? ""
         }
 
-        if chatSessions.isEmpty, let serverSession = selectedServerSession {
+        if chatSessions.isEmpty {
             let session = DesktopChatSessionState(
                 id: "chat-session-\(UUID().uuidString)",
                 title: "Chat 1",
-                serverSessionID: serverSession.id
+                serverSessionID: "",
+                statusText: "Choose Server"
             )
             chatSessions = [session]
             loadChatSession(session)
@@ -5566,13 +5794,14 @@ public final class RuntimeViewModel {
         }
 
         chatSessions = chatSessions.map { session in
-            guard serverSession(id: session.serverSessionID) == nil else {
+            guard session.hasServerBinding, serverSession(id: session.serverSessionID) == nil else {
                 return session
             }
-            var rebound = session
-            rebound.serverSessionID = serverSessions.first?.id ?? rebound.serverSessionID
-            rebound.updatedAt = Date()
-            return rebound
+            var unbound = session
+            unbound.serverSessionID = ""
+            unbound.statusText = "Choose Server"
+            unbound.updatedAt = Date()
+            return unbound
         }
 
         if selectedChatSession == nil, let first = chatSessions.first {
@@ -5591,11 +5820,16 @@ public final class RuntimeViewModel {
                 from: latestSnapshot,
                 serverSessionID: seededServerSessionID
             )
+            let projectedServedModelID = projectedConfig?.servedModelID
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let seeded = makeServerSession(
-                for: firstTextModel,
+                for: projectedConfig.flatMap { projection in
+                    textModels.first { $0.modelID == projection.servedModelID }
+                } ?? firstTextModel,
                 title: "Primary Server",
                 port: projectedConfig?.port ?? 8080,
-                serverSessionID: seededServerSessionID
+                serverSessionID: seededServerSessionID,
+                modelIDOverride: projectedServedModelID?.isEmpty == false ? projectedServedModelID : nil
             )
             if projectedConfig != nil {
                 var projectedSeeded = seeded
@@ -5654,12 +5888,13 @@ public final class RuntimeViewModel {
         for model: RuntimeModelRow,
         title: String,
         port: Int,
-        serverSessionID: String = "server-session-\(UUID().uuidString)"
+        serverSessionID: String = "server-session-\(UUID().uuidString)",
+        modelIDOverride: String? = nil
     ) -> DesktopServerSessionState {
         var session = DesktopServerSessionState(
             id: serverSessionID,
             title: title,
-            modelID: model.modelID,
+            modelID: modelIDOverride ?? model.modelID,
             port: port,
             lifecycle: .running,
             lastKnownModelStateText: model.stateText
@@ -5695,6 +5930,7 @@ public final class RuntimeViewModel {
             selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
             registryHasConfiguredRootOverride = registryConfiguredRootPaths.isEmpty == false
@@ -5717,7 +5953,8 @@ public final class RuntimeViewModel {
             serverSessions: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
-            registryRoots: registryConfiguredRootPaths
+            registryRoots: registryConfiguredRootPaths,
+            paneVisibility: desktopPaneVisibility
         )
     }
 
@@ -6800,7 +7037,6 @@ public final class RuntimeViewModel {
         session.port = projection.port
         session.effectiveHost = projection.effectiveHost
         session.effectivePort = projection.effectivePort
-        session.modelID = projection.servedModelID
         session.rateLimitPerMinute = projection.rateLimitPerMinute
         session.timeoutSeconds = projection.timeoutSeconds
         session.gatewayConfigSourceText = projection.sourceText
@@ -7459,8 +7695,9 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedChatModelID() -> String {
-        if let serverModelID = selectedChatServerSession?.modelID,
-           models.contains(where: { $0.modelID == serverModelID }) {
+        if let serverModelID = selectedChatServerSession?.modelID
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !serverModelID.isEmpty {
             selectedChatModelID = serverModelID
             return serverModelID
         }
@@ -7731,7 +7968,7 @@ public final class RuntimeViewModel {
             entryID: entryID,
             kind: .assistant,
             title: "Assistant",
-            detail: requestID
+            detail: ""
         )
     }
 
@@ -7744,7 +7981,7 @@ public final class RuntimeViewModel {
             entryID: entryID,
             kind: .reasoning,
             title: "Reasoning",
-            detail: requestID
+            detail: ""
         )
     }
 
@@ -7767,14 +8004,14 @@ public final class RuntimeViewModel {
         guard !assistantText.isEmpty else { return }
         let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
         activeAssistantEntryID = entryID
-        replaceBodyIfEmpty(assistantText, entryID: entryID, kind: .assistant, title: "Assistant", detail: requestID)
+        replaceBodyIfEmpty(assistantText, entryID: entryID, kind: .assistant, title: "Assistant", detail: "")
     }
 
     private func finalizeReasoningText(_ reasoningText: String, requestID: String) {
         guard !reasoningText.isEmpty else { return }
         let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
         activeReasoningEntryID = entryID
-        replaceBodyIfEmpty(reasoningText, entryID: entryID, kind: .reasoning, title: "Reasoning", detail: requestID)
+        replaceBodyIfEmpty(reasoningText, entryID: entryID, kind: .reasoning, title: "Reasoning", detail: "")
     }
 
     private func commitAssistantMessageIfNeeded() {
@@ -8097,7 +8334,7 @@ public final class RuntimeViewModel {
             id: Self.productUpdateBannerID(summary: productUpdateSummary, detail: productUpdateDetail ?? ""),
             title: productUpdateSummary,
             detail: productUpdateDetail ?? "",
-            severity: productUpdateCheckSucceeded ? .info : .warning,
+            severity: .info,
             isDismissible: true
         )
     }

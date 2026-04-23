@@ -308,18 +308,20 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [MelixOperatorDownloadQueueEntryState]
     public var registryRoots: [String]
+    public var paneVisibility: [MelixOperatorPaneVisibilityState]
 
     public init(
-        schemaVersion: Int = 4,
+        schemaVersion: Int = 5,
         selectedSurfaceID: String = "chat",
         selectedToolSectionID: String = "modelsLibrary",
         selectedServerSessionID: String,
         serverSessions: [MelixOperatorServerSessionState],
         dismissedBannerIDs: [String] = [],
         downloadQueue: [MelixOperatorDownloadQueueEntryState] = [],
-        registryRoots: [String] = []
+        registryRoots: [String] = [],
+        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates
     ) {
-        self.schemaVersion = schemaVersion
+        self.schemaVersion = max(schemaVersion, 5)
         self.selectedSurfaceID = selectedSurfaceID
         self.selectedToolSectionID = selectedToolSectionID
         self.selectedServerSessionID = selectedServerSessionID
@@ -327,6 +329,7 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
+        self.paneVisibility = MelixOperatorPaneVisibilityState.mergedWithDefaults(paneVisibility)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -338,6 +341,7 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
+        case paneVisibility = "pane_visibility"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -350,7 +354,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
             serverSessions: try container.decodeIfPresent([MelixOperatorServerSessionState].self, forKey: .serverSessions) ?? [],
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             downloadQueue: try container.decodeIfPresent([MelixOperatorDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
-            registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? []
+            registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
+            paneVisibility: try container.decodeIfPresent([MelixOperatorPaneVisibilityState].self, forKey: .paneVisibility)
+                ?? MelixOperatorPaneVisibilityState.defaultStates
         )
     }
 
@@ -364,6 +370,69 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
+        try container.encode(paneVisibility, forKey: .paneVisibility)
+    }
+}
+
+public struct MelixOperatorPaneVisibilityState: Codable, Equatable, Sendable {
+    public var surfaceID: String
+    public var showsSidebar: Bool
+    public var showsInspector: Bool
+
+    public init(surfaceID: String, showsSidebar: Bool = true, showsInspector: Bool = false) {
+        self.surfaceID = Self.normalizedSurfaceID(surfaceID)
+        self.showsSidebar = showsSidebar
+        self.showsInspector = showsInspector
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case surfaceID = "surface"
+        case showsSidebar = "shows_sidebar"
+        case showsInspector = "shows_inspector"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            surfaceID: try container.decodeIfPresent(String.self, forKey: .surfaceID) ?? "chat",
+            showsSidebar: try container.decodeIfPresent(Bool.self, forKey: .showsSidebar) ?? true,
+            showsInspector: try container.decodeIfPresent(Bool.self, forKey: .showsInspector) ?? false
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(surfaceID, forKey: .surfaceID)
+        try container.encode(showsSidebar, forKey: .showsSidebar)
+        try container.encode(showsInspector, forKey: .showsInspector)
+    }
+
+    public static let defaultStates: [MelixOperatorPaneVisibilityState] = [
+        "chat",
+        "image",
+        "server",
+        "tools",
+        "api",
+    ].map { MelixOperatorPaneVisibilityState(surfaceID: $0) }
+
+    public static func mergedWithDefaults(
+        _ states: [MelixOperatorPaneVisibilityState]
+    ) -> [MelixOperatorPaneVisibilityState] {
+        var bySurface = Dictionary(uniqueKeysWithValues: defaultStates.map { ($0.surfaceID, $0) })
+        for state in states {
+            bySurface[state.surfaceID] = state
+        }
+        return defaultStates.map { defaultState in
+            bySurface[defaultState.surfaceID] ?? defaultState
+        }
+    }
+
+    private static func normalizedSurfaceID(_ rawValue: String) -> String {
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter(\.isLetter)
+        return ["chat", "image", "server", "tools", "api"].contains(normalized) ? normalized : "chat"
     }
 }
 

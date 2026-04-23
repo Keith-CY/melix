@@ -237,6 +237,10 @@ enum RegistrySnapshotSync {
         let routeKind = metadata["melix.capability.route_kind"]
         model.capabilityClass = capabilityClass(identifier: capabilityIdentifier, kind: model.kind)
         model.routeClass = routeClass(routeKind: routeKind, kind: model.kind)
+        if model.settings.ext["melix.capability.route_kind"] == nil,
+           let resolvedRouteKind = routeKindIdentifier(for: model.routeClass) {
+            model.settings.ext["melix.capability.route_kind"] = resolvedRouteKind
+        }
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
         return model
@@ -421,28 +425,27 @@ enum RegistrySnapshotSync {
         routeKind: String?,
         kind: String
     ) -> Melix_Controlplane_V1_WorkerRouteClass {
-        let mapping: [String: Melix_Controlplane_V1_WorkerRouteClass] = [
-            "python_embedding": .workerRoutePythonEmbedding,
-            "python_rerank": .workerRoutePythonRerank,
-            "python_model_operations": .workerRoutePythonModelOperations,
-            "python_ocr": .workerRoutePythonOcr,
-            "python_vlm": .workerRoutePythonVlm,
-            "python_transcription": .workerRoutePythonTranscription,
-            "python_speech": .workerRoutePythonSpeech,
-            "python_image": .workerRoutePythonImage,
-            "python_text_compatibility": .workerRoutePythonTextCompatibility,
-            "swift_text": .workerRouteSwiftText,
-            "embedding": .workerRoutePythonEmbedding,
-            "rerank": .workerRoutePythonRerank,
-            "model_ops": .workerRoutePythonModelOperations,
-            "ocr": .workerRoutePythonOcr,
-            "vlm": .workerRoutePythonVlm,
-            "transcription": .workerRoutePythonTranscription,
-            "speech": .workerRoutePythonSpeech,
-            "image": .workerRoutePythonImage,
-            "text": .workerRouteSwiftText,
-        ]
-        return mapping[normalizedMetadataValue(routeKind)] ?? mapping[normalizedMetadataValue(kind)] ?? .workerRouteSwiftText
+        if let route = WorkerRouteKind(metadataIdentifier: routeKind) {
+            return route.routeClass
+        }
+        if let route = WorkerRouteKind(capabilityIdentifier: kind) {
+            return route.routeClass
+        }
+        return .workerRouteSwiftText
+    }
+
+    private static func routeKindIdentifier(
+        for routeClass: Melix_Controlplane_V1_WorkerRouteClass
+    ) -> String? {
+        switch routeClass {
+        case .workerRouteSwiftText, .workerRoutePythonTextCompatibility, .workerRoutePythonEmbedding,
+             .workerRoutePythonRerank, .workerRoutePythonModelOperations, .workerRoutePythonOcr,
+             .workerRoutePythonVlm, .workerRoutePythonTranscription, .workerRoutePythonSpeech,
+             .workerRoutePythonImage:
+            return WorkerRouteKind(routeClass: routeClass)?.metadataIdentifier
+        default:
+            return nil
+        }
     }
 
     private static func supportedModalities(

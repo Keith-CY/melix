@@ -18,12 +18,14 @@ try:
     from scripts.real_model_support import (
         REAL_SMALL_TEXT_MODEL_ID,
         REAL_SMALL_TEXT_MODEL_PATH_ENV,
+        build_runtime_model_preflight,
         resolve_real_small_text_model_source,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct `python scripts/...` execution fallback.
     from real_model_support import (  # type: ignore[no-redef]
         REAL_SMALL_TEXT_MODEL_ID,
         REAL_SMALL_TEXT_MODEL_PATH_ENV,
+        build_runtime_model_preflight,
         resolve_real_small_text_model_source,
     )
 
@@ -104,8 +106,9 @@ class CLICommandError(AcceptanceBundleError):
 
     def __str__(self) -> str:
         joined = " ".join(self.command)
-        details = self.stderr.strip() or self.stdout.strip() or f"command exited with {self.returncode}"
-        return f"{joined} failed with exit code {self.returncode}: {details}"
+        status = _return_code_description(self.returncode)
+        details = self.stderr.strip() or self.stdout.strip() or "no stderr or stdout captured"
+        return f"{joined} failed ({status}): {details}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +142,78 @@ class AcceptanceBundleConfig:
 class JSONCommandExecuting(Protocol):
     def run_json(self, args: list[str]) -> object:
         ...
+
+
+class _TracingJSONExecutor:
+    def __init__(self, *, executor: JSONCommandExecuting, event_log_path: Path) -> None:
+        self._executor = executor
+        self._event_log_path = event_log_path
+        self._step_index = 0
+
+    def run_json(self, args: list[str]) -> object:
+        self._step_index += 1
+        step_id = f"{self._step_index:02d}"
+        step_label = _cli_step_label(args)
+        started_at = time.perf_counter()
+        _append_jsonl(
+            self._event_log_path,
+            {
+                "event": "cli_step_started",
+                "timestamp": _utc_event_timestamp(),
+                "step_id": step_id,
+                "step_label": step_label,
+                "args": list(args),
+            },
+        )
+        try:
+            payload = self._executor.run_json(args)
+        except CLICommandError as error:
+            _append_jsonl(
+                self._event_log_path,
+                {
+                    "event": "cli_step_failed",
+                    "timestamp": _utc_event_timestamp(),
+                    "step_id": step_id,
+                    "step_label": step_label,
+                    "args": list(args),
+                    "command": list(error.command),
+                    "returncode": error.returncode,
+                    "returncode_description": _return_code_description(error.returncode),
+                    "failure": str(error),
+                    "stderr": _trim_diagnostic_text(error.stderr),
+                    "stdout": _trim_diagnostic_text(error.stdout),
+                    "duration_ms": _elapsed_ms(started_at),
+                },
+            )
+            raise
+        except Exception as error:
+            _append_jsonl(
+                self._event_log_path,
+                {
+                    "event": "cli_step_failed",
+                    "timestamp": _utc_event_timestamp(),
+                    "step_id": step_id,
+                    "step_label": step_label,
+                    "args": list(args),
+                    "exception_type": type(error).__name__,
+                    "failure": str(error),
+                    "duration_ms": _elapsed_ms(started_at),
+                },
+            )
+            raise
+
+        _append_jsonl(
+            self._event_log_path,
+            {
+                "event": "cli_step_completed",
+                "timestamp": _utc_event_timestamp(),
+                "step_id": step_id,
+                "step_label": step_label,
+                "args": list(args),
+                "duration_ms": _elapsed_ms(started_at),
+            },
+        )
+        return payload
 
 
 class CLIJSONExecutor:
@@ -202,11 +277,15 @@ def run_acceptance_bundle(
     matrix_summary_csv_path = exports_root / "bench-matrix-summary.csv"
     evaluation_summary_csv_path = exports_root / "evaluation-summary.csv"
     evaluation_samples_jsonl_path = exports_root / "evaluation-samples.jsonl"
+    event_log_path = bundle_root / "events.jsonl"
 
     timings: dict[str, float] = {}
     bundle_root.mkdir(parents=True, exist_ok=True)
     exports_root.mkdir(parents=True, exist_ok=True)
     cli_receipts_root.mkdir(parents=True, exist_ok=True)
+    if event_log_path.exists():
+        event_log_path.unlink()
+    executor = _TracingJSONExecutor(executor=executor, event_log_path=event_log_path)
 
     materialize_started_at = time.perf_counter()
     if config.live:
@@ -258,6 +337,13 @@ def run_acceptance_bundle(
     managed_model_path = _require_string(materialize_receipt, "managed_model_path", context="managed model receipt")
     source_kind = _require_string(materialize_receipt, "source_kind", context="managed model receipt")
     source_locator = _require_string(materialize_receipt, "source_locator", context="managed model receipt")
+    source_resolution_mode = config.source_resolution_mode or _default_source_resolution_mode(config)
+    model_preflight = build_runtime_model_preflight(
+        model_id=model_id,
+        live=config.live,
+        local_model_path=config.local_model_path,
+        source_resolution_mode=source_resolution_mode,
+    ).to_dict()
     _write_json(cli_receipts_root / "01-materialize.json", materialize_receipt)
 
     rebind_started_at = time.perf_counter()
@@ -598,8 +684,9 @@ def run_acceptance_bundle(
             "managed_model_path": managed_model_path,
             "source_kind": source_kind,
             "source_locator": source_locator,
-            "source_resolution_mode": config.source_resolution_mode or _default_source_resolution_mode(config),
+            "source_resolution_mode": source_resolution_mode,
             "warnings": materialize_receipt.get("warnings", []),
+            "preflight": model_preflight,
         },
         "runtime": {
             "backend_mode": config.runtime_backend_mode,
@@ -669,6 +756,9 @@ def run_acceptance_bundle(
             "publish": publish_result.get("receipt", {}),
         },
         "metrics": timings,
+        "diagnostics": {
+            "event_log_jsonl": str(event_log_path),
+        },
     }
 
     bundle_write_started_at = time.perf_counter()
@@ -953,6 +1043,43 @@ def _has_publish_token() -> bool:
         if os.environ.get(key, "").strip():
             return True
     return False
+
+
+def _return_code_description(returncode: int) -> str:
+    if returncode < 0:
+        return f"terminated by signal {-returncode}"
+    return f"exit code {returncode}"
+
+
+def _utc_event_timestamp() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _cli_step_label(args: list[str]) -> str:
+    if len(args) >= 3 and args[0] == "bench" and args[1] == "matrix":
+        return f"bench matrix {args[2]}"
+    if len(args) >= 3 and args[0] == "model" and args[1] in {"hub", "roots"}:
+        return f"model {args[1]} {args[2]}"
+    if len(args) >= 3 and args[0] == "server" and args[1] == "session":
+        return f"server session {args[2]}"
+    if len(args) >= 2:
+        return f"{args[0]} {args[1]}"
+    if args:
+        return args[0]
+    return "melix"
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _trim_diagnostic_text(value: str, *, limit: int = 4_096) -> str:
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 def _elapsed_ms(started_at: float) -> float:

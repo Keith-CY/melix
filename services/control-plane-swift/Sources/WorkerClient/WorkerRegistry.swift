@@ -39,10 +39,10 @@ public actor WorkerRegistry {
         if let route = WorkerRouteKind(routeClass: model.routeClass) {
             return route
         }
-        if let route = routeKind(fromMetadata: model.settings.ext["melix.capability.route_kind"]) {
+        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
             return route
         }
-        if let route = routeKind(fromCapabilityIdentifier: model.settings.ext["melix.capability.class"]) {
+        if let route = WorkerRouteKind(capabilityIdentifier: model.settings.ext["melix.capability.class"]) {
             return route
         }
 
@@ -67,45 +67,6 @@ public actor WorkerRegistry {
             return .pythonImage
         default:
             return model.kind == "text" ? .swiftText : .pythonCompatibility
-        }
-    }
-
-    private func routeKind(fromMetadata rawValue: String?) -> WorkerRouteKind? {
-        guard let rawValue else {
-            return nil
-        }
-        return WorkerRouteKind(
-            rawValue: rawValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-        )
-    }
-
-    private func routeKind(fromCapabilityIdentifier identifier: String?) -> WorkerRouteKind? {
-        guard let identifier else {
-            return nil
-        }
-        switch identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "text":
-            return .swiftText
-        case "embedding":
-            return .pythonEmbedding
-        case "rerank":
-            return .pythonRerank
-        case "model_operations":
-            return .pythonModelOperations
-        case "ocr":
-            return .pythonOCR
-        case "vlm":
-            return .pythonVLM
-        case "transcription":
-            return .pythonTranscription
-        case "speech":
-            return .pythonSpeech
-        case "image_generation":
-            return .pythonImage
-        default:
-            return nil
         }
     }
 

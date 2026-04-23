@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import Testing
 
@@ -72,9 +73,9 @@ struct AppMainBootstrapTests {
         #expect(await client.handshakeCount == 1)
     }
 
-    @Test("launcher installs a command-q application menu item")
+    @Test("launcher installs application menu keyboard commands")
     @MainActor
-    func launcherInstallsCommandQApplicationMenuItem() async throws {
+    func launcherInstallsApplicationMenuKeyboardCommands() async throws {
         let app = RecordingApplicationLifecycle()
         let bootstrap = MelixMenuBarBootstrap(
             client: FakeControlPlaneXPCClient(),
@@ -91,11 +92,62 @@ struct AppMainBootstrapTests {
         let mainMenu = try #require(app.mainMenu)
         let appMenuItem = try #require(mainMenu.items.first)
         let appMenu = try #require(appMenuItem.submenu)
+        let sendChatItem = try #require(appMenu.items.first { $0.title == "Send Chat Prompt" })
         let quitItem = try #require(appMenu.items.last)
 
+        #expect(sendChatItem.keyEquivalent == "\r")
+        #expect(sendChatItem.keyEquivalentModifierMask == [.command])
+        #expect(sendChatItem.target === DesktopChatShortcutController.shared)
         #expect(quitItem.title == "Quit Melix")
         #expect(quitItem.keyEquivalent == "q")
         #expect(quitItem.keyEquivalentModifierMask == [.command])
+    }
+
+    @Test("chat shortcut controller recognizes command return")
+    @MainActor
+    func chatShortcutControllerRecognizesCommandReturn() throws {
+        let commandReturn = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+        let plainReturn = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(DesktopChatShortcutController.isChatSubmitShortcut(commandReturn))
+        #expect(DesktopChatShortcutController.isChatSubmitShortcut(plainReturn) == false)
+    }
+
+    @Test("chat shortcut controller registers both return key codes")
+    @MainActor
+    func chatShortcutControllerRegistersBothReturnKeyCodes() {
+        let descriptors = DesktopChatShortcutController.hotKeyDescriptors
+
+        #expect(descriptors.map(\.keyCode).contains(UInt32(DesktopChatComposerKeyPolicy.returnKeyCode)))
+        #expect(descriptors.map(\.keyCode).contains(UInt32(DesktopChatComposerKeyPolicy.keypadEnterKeyCode)))
+        #expect(descriptors.allSatisfy { $0.modifiers == UInt32(cmdKey) })
+        #expect(Set(descriptors.map(\.id)).count == descriptors.count)
     }
 
     @Test("live application delegates activation policy and run to its application controller")
@@ -702,7 +754,7 @@ struct AppMainBootstrapTests {
         #expect(recordedRuntimeDirectory == "/tmp/melix-runtime")
     }
 
-    @Test("MelixHome defaults to HOME/.melix when MELIX_HOME is unset")
+    @Test("MelixHome defaults to HOME/.melix when MELIX_HOME and app support are unset")
     @MainActor
     func melixHomeDefaultsToHomeDotMelix() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -711,9 +763,34 @@ struct AppMainBootstrapTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         await withEnvironmentValue("MELIX_HOME", nil) {
-            await withEnvironmentValue("HOME", temporaryRoot.path) {
-                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
-                #expect(melixHome.rootURL.path == temporaryRoot.appendingPathComponent(".melix").path)
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", nil) {
+                await withEnvironmentValue("HOME", temporaryRoot.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == temporaryRoot.appendingPathComponent(".melix").path)
+                }
+            }
+        }
+    }
+
+    @Test("MelixHome uses app support as packaged app home when MELIX_HOME is unset")
+    @MainActor
+    func melixHomeUsesAppSupportWhenMelixHomeUnset() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-tests-app-support-\(UUID().uuidString)")
+        let appSupportHome = temporaryRoot.appendingPathComponent("Application Support/Melix", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupportHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        await withEnvironmentValue("MELIX_HOME", nil) {
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", appSupportHome.path) {
+                await withEnvironmentValue("HOME", temporaryRoot.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == appSupportHome.path)
+                    #expect(
+                        melixHome.operatorSessionFileURL.path
+                            == appSupportHome.appendingPathComponent("state/operator-session.json").path
+                    )
+                }
             }
         }
     }
@@ -728,9 +805,11 @@ struct AppMainBootstrapTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         await withEnvironmentValue("HOME", temporaryRoot.path) {
-            await withEnvironmentValue("MELIX_HOME", overrideHome.path) {
-                let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
-                #expect(melixHome.rootURL.path == overrideHome.path)
+            await withEnvironmentValue("MELIX_APP_SUPPORT_DIR", temporaryRoot.appendingPathComponent("ignored").path) {
+                await withEnvironmentValue("MELIX_HOME", overrideHome.path) {
+                    let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
+                    #expect(melixHome.rootURL.path == overrideHome.path)
+                }
             }
         }
     }

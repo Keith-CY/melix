@@ -169,7 +169,7 @@ phase7-metrics:
 
 phase8-acceptance:
 	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_acceptance_bundle.py $(PHASE8_ACCEPTANCE_ARGS)
+	UV_CACHE_DIR="$(UV_CACHE_DIR)" bash scripts/run_phase8_acceptance_bundle.sh $(PHASE8_ACCEPTANCE_ARGS)
 
 phase8-real-e2e:
 	mkdir -p "$(UV_CACHE_DIR)"

@@ -9,6 +9,99 @@ enum DesktopShellChromeMetrics {
     static let paneToggleButtonHeight: CGFloat = 24
 }
 
+enum DesktopWorkspacePaneAnimation {
+    static let durationSeconds = 0.20
+    static let animation = Animation.easeInOut(duration: durationSeconds)
+}
+
+enum DesktopWorkspacePaneTransition {
+    static func edge(for role: DesktopPaneRole) -> Edge {
+        switch role {
+        case .sidebar:
+            return .leading
+        case .inspector:
+            return .trailing
+        }
+    }
+
+    static func transition(for role: DesktopPaneRole) -> AnyTransition {
+        .move(edge: edge(for: role)).combined(with: .opacity)
+    }
+}
+
+enum DesktopWorkspacePaneSlotMetrics {
+    static let collapsedWidth: CGFloat = 0
+
+    static func width(isVisible: Bool, idealWidth: CGFloat) -> CGFloat {
+        isVisible ? idealWidth : collapsedWidth
+    }
+
+    static func alignment(for role: DesktopPaneRole) -> Alignment {
+        switch role {
+        case .sidebar:
+            return .leading
+        case .inspector:
+            return .trailing
+        }
+    }
+
+    static func boundaryAlignment(for role: DesktopPaneRole) -> Alignment {
+        switch role {
+        case .sidebar:
+            return .trailing
+        case .inspector:
+            return .leading
+        }
+    }
+
+    static func boundaryWidth(isVisible: Bool) -> CGFloat {
+        isVisible ? 1 : 0
+    }
+}
+
+extension View {
+    func desktopWorkspacePaneTransition(_ role: DesktopPaneRole) -> some View {
+        transition(DesktopWorkspacePaneTransition.transition(for: role))
+    }
+}
+
+struct DesktopWorkspacePaneSlot<Content: View>: View {
+    let role: DesktopPaneRole
+    let isVisible: Bool
+    let idealWidth: CGFloat
+    var showsBoundary = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .frame(width: idealWidth, alignment: DesktopWorkspacePaneSlotMetrics.alignment(for: role))
+            .opacity(isVisible ? 1 : 0)
+            .accessibilityHidden(isVisible == false)
+            .allowsHitTesting(isVisible)
+            .frame(
+                width: DesktopWorkspacePaneSlotMetrics.width(isVisible: isVisible, idealWidth: idealWidth),
+                alignment: DesktopWorkspacePaneSlotMetrics.alignment(for: role)
+            )
+            .clipped()
+            .overlay(alignment: DesktopWorkspacePaneSlotMetrics.boundaryAlignment(for: role)) {
+                if showsBoundary {
+                    DesktopWorkspacePaneBoundary(isVisible: isVisible)
+                }
+            }
+    }
+}
+
+struct DesktopWorkspacePaneBoundary: View {
+    let isVisible: Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.55))
+            .frame(width: DesktopWorkspacePaneSlotMetrics.boundaryWidth(isVisible: isVisible))
+            .accessibilityHidden(true)
+    }
+}
+
 struct DesktopWorkspaceTitleBarTabsView: View {
     let viewModel: RuntimeViewModel
 
@@ -21,11 +114,13 @@ struct DesktopWorkspaceTitleBarTabsView: View {
 }
 
 struct DesktopWorkspaceTitleBarCommandCenterButton: View {
+    static let symbolName = "command.circle"
+
     let openCommandCenter: () -> Void
 
     var body: some View {
         Button(action: openCommandCenter) {
-            Image(systemName: "command.circle")
+            Image(systemName: Self.symbolName)
                 .font(.title3.weight(.semibold))
                 .frame(width: 28, height: 28)
                 .contentShape(RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous))
@@ -34,6 +129,33 @@ struct DesktopWorkspaceTitleBarCommandCenterButton: View {
         .help("Open Command Center")
         .accessibilityLabel("Open Command Center")
         .keyboardShortcut("k", modifiers: .command)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct DesktopWorkspaceTitleBarActionsView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        HStack(spacing: 4) {
+            DesktopPaneToggleButton(
+                role: .sidebar,
+                isVisible: viewModel.isDesktopPaneVisible(.sidebar)
+            ) {
+                withAnimation(DesktopWorkspacePaneAnimation.animation) {
+                    viewModel.toggleDesktopPane(.sidebar)
+                }
+            }
+            DesktopPaneToggleButton(
+                role: .inspector,
+                isVisible: viewModel.isDesktopPaneVisible(.inspector)
+            ) {
+                withAnimation(DesktopWorkspacePaneAnimation.animation) {
+                    viewModel.toggleDesktopPane(.inspector)
+                }
+            }
+            DesktopWorkspaceTitleBarCommandCenterButton(openCommandCenter: viewModel.openCommandCenter)
+        }
         .fixedSize(horizontal: true, vertical: false)
     }
 }

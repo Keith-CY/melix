@@ -131,6 +131,84 @@ struct DesktopFoundationViewTests {
         #expect(commandCenter.wasOpened)
     }
 
+    @Test("titlebar exposes pane toggles and command center entry")
+    @MainActor
+    func titlebarExposesPaneTogglesAndCommandCenterEntry() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let commandCenter = CommandCenterOpenRecorder()
+        viewModel.openCommandCenterAction = { commandCenter.open() }
+        await viewModel.start()
+
+        #expect(viewModel.isDesktopPaneVisible(.sidebar, for: .chat))
+        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
+        #expect(DesktopWorkspaceTitleBarCommandCenterButton.symbolName == "command.circle")
+
+        let hosted = hostView(DesktopWorkspaceTitleBarActionsView(viewModel: viewModel))
+        #expect(hosted.subviews.isEmpty == false)
+
+        viewModel.toggleDesktopPane(.inspector)
+        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat))
+
+        viewModel.openCommandCenter()
+        #expect(commandCenter.wasOpened)
+    }
+
+    @Test("titlebar pane toggles use the shared pane animation contract")
+    @MainActor
+    func titlebarPaneTogglesUseSharedPaneAnimationContract() {
+        #expect(DesktopWorkspacePaneAnimation.durationSeconds >= 0.16)
+        #expect(DesktopWorkspacePaneAnimation.durationSeconds <= 0.24)
+        #expect(DesktopWorkspacePaneTransition.edge(for: .sidebar) == .leading)
+        #expect(DesktopWorkspacePaneTransition.edge(for: .inspector) == .trailing)
+    }
+
+    @Test("workspace panes collapse by animating their owning edge slot")
+    @MainActor
+    func workspacePanesCollapseByAnimatingTheirOwningEdgeSlot() {
+        #expect(DesktopWorkspacePaneSlotMetrics.width(isVisible: false, idealWidth: 220) == 0)
+        #expect(DesktopWorkspacePaneSlotMetrics.width(isVisible: true, idealWidth: 220) == 220)
+        #expect(DesktopWorkspacePaneSlotMetrics.alignment(for: .sidebar) == .leading)
+        #expect(DesktopWorkspacePaneSlotMetrics.alignment(for: .inspector) == .trailing)
+    }
+
+    @Test("workspace pane dividers are clipped by the owning pane slot")
+    func workspacePaneDividersAreClippedByTheOwningPaneSlot() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellChrome = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let shellSource = try String(contentsOf: shellChrome, encoding: .utf8)
+
+        #expect(shellSource.contains("struct DesktopWorkspacePaneBoundary"))
+        #expect(DesktopWorkspacePaneSlotMetrics.boundaryAlignment(for: .sidebar) == .trailing)
+        #expect(DesktopWorkspacePaneSlotMetrics.boundaryAlignment(for: .inspector) == .leading)
+
+        let workspaceSources = [
+            "apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift",
+            "apps/macos-menubar/Sources/AppMain/Image/DesktopImageView.swift",
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift",
+        ]
+
+        for relativePath in workspaceSources {
+            let sourceURL = root.appendingPathComponent(relativePath)
+            let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+            #expect(source.contains("if showsSidebar {\n                Divider()") == false)
+            #expect(source.contains("if showsInspector {\n                Divider()") == false)
+        }
+    }
+
+    @Test("chat submit shortcut is not double-owned by the SwiftUI send button")
+    func chatSubmitShortcutIsNotDoubleOwnedByTheSwiftUISendButton() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let chatView = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"
+        )
+        let source = try String(contentsOf: chatView, encoding: .utf8)
+
+        #expect(source.contains(".keyboardShortcut(.return, modifiers: .command)") == false)
+    }
+
     @Test("tools categories map sections into staged workflow groups")
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
@@ -172,7 +250,8 @@ struct DesktopFoundationViewTests {
             #expect(renderedTexts.contains("Hide List") == false)
             #expect(renderedTexts.contains("Hide Inspector") == false)
             #expect(DesktopPaneRole.sidebar.accessibilityLabel(isVisible: true) == "Hide Sidebar")
-            #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: true) == "Hide Inspector")
+            #expect(DesktopPaneRole.inspector.accessibilityLabel(isVisible: false) == "Show Inspector")
+            #expect(viewModel.isDesktopPaneVisible(.inspector, for: surface) == false)
         }
     }
 
@@ -1153,14 +1232,18 @@ struct DesktopFoundationViewTests {
             DesktopAPIWorkspaceView(
                 viewModel: viewModel,
                 foundation: foundation,
-                initialSection: .authentication
+                initialSection: .authentication,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(false)
             )
         )
         let quickStarts = hostView(
             DesktopAPIWorkspaceView(
                 viewModel: viewModel,
                 foundation: foundation,
-                initialSection: .quickStarts
+                initialSection: .quickStarts,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(false)
             )
         )
 
@@ -2845,6 +2928,7 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
 
         let tab = DesktopChatTabView(viewModel: viewModel)
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Hello from SwiftUI"
         await viewModel.submitChatPrompt()
         viewModel.clearChatTranscript()
@@ -2862,6 +2946,7 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Render the transcript"
 
         await viewModel.submitChatPrompt()
@@ -2886,6 +2971,7 @@ struct DesktopFoundationViewTests {
         ])
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Render the error path"
 
         await viewModel.submitChatPrompt()
@@ -2907,6 +2993,9 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        for session in viewModel.chatSessions {
+            viewModel.deleteChatSession(id: session.id)
+        }
 
         let view = hostView(DesktopChatSessionSidebar(viewModel: viewModel))
 
@@ -2918,24 +3007,15 @@ struct DesktopFoundationViewTests {
     @MainActor
     func chatWorkspaceUsesCompactLayoutMetrics() {
         #expect(DesktopChatLayoutMetrics.sidebarIdealWidth <= 230)
+        #expect(DesktopChatLayoutMetrics.sidebarMaxWidth <= 260)
         #expect(DesktopChatLayoutMetrics.inspectorIdealWidth <= 240)
         #expect(DesktopChatLayoutMetrics.composerMinHeight <= 84)
-        #expect(DesktopChatLayoutMetrics.collapsedRailWidth <= 32)
+        #expect(DesktopChatLayoutMetrics.collapsedRailWidth == 0)
     }
 
-    @Test("chat collapsed rails render compact restore affordances")
+    @Test("chat tab omits collapsed rails when both side panes start hidden")
     @MainActor
-    func chatCollapsedRailsRenderCompactRestoreAffordances() {
-        let leadingRail = hostView(DesktopChatPaneRail(edge: .leading, action: {}))
-        let trailingRail = hostView(DesktopChatPaneRail(edge: .trailing, action: {}))
-
-        #expect(leadingRail.fittingSize.width <= DesktopChatLayoutMetrics.collapsedRailWidth + 4)
-        #expect(trailingRail.fittingSize.width <= DesktopChatLayoutMetrics.collapsedRailWidth + 4)
-    }
-
-    @Test("chat tab renders collapsed rails when both side panes start hidden")
-    @MainActor
-    func chatTabRendersCollapsedRailsWhenBothSidePanesStartHidden() async throws {
+    func chatTabOmitsCollapsedRailsWhenBothSidePanesStartHidden() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -2954,6 +3034,236 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Inspector") == false)
     }
 
+    @Test("chat session workspace leaves empty transcript visually quiet")
+    @MainActor
+    func chatSessionWorkspaceLeavesEmptyTranscriptVisuallyQuiet() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let hosted = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(false)
+            )
+        )
+        let renderedTexts = renderedTextValues(in: hosted)
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(viewModel.chatTranscript.isEmpty)
+        #expect(renderedTexts.contains("Start a conversation") == false)
+        #expect(renderedTexts.contains { $0.contains("Messages will appear here after you send.") } == false)
+
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+        #expect(source.contains("Start a conversation") == false)
+        #expect(source.contains("Messages will appear here after you send.") == false)
+    }
+
+    @Test("new chat session button opts out of launch focus highlight")
+    @MainActor
+    func newChatSessionButtonOptsOutOfLaunchFocusHighlight() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains(".accessibilityLabel(\"New Chat Session\")"))
+        #expect(source.contains(".focusable(false)"))
+    }
+
+    @Test("chat session branch display hides main but keeps fork labels")
+    @MainActor
+    func chatSessionBranchDisplayHidesMainButKeepsForkLabels() throws {
+        let mainSession = DesktopChatSessionState(
+            id: "chat-main",
+            title: "Chat 1",
+            serverSessionID: "server-main",
+            branchID: "main",
+            branchTitle: "Main"
+        )
+        let forkSession = DesktopChatSessionState(
+            id: "chat-fork",
+            title: "Chat 2",
+            serverSessionID: "server-main",
+            branchID: "branch-2",
+            branchTitle: "Branch 2"
+        )
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(mainSession.displayBranchTitle == nil)
+        #expect(forkSession.displayBranchTitle == "Branch 2")
+        #expect(source.contains("selectedChatSession?.displayBranchTitle"))
+    }
+
+    @Test("chat session inspector labels snapshot capabilities without claiming route traces")
+    @MainActor
+    func chatSessionInspectorLabelsSnapshotCapabilitiesWithoutClaimingRouteTraces() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("DesktopChatServerPicker"))
+        #expect(source.contains("bindSelectedChatSessionToServer"))
+        #expect(source.contains("MelixSectionCard(\"Model Capabilities\")"))
+        #expect(source.contains("DesktopChatCapabilityIconGrid"))
+        #expect(source.contains("MelixSectionCard(\"Runtime\")") == false)
+        #expect(source.contains("Text(\"request \\(") == false)
+        #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
+    }
+
+    @Test("chat composer keyboard policy submits only command return")
+    @MainActor
+    func chatComposerKeyboardPolicySubmitsOnlyCommandReturn() {
+        #expect(
+            DesktopChatComposerKeyPolicy.action(
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode,
+                modifiers: [.command]
+            ) == .submit
+        )
+        #expect(
+            DesktopChatComposerKeyPolicy.action(
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode,
+                modifiers: [.control]
+            ) == .insertNewline
+        )
+    }
+
+    @Test("chat composer AppKit return commands follow the same submit policy")
+    @MainActor
+    func chatComposerAppKitReturnCommandsFollowTheSameSubmitPolicy() {
+        #expect(
+            DesktopChatComposerReturnCommandPolicy.action(
+                selector: #selector(NSTextView.insertNewline(_:)),
+                modifiers: [.command]
+            ) == .submit
+        )
+        #expect(
+            DesktopChatComposerReturnCommandPolicy.action(
+                selector: #selector(NSTextView.insertLineBreak(_:)),
+                modifiers: [.command]
+            ) == .submit
+        )
+        #expect(
+            DesktopChatComposerReturnCommandPolicy.action(
+                selector: #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:)),
+                modifiers: [.control]
+            ) == .insertNewline
+        )
+        #expect(
+            DesktopChatComposerReturnCommandPolicy.action(
+                selector: #selector(NSTextView.deleteBackward(_:)),
+                modifiers: [.command]
+            ) == .passThrough
+        )
+    }
+
+    @Test("chat composer handles command return as a key equivalent")
+    @MainActor
+    func chatComposerHandlesCommandReturnAsAKeyEquivalent() throws {
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        textView.string = "Send this prompt"
+        var submittedText: String?
+        textView.onCommandSubmit = { currentText in
+            submittedText = currentText
+            return true
+        }
+        let event = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(textView.performKeyEquivalent(with: event))
+        #expect(submittedText == "Send this prompt")
+    }
+
+    @Test("chat composer local key monitor consumes command return")
+    @MainActor
+    func chatComposerLocalKeyMonitorConsumesCommandReturn() throws {
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        textView.string = "Send from local monitor"
+        var submittedText: String?
+        textView.onCommandSubmit = { currentText in
+            submittedText = currentText
+            return true
+        }
+        let event = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(textView.handleLocalKeyDown(event))
+        #expect(submittedText == "Send from local monitor")
+    }
+
+    @Test("chat composer scroll view handles command return key equivalents")
+    @MainActor
+    func chatComposerScrollViewHandlesCommandReturnKeyEquivalents() throws {
+        let scrollView = DesktopChatComposerCommandSubmitScrollView()
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        textView.string = "Send from scroll key equivalent"
+        scrollView.commandSubmitTextView = textView
+        scrollView.documentView = textView
+        var submittedText: String?
+        textView.onCommandSubmit = { currentText in
+            submittedText = currentText
+            return true
+        }
+        let event = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(scrollView.performKeyEquivalent(with: event))
+        #expect(submittedText == "Send from scroll key equivalent")
+    }
+
     @Test("chat session workspace renders the server required state when no server is running")
     @MainActor
     func chatSessionWorkspaceRendersTheServerRequiredStateWhenNoServerIsRunning() async throws {
@@ -2961,6 +3271,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         await viewModel.stopSelectedServerSession()
         viewModel.chatComposerText = "Need a running server"
         await viewModel.submitChatPrompt()
@@ -3020,6 +3331,7 @@ struct DesktopFoundationViewTests {
         await client.configureSnapshot(pausedSnapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
 
         let pausedView = hostView(
             DesktopChatSessionWorkspace(
@@ -3113,6 +3425,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Export the transcript"
         await viewModel.submitChatPrompt()
         let exportPath = try #require(viewModel.exportSelectedChatSession())
@@ -4562,6 +4875,12 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
 
     visit(rootView)
     return values
+}
+
+@MainActor
+private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
+    let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+    viewModel.bindSelectedChatSessionToServer(serverSessionID: serverSessionID)
 }
 
 @MainActor

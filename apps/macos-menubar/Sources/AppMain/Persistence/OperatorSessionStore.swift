@@ -10,18 +10,20 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [RuntimeDownloadQueueEntryState]
     public var registryRoots: [String]
+    public var paneVisibility: [DesktopPaneVisibilityState]
 
     public init(
-        schemaVersion: Int = 4,
+        schemaVersion: Int = 5,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
         serverSessions: [DesktopServerSessionState],
         dismissedBannerIDs: [String] = [],
         downloadQueue: [RuntimeDownloadQueueEntryState] = [],
-        registryRoots: [String] = []
+        registryRoots: [String] = [],
+        paneVisibility: [DesktopPaneVisibilityState] = DesktopPaneVisibilityState.defaultStates
     ) {
-        self.schemaVersion = schemaVersion
+        self.schemaVersion = max(schemaVersion, 5)
         self.selectedSurface = selectedSurface
         self.selectedToolSection = selectedToolSection
         self.selectedServerSessionID = selectedServerSessionID
@@ -29,6 +31,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
+        self.paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -40,6 +43,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
+        case paneVisibility = "pane_visibility"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -54,7 +58,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
             serverSessions: try container.decodeIfPresent([DesktopServerSessionState].self, forKey: .serverSessions) ?? [],
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             downloadQueue: try container.decodeIfPresent([RuntimeDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
-            registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? []
+            registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
+            paneVisibility: try container.decodeIfPresent([DesktopPaneVisibilityState].self, forKey: .paneVisibility)
+                ?? DesktopPaneVisibilityState.defaultStates
         )
     }
 
@@ -68,6 +74,12 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
+        try container.encode(paneVisibility, forKey: .paneVisibility)
+    }
+
+    public mutating func ensurePaneVisibilityDefaults() {
+        schemaVersion = max(schemaVersion, 5)
+        paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
     }
 }
 
@@ -114,7 +126,8 @@ private extension OperatorSessionState {
             serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),
             dismissedBannerIDs: sharedState.dismissedBannerIDs,
             downloadQueue: sharedState.downloadQueue.map(RuntimeDownloadQueueEntryState.init(sharedState:)),
-            registryRoots: sharedState.registryRoots
+            registryRoots: sharedState.registryRoots,
+            paneVisibility: sharedState.paneVisibility.map(DesktopPaneVisibilityState.init(sharedState:))
         )
     }
 
@@ -127,7 +140,26 @@ private extension OperatorSessionState {
             serverSessions: serverSessions.map(\.sharedState),
             dismissedBannerIDs: dismissedBannerIDs,
             downloadQueue: downloadQueue.map(\.sharedState),
-            registryRoots: registryRoots
+            registryRoots: registryRoots,
+            paneVisibility: paneVisibility.map(\.sharedState)
+        )
+    }
+}
+
+private extension DesktopPaneVisibilityState {
+    init(sharedState: MelixOperatorPaneVisibilityState) {
+        self.init(
+            surface: DesktopSurface(paneVisibilityID: sharedState.surfaceID),
+            showsSidebar: sharedState.showsSidebar,
+            showsInspector: sharedState.showsInspector
+        )
+    }
+
+    var sharedState: MelixOperatorPaneVisibilityState {
+        MelixOperatorPaneVisibilityState(
+            surfaceID: surface.paneVisibilityID,
+            showsSidebar: showsSidebar,
+            showsInspector: showsInspector
         )
     }
 }

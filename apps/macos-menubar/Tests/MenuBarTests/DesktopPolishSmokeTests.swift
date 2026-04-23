@@ -92,6 +92,8 @@ struct DesktopPolishSmokeTests {
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
 
+        let chatServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: chatServerSessionID)
         viewModel.chatComposerText = "Smooth bursty deltas"
         let submitTask = Task { @MainActor in
             await viewModel.submitChatPrompt()

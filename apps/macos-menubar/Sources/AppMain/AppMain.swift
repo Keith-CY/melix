@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Darwin
 import Foundation
 import MelixCLICore
@@ -190,13 +191,170 @@ enum MenuBarApplicationMenuBuilder {
         let mainMenu = NSMenu(title: MelixBranding.productName)
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: MelixBranding.productName)
+        let sendChatItem = NSMenuItem(
+            title: "Send Chat Prompt",
+            action: #selector(DesktopChatShortcutController.submitChatPrompt(_:)),
+            keyEquivalent: "\r"
+        )
+        sendChatItem.target = DesktopChatShortcutController.shared
+        sendChatItem.keyEquivalentModifierMask = [.command]
         let quitItem = NSMenuItem(title: "Quit Melix", action: action, keyEquivalent: "q")
         quitItem.target = target
         quitItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(sendChatItem)
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
         return mainMenu
+    }
+}
+
+@MainActor
+final class DesktopChatShortcutController: NSObject {
+    static let shared = DesktopChatShortcutController()
+
+    struct HotKeyDescriptor: Equatable {
+        let keyCode: UInt32
+        let modifiers: UInt32
+        let id: UInt32
+    }
+
+    static let hotKeySignature: OSType = 0x4D6C7853
+    static let hotKeyDescriptors = [
+        HotKeyDescriptor(
+            keyCode: UInt32(DesktopChatComposerKeyPolicy.returnKeyCode),
+            modifiers: UInt32(cmdKey),
+            id: 1
+        ),
+        HotKeyDescriptor(
+            keyCode: UInt32(DesktopChatComposerKeyPolicy.keypadEnterKeyCode),
+            modifiers: UInt32(cmdKey),
+            id: 2
+        ),
+    ]
+
+    weak var viewModel: RuntimeViewModel?
+    private var keyDownMonitor: Any?
+    private var eventHandlerRef: EventHandlerRef?
+    private var hotKeyRefs: [EventHotKeyRef] = []
+
+    static func isChatSubmitShortcut(_ event: NSEvent) -> Bool {
+        DesktopChatComposerKeyPolicy.action(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags
+        ) == .submit
+    }
+
+    func installShortcutHandlers() {
+        installKeyDownMonitor()
+        installCarbonHotKeysIfNeeded()
+    }
+
+    private func installKeyDownMonitor() {
+        guard keyDownMonitor == nil else {
+            return
+        }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  Self.isChatSubmitShortcut(event)
+            else {
+                return event
+            }
+            return self.submitChatPromptFromShortcut(playsFailureSound: false) ? nil : event
+        }
+    }
+
+    private func installCarbonHotKeysIfNeeded() {
+        guard eventHandlerRef == nil,
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        else {
+            return
+        }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let userData = Unmanaged.passUnretained(self).toOpaque()
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, userData in
+                guard let event,
+                      let userData
+                else {
+                    return noErr
+                }
+                var hotKeyID = EventHotKeyID()
+                let parameterStatus = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard parameterStatus == noErr,
+                      hotKeyID.signature == DesktopChatShortcutController.hotKeySignature
+                else {
+                    return noErr
+                }
+                let controller = Unmanaged<DesktopChatShortcutController>
+                    .fromOpaque(userData)
+                    .takeUnretainedValue()
+                Task { @MainActor in
+                    _ = controller.submitChatPromptFromShortcut(playsFailureSound: false)
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            userData,
+            &eventHandlerRef
+        )
+        guard installStatus == noErr else {
+            eventHandlerRef = nil
+            return
+        }
+
+        for descriptor in Self.hotKeyDescriptors {
+            var hotKeyRef: EventHotKeyRef?
+            let hotKeyID = EventHotKeyID(signature: Self.hotKeySignature, id: descriptor.id)
+            let registerStatus = RegisterEventHotKey(
+                descriptor.keyCode,
+                descriptor.modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRef
+            )
+            if registerStatus == noErr, let hotKeyRef {
+                hotKeyRefs.append(hotKeyRef)
+            }
+        }
+    }
+
+    @objc
+    func submitChatPrompt(_ sender: Any?) {
+        _ = sender
+        submitChatPromptFromShortcut(playsFailureSound: true)
+    }
+
+    @discardableResult
+    private func submitChatPromptFromShortcut(playsFailureSound: Bool) -> Bool {
+        guard let viewModel,
+              viewModel.selectedSurface == .chat,
+              viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              viewModel.isChatStreaming == false,
+              viewModel.selectedChatServerSession?.isInteractiveReady == true
+        else {
+            if playsFailureSound {
+                NSSound.beep()
+            }
+            return false
+        }
+        Task { await viewModel.submitChatPrompt() }
+        return true
     }
 }
 
@@ -266,6 +424,8 @@ public final class MelixMenuBarBootstrap {
         viewModel.openCommandCenterAction = {
             commandCenterPresenter.show()
         }
+        DesktopChatShortcutController.shared.viewModel = viewModel
+        DesktopChatShortcutController.shared.installShortcutHandlers()
         self.viewModel = viewModel
         self.cliWorkflowRunner = cliWorkflowRunner
         self.startupSurface = startupSurface

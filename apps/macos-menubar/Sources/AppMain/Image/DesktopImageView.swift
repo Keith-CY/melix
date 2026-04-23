@@ -4,9 +4,25 @@ import SwiftUI
 
 struct DesktopImageTabView: View {
     let viewModel: RuntimeViewModel
-    @State private var showsSidebar = true
-    @State private var showsInspector = true
+    @Binding private var showsSidebar: Bool
+    @Binding private var showsInspector: Bool
     @State private var selectedMode: DesktopImageWorkspaceMode = .generate
+
+    init(viewModel: RuntimeViewModel) {
+        self.viewModel = viewModel
+        _showsSidebar = .constant(true)
+        _showsInspector = .constant(false)
+    }
+
+    init(
+        viewModel: RuntimeViewModel,
+        showsSidebar: Binding<Bool>,
+        showsInspector: Binding<Bool>
+    ) {
+        self.viewModel = viewModel
+        _showsSidebar = showsSidebar
+        _showsInspector = showsInspector
+    }
 
     @MainActor
     func cancelSelectedJob() {
@@ -29,10 +45,13 @@ struct DesktopImageTabView: View {
     }
 
     var body: some View {
-        HSplitView {
-            if showsSidebar {
+        HStack(spacing: 0) {
+            DesktopWorkspacePaneSlot(
+                role: .sidebar,
+                isVisible: showsSidebar,
+                idealWidth: 270
+            ) {
                 DesktopImageJobsSidebar(viewModel: viewModel)
-                    .frame(minWidth: 250, idealWidth: 270)
             }
 
             DesktopImageWorkspace(
@@ -41,15 +60,19 @@ struct DesktopImageTabView: View {
                 showsSidebar: $showsSidebar,
                 showsInspector: $showsInspector
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
+            DesktopWorkspacePaneSlot(
+                role: .inspector,
+                isVisible: showsInspector,
+                idealWidth: 320
+            ) {
                 DesktopImageInspector(
                     viewModel: viewModel,
                     cancelSelectedJob: cancelSelectedJob,
                     redoSelectedJob: redoSelectedJob,
                     prepareReiterateFromSelectedJob: prepareReiterateFromSelectedJob
                 )
-                    .frame(minWidth: 300, idealWidth: 320)
             }
         }
     }
@@ -122,22 +145,7 @@ struct DesktopImageWorkspace: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                DesktopWorkspaceHeader(title: "Image") {
-                    DesktopPaneToggleButton(
-                        role: .sidebar,
-                        isVisible: showsSidebar,
-                        shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
-                    ) {
-                        showsSidebar.toggle()
-                    }
-                    DesktopPaneToggleButton(
-                        role: .inspector,
-                        isVisible: showsInspector,
-                        shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
-                    ) {
-                        showsInspector.toggle()
-                    }
-                }
+                DesktopWorkspaceHeader(title: "Image") {}
 
                 Picker("Workflow", selection: $selectedMode) {
                     ForEach(DesktopImageWorkspaceMode.allCases) { mode in
@@ -165,7 +173,7 @@ struct DesktopImageWorkspace: View {
                         .foregroundStyle(.secondary)
                 }
 
-                GroupBox("Defaults") {
+                MelixSectionCard("Defaults") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Source")
@@ -198,16 +206,27 @@ struct DesktopImageWorkspace: View {
                     .font(.caption)
                 }
 
-                GroupBox(selectedMode.rawValue) {
+                MelixSectionCard(selectedMode.rawValue) {
                     VStack(alignment: .leading, spacing: 10) {
-                        TextEditor(
-                            text: Binding(
-                                get: { viewModel.imagePromptText },
-                                set: { viewModel.imagePromptText = $0 }
+                        ZStack(alignment: .topLeading) {
+                            TextEditor(
+                                text: Binding(
+                                    get: { viewModel.imagePromptText },
+                                    set: { viewModel.imagePromptText = $0 }
+                                )
                             )
-                        )
-                        .font(.body.monospaced())
-                        .frame(minHeight: 120)
+                            .font(.body.monospaced())
+                            .frame(minHeight: 120)
+
+                            if viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(selectedMode == .generate ? "Describe the image to generate..." : "Describe the edit to apply...")
+                                    .font(.body.monospaced())
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 8)
+                                    .padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
 
                         HStack {
                             TextField(
@@ -322,7 +341,7 @@ struct DesktopImageWorkspace: View {
                         }
 
                         HStack {
-                            Text(viewModel.imageStatusText)
+                            Text(imageActionStatusText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -343,7 +362,7 @@ struct DesktopImageWorkspace: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                GroupBox("Results") {
+                MelixSectionCard("Results") {
                     if let job = viewModel.selectedImageJob, job.artifacts.isEmpty == false {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
                             ForEach(job.artifacts, id: \.artifactID) { artifact in
@@ -380,6 +399,28 @@ struct DesktopImageWorkspace: View {
                     || viewModel.imagePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         }
+    }
+
+    private var imageActionStatusText: String {
+        if isActionDisabled {
+            if availableImageModels.isEmpty {
+                return "Select an image-capable model before running."
+            }
+            switch selectedMode {
+            case .generate:
+                return "Enter a prompt before running."
+            case .edit:
+                switch viewModel.imageEditMode {
+                case .edit:
+                    return "Add a source image URI before editing."
+                case .variation:
+                    return "Select a source artifact before creating a variation."
+                case .iterate:
+                    return "Select a source artifact and enter a prompt before iterating."
+                }
+            }
+        }
+        return viewModel.imageStatusText
     }
 
     private func imageRoleSummary(for model: RuntimeModelRow) -> String {
@@ -438,7 +479,7 @@ struct DesktopImageInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            GroupBox("Selected Job") {
+            MelixSectionCard("Selected Job") {
                 if let job = viewModel.selectedImageJob {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(job.jobID)
@@ -469,7 +510,7 @@ struct DesktopImageInspector: View {
                 }
             }
 
-            GroupBox("Artifacts") {
+            MelixSectionCard("Artifacts") {
                 if let job = viewModel.selectedImageJob, job.artifacts.isEmpty == false {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(job.artifacts, id: \.artifactID) { artifact in

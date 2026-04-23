@@ -1,61 +1,67 @@
+import AppKit
 import SwiftUI
 import MelixControlPlaneCore
 
 enum DesktopChatLayoutMetrics {
     static let sidebarMinWidth: CGFloat = 190
     static let sidebarIdealWidth: CGFloat = 220
+    static let sidebarMaxWidth: CGFloat = 250
     static let inspectorMinWidth: CGFloat = 210
     static let inspectorIdealWidth: CGFloat = 232
-    static let collapsedRailWidth: CGFloat = 28
+    static let inspectorMaxWidth: CGFloat = 280
+    static let collapsedRailWidth: CGFloat = 0
     static let composerMinHeight: CGFloat = 76
 }
 
-enum DesktopChatPaneRailEdge {
-    case leading
-    case trailing
-
-    var restoreSymbolName: String {
-        switch self {
-        case .leading:
-            return "sidebar.left"
-        case .trailing:
-            return "sidebar.right"
-        }
+enum DesktopChatComposerKeyPolicy {
+    enum Action: Equatable {
+        case submit
+        case insertNewline
+        case passThrough
     }
 
-    var accessibilityLabel: String {
-        switch self {
-        case .leading:
-            return "Show Chat Sessions"
-        case .trailing:
-            return "Show Inspector"
+    static let returnKeyCode: UInt16 = 36
+    static let keypadEnterKeyCode: UInt16 = 76
+
+    static func action(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Action {
+        guard keyCode == returnKeyCode || keyCode == keypadEnterKeyCode else {
+            return .passThrough
         }
+        if modifiers.contains(.command) {
+            return .submit
+        }
+        if modifiers.contains(.control) {
+            return .insertNewline
+        }
+        return .passThrough
     }
 }
 
-struct DesktopChatPaneRail: View {
-    let edge: DesktopChatPaneRailEdge
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: edge.restoreSymbolName)
-                .font(.caption.weight(.semibold))
-                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
+enum DesktopChatComposerReturnCommandPolicy {
+    static func action(selector: Selector, modifiers: NSEvent.ModifierFlags) -> DesktopChatComposerKeyPolicy.Action {
+        guard isReturnCommandSelector(selector) else {
+            return .passThrough
         }
-        .buttonStyle(.plain)
-        .help(edge.accessibilityLabel)
-        .accessibilityLabel(edge.accessibilityLabel)
-        .background(Color.secondary.opacity(0.04))
+        if modifiers.contains(.command) {
+            return .submit
+        }
+        if modifiers.contains(.control) {
+            return .insertNewline
+        }
+        return .passThrough
+    }
+
+    private static func isReturnCommandSelector(_ selector: Selector) -> Bool {
+        selector == #selector(NSTextView.insertNewline(_:))
+        || selector == #selector(NSTextView.insertLineBreak(_:))
+        || selector == #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))
     }
 }
 
 struct DesktopChatTabView: View {
     let viewModel: RuntimeViewModel
-    @State private var showsSidebar = true
-    @State private var showsInspector = true
+    @Binding private var showsSidebar: Bool
+    @Binding private var showsInspector: Bool
 
     init(
         viewModel: RuntimeViewModel,
@@ -63,23 +69,28 @@ struct DesktopChatTabView: View {
         initiallyShowsInspector: Bool = true
     ) {
         self.viewModel = viewModel
-        _showsSidebar = State(initialValue: initiallyShowsSidebar)
-        _showsInspector = State(initialValue: initiallyShowsInspector)
+        _showsSidebar = .constant(initiallyShowsSidebar)
+        _showsInspector = .constant(initiallyShowsInspector)
+    }
+
+    init(
+        viewModel: RuntimeViewModel,
+        showsSidebar: Binding<Bool>,
+        showsInspector: Binding<Bool>
+    ) {
+        self.viewModel = viewModel
+        _showsSidebar = showsSidebar
+        _showsInspector = showsInspector
     }
 
     var body: some View {
-        HSplitView {
-            if showsSidebar {
+        HStack(spacing: 0) {
+            DesktopWorkspacePaneSlot(
+                role: .sidebar,
+                isVisible: showsSidebar,
+                idealWidth: DesktopChatLayoutMetrics.sidebarIdealWidth
+            ) {
                 DesktopChatSessionSidebar(viewModel: viewModel)
-                    .frame(
-                        minWidth: DesktopChatLayoutMetrics.sidebarMinWidth,
-                        idealWidth: DesktopChatLayoutMetrics.sidebarIdealWidth
-                    )
-            } else {
-                DesktopChatPaneRail(edge: .leading) {
-                    showsSidebar = true
-                }
-                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
             }
 
             DesktopChatSessionWorkspace(
@@ -87,18 +98,14 @@ struct DesktopChatTabView: View {
                 showsSidebar: $showsSidebar,
                 showsInspector: $showsInspector
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if showsInspector {
+            DesktopWorkspacePaneSlot(
+                role: .inspector,
+                isVisible: showsInspector,
+                idealWidth: DesktopChatLayoutMetrics.inspectorIdealWidth
+            ) {
                 DesktopChatSessionInspector(viewModel: viewModel)
-                    .frame(
-                        minWidth: DesktopChatLayoutMetrics.inspectorMinWidth,
-                        idealWidth: DesktopChatLayoutMetrics.inspectorIdealWidth
-                    )
-            } else {
-                DesktopChatPaneRail(edge: .trailing) {
-                    showsInspector = true
-                }
-                .frame(width: DesktopChatLayoutMetrics.collapsedRailWidth)
             }
         }
     }
@@ -121,6 +128,7 @@ struct DesktopChatSessionSidebar: View {
                 .buttonStyle(.plain)
                 .help("New Chat Session")
                 .accessibilityLabel("New Chat Session")
+                .focusable(false)
             }
 
             if viewModel.chatSessions.isEmpty {
@@ -146,6 +154,9 @@ struct DesktopChatSessionSidebar: View {
                                 onExport: {
                                     viewModel.selectChatSession(id: session.id)
                                     _ = viewModel.exportSelectedChatSession()
+                                },
+                                onDelete: {
+                                    viewModel.deleteChatSession(id: session.id)
                                 }
                             )
                         }
@@ -164,6 +175,16 @@ struct DesktopChatSessionWorkspace: View {
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
 
+    private var isSendDisabled: Bool {
+        viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || viewModel.isChatStreaming
+        || viewModel.selectedChatServerSession?.isInteractiveReady != true
+    }
+
+    private func submitChatPrompt() {
+        Task { await viewModel.submitChatPrompt() }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
@@ -171,37 +192,17 @@ struct DesktopChatSessionWorkspace: View {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
                         .font(.title2.weight(.semibold))
                     HStack(spacing: 8) {
-                        if let branch = viewModel.selectedChatSession?.branchTitle {
+                        if let branch = viewModel.selectedChatSession?.displayBranchTitle {
                             Text(branch)
                                 .font(.caption2)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(.quaternary, in: Capsule())
                         }
-                        if let server = viewModel.selectedChatServerSession {
-                            Text(server.title)
-                                .font(.caption2)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(.quaternary, in: Capsule())
-                        }
+                        DesktopChatServerPicker(viewModel: viewModel)
                     }
                 }
                 Spacer()
-                DesktopPaneToggleButton(
-                    role: .sidebar,
-                    isVisible: showsSidebar,
-                    shortcut: KeyboardShortcut("s", modifiers: [.command, .option])
-                ) {
-                    showsSidebar.toggle()
-                }
-                DesktopPaneToggleButton(
-                    role: .inspector,
-                    isVisible: showsInspector,
-                    shortcut: KeyboardShortcut("i", modifiers: [.command, .option])
-                ) {
-                    showsInspector.toggle()
-                }
             }
 
             if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
@@ -254,17 +255,7 @@ struct DesktopChatSessionWorkspace: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if viewModel.chatTranscript.isEmpty {
-                        GroupBox {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("No transcript yet")
-                                    .font(.headline)
-                                Text("This chat session is bound to the selected Server Session. Submit a prompt to stream assistant, reasoning, and tool-call state.")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else {
+                    if viewModel.chatTranscript.isEmpty == false {
                         ForEach(viewModel.chatTranscript) { entry in
                             DesktopChatTranscriptRowView(entry: entry)
                         }
@@ -273,14 +264,18 @@ struct DesktopChatSessionWorkspace: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                TextEditor(
+                DesktopChatComposerTextView(
                     text: Binding(
                         get: { viewModel.chatComposerText },
                         set: { viewModel.chatComposerText = $0 }
-                    )
+                    ),
+                    isSubmitAvailable: viewModel.isChatStreaming == false
+                    && viewModel.selectedChatServerSession?.isInteractiveReady == true,
+                    onCommandSubmit: { draft in
+                        viewModel.chatComposerText = draft
+                        submitChatPrompt()
+                    }
                 )
-                .font(.body.monospaced())
-                .scrollContentBackground(.hidden)
                 .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -308,15 +303,10 @@ struct DesktopChatSessionWorkspace: View {
                     }
                     .buttonStyle(.bordered)
                     Button("Send \u{2318}\u{21A9}") {
-                        Task { await viewModel.submitChatPrompt() }
+                        submitChatPrompt()
                     }
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(
-                        viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || viewModel.isChatStreaming
-                        || viewModel.selectedChatServerSession?.isInteractiveReady != true
-                    )
+                    .disabled(isSendDisabled)
                 }
             }
         }
@@ -334,8 +324,12 @@ struct DesktopChatSessionInspector: View {
                     Text(viewModel.selectedChatSession?.statusText ?? "Idle")
                         .font(.headline)
                     if let server = viewModel.selectedChatServerSession {
-                        Text(server.baseURL)
+                        Text(server.effectiveBaseURL)
                             .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Choose a Server Session")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     if let exportPath = viewModel.selectedChatSession?.exportPath, !exportPath.isEmpty {
@@ -346,44 +340,109 @@ struct DesktopChatSessionInspector: View {
                 }
             }
 
-            MelixSectionCard("Analysis Routes") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.chatCapabilities) { capability in
-                        HStack(alignment: .top) {
-                            Image(systemName: capability.isReady ? "checkmark.circle.fill" : "circle.dotted")
-                                .foregroundStyle(capability.isReady ? .green : .secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(capability.title)
-                                    .font(.headline)
-                                Text(capability.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !viewModel.lastChatRequestID.isEmpty || !viewModel.lastChatUsageText.isEmpty {
-                MelixSectionCard("Runtime") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !viewModel.lastChatRequestID.isEmpty {
-                            Text("request \(viewModel.lastChatRequestID)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                        if !viewModel.lastChatUsageText.isEmpty {
-                            Text(viewModel.lastChatUsageText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            MelixSectionCard("Model Capabilities") {
+                DesktopChatCapabilityIconGrid(capabilities: viewModel.chatCapabilities)
             }
 
             Spacer()
         }
         .padding(14)
+    }
+}
+
+private struct DesktopChatServerPicker: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedServerBinding: Binding<String> {
+        Binding(
+            get: { viewModel.selectedChatSession?.serverSessionID ?? "" },
+            set: { viewModel.bindSelectedChatSessionToServer(serverSessionID: $0) }
+        )
+    }
+
+    var body: some View {
+        if viewModel.serverSessions.isEmpty {
+            Button {
+                viewModel.selectSurface(.server)
+            } label: {
+                Label("Choose Server", systemImage: "server.rack")
+                    .labelStyle(.titleAndIcon)
+            }
+            .font(.caption2)
+            .buttonStyle(.borderless)
+            .help("Open Server to create a chat provider")
+            .accessibilityLabel("Choose Chat Server")
+        } else {
+            Picker("Server", selection: selectedServerBinding) {
+                Text("Choose Server").tag("")
+                ForEach(viewModel.serverSessions) { session in
+                    Text(session.title).tag(session.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(maxWidth: 180)
+            .help("Choose the server or provider for this chat session")
+            .accessibilityLabel("Chat Server")
+        }
+    }
+}
+
+private struct DesktopChatCapabilityIconGrid: View {
+    let capabilities: [DesktopChatCapabilityRow]
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 74), spacing: 8, alignment: .top),
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            ForEach(capabilities) { capability in
+                DesktopChatCapabilityIconTile(capability: capability)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model Capabilities")
+    }
+}
+
+private struct DesktopChatCapabilityIconTile: View {
+    let capability: DesktopChatCapabilityRow
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: capability.systemImageName)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 34, height: 28)
+                    .foregroundStyle(capability.isReady ? Color.accentColor : Color.secondary)
+
+                Circle()
+                    .fill(capability.isReady ? Color.green : Color.secondary.opacity(0.45))
+                    .frame(width: 7, height: 7)
+                    .offset(x: 2, y: -1)
+            }
+
+            Text(capability.shortTitle)
+                .font(.caption2.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(minWidth: 64, minHeight: 58)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help("\(capability.title): \(capability.detail)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
     }
 }
 
@@ -393,6 +452,7 @@ private struct DesktopChatSessionRow: View {
     let onSelect: () -> Void
     let onFork: () -> Void
     let onExport: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -403,10 +463,12 @@ private struct DesktopChatSessionRow: View {
                             .font(.headline)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(session.branchTitle)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if let branch = session.displayBranchTitle {
+                            Text(branch)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     Text(session.summaryText)
                         .font(.caption)
@@ -418,7 +480,7 @@ private struct DesktopChatSessionRow: View {
             }
             .buttonStyle(.plain)
 
-            DesktopChatSessionRowActions(onFork: onFork, onExport: onExport)
+            DesktopChatSessionRowActions(onFork: onFork, onExport: onExport, onDelete: onDelete)
         }
         .padding(10)
         .melixSelection(isSelected)
@@ -428,23 +490,281 @@ private struct DesktopChatSessionRow: View {
 private struct DesktopChatSessionRowActions: View {
     let onFork: () -> Void
     let onExport: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         Menu {
             Button("Fork", action: onFork)
             Button("Export", action: onExport)
+            Divider()
+            Button("Delete", role: .destructive, action: onDelete)
         } label: {
-            HStack(spacing: 2) {
-                Image(systemName: "ellipsis.circle")
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
+            Image(systemName: "ellipsis.circle")
+                .font(.body)
             .foregroundStyle(.secondary)
-            .frame(height: 18)
+            .frame(width: 22, height: 22)
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .help("Chat Actions")
+        .accessibilityLabel("Chat Actions")
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct DesktopChatComposerTextView: NSViewRepresentable {
+    @Binding var text: String
+    let isSubmitAvailable: Bool
+    let onCommandSubmit: (String) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = DesktopChatComposerCommandSubmitScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .noBorder
+
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.minSize = NSSize(width: 0, height: DesktopChatLayoutMetrics.composerMinHeight)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        scrollView.commandSubmitTextView = textView
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? DesktopChatComposerCommandSubmitTextView else {
+            return
+        }
+        if textView.string != text {
+            textView.string = text
+        }
+        textView.onCommandSubmit = { currentText in
+            context.coordinator.text.wrappedValue = currentText
+            guard isSubmitAvailable,
+                  currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                return false
+            }
+            onCommandSubmit(currentText)
+            return true
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else {
+                return
+            }
+            text.wrappedValue = textView.string
+        }
+    }
+
+}
+
+@MainActor
+final class DesktopChatComposerCommandSubmitScrollView: NSScrollView {
+    weak var commandSubmitTextView: DesktopChatComposerCommandSubmitTextView?
+    private var localKeyDownMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            if let localKeyDownMonitor {
+                NSEvent.removeMonitor(localKeyDownMonitor)
+                self.localKeyDownMonitor = nil
+            }
+            return
+        }
+
+        guard localKeyDownMonitor == nil else {
+            return
+        }
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  window.isKeyWindow,
+                  event.window == nil || event.window === window,
+                  self.isComposerInteractionActive
+            else {
+                return event
+            }
+            return self.handleComposerKeyEvent(event) ? nil : event
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleComposerKeyEvent(event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if handleComposerKeyEvent(event) == false {
+            super.keyDown(with: event)
+        }
+    }
+
+    @discardableResult
+    func handleComposerKeyEvent(_ event: NSEvent) -> Bool {
+        guard let commandSubmitTextView,
+              isComposerInteractionActive
+        else {
+            return false
+        }
+        return commandSubmitTextView.handleLocalKeyDown(event)
+    }
+
+    private var isComposerInteractionActive: Bool {
+        guard let window else {
+            return true
+        }
+        guard let firstResponder = window.firstResponder else {
+            return false
+        }
+        if firstResponder === self || firstResponder === commandSubmitTextView {
+            return true
+        }
+        guard let firstResponderView = firstResponder as? NSView else {
+            return false
+        }
+        return firstResponderView.isDescendant(of: self)
+    }
+}
+
+@MainActor
+final class DesktopChatComposerCommandSubmitTextView: NSTextView {
+    var onCommandSubmit: ((String) -> Bool)?
+    private var localKeyDownMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            if let localKeyDownMonitor {
+                NSEvent.removeMonitor(localKeyDownMonitor)
+                self.localKeyDownMonitor = nil
+            }
+            return
+        }
+
+        guard localKeyDownMonitor == nil else {
+            return
+        }
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  window.isKeyWindow,
+                  event.window == nil || event.window === window,
+                  window.firstResponder === self || window.firstResponder is NSTextView
+            else {
+                return event
+            }
+            return self.handleLocalKeyDown(event) ? nil : event
+        }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard DesktopChatComposerKeyPolicy.action(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags
+        ) == .submit else {
+            return super.performKeyEquivalent(with: event)
+        }
+        return submitCurrentText()
+    }
+
+    override func doCommand(by selector: Selector) {
+        switch currentReturnCommandAction(for: selector) {
+        case .submit:
+            _ = submitCurrentText()
+        case .insertNewline:
+            super.insertNewlineIgnoringFieldEditor(nil)
+        case .passThrough:
+            super.doCommand(by: selector)
+        }
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        guard currentReturnCommandAction(for: #selector(NSTextView.insertNewline(_:))) == .submit else {
+            super.insertNewline(sender)
+            return
+        }
+        _ = submitCurrentText()
+    }
+
+    override func insertLineBreak(_ sender: Any?) {
+        guard currentReturnCommandAction(for: #selector(NSTextView.insertLineBreak(_:))) == .submit else {
+            super.insertLineBreak(sender)
+            return
+        }
+        _ = submitCurrentText()
+    }
+
+    override func insertNewlineIgnoringFieldEditor(_ sender: Any?) {
+        guard currentReturnCommandAction(
+            for: #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))
+        ) == .submit else {
+            super.insertNewlineIgnoringFieldEditor(sender)
+            return
+        }
+        _ = submitCurrentText()
+    }
+
+    @discardableResult
+    func handleLocalKeyDown(_ event: NSEvent) -> Bool {
+        switch DesktopChatComposerKeyPolicy.action(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+        case .submit:
+            return submitCurrentText()
+        case .insertNewline:
+            insertNewlineIgnoringFieldEditor(nil)
+            return true
+        case .passThrough:
+            return false
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if handleLocalKeyDown(event) == false {
+            super.keyDown(with: event)
+        }
+    }
+
+    private func currentReturnCommandAction(for selector: Selector) -> DesktopChatComposerKeyPolicy.Action {
+        guard let event = NSApp.currentEvent else {
+            return .passThrough
+        }
+        return DesktopChatComposerReturnCommandPolicy.action(selector: selector, modifiers: event.modifierFlags)
+    }
+
+    private func submitCurrentText() -> Bool {
+        if onCommandSubmit?(string) == true {
+            return true
+        }
+        NSSound.beep()
+        return true
     }
 }
 

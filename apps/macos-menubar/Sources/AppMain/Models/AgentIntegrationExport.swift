@@ -67,7 +67,7 @@ public struct AgentIntegrationExport: Identifiable, Equatable, Sendable {
         target: AgentIntegrationExportTarget,
         session: DesktopServerSessionState
     ) -> AgentIntegrationExport {
-        let baseURL = session.baseURL
+        let baseURL = session.effectiveBaseURL
         let modelID = session.modelID
         let authPlaceholder = session.integrationAuthValue
         let shellSnippet = shellSnippet(

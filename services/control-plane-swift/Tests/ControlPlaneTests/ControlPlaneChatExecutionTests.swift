@@ -31,6 +31,16 @@ struct ControlPlaneChatExecutionTests {
         #expect(request.maxTokens == 256)
     }
 
+    @Test("chat execution errors preserve user-facing diagnostics")
+    func chatExecutionErrorsPreserveUserFacingDiagnostics() {
+        #expect(String(describing: ControlPlaneChatExecutionError.unavailable) == "unavailable")
+        #expect(
+            String(describing: ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: lazy text load failed")) ==
+                "chat_unavailable: lazy text load failed"
+        )
+        #expect(String(describing: ControlPlaneChatExecutionError.unavailableReason("  ")) == "unavailable")
+    }
+
     @Test("execute-event mapping covers all supported chat payloads")
     func executeEventMappingCoversAllSupportedChatPayloads() {
         #expect(

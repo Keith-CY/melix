@@ -514,6 +514,19 @@ struct StatusMenuTests {
         #expect(image.size.height > 0)
     }
 
+    @Test("branding dock icon glyph fills the packaged app icon")
+    @MainActor
+    func brandingDockIconGlyphFillsPackagedAppIcon() async throws {
+        let image = MelixBranding.appIcon()
+        let metrics = try #require(MelixBranding._testIconPixelMetrics(for: image))
+        let glyphBounds = metrics.darkGlyphBounds
+
+        #expect(glyphBounds.width / image.size.width >= 0.70)
+        #expect(glyphBounds.height / image.size.height >= 0.70)
+        #expect(metrics.backgroundAlpha >= 0.90)
+        #expect(metrics.backgroundLuminance >= 0.94)
+    }
+
     @Test("branding helpers return the original image when no bitmap representation is available")
     @MainActor
     func brandingHelpersReturnOriginalImageWithoutBitmapRepresentation() async throws {

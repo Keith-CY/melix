@@ -545,7 +545,7 @@ public actor ModelCatalog {
         var ext: [String: String] {
             var ext = [
                 "melix.adapter_set_hash": adapterSetHash,
-                "melix.capability.route_kind": routeKind.rawValue,
+                "melix.capability.route_kind": routeKind.metadataIdentifier,
                 "melix.capability.class": capabilityIdentifier,
                 "melix.capability.supported_modalities": supportedModalities.joined(separator: ","),
                 "melix.capability.supported_tasks": supportedTasks.joined(separator: ","),
@@ -742,28 +742,7 @@ public actor ModelCatalog {
     private static func workerRouteClass(
         for routeKind: WorkerRouteKind
     ) -> Melix_Controlplane_V1_WorkerRouteClass {
-        switch routeKind {
-        case .swiftText:
-            return .workerRouteSwiftText
-        case .pythonCompatibility:
-            return .workerRoutePythonTextCompatibility
-        case .pythonEmbedding:
-            return .workerRoutePythonEmbedding
-        case .pythonRerank:
-            return .workerRoutePythonRerank
-        case .pythonModelOperations:
-            return .workerRoutePythonModelOperations
-        case .pythonOCR:
-            return .workerRoutePythonOcr
-        case .pythonVLM:
-            return .workerRoutePythonVlm
-        case .pythonTranscription:
-            return .workerRoutePythonTranscription
-        case .pythonSpeech:
-            return .workerRoutePythonSpeech
-        case .pythonImage:
-            return .workerRoutePythonImage
-        }
+        routeKind.routeClass
     }
 
     private static func capabilityClass(
@@ -1113,9 +1092,7 @@ public actor ModelCatalog {
         model.settings.ext["melix.model_revision"] = "dev"
         model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
         applyCapabilityAdapter(capabilityAdapter, to: &model)
-        model.settings.ext["melix.capability.route_kind"] = capabilityAdapter.routeKind == .pythonCompatibility
-            ? "python_text_compatibility"
-            : capabilityAdapter.routeKind.rawValue
+        model.settings.ext["melix.capability.route_kind"] = capabilityAdapter.routeKind.metadataIdentifier
         return withSynchronizedResidency(model)
     }
 

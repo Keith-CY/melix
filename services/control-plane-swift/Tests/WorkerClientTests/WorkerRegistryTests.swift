@@ -112,6 +112,52 @@ struct WorkerRegistryTests {
         #expect(await registry.route(for: rerankModel) == .pythonRerank)
     }
 
+    @Test("worker route kind helpers normalize metadata aliases and capability identifiers")
+    func workerRouteKindHelpersNormalizeMetadataAliasesAndCapabilityIdentifiers() {
+        let metadataCases: [(String, WorkerRouteKind, Melix_Controlplane_V1_WorkerRouteClass, String)] = [
+            ("swift_text", .swiftText, .workerRouteSwiftText, "swift_text"),
+            ("python_text_compatibility", .pythonCompatibility, .workerRoutePythonTextCompatibility, "python_text_compatibility"),
+            ("python_compatibility", .pythonCompatibility, .workerRoutePythonTextCompatibility, "python_text_compatibility"),
+            ("python_embedding", .pythonEmbedding, .workerRoutePythonEmbedding, "python_embedding"),
+            ("python_rerank", .pythonRerank, .workerRoutePythonRerank, "python_rerank"),
+            ("python_model_operations", .pythonModelOperations, .workerRoutePythonModelOperations, "python_model_operations"),
+            ("python_ocr", .pythonOCR, .workerRoutePythonOcr, "python_ocr"),
+            ("python_vlm", .pythonVLM, .workerRoutePythonVlm, "python_vlm"),
+            ("python_transcription", .pythonTranscription, .workerRoutePythonTranscription, "python_transcription"),
+            ("python_speech", .pythonSpeech, .workerRoutePythonSpeech, "python_speech"),
+            ("python_image", .pythonImage, .workerRoutePythonImage, "python_image"),
+        ]
+
+        for (identifier, route, routeClass, canonicalIdentifier) in metadataCases {
+            #expect(WorkerRouteKind(metadataIdentifier: identifier) == route)
+            #expect(WorkerRouteKind(routeClass: routeClass) == route)
+            #expect(route.routeClass == routeClass)
+            #expect(route.metadataIdentifier == canonicalIdentifier)
+        }
+
+        let capabilityCases: [(String, WorkerRouteKind)] = [
+            ("text", .swiftText),
+            ("embedding", .pythonEmbedding),
+            ("rerank", .pythonRerank),
+            ("model_operations", .pythonModelOperations),
+            ("model_ops", .pythonModelOperations),
+            ("ocr", .pythonOCR),
+            ("vlm", .pythonVLM),
+            ("transcription", .pythonTranscription),
+            ("speech", .pythonSpeech),
+            ("image_generation", .pythonImage),
+            ("image", .pythonImage),
+        ]
+
+        for (identifier, route) in capabilityCases {
+            #expect(WorkerRouteKind(capabilityIdentifier: identifier) == route)
+        }
+
+        #expect(WorkerRouteKind(metadataIdentifier: "unsupported") == nil)
+        #expect(WorkerRouteKind(capabilityIdentifier: "unsupported") == nil)
+        #expect(WorkerRouteKind(routeClass: .unspecified) == nil)
+    }
+
     @Test("empty model identifiers and missing compatibility clients return nil")
     func emptyModelIdentifiersAndMissingCompatibilityClientsReturnNil() async {
         let registry = WorkerRegistry(defaultTextClient: RouteTestingWorkerClient())

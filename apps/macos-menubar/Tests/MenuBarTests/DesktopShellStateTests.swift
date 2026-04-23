@@ -5,6 +5,53 @@ import Testing
 
 @Suite("Desktop Shell State", .serialized)
 struct DesktopShellStateTests {
+    @Test("pane visibility defaults keep sidebars visible and inspectors collapsed")
+    func paneVisibilityDefaultsKeepSidebarsVisibleAndInspectorsCollapsed() throws {
+        for surface in DesktopSurface.allCases {
+            let state = DesktopPaneVisibilityState.defaultState(for: surface)
+
+            #expect(state.surface == surface)
+            #expect(state.showsSidebar)
+            #expect(state.showsInspector == false)
+        }
+
+        let encodedLegacyState = """
+        {
+          "schema_version": 4,
+          "selected_surface": "api",
+          "selected_tool_section": "settings",
+          "selected_server_session_id": "server-session-1",
+          "server_sessions": [],
+          "dismissed_banner_ids": [],
+          "download_queue": [],
+          "registry_roots": []
+        }
+        """.data(using: .utf8)!
+
+        let restored = try JSONDecoder().decode(OperatorSessionState.self, from: encodedLegacyState)
+
+        #expect(restored.schemaVersion == 5)
+        #expect(restored.paneVisibility.count == DesktopSurface.allCases.count)
+        #expect(restored.paneVisibility.first(where: { $0.surface == .api })?.showsSidebar == true)
+        #expect(restored.paneVisibility.first(where: { $0.surface == .api })?.showsInspector == false)
+
+        var customized = OperatorSessionState(
+            selectedSurface: .tools,
+            selectedToolSection: .settings,
+            selectedServerSessionID: "server-session-1",
+            serverSessions: [],
+            paneVisibility: [
+                DesktopPaneVisibilityState(surface: .tools, showsSidebar: false, showsInspector: true),
+            ]
+        )
+        customized.ensurePaneVisibilityDefaults()
+
+        #expect(customized.paneVisibility.first(where: { $0.surface == .tools })?.showsSidebar == false)
+        #expect(customized.paneVisibility.first(where: { $0.surface == .tools })?.showsInspector == true)
+        #expect(customized.paneVisibility.first(where: { $0.surface == .chat })?.showsSidebar == true)
+        #expect(customized.paneVisibility.first(where: { $0.surface == .chat })?.showsInspector == false)
+    }
+
     @Test("lifecycle capability flags cover operator-facing states")
     func lifecycleCapabilityFlagsCoverOperatorFacingStates() {
         let draft = makeDesktopShellSession(lifecycle: .draft, powerState: .unavailable)

@@ -57,9 +57,12 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
     assert 'export MELIX_PACKAGING_KIND="app_bundle"' in script
     assert 'export MELIX_PRODUCT_VERSION="0.8.11"' in script
     assert 'export MELIX_APP_SUPPORT_DIR="$HOME/Library/Application Support/Melix"' in script
+    assert 'export MELIX_HOME="$MELIX_APP_SUPPORT_DIR"' in script
     assert 'export MELIX_RUNTIME_DIR="$MELIX_APP_SUPPORT_DIR/runtime"' in script
     assert 'export MELIX_MANAGED_MODEL_ROOT="$MELIX_APP_SUPPORT_DIR/models/default-managed"' in script
     assert 'export MELIX_AUDIO_RUNTIME_PACK_ROOT="$MELIX_APP_SUPPORT_DIR/runtime-packs/audio"' in script
+    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/model-ops"' in script
+    assert 'export MELIX_EVALUATION_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/evaluation"' in script
     assert 'export MELIX_BACKEND_MODE="auto"' in script
     assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
 
@@ -81,6 +84,8 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert '"$RESOURCES_DIR/melix-text-worker-swift"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" -m worker.bootstrap' in script
     assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
+    assert '"$MELIX_MODEL_OPS_JOBS_ROOT"' in script
+    assert '"$MELIX_EVALUATION_JOBS_ROOT"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
     assert '"$RESOURCES_DIR/melix-menubar" "$@"' in script
     assert "backend-mode deterministic" not in script
@@ -174,6 +179,8 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script
     assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
+    assert 'export MELIX_MODEL_OPS_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/model-ops"' in env_script
+    assert 'export MELIX_EVALUATION_JOBS_ROOT="$MELIX_APP_SUPPORT_DIR/jobs/evaluation"' in env_script
     target_payload = json.loads(Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8"))
     assert target_payload["packaging_target_id"] == "macos_app_bundle_preview"
     assert target_payload["logical_product_identity"] == "io.melix"

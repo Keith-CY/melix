@@ -129,6 +129,43 @@ struct OnDemandModelLoaderTests {
         #expect(loadRequest.memoryBudgetBytes == 32_768)
     }
 
+    @Test("canonical python text compatibility metadata routes to the python compatibility worker")
+    func canonicalPythonTextCompatibilityMetadataRoutesToPythonCompatibilityWorker() async throws {
+        var model = makeTextModel(id: "registry-text", state: .modelDiscovered)
+        model.routeClass = .unspecified
+        model.settings.ext["melix.capability.route_kind"] = "python_text_compatibility"
+        let catalog = ModelCatalog(seedModels: [model])
+        let swiftClient = LoaderTestingWorkerClient()
+        await swiftClient.setLoadResponse(
+            ok: true,
+            handle: "registry-text::swift",
+            estimatedResidentBytes: 4_096
+        )
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "registry-text::python",
+            estimatedResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "registry-text",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        #expect(handle == "registry-text::python")
+        #expect(await pythonClient.loadRequestCount == 1)
+        #expect(await swiftClient.loadRequestCount == 0)
+    }
+
     @Test("lazy load falls back to estimated resident bytes when runtime stats are unavailable")
     func lazyLoadFallsBackToEstimatedResidentBytesWhenRuntimeStatsAreUnavailable() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])

@@ -1104,6 +1104,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "hello"
         await viewModel.stopSelectedServerSession()
         await viewModel.submitChatPrompt()
@@ -1137,6 +1138,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "wake on demand"
         await viewModel.submitChatPrompt()
 
@@ -1174,9 +1176,9 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
     }
 
-    @Test("creating a chat session binds it to the selected server session")
+    @Test("new chat sessions require an explicit server selection before sending")
     @MainActor
-    func creatingChatSessionBindsSelectedServerSession() async throws {
+    func newChatSessionsRequireExplicitServerSelectionBeforeSending() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
@@ -1186,7 +1188,22 @@ struct RuntimeViewModelTests {
         viewModel.createChatSession()
 
         #expect(viewModel.chatSessions.count == 2)
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatServerSession == nil)
+
+        viewModel.chatComposerText = "should wait for server choice"
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
+        #expect(viewModel.chatStatusText == "Choose Server")
+        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServerID)
+        viewModel.chatComposerText = "send after server choice"
+        await viewModel.submitChatPrompt()
+
         #expect(viewModel.selectedChatSession?.serverSessionID == originalServerID)
+        #expect(await client.recordedActions.contains("chat:melix-dev-text"))
     }
 
     @Test("surface selection command center and server session controls update shell state")
@@ -1435,6 +1452,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "starting blocked"
         await viewModel.submitChatPrompt()
         #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
@@ -1470,6 +1488,7 @@ struct RuntimeViewModelTests {
         stoppingViewModel.selectServerSession(id: stoppingServer.id)
         #expect(stoppingViewModel.selectedServerSession?.lifecycle == .stopped)
         stoppingViewModel.createChatSession()
+        stoppingViewModel.bindSelectedChatSessionToServer(serverSessionID: stoppingServer.id)
         #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
         stoppingViewModel.chatComposerText = "stopping blocked"
         await stoppingViewModel.submitChatPrompt()
@@ -1491,6 +1510,7 @@ struct RuntimeViewModelTests {
         let failingViewModel = RuntimeViewModel(client: failingClient)
         await failingViewModel.start()
         failingViewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(failingViewModel)
         await failingViewModel.pauseSelectedServerSession()
         failingViewModel.chatComposerText = "error blocked"
         await failingViewModel.submitChatPrompt()
@@ -1545,8 +1565,8 @@ struct RuntimeViewModelTests {
         let reboundServer = try #require(viewModel.selectedServerSession)
         let reboundExport = try #require(viewModel.selectedAgentIntegrationExport)
         #expect(reboundServer.port == 9090)
-        #expect(reboundExport.baseURL == "http://0.0.0.0:9090/v1")
-        #expect(reboundExport.configFragment.contains("http://0.0.0.0:9090/v1"))
+        #expect(reboundExport.baseURL == reboundServer.effectiveBaseURL)
+        #expect(reboundExport.configFragment.contains(reboundServer.effectiveBaseURL))
         #expect(reboundExport.configFragment.contains("not-required"))
     }
 
@@ -1791,32 +1811,41 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedAgentIntegrationExport == nil)
     }
 
-    @Test("empty workspace routes chat creation to server and server creation seeds the first chat session")
+    @Test("empty workspace creates unbound chat sessions until a server is selected")
     @MainActor
-    func emptyWorkspaceRoutesChatCreationToServerAndSeedsServerBoundChat() async throws {
+    func emptyWorkspaceCreatesUnboundChatSessionsUntilServerSelection() async throws {
         let client = EmptySnapshotControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
         #expect(viewModel.serverSessions.isEmpty)
-        #expect(viewModel.chatSessions.isEmpty)
+        #expect(viewModel.chatSessions.count == 1)
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
 
         viewModel.createChatSession()
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError == "Create a Server Session before opening chat.")
-        #expect(viewModel.selectedSurface == .server)
+        #expect(viewModel.chatSessions.count == 2)
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedSurface == .chat)
+
+        viewModel.chatComposerText = "wait for server"
+        await viewModel.submitChatPrompt()
+        #expect(viewModel.chatStatusText == "Choose Server")
+        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
 
         viewModel.createServerSession()
 
         let seededServer = try #require(viewModel.selectedServerSession)
         let seededChat = try #require(viewModel.selectedChatSession)
         #expect(viewModel.serverSessions.count == 1)
-        #expect(viewModel.chatSessions.count == 1)
+        #expect(viewModel.chatSessions.count == 2)
         #expect(seededServer.title == "Primary Server")
         #expect(seededServer.modelID == "melix-dev-text")
         #expect(seededServer.port == 8080)
-        #expect(seededChat.serverSessionID == seededServer.id)
-        #expect(viewModel.selectedSurface == .chat)
+        #expect(seededChat.serverSessionID == "")
+
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: seededServer.id)
+        #expect(viewModel.selectedChatSession?.serverSessionID == seededServer.id)
+        #expect(viewModel.selectedSurface == .server)
     }
 
     @Test("chat sessions can be exported forked and reselected without losing server bindings")
@@ -1826,6 +1855,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Export this chat session"
         await viewModel.submitChatPrompt()
 
@@ -1850,6 +1880,15 @@ struct RuntimeViewModelTests {
 
         viewModel.selectChatSession(id: "missing-chat-session")
         #expect(viewModel.selectedChatSession?.id == originalSession.id)
+
+        viewModel.deleteChatSession(id: originalSession.id)
+        #expect(viewModel.chatSessions.count == 1)
+        #expect(viewModel.selectedChatSession?.id == forkedSession.id)
+
+        viewModel.deleteChatSession(id: forkedSession.id)
+        #expect(viewModel.chatSessions.isEmpty)
+        #expect(viewModel.selectedChatSession == nil)
+        #expect(viewModel.chatTranscript.isEmpty)
     }
 
     @Test("chat export sanitizes transcript markdown without mutating stored transcript state")
@@ -1869,6 +1908,7 @@ struct RuntimeViewModelTests {
         ])
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "<i>Export me</i> file:///tmp/melix"
         await viewModel.submitChatPrompt()
 
@@ -1903,7 +1943,7 @@ struct RuntimeViewModelTests {
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
         #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError?.contains("Server Session") == true)
+        #expect(viewModel.lastError == "Create a Server Session before sending chat prompts.")
         #expect(viewModel.selectedSurface == .server)
     }
 
@@ -1914,6 +1954,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.updateSelectedServerSessionModelID("missing-model")
 
         let alternateTextSnapshot = makeSnapshot(
@@ -1932,7 +1973,7 @@ struct RuntimeViewModelTests {
         drainingEvent.state = .serverDraining
         await client.sendServerStateChanged(state: .serverDraining)
         try await waitForRuntimeViewModelCondition("warning banner should surface draining runtime state") {
-            viewModel.desktopBannerState?.severity == .warning
+            viewModel.desktopBannerState?.title == "Runtime Needs Monitoring"
         }
         #expect(viewModel.desktopBannerState?.title == "Runtime Needs Monitoring")
 
@@ -1992,9 +2033,9 @@ struct RuntimeViewModelTests {
         #expect(banner.detail == viewModel.connectionDetailText)
     }
 
-    @Test("audio setup banner and download actions surface missing audio assets")
+    @Test("audio setup remediation stays contextual instead of becoming a desktop banner")
     @MainActor
-    func audioSetupBannerAndDownloadActionsSurfaceMissingAudioAssets() async throws {
+    func audioSetupRemediationStaysContextualInsteadOfBecomingDesktopBanner() async throws {
         let client = FakeControlPlaneXPCClient()
         var whisper = ModelCatalog.mlxWhisperModel()
         whisper.settings.ext["melix.audio.runtime_pack_state"] = "missing"
@@ -2009,14 +2050,185 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        let banner = try #require(viewModel.desktopBannerState)
         let action = try #require(viewModel.audioSetupActions.first)
 
-        #expect(banner.severity == .warning)
-        #expect(banner.title == "Audio Setup Required")
+        #expect(viewModel.desktopSignalStates.contains { $0.title == "Audio Setup Required" } == false)
+        #expect(viewModel.pendingAudioSetupPrompt == nil)
         #expect(action.modelID == "melix-whisper-mlx")
         #expect(action.actionTitle == "Install Audio Support")
         #expect(action.detail.contains("melix-audio-runtime-pack"))
+
+        viewModel.presentAudioSetupPrompt(action)
+
+        let prompt = try #require(viewModel.pendingAudioSetupPrompt)
+        #expect(prompt.title == "Audio Support Required")
+        #expect(prompt.primaryActionTitle == "Install Audio Support")
+        #expect(prompt.modelID == "melix-whisper-mlx")
+    }
+
+    @Test("runtime endpoint projection drives primary model and integration exports")
+    @MainActor
+    func runtimeEndpointProjectionDrivesPrimaryModelAndIntegrationExports() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let baseModel = makeCapabilityModelSummary(
+            modelID: "melix-dev-text",
+            kind: "text",
+            state: .modelWarm,
+            features: ["chat"]
+        )
+        let selectedModel = makeCapabilityModelSummary(
+            modelID: "melix-selected-text",
+            kind: "text",
+            state: .modelWarm,
+            features: ["chat"]
+        )
+        let listener = makeGatewayConfigListener(
+            serverSessionID: "server-session-1",
+            requestedHost: "127.0.0.1",
+            requestedPort: 8080,
+            effectiveHost: "127.0.0.1",
+            effectivePort: 12434,
+            servedModelID: "melix-selected-text",
+            rateLimitPerMinute: 120,
+            timeoutSeconds: 120,
+            source: .environmentDefaults,
+            activeBinding: true,
+            requiresRestart: false
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [baseModel, selectedModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")],
+                gatewayConfig: makeGatewayConfigSummary(listener: listener)
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.primaryModel?.modelID == "melix-selected-text")
+        #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:12434/v1")
+        #expect(viewModel.desktopRuntimeEndpointState.requestedBaseURL == "http://127.0.0.1:8080/v1")
+        #expect(viewModel.agentIntegrationExports.isEmpty == false)
+        #expect(viewModel.agentIntegrationExports.allSatisfy { $0.baseURL == "http://127.0.0.1:12434/v1" })
+        #expect(viewModel.agentIntegrationExports.allSatisfy { $0.modelID == "melix-selected-text" })
+    }
+
+    @Test("gateway projection preserves restored server model when listener model is stale")
+    @MainActor
+    func gatewayProjectionPreservesRestoredServerModelWhenListenerModelIsStale() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-gateway-stale-model-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let selectedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let staleGatewayModelID = "melix-dev-qwen-local"
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredServerSession = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Primary Session",
+            modelID: selectedModelID,
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .chat,
+                selectedServerSessionID: restoredServerSession.id,
+                serverSessions: [restoredServerSession]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        let listener = makeGatewayConfigListener(
+            serverSessionID: restoredServerSession.id,
+            requestedHost: "127.0.0.1",
+            requestedPort: 8080,
+            effectiveHost: "127.0.0.1",
+            effectivePort: 11_434,
+            servedModelID: staleGatewayModelID,
+            rateLimitPerMinute: 120,
+            timeoutSeconds: 120,
+            source: .configFileImport,
+            activeBinding: true,
+            requiresRestart: false
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: staleGatewayModelID, state: .modelWarm),
+                    makeModelSummary(modelID: selectedModelID, state: .modelWarm),
+                ],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: restoredServerSession.id)],
+                gatewayConfig: makeGatewayConfigSummary(listener: listener)
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+        await viewModel.start()
+
+        #expect(viewModel.selectedServerSession?.modelID == selectedModelID)
+        #expect(viewModel.primaryModel?.modelID == selectedModelID)
+        #expect(viewModel.desktopRuntimeEndpointState.effectiveBaseURL == "http://127.0.0.1:11434/v1")
+
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Use the restored server model"
+
+        await viewModel.submitChatPrompt()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("chat:\(selectedModelID)"))
+        #expect(actions.contains("chat:\(staleGatewayModelID)") == false)
+    }
+
+    @Test("chat submission uses bound server model even before registry refresh surfaces it")
+    @MainActor
+    func chatSubmissionUsesBoundServerModelBeforeRegistryRefreshSurfacesIt() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let selectedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let listener = makeGatewayConfigListener(
+            serverSessionID: "server-session-1",
+            requestedHost: "127.0.0.1",
+            requestedPort: 8080,
+            effectiveHost: "127.0.0.1",
+            effectivePort: 8080,
+            servedModelID: selectedModelID,
+            rateLimitPerMinute: 120,
+            timeoutSeconds: 120,
+            source: .environmentDefaults,
+            activeBinding: true,
+            requiresRestart: false
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeCapabilityModelSummary(
+                    modelID: "melix-dev-text",
+                    kind: "text",
+                    state: .modelWarm,
+                    features: ["chat"]
+                )],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")],
+                gatewayConfig: makeGatewayConfigSummary(listener: listener)
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Use the selected server"
+
+        await viewModel.submitChatPrompt()
+
+        let actions = await client.recordedActions
+        let snapshotIndex = try #require(actions.firstIndex(of: "snapshot"))
+        let chatIndex = try #require(actions.firstIndex(of: "chat:\(selectedModelID)"))
+        #expect(snapshotIndex < chatIndex)
+        #expect(actions.contains("load:\(selectedModelID)") == false)
+        #expect(actions.contains("chat:melix-dev-text") == false)
     }
 
     @Test("audio setup actions dispatch install and download operations then refresh snapshot")
@@ -2650,7 +2862,14 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.createServerSession()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        try await waitForRuntimeViewModelCondition("expected CLI-created server session to hydrate") {
+            viewModel.serverSessions.count >= 2
+        }
+        let serverSessionID = try #require(viewModel.serverSessions.map(\.id).sorted().last)
+        viewModel.selectServerSession(id: serverSessionID)
+        try await waitForRuntimeViewModelCondition("expected CLI-created server session to become selected") {
+            viewModel.selectedServerSession?.id == serverSessionID
+        }
         viewModel.updateSelectedServerSessionHost("127.0.0.1")
         viewModel.updateSelectedServerSessionPort(18081)
         viewModel.updateSelectedServerSessionRateLimit(360)
@@ -2865,6 +3084,30 @@ struct RuntimeViewModelTests {
 
         #expect(upgradedViewModel.desktopBannerState == nil)
         #expect(upgradedViewModel.desktopSignalStates.contains { $0.title == "Update available: 0.3.0" })
+    }
+
+    @Test("failed update checks stay out of the top banner")
+    @MainActor
+    func failedUpdateChecksStayOutOfTopBanner() async throws {
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            productInstallStateProvider: StubProductInstallStateProvider(
+                updateStatusResponse: ProductUpdateStatus(
+                    summary: "Update: check failed",
+                    detail: "Could not read /tmp/missing-stable.json",
+                    isAvailable: false,
+                    checkSucceeded: false
+                ),
+                startupDiagnosticResponse: nil
+            )
+        )
+
+        await viewModel.start()
+
+        let signal = try #require(viewModel.desktopSignalStates.first { $0.title == "Update: check failed" })
+        #expect(signal.severity == .info)
+        #expect(signal.isDismissible)
+        #expect(viewModel.desktopBannerState == nil)
     }
 
     @Test("critical runtime banners ignore dismiss requests")
@@ -4029,7 +4272,8 @@ struct RuntimeViewModelTests {
         #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cachePolicyText == "Disabled • Hybrid")
         #expect(rows.first(where: { $0.modelID == "melix-dev-hybrid" })?.cacheSettingsText == "/var/melix/cache-vlm • cache 16 KB • multimodal 4 KB")
         #expect(rows.first(where: { $0.modelID == "melix-dev-unknown" })?.cachePolicyText == "Unknown • Unspecified")
-        #expect(viewModel.modelSettingsCacheModeDraft == "tiered")
+        #expect(viewModel.primaryModel?.modelID == "melix-dev-hybrid")
+        #expect(viewModel.modelSettingsCacheModeDraft == "hybrid")
 
         await viewModel.fetchModelInfo(modelID: "melix-dev-rotate")
         #expect(viewModel.selectedModelInfo?.cacheCompatibilityText == "Limited")
@@ -6918,6 +7162,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Explain Melix"
 
         await viewModel.submitChatPrompt()
@@ -6932,12 +7177,16 @@ struct RuntimeViewModelTests {
         let hasToolEntry = viewModel.chatTranscript.contains {
             $0.kind == .tool && $0.body.contains(#""q":"melix""#)
         }
+        let userEntry = try #require(viewModel.chatTranscript.first { $0.kind == .user })
+        let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
 
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
         #expect(hasUserEntry)
         #expect(hasAssistantEntry)
         #expect(hasReasoningEntry)
         #expect(hasToolEntry)
+        #expect(userEntry.detail.isEmpty)
+        #expect(assistantEntry.detail.isEmpty)
         #expect(viewModel.chatStatusText.contains("Completed"))
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
         #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
@@ -6965,6 +7214,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Merge deltas"
 
         await viewModel.submitChatPrompt()
@@ -6999,6 +7249,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Smooth bursty deltas"
 
         let submitTask = Task { @MainActor in
@@ -7037,6 +7288,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Completion only"
 
         await viewModel.submitChatPrompt()
@@ -7068,6 +7320,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Diagnose runtime phases"
 
         await viewModel.submitChatPrompt()
@@ -7091,6 +7344,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Diagnose transport"
 
         await viewModel.submitChatPrompt()
@@ -8214,6 +8468,12 @@ struct RuntimeViewModelTests {
         #expect(unknownRow.runtimeModeText == "?")
         #expect(unknownRow.runtimeModeAccessibilityLabel == "Runtime mode: unrecognized")
     }
+}
+
+@MainActor
+private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
+    let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+    viewModel.bindSelectedChatSessionToServer(serverSessionID: serverSessionID)
 }
 
 @MainActor
