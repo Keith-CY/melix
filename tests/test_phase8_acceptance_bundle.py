@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,9 @@ def test_run_acceptance_bundle_shells_out_in_expected_order(tmp_path: Path) -> N
             {"job_id": "eval-1", "output_path": str(evaluation_samples_jsonl), "row_count": 1},
         ]
     )
+    stale_events_path = _bundle_root(tmp_path) / "events.jsonl"
+    stale_events_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_events_path.write_text('{"event":"stale"}\n', encoding="utf-8")
 
     bundle_path, bundle = phase8_acceptance_bundle.run_acceptance_bundle(
         _bundle_config(tmp_path, live=True),
@@ -376,6 +380,15 @@ def test_run_acceptance_bundle_shells_out_in_expected_order(tmp_path: Path) -> N
     assert bundle["jobs"]["bench_matrix_job_id"] == "bench-matrix-1"
     assert bundle["jobs"]["evaluation_job_id"] == "eval-1"
     assert bundle["exports"]["evaluation_samples_jsonl"] == str(evaluation_samples_jsonl)
+    assert bundle["diagnostics"]["event_log_jsonl"] == str(_bundle_root(tmp_path) / "events.jsonl")
+    events = [
+        json.loads(line)
+        for line in (_bundle_root(tmp_path) / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[0]["event"] == "cli_step_started"
+    assert events[0]["step_label"] == "model hub download"
+    assert events[-1]["event"] == "cli_step_completed"
+    assert all(event["event"] != "stale" for event in events)
 
 
 def test_run_acceptance_bundle_bubbles_cli_failures(tmp_path: Path) -> None:
@@ -391,6 +404,73 @@ def test_run_acceptance_bundle_bubbles_cli_failures(tmp_path: Path) -> None:
 
     with pytest.raises(phase8_acceptance_bundle.CLICommandError, match="download failed"):
         phase8_acceptance_bundle.run_acceptance_bundle(_bundle_config(tmp_path, live=True), executor=executor)
+
+
+def test_cli_command_error_formats_negative_return_code_without_output() -> None:
+    error = phase8_acceptance_bundle.CLICommandError(
+        command=["melix", "model", "import"],
+        returncode=-1,
+        stderr="",
+        stdout="",
+    )
+
+    message = str(error)
+
+    assert "terminated by signal 1" in message
+    assert "no stderr or stdout captured" in message
+
+
+def test_run_acceptance_bundle_writes_event_log_before_cli_failure(tmp_path: Path) -> None:
+    executor = _FakeExecutor(
+        [
+            phase8_acceptance_bundle.CLICommandError(
+                command=["melix", "model", "hub", "download"],
+                returncode=-1,
+                stderr="",
+                stdout="",
+            )
+        ]
+    )
+
+    with pytest.raises(phase8_acceptance_bundle.CLICommandError):
+        phase8_acceptance_bundle.run_acceptance_bundle(_bundle_config(tmp_path, live=True), executor=executor)
+
+    events_path = _bundle_root(tmp_path) / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert events[0]["event"] == "cli_step_started"
+    assert events[0]["step_label"] == "model hub download"
+    assert events[0]["args"] == [
+        "model",
+        "hub",
+        "download",
+        "--repo-id",
+        "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "--json",
+    ]
+    assert events[1]["event"] == "cli_step_failed"
+    assert events[1]["returncode"] == -1
+    assert "terminated by signal 1" in events[1]["failure"]
+
+
+def test_tracing_executor_records_unexpected_exceptions(tmp_path: Path) -> None:
+    class _ExplodingExecutor:
+        def run_json(self, args: list[str]) -> object:  # noqa: ARG002
+            raise ValueError("unexpected executor failure")
+
+    event_log_path = tmp_path / "events.jsonl"
+    executor = phase8_acceptance_bundle._TracingJSONExecutor(
+        executor=_ExplodingExecutor(),
+        event_log_path=event_log_path,
+    )
+
+    with pytest.raises(ValueError, match="unexpected executor failure"):
+        executor.run_json(["model", "list", "--json"])
+
+    events = [json.loads(line) for line in event_log_path.read_text(encoding="utf-8").splitlines()]
+    assert events[0]["event"] == "cli_step_started"
+    assert events[1]["event"] == "cli_step_failed"
+    assert events[1]["exception_type"] == "ValueError"
+    assert events[1]["failure"] == "unexpected executor failure"
 
 
 def test_run_acceptance_bundle_rejects_missing_evaluation_export_paths(tmp_path: Path) -> None:
@@ -514,6 +594,41 @@ def test_run_acceptance_bundle_imports_local_model_when_live_disabled(tmp_path: 
         "--json",
     ]
     assert bundle["model"]["source_kind"] == "local_path"
+    assert bundle["model"]["preflight"]["runtime_model_class"] == "deterministic_dev_model"
+
+
+def test_run_acceptance_bundle_records_real_local_model_preflight(tmp_path: Path) -> None:
+    fixture_model = tmp_path / "fixture-model"
+    fixture_model.mkdir(parents=True)
+    (fixture_model / "config.json").write_text("{}", encoding="utf-8")
+    (fixture_model / "model.safetensors").write_text("weights\n", encoding="utf-8")
+    config = replace(
+        _bundle_config(tmp_path, live=False),
+        model_id="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        local_model_path=str(fixture_model),
+        source_resolution_mode="explicit_local_path",
+    )
+    executor = _FakeExecutor(
+        _successful_acceptance_responses(
+            tmp_path,
+            source_kind="local_path",
+            source_locator=str(fixture_model),
+            model_id="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        )
+    )
+
+    _, bundle = phase8_acceptance_bundle.run_acceptance_bundle(config, executor=executor)
+
+    assert bundle["model"]["preflight"] == {
+        "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "runtime_model_class": "real_local_model",
+        "real_local_model": True,
+        "deterministic_dev_model": False,
+        "hub_required": False,
+        "local_model_path": str(fixture_model.resolve()),
+        "source_resolution_mode": "explicit_local_path",
+        "warnings": [],
+    }
 
 
 def test_run_acceptance_bundle_rejects_empty_evaluation_runs(tmp_path: Path) -> None:
@@ -1112,6 +1227,106 @@ def test_main_prints_errors_to_stderr(
     assert "bundle failed" in capsys.readouterr().err
 
 
+def test_maybe_publish_adapter_handles_skip_required_and_success_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    adapter_manifest_path = tmp_path / "adapter.json"
+    adapter_manifest_path.write_text("{}", encoding="utf-8")
+    cli_receipts_root = tmp_path / "cli"
+
+    missing_target_config = replace(
+        _bundle_config(tmp_path, live=False),
+        publish_mode="auto",
+        publish_target_repo="",
+    )
+    result = phase8_acceptance_bundle._maybe_publish_adapter(
+        config=missing_target_config,
+        executor=_FakeExecutor([]),
+        model_id="melix-dev-qwen-local",
+        adapter_manifest_path=adapter_manifest_path,
+        cli_receipts_root=cli_receipts_root,
+    )
+    assert result["status"] == "skipped"
+    assert result["skip_reason"] == "publish_target_repo_missing"
+
+    required_missing_target_config = replace(missing_target_config, publish_mode="required")
+    with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="publish target repo is required"):
+        phase8_acceptance_bundle._maybe_publish_adapter(
+            config=required_missing_target_config,
+            executor=_FakeExecutor([]),
+            model_id="melix-dev-qwen-local",
+            adapter_manifest_path=adapter_manifest_path,
+            cli_receipts_root=cli_receipts_root,
+        )
+
+    for key in phase8_acceptance_bundle._HF_TOKEN_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    missing_token_config = replace(
+        _bundle_config(tmp_path, live=False),
+        publish_mode="auto",
+        publish_target_repo="chenyu/adapter",
+    )
+    result = phase8_acceptance_bundle._maybe_publish_adapter(
+        config=missing_token_config,
+        executor=_FakeExecutor([]),
+        model_id="melix-dev-qwen-local",
+        adapter_manifest_path=adapter_manifest_path,
+        cli_receipts_root=cli_receipts_root,
+    )
+    assert result["status"] == "skipped"
+    assert result["skip_reason"] == "missing_hf_token"
+
+    required_missing_token_config = replace(missing_token_config, publish_mode="required")
+    with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="Hugging Face token is required"):
+        phase8_acceptance_bundle._maybe_publish_adapter(
+            config=required_missing_token_config,
+            executor=_FakeExecutor([]),
+            model_id="melix-dev-qwen-local",
+            adapter_manifest_path=adapter_manifest_path,
+            cli_receipts_root=cli_receipts_root,
+        )
+
+    monkeypatch.setenv("HF_TOKEN", "token")
+    executor = _FakeExecutor([{"status": "published", "url": "https://huggingface.co/chenyu/adapter"}])
+    result = phase8_acceptance_bundle._maybe_publish_adapter(
+        config=missing_token_config,
+        executor=executor,
+        model_id="melix-dev-qwen-local",
+        adapter_manifest_path=adapter_manifest_path,
+        cli_receipts_root=cli_receipts_root,
+    )
+    assert result["status"] == "published"
+    assert result["skip_reason"] == ""
+    assert (cli_receipts_root / "17-publish.json").is_file()
+    assert executor.calls == [
+        [
+            "melix",
+            "upload",
+            "--model-id",
+            "melix-dev-qwen-local",
+            "--artifact-path",
+            str(adapter_manifest_path),
+            "--artifact-kind",
+            "adapter",
+            "--target-repo",
+            "chenyu/adapter",
+            "--json",
+        ]
+    ]
+
+
+def test_has_publish_token_checks_supported_environment_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in phase8_acceptance_bundle._HF_TOKEN_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    assert phase8_acceptance_bundle._has_publish_token() is False
+
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "token")
+    assert phase8_acceptance_bundle._has_publish_token() is True
+
+
 def test_helper_functions_cover_success_and_error_paths(tmp_path: Path) -> None:
     artifact_path = tmp_path / "job" / "train_lora.adapter.json"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1140,9 +1355,36 @@ def test_helper_functions_cover_success_and_error_paths(tmp_path: Path) -> None:
         context="export",
     ) == export_path
     assert phase8_acceptance_bundle._require_string({"job_id": "eval-1"}, "job_id", context="job") == "eval-1"
+    assert phase8_acceptance_bundle._resolve_model_source(
+        execution_profile="deterministic_import",
+        model_id="melix-dev-text",
+        local_model_path="",
+        live=True,
+    ) == ("melix-dev-text", True, "", "explicit_live_hub", ())
+    assert phase8_acceptance_bundle._resolve_model_source(
+        execution_profile="deterministic_import",
+        model_id="melix-dev-text",
+        local_model_path=str(tmp_path / "model"),
+        live=False,
+    ) == ("melix-dev-text", False, str(tmp_path / "model"), "explicit_local_path", ())
+    assert phase8_acceptance_bundle._default_source_resolution_mode(
+        replace(_bundle_config(tmp_path, live=True), live=False, local_model_path="")
+    ) == ""
+    assert phase8_acceptance_bundle._evaluation_scoring_mode([]) == "normalized_exact_match"
+    assert phase8_acceptance_bundle._cli_step_label(["single"]) == "single"
+    assert phase8_acceptance_bundle._cli_step_label([]) == "melix"
+    assert phase8_acceptance_bundle._trim_diagnostic_text("abc", limit=10) == "abc"
+    assert phase8_acceptance_bundle._trim_diagnostic_text("0123456789", limit=4) == "6789"
 
     with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="artifact_path or weights_path"):
         phase8_acceptance_bundle._adapter_manifest_path({})
+    with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="--model-id is required"):
+        phase8_acceptance_bundle._resolve_model_source(
+            execution_profile="deterministic_import",
+            model_id="",
+            local_model_path="",
+            live=False,
+        )
     with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="did not return a JSON array"):
         phase8_acceptance_bundle._expect_list({"job": {}}, context="eval")
     with pytest.raises(phase8_acceptance_bundle.AcceptanceBundleError, match="payload at index 0 was not a JSON object"):
