@@ -13,6 +13,37 @@ enum DesktopChatLayoutMetrics {
     static let composerMinHeight: CGFloat = 76
 }
 
+enum DesktopChatTranscriptAutoScroll {
+    enum Anchor: String, Hashable {
+        case bottom = "desktop-chat-transcript-bottom"
+    }
+
+    struct Snapshot: Equatable {
+        let entryCount: Int
+        let lastEntryID: String
+        let lastEntryBody: String
+        let lastEntryDetail: String
+        let isStreaming: Bool
+        let statusText: String
+    }
+
+    static func snapshot(
+        transcript: [DesktopChatTranscriptEntry],
+        isStreaming: Bool,
+        statusText: String
+    ) -> Snapshot {
+        let lastEntry = transcript.last
+        return Snapshot(
+            entryCount: transcript.count,
+            lastEntryID: lastEntry?.id ?? "",
+            lastEntryBody: lastEntry?.body ?? "",
+            lastEntryDetail: lastEntry?.detail ?? "",
+            isStreaming: isStreaming,
+            statusText: isStreaming ? statusText : ""
+        )
+    }
+}
+
 enum DesktopChatComposerKeyPolicy {
     enum Action: Equatable {
         case submit
@@ -185,6 +216,26 @@ struct DesktopChatSessionWorkspace: View {
         Task { await viewModel.submitChatPrompt() }
     }
 
+    private var chatTranscriptScrollSnapshot: DesktopChatTranscriptAutoScroll.Snapshot {
+        DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: viewModel.chatTranscript,
+            isStreaming: viewModel.isChatStreaming,
+            statusText: viewModel.chatStatusText
+        )
+    }
+
+    private func scrollChatTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo(DesktopChatTranscriptAutoScroll.Anchor.bottom, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(DesktopChatTranscriptAutoScroll.Anchor.bottom, anchor: .bottom)
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
@@ -253,13 +304,29 @@ struct DesktopChatSessionWorkspace: View {
                 }
             }
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if viewModel.chatTranscript.isEmpty == false {
-                        ForEach(viewModel.chatTranscript) { entry in
-                            DesktopChatTranscriptRowView(entry: entry)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if viewModel.chatTranscript.isEmpty == false {
+                            ForEach(viewModel.chatTranscript) { entry in
+                                DesktopChatTranscriptRowView(
+                                    entry: entry,
+                                    isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
+                                    pendingStatusText: viewModel.chatStatusText
+                                )
+                                .id(entry.id)
+                            }
                         }
+                        Color.clear
+                            .frame(height: 1)
+                            .id(DesktopChatTranscriptAutoScroll.Anchor.bottom)
                     }
+                }
+                .onAppear {
+                    scrollChatTranscriptToBottom(proxy, animated: false)
+                }
+                .onChange(of: chatTranscriptScrollSnapshot) { _, _ in
+                    scrollChatTranscriptToBottom(proxy, animated: true)
                 }
             }
 
@@ -768,8 +835,20 @@ final class DesktopChatComposerCommandSubmitTextView: NSTextView {
     }
 }
 
-private struct DesktopChatTranscriptRowView: View {
+struct DesktopChatTranscriptRowView: View {
     let entry: DesktopChatTranscriptEntry
+    let isPending: Bool
+    let pendingStatusText: String
+
+    init(
+        entry: DesktopChatTranscriptEntry,
+        isPending: Bool = false,
+        pendingStatusText: String = ""
+    ) {
+        self.entry = entry
+        self.isPending = isPending
+        self.pendingStatusText = pendingStatusText
+    }
 
     var body: some View {
         let sanitizedTitle = RichOutputSanitizer.sanitized(entry.title)
@@ -786,13 +865,39 @@ private struct DesktopChatTranscriptRowView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Text(sanitizedBody.isEmpty ? "…" : sanitizedBody)
-                .font(entry.kind == .tool ? .caption.monospaced() : .body)
-                .textSelection(.enabled)
+            if isPending {
+                pendingAssistantView
+            } else if DesktopChatMarkdownRenderer.usesMarkdown(for: entry.kind) {
+                DesktopChatMarkdownBodyView(rawText: sanitizedBody.isEmpty ? "…" : sanitizedBody)
+            } else {
+                Text(sanitizedBody.isEmpty ? "…" : sanitizedBody)
+                    .font(entry.kind == .tool ? .caption.monospaced() : .body)
+                    .textSelection(.enabled)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
+    }
+
+    private var pendingAssistantView: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Thinking...")
+                    .font(.body)
+                let sanitizedStatus = RichOutputSanitizer.sanitized(pendingStatusText)
+                if sanitizedStatus.isEmpty == false {
+                    Text(sanitizedStatus)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Assistant is thinking")
     }
 
     private var backgroundStyle: some ShapeStyle {

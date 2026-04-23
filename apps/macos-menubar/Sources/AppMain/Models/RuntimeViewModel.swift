@@ -1551,6 +1551,10 @@ public final class RuntimeViewModel {
         models.filter(\.isServeableServerModel)
     }
 
+    public func isPendingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
+        isEmptyPendingAssistantEntry(entry)
+    }
+
     private let client: any ControlPlaneXPCClient
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
@@ -3167,6 +3171,15 @@ public final class RuntimeViewModel {
             body: prompt,
             detail: ""
         )
+        let pendingAssistantEntryID = "assistant-\(UUID().uuidString)"
+        activeAssistantEntryID = pendingAssistantEntryID
+        appendChatEntry(
+            id: pendingAssistantEntryID,
+            kind: .assistant,
+            title: "Assistant",
+            body: "",
+            detail: ""
+        )
         chatStatusText = "Preparing"
         lastChatUsageText = ""
         isChatStreaming = true
@@ -3237,11 +3250,13 @@ public final class RuntimeViewModel {
                     chatStatusText = finishReason.isEmpty ? "Completed" : "Completed • \(finishReason)"
                     finalizeAssistantText(assistantText, requestID: execution.requestID)
                     finalizeReasoningText(reasoningText, requestID: execution.requestID)
+                    removeEmptyPendingAssistantEntryIfNeeded()
                 case .failed(let code, let message):
                     flushPendingChatPresentation()
                     chatStatusText = code.isEmpty ? "Failed" : "Failed • \(code)"
                     let failureMessage = message.isEmpty ? "Chat request failed." : message
                     setLastError(failureMessage)
+                    removeEmptyPendingAssistantEntryIfNeeded()
                     appendChatEntry(
                         id: "error-\(UUID().uuidString)",
                         kind: .error,
@@ -3257,6 +3272,7 @@ public final class RuntimeViewModel {
             }
 
             flushPendingChatPresentation()
+            removeEmptyPendingAssistantEntryIfNeeded()
             await metrics.record(
                 name: "menu.chat_stream_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -3275,6 +3291,7 @@ public final class RuntimeViewModel {
             flushPendingChatPresentation()
             setLastError(String(describing: error))
             chatStatusText = "Failed"
+            removeEmptyPendingAssistantEntryIfNeeded()
             appendChatEntry(
                 id: "error-\(UUID().uuidString)",
                 kind: .error,
@@ -5806,7 +5823,7 @@ public final class RuntimeViewModel {
 
         if selectedChatSession == nil, let first = chatSessions.first {
             loadChatSession(first)
-        } else if let selectedChatSession {
+        } else if let selectedChatSession, isChatStreaming == false {
             loadChatSession(selectedChatSession)
         }
     }
@@ -6152,7 +6169,7 @@ public final class RuntimeViewModel {
             return
         }
         replaceChatSession(id: session.id) { current in
-            current.transcript = chatTranscript
+            current.transcript = persistableChatTranscript()
             current.statusText = chatStatusText
             current.usageText = lastChatUsageText
             current.requestID = lastChatRequestID
@@ -8169,6 +8186,31 @@ public final class RuntimeViewModel {
                 detail: detail
             )
         )
+    }
+
+    private func isEmptyPendingAssistantEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
+        isChatStreaming
+        && entry.kind == .assistant
+        && entry.id == activeAssistantEntryID
+        && entry.body.isEmpty
+    }
+
+    private func persistableChatTranscript() -> [DesktopChatTranscriptEntry] {
+        chatTranscript.filter { isEmptyPendingAssistantEntry($0) == false }
+    }
+
+    private func removeEmptyPendingAssistantEntryIfNeeded() {
+        guard
+            let entryID = activeAssistantEntryID,
+            let index = chatTranscript.firstIndex(where: { entry in
+                entry.id == entryID
+                && entry.kind == .assistant
+                && entry.body.isEmpty
+            })
+        else {
+            return
+        }
+        chatTranscript.remove(at: index)
     }
 
     private func appendBody(
