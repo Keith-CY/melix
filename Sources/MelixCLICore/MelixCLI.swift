@@ -183,6 +183,28 @@ public struct LoraExperimentsShowOptions: Equatable, Sendable {
     }
 }
 
+public struct LoraPublishesListOptions: Equatable, Sendable {
+    public let modelID: String
+    public let json: Bool
+
+    public init(modelID: String = "", json: Bool = false) {
+        self.modelID = modelID
+        self.json = json
+    }
+}
+
+public struct LoraPublishesShowOptions: Equatable, Sendable {
+    public let modelID: String
+    public let jobID: String
+    public let json: Bool
+
+    public init(modelID: String = "", jobID: String, json: Bool = false) {
+        self.modelID = modelID
+        self.jobID = jobID
+        self.json = json
+    }
+}
+
 public struct LoraResumeOptions: Equatable, Sendable {
     public let modelID: String
     public let groupID: String
@@ -967,6 +989,8 @@ public enum MelixCLICommand: Equatable, Sendable {
     case loraPublish(LoraPublishOptions)
     case loraExperimentsList(LoraExperimentsListOptions)
     case loraExperimentsShow(LoraExperimentsShowOptions)
+    case loraPublishesList(LoraPublishesListOptions)
+    case loraPublishesShow(LoraPublishesShowOptions)
     case loraResume(LoraResumeOptions)
     case benchRun(BenchRunOptions)
     case benchList(BenchListOptions)
@@ -1104,10 +1128,12 @@ public enum MelixCLIParser {
       melix lora dataset build --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--output-dir PATH] [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
       melix lora activate --model-id MODEL_ID --adapter-path PATH [--activation-mode (fused_derived_model|adapter_backed_runtime)] [--alias NAME] [--json]
       melix lora remove-derived --model-id MODEL_ID (--derived-model-id ID | --manifest-path PATH) [--json]
-      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--json]
+      melix lora publish --model-id MODEL_ID --target-repo REPO (--adapter-path PATH | --merged-model-path PATH | --manifest-path PATH) [--export-kind (adapter|merged)] [--json]
       melix lora experiments list [--model-id MODEL_ID] [--json]
       melix lora experiments show --group-id GROUP_ID [--model-id MODEL_ID] [--json]
       melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
+      melix lora publishes list [--model-id MODEL_ID] [--json]
+      melix lora publishes show --job-id JOB_ID [--model-id MODEL_ID] [--json]
       melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
@@ -1674,20 +1700,44 @@ public enum MelixCLIParser {
                     "Exactly one of --adapter-path, --merged-model-path, or --manifest-path is required for melix lora publish."
                 )
             }
+            let explicitExportKind: LoraPublishExportKind?
+            if let rawKind = values.single["--export-kind"], !rawKind.isEmpty {
+                switch rawKind {
+                case "adapter", "adapter_export":
+                    explicitExportKind = .adapterExport
+                case "merged", "merged_export":
+                    explicitExportKind = .mergedExport
+                default:
+                    throw MelixCLIError.usage("Invalid value for --export-kind. Expected one of: adapter, merged.")
+                }
+            } else {
+                explicitExportKind = nil
+            }
             let exportKind: LoraPublishExportKind
             let artifactPath: String
             let artifactManifestPath: String
             if adapterPath.isEmpty == false {
+                if explicitExportKind == .mergedExport {
+                    throw MelixCLIError.usage("--export-kind merged is incompatible with --adapter-path.")
+                }
                 exportKind = .adapterExport
                 artifactPath = adapterPath
                 // Adapter publish accepts the adapter manifest JSON itself as the source artifact.
                 artifactManifestPath = adapterPath
             } else if mergedModelPath.isEmpty == false {
+                if explicitExportKind == .adapterExport {
+                    throw MelixCLIError.usage("--export-kind adapter is incompatible with --merged-model-path.")
+                }
                 exportKind = .mergedExport
                 artifactPath = mergedModelPath
                 artifactManifestPath = ""
             } else {
-                exportKind = .mergedExport
+                // --manifest-path: infer from the manifest when possible; fall back to --export-kind.
+                let inferred = try inferLoraPublishExportKind(
+                    manifestPath: manifestPath,
+                    explicitOverride: explicitExportKind
+                )
+                exportKind = inferred
                 artifactPath = manifestPath
                 artifactManifestPath = manifestPath
             }
@@ -1703,6 +1753,8 @@ public enum MelixCLIParser {
             )
         case "experiments":
             return try parseLoraExperiments(Array(arguments.dropFirst()))
+        case "publishes":
+            return try parseLoraPublishes(Array(arguments.dropFirst()))
         case "resume":
             let values = try cursor.parse()
             guard let groupID = values.single["--group-id"], !groupID.isEmpty else {
@@ -1752,6 +1804,71 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseLoraPublishes(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "list":
+            return .loraPublishesList(
+                LoraPublishesListOptions(
+                    modelID: values.single["--model-id"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "show":
+            guard let jobID = values.single["--job-id"], !jobID.isEmpty else {
+                throw MelixCLIError.missingRequired(
+                    "--job-id is required for melix lora publishes show."
+                )
+            }
+            return .loraPublishesShow(
+                LoraPublishesShowOptions(
+                    modelID: values.single["--model-id"] ?? "",
+                    jobID: jobID,
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func inferLoraPublishExportKind(
+        manifestPath: String,
+        explicitOverride: LoraPublishExportKind?
+    ) throws -> LoraPublishExportKind {
+        if let override = explicitOverride {
+            return override
+        }
+        let url = URL(fileURLWithPath: manifestPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw MelixCLIError.missingRequired(
+                "Unable to read manifest at \(manifestPath) to infer export kind; pass --export-kind explicitly."
+            )
+        }
+        let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let schemaVersion = (payload?["schema_version"] as? String) ?? ""
+        let artifactKind = (payload?["artifact_kind"] as? String) ?? ""
+        let activationMode = (payload?["activation_mode"] as? String) ?? ""
+        if artifactKind == "adapter" || schemaVersion == "melix.lora_adapter_package.v1" {
+            return .adapterExport
+        }
+        if schemaVersion == "melix.derived_text_model.v1" || activationMode == "fused_derived_model" {
+            return .mergedExport
+        }
+        if artifactKind == "converted_model_bundle" || artifactKind == "quantized_model_bundle" {
+            return .mergedExport
+        }
+        throw MelixCLIError.usage(
+            "Unable to infer export kind from manifest at \(manifestPath); pass --export-kind (adapter|merged) explicitly."
+        )
     }
 
     private static func parseLoraDataset(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3224,6 +3341,10 @@ public actor MelixCLIRunner {
             return try await runLoraExperimentsList(options)
         case .loraExperimentsShow(let options):
             return try await runLoraExperimentsShow(options)
+        case .loraPublishesList(let options):
+            return try await runLoraPublishesList(options)
+        case .loraPublishesShow(let options):
+            return try await runLoraPublishesShow(options)
         case .loraResume(let options):
             return try await runLoraResume(options)
         case .benchRun(let options):
@@ -3789,6 +3910,8 @@ public actor MelixCLIRunner {
              .loraRemoveDerived,
              .loraExperimentsList,
              .loraExperimentsShow,
+             .loraPublishesList,
+             .loraPublishesShow,
              .loraResume,
              .benchRun,
              .benchMatrixRun,
@@ -4415,6 +4538,160 @@ public actor MelixCLIRunner {
             return try prettyJSON(group)
         }
         return renderExperimentsShow(group)
+    }
+
+    private func runLoraPublishesList(_ options: LoraPublishesListOptions) async throws -> String {
+        let modelID = try await resolveModelID(preferred: options.modelID)
+        let result = try await performModelOperation(
+            modelID: modelID,
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let publishes = try extractPublishes(fromManifestJson: result.manifestJson)
+        if options.json {
+            return try prettyJSON(["publishes": publishes])
+        }
+        return renderPublishesList(publishes)
+    }
+
+    private func runLoraPublishesShow(_ options: LoraPublishesShowOptions) async throws -> String {
+        let modelID = try await resolveModelID(preferred: options.modelID)
+        let result = try await performModelOperation(
+            modelID: modelID,
+            operation: "registry_snapshot",
+            outputDir: "",
+            ext: [:]
+        )
+        let publishes = try extractPublishes(fromManifestJson: result.manifestJson)
+        guard let publish = publishes.first(where: { ($0["job_id"] as? String) == options.jobID }) else {
+            throw MelixCLIError.missingRequired(publishNotFoundMessage(jobID: options.jobID, publishes: publishes))
+        }
+        if options.json {
+            return try prettyJSON(publish)
+        }
+        return renderPublishesShow(publish)
+    }
+
+    private func extractPublishes(fromManifestJson manifestJson: String) throws -> [[String: Any]] {
+        guard let data = manifestJson.data(using: .utf8) else {
+            throw MelixCLIError.runtime("registry_snapshot payload was not valid UTF-8.")
+        }
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw MelixCLIError.runtime("registry_snapshot payload was not valid JSON: \(error.localizedDescription)")
+        }
+        guard let payload = parsed as? [String: Any] else {
+            throw MelixCLIError.runtime("registry_snapshot payload was not a JSON object.")
+        }
+        return payload["publishes"] as? [[String: Any]] ?? []
+    }
+
+    private func publishNotFoundMessage(jobID: String, publishes: [[String: Any]]) -> String {
+        let knownIDs = publishes.compactMap { $0["job_id"] as? String }.filter { $0.isEmpty == false }
+        if knownIDs.isEmpty {
+            return "Unknown publish job \(jobID); no publishes are recorded yet."
+        }
+        return "Unknown publish job \(jobID). Known jobs: \(knownIDs.joined(separator: ", "))."
+    }
+
+    private func renderPublishesList(_ publishes: [[String: Any]]) -> String {
+        if publishes.isEmpty {
+            return "No publishes recorded.\n"
+        }
+        let header = ["JOB_ID", "KIND", "TARGET_REPO", "SOURCE_JOB", "ADAPTER/DERIVED"]
+        let rows: [[String]] = publishes.map { publish in
+            let jobID = (publish["job_id"] as? String) ?? ""
+            let exportKind = (publish["export_artifact_kind"] as? String) ?? ""
+            let targetRepo = (publish["target_repo"] as? String) ?? ""
+            let sourceJob = (publish["source_job_id"] as? String) ?? ""
+            let adapterName = (publish["adapter_name"] as? String) ?? ""
+            let derivedModelID = (publish["derived_model_id"] as? String) ?? ""
+            let identity = derivedModelID.isEmpty ? adapterName : derivedModelID
+            return [jobID, exportKind, targetRepo, sourceJob, identity]
+        }
+        return renderFixedWidthTable(header: header, rows: rows) + "\n"
+    }
+
+    private func renderPublishesShow(_ publish: [String: Any]) -> String {
+        let jobID = (publish["job_id"] as? String) ?? ""
+        let exportKind = (publish["export_artifact_kind"] as? String) ?? ""
+        let distributionContract = (publish["distribution_contract"] as? String) ?? ""
+        let targetRepo = (publish["target_repo"] as? String) ?? ""
+        let publishedURL = (publish["published_url"] as? String) ?? ""
+        let publishedRef = (publish["published_ref"] as? String) ?? ""
+        let publishBackend = (publish["publish_backend"] as? String) ?? ""
+        let sourceArtifactKind = (publish["source_artifact_kind"] as? String) ?? ""
+        let sourceJobID = (publish["source_job_id"] as? String) ?? ""
+        let sourceModel = (publish["source_model"] as? String) ?? ""
+        let sourceArtifactPath = (publish["source_artifact_path"] as? String) ?? ""
+        let sourceManifestPath = (publish["source_manifest_path"] as? String) ?? ""
+        let adapterName = (publish["adapter_name"] as? String) ?? ""
+        let derivedModelID = (publish["derived_model_id"] as? String) ?? ""
+        let activationMode = (publish["activation_mode"] as? String) ?? ""
+        let receiptPath = (publish["receipt_path"] as? String) ?? ""
+        let publishedFiles = (publish["published_files"] as? [Any] ?? []).compactMap { $0 as? String }
+
+        var lines: [String] = []
+        lines.append("Publish: \(jobID)")
+        if !exportKind.isEmpty {
+            lines.append("Export kind: \(exportKind)")
+        }
+        if !distributionContract.isEmpty {
+            lines.append("Distribution contract: \(distributionContract)")
+        }
+        if !targetRepo.isEmpty {
+            lines.append("Target repo: \(targetRepo)")
+        }
+        if !publishedURL.isEmpty {
+            lines.append("Published URL: \(publishedURL)")
+        }
+        if !publishedRef.isEmpty {
+            lines.append("Published ref: \(publishedRef)")
+        }
+        if !publishBackend.isEmpty {
+            lines.append("Publish backend: \(publishBackend)")
+        }
+        lines.append("")
+        lines.append("Source:")
+        if !sourceArtifactKind.isEmpty {
+            lines.append("  Artifact kind: \(sourceArtifactKind)")
+        }
+        if !sourceJobID.isEmpty {
+            lines.append("  Source job: \(sourceJobID)")
+        }
+        if !sourceModel.isEmpty {
+            lines.append("  Source model: \(sourceModel)")
+        }
+        if !sourceArtifactPath.isEmpty {
+            lines.append("  Artifact path: \(sourceArtifactPath)")
+        }
+        if !sourceManifestPath.isEmpty, sourceManifestPath != sourceArtifactPath {
+            lines.append("  Manifest path: \(sourceManifestPath)")
+        }
+        if !adapterName.isEmpty {
+            lines.append("  Adapter name: \(adapterName)")
+        }
+        if !derivedModelID.isEmpty {
+            lines.append("  Derived model id: \(derivedModelID)")
+        }
+        if !activationMode.isEmpty {
+            lines.append("  Activation mode: \(activationMode)")
+        }
+        if !publishedFiles.isEmpty {
+            lines.append("")
+            lines.append("Published files (\(publishedFiles.count)):")
+            for file in publishedFiles {
+                lines.append("  \(file)")
+            }
+        }
+        if !receiptPath.isEmpty {
+            lines.append("")
+            lines.append("Receipt: \(receiptPath)")
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private func runLoraResume(_ options: LoraResumeOptions) async throws -> String {

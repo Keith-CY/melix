@@ -84,6 +84,10 @@ public enum MelixCLICommandCodec {
             return "lora.experiments.list"
         case .loraExperimentsShow:
             return "lora.experiments.show"
+        case .loraPublishesList:
+            return "lora.publishes.list"
+        case .loraPublishesShow:
+            return "lora.publishes.show"
         case .loraResume:
             return "lora.resume"
         case .benchRun:
@@ -286,6 +290,9 @@ public enum MelixCLICommandCodec {
             case .mergedExport:
                 if options.artifactManifestPath.isEmpty == false {
                     appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
+                    // Be explicit on the round trip: --manifest-path alone would otherwise
+                    // require the parser to read the manifest from disk to classify it.
+                    appendOption("--export-kind", value: "merged", into: &arguments)
                 } else {
                     appendOption("--merged-model-path", value: options.artifactPath, into: &arguments)
                 }
