@@ -425,55 +425,24 @@ enum RegistrySnapshotSync {
         routeKind: String?,
         kind: String
     ) -> Melix_Controlplane_V1_WorkerRouteClass {
-        let mapping: [String: Melix_Controlplane_V1_WorkerRouteClass] = [
-            "python_embedding": .workerRoutePythonEmbedding,
-            "python_rerank": .workerRoutePythonRerank,
-            "python_model_operations": .workerRoutePythonModelOperations,
-            "python_ocr": .workerRoutePythonOcr,
-            "python_vlm": .workerRoutePythonVlm,
-            "python_transcription": .workerRoutePythonTranscription,
-            "python_speech": .workerRoutePythonSpeech,
-            "python_image": .workerRoutePythonImage,
-            "python_text_compatibility": .workerRoutePythonTextCompatibility,
-            "python_compatibility": .workerRoutePythonTextCompatibility,
-            "swift_text": .workerRouteSwiftText,
-            "embedding": .workerRoutePythonEmbedding,
-            "rerank": .workerRoutePythonRerank,
-            "model_ops": .workerRoutePythonModelOperations,
-            "ocr": .workerRoutePythonOcr,
-            "vlm": .workerRoutePythonVlm,
-            "transcription": .workerRoutePythonTranscription,
-            "speech": .workerRoutePythonSpeech,
-            "image": .workerRoutePythonImage,
-            "text": .workerRoutePythonTextCompatibility,
-        ]
-        return mapping[normalizedMetadataValue(routeKind)] ?? mapping[normalizedMetadataValue(kind)] ?? .workerRouteSwiftText
+        if let route = WorkerRouteKind(metadataIdentifier: routeKind) {
+            return route.routeClass
+        }
+        if let route = WorkerRouteKind(capabilityIdentifier: kind) {
+            return route.routeClass
+        }
+        return .workerRouteSwiftText
     }
 
     private static func routeKindIdentifier(
         for routeClass: Melix_Controlplane_V1_WorkerRouteClass
     ) -> String? {
         switch routeClass {
-        case .workerRouteSwiftText:
-            return "swift_text"
-        case .workerRoutePythonTextCompatibility:
-            return "python_text_compatibility"
-        case .workerRoutePythonEmbedding:
-            return "python_embedding"
-        case .workerRoutePythonRerank:
-            return "python_rerank"
-        case .workerRoutePythonModelOperations:
-            return "python_model_operations"
-        case .workerRoutePythonOcr:
-            return "python_ocr"
-        case .workerRoutePythonVlm:
-            return "python_vlm"
-        case .workerRoutePythonTranscription:
-            return "python_transcription"
-        case .workerRoutePythonSpeech:
-            return "python_speech"
-        case .workerRoutePythonImage:
-            return "python_image"
+        case .workerRouteSwiftText, .workerRoutePythonTextCompatibility, .workerRoutePythonEmbedding,
+             .workerRoutePythonRerank, .workerRoutePythonModelOperations, .workerRoutePythonOcr,
+             .workerRoutePythonVlm, .workerRoutePythonTranscription, .workerRoutePythonSpeech,
+             .workerRoutePythonImage:
+            return WorkerRouteKind(routeClass: routeClass)?.metadataIdentifier
         default:
             return nil
         }

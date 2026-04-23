@@ -2927,7 +2927,7 @@ public actor ControlPlaneService {
         model.settings.ext["melix.model_path"] = card.repoID
         model.settings.ext["melix.model_revision"] = "main"
         model.settings.ext["melix.tokenizer_hash"] = "hf.\(card.repoID.replacingOccurrences(of: "/", with: "."))"
-        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind(routeClass: taskKind.routeClass)?.rawValue ?? ""
+        model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind(routeClass: taskKind.routeClass)?.metadataIdentifier ?? ""
         model.settings.ext["melix.capability.class"] = taskKind.capabilityIdentifier
         model.settings.ext["melix.capability.supported_modalities"] = taskKind.supportedModalities.joined(separator: ",")
         model.settings.ext["melix.capability.supported_tasks"] = taskKind.supportedTasks.joined(separator: ",")

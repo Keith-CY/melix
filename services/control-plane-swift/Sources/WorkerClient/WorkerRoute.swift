@@ -12,6 +12,47 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
     case pythonSpeech = "python_speech"
     case pythonImage = "python_image"
 
+    public init?(metadataIdentifier rawValue: String?) {
+        guard let rawValue else {
+            return nil
+        }
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "python_text_compatibility":
+            self = .pythonCompatibility
+        default:
+            self.init(rawValue: normalized)
+        }
+    }
+
+    public init?(capabilityIdentifier rawValue: String?) {
+        guard let rawValue else {
+            return nil
+        }
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "text":
+            self = .swiftText
+        case "embedding":
+            self = .pythonEmbedding
+        case "rerank":
+            self = .pythonRerank
+        case "model_operations", "model_ops":
+            self = .pythonModelOperations
+        case "ocr":
+            self = .pythonOCR
+        case "vlm":
+            self = .pythonVLM
+        case "transcription":
+            self = .pythonTranscription
+        case "speech":
+            self = .pythonSpeech
+        case "image_generation", "image":
+            self = .pythonImage
+        default:
+            return nil
+        }
+    }
+
     public init?(routeClass: Melix_Controlplane_V1_WorkerRouteClass) {
         switch routeClass {
         case .workerRouteSwiftText:
@@ -36,6 +77,40 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
             self = .pythonImage
         default:
             return nil
+        }
+    }
+
+    public var routeClass: Melix_Controlplane_V1_WorkerRouteClass {
+        switch self {
+        case .swiftText:
+            return .workerRouteSwiftText
+        case .pythonCompatibility:
+            return .workerRoutePythonTextCompatibility
+        case .pythonEmbedding:
+            return .workerRoutePythonEmbedding
+        case .pythonRerank:
+            return .workerRoutePythonRerank
+        case .pythonModelOperations:
+            return .workerRoutePythonModelOperations
+        case .pythonOCR:
+            return .workerRoutePythonOcr
+        case .pythonVLM:
+            return .workerRoutePythonVlm
+        case .pythonTranscription:
+            return .workerRoutePythonTranscription
+        case .pythonSpeech:
+            return .workerRoutePythonSpeech
+        case .pythonImage:
+            return .workerRoutePythonImage
+        }
+    }
+
+    public var metadataIdentifier: String {
+        switch self {
+        case .pythonCompatibility:
+            return "python_text_compatibility"
+        default:
+            return rawValue
         }
     }
 

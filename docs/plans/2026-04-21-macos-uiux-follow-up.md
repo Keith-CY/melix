@@ -47,9 +47,9 @@ repository design system while preserving the existing control-plane and worker 
   - sync managed registry models before native Chat lazy-loads a selected server model, so local
     managed downloads are loaded by filesystem path instead of being resolved again as Hugging Face
     repo IDs.
-  - default registry-snapshot text models without explicit route metadata to
-    `python_text_compatibility`, matching managed Hugging Face downloads whose local manifests
-    predate route-kind emission.
+  - treat `model_kind: "text"` as capability metadata rather than a Python runtime selector; managed
+    Hugging Face downloads must use explicit route metadata or a refreshed worker-owned registry
+    snapshot to select `python_text_compatibility`.
   - keep `python_text_compatibility` Chat sessions on the worker `generate` path rather than the
     phase-aware prefill/decode path, because the Python worker only implements prefill/decode for
     native VLM runtime sessions; this prevents local text sessions from surfacing `unavailable`
@@ -96,8 +96,9 @@ Manual evidence:
   as compact icons.
 - Confirm a Chat session targeting a downloaded managed model does not pass a Hugging Face repo ID
   to the worker load request when the local registry manifest exposes a managed filesystem path.
-- Confirm older managed text manifests without `melix.capability.route_kind` still route to the
-  Python text compatibility worker.
+- Confirm bare text registry snapshots without `melix.capability.route_kind` continue to route
+  through the default text worker, while managed Python-compatible text models route through
+  explicit `python_text_compatibility` metadata after worker registry refresh.
 - Confirm a Chat session targeting a downloaded text model routes through generate, not
   phase-aware prefill/decode, and returns worker text instead of `Error unavailable`.
 - Confirm selecting `Primary Server` in Chat submits that server's configured model ID rather than
