@@ -95,6 +95,9 @@ public struct SessionLifecycleSmokeRunner: Sendable {
             )
         } catch ControlPlaneChatExecutionError.unavailable {
             blockedStatus = "unavailable"
+        } catch ControlPlaneChatExecutionError.unavailableReason(let reason)
+            where reason.localizedCaseInsensitiveContains("server_paused") {
+            blockedStatus = "unavailable"
         }
 
         _ = try await client.resumeServerSession(serverSessionID: serverSessionID)

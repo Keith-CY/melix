@@ -63,7 +63,17 @@ Existing plans already define the intended contract:
 - `swift test --enable-code-coverage --package-path services/control-plane-swift --filter 'executeHandlesModelListBySyncingRegistrySnapshotModelsFromTheModelOperationsWorker|executeSyncsRegistryModelsBeforeWorkerBackedModelLoad|executeSyncsRegistryModelsBeforeRunBenchResolution|startChatSyncsManagedRegistryModelsBeforeLazyLoad|registrySnapshotTextFamiliesPreserveCompatibilityRoutingAndParserMetadata|executeImportsDirectHFBenchmarkTargetForGemma4|WorkerRegistryTests|ModelCatalogTests'`
 - `python3 scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift services/control-plane-swift/Sources/ModelCatalog/RegistrySnapshotSync.swift services/control-plane-swift/Sources/WorkerClient/WorkerRegistry.swift services/control-plane-swift/Sources/WorkerClient/WorkerRoute.swift services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift services/control-plane-swift/Tests/WorkerClientTests/WorkerRegistryTests.swift`
 - `swift test --package-path services/control-plane-swift`
+- `swift test --filter 'SessionLifecycleSmokeRunnerTests'`
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" UV_CACHE_DIR="$(pwd)/.cache/uv" uv run --project services/mlx-worker-python --extra mlx pytest tests/integration/test_session_lifecycle_integration.py -q`
 - `git diff --check`
+
+## CI Follow-Up
+
+- The live session lifecycle smoke runner treats a reasoned chat rejection containing
+  `server_paused` as expected pause evidence. This preserves the control plane contract that paused
+  sessions reject serving requests, while allowing the smoke runner to resume the session before
+  validating idle sleep, request wake, and restart recovery.
+- Other reasoned chat unavailability remains fatal to the smoke runner.
 
 ## Metrics
 
@@ -72,5 +82,6 @@ Existing plans already define the intended contract:
 - Existing registry probes remain relevant: `registry.reload_latency_ms` and
   `registry.discovered_model_count`.
 - Changed-line coverage: `100.00% (134/134)` for the touched Swift scope.
+- Session lifecycle smoke changed-line coverage: `100.00% (18/18)` for the CLI runner fix.
 - Success metric: route-resolution regressions are covered by focused Swift tests and PR CI should
   no longer fail the registry sync cases after this branch is pushed.
