@@ -7276,6 +7276,114 @@ struct RuntimeViewModelTests {
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
     }
 
+    @Test("chat prompt creates a transient assistant pending row before the first token")
+    @MainActor
+    func chatPromptCreatesTransientAssistantPendingRowBeforeFirstToken() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(120), event: .tokenDelta("Assistant final")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "Assistant final",
+                reasoningText: ""
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Wait for model"
+
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should expose a pending assistant row before first token") {
+            viewModel.isChatStreaming && viewModel.chatTranscript.contains { entry in
+                entry.kind == .assistant && entry.body.isEmpty
+            }
+        }
+
+        let pendingAssistantEntries = viewModel.chatTranscript.filter { $0.kind == .assistant }
+        let persistedPendingAssistantEntries = viewModel.selectedChatSession?.transcript.filter {
+            $0.kind == .assistant && $0.body.isEmpty
+        } ?? []
+
+        #expect(pendingAssistantEntries.count == 1)
+        #expect(pendingAssistantEntries.first?.body.isEmpty == true)
+        #expect(persistedPendingAssistantEntries.isEmpty)
+
+        await submitTask.value
+
+        let finalAssistantEntries = viewModel.chatTranscript.filter { $0.kind == .assistant }
+        #expect(finalAssistantEntries.count == 1)
+        #expect(finalAssistantEntries.first?.body == "Assistant final")
+    }
+
+    @Test("chat prompt removes an empty pending assistant row after terminal stream failure")
+    @MainActor
+    func chatPromptRemovesPendingAssistantAfterTerminalStreamFailure() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(80), event: .failed(code: "runtime_error", message: "worker failed")),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Trigger failure"
+
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should show pending assistant before failure") {
+            viewModel.chatTranscript.contains { entry in
+                entry.kind == .assistant && entry.body.isEmpty
+            }
+        }
+
+        await submitTask.value
+
+        #expect(viewModel.chatTranscript.filter { $0.kind == .assistant }.isEmpty)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .error && $0.body == "worker failed" })
+        #expect(viewModel.selectedChatSession?.transcript.contains { $0.kind == .assistant && $0.body.isEmpty } == false)
+    }
+
+    @Test("chat prompt removes an empty pending assistant row after empty completion")
+    @MainActor
+    func chatPromptRemovesPendingAssistantAfterEmptyCompletion() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(80), event: .completed(
+                finishReason: "stop",
+                assistantText: "",
+                reasoningText: ""
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Return nothing"
+
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should show pending assistant before empty completion") {
+            viewModel.chatTranscript.contains { entry in
+                entry.kind == .assistant && entry.body.isEmpty
+            }
+        }
+
+        await submitTask.value
+
+        #expect(viewModel.chatTranscript.filter { $0.kind == .assistant }.isEmpty)
+        #expect(viewModel.chatStatusText == "Completed • stop")
+        #expect(viewModel.selectedChatSession?.transcript.contains { $0.kind == .assistant && $0.body.isEmpty } == false)
+    }
+
     @Test("chat completion can synthesize transcript entries without prior deltas")
     @MainActor
     func chatCompletionSynthesizesTranscriptEntriesWithoutPriorDeltas() async throws {
@@ -7302,6 +7410,7 @@ struct RuntimeViewModelTests {
 
         #expect(hasAssistantFinal)
         #expect(hasReasoningFinal)
+        #expect(viewModel.chatTranscript.filter { $0.kind == .assistant }.count == 1)
         #expect(viewModel.chatStatusText == "Completed • stop")
     }
 

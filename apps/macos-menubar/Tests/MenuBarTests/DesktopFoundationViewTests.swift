@@ -2986,6 +2986,202 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.chatStatusText == "Failed • runtime_error")
     }
 
+    @Test("chat transcript row renders pending assistant state")
+    @MainActor
+    func chatTranscriptRowRendersPendingAssistantState() {
+        let view = hostView(DesktopChatTranscriptRowView(
+            entry: DesktopChatTranscriptEntry(
+                id: "assistant-pending",
+                kind: .assistant,
+                title: "Assistant",
+                body: "",
+                detail: ""
+            ),
+            isPending: true,
+            pendingStatusText: "Preparing"
+        ))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat transcript auto-scroll snapshot tracks trailing content growth")
+    func chatTranscriptAutoScrollSnapshotTracksTrailingContentGrowth() {
+        let initial = DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: [
+                DesktopChatTranscriptEntry(
+                    id: "assistant-1",
+                    kind: .assistant,
+                    title: "Assistant",
+                    body: "",
+                    detail: ""
+                )
+            ],
+            isStreaming: true,
+            statusText: "Preparing"
+        )
+        let advanced = DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: [
+                DesktopChatTranscriptEntry(
+                    id: "assistant-1",
+                    kind: .assistant,
+                    title: "Assistant",
+                    body: "Token delta",
+                    detail: ""
+                )
+            ],
+            isStreaming: true,
+            statusText: "Decoding"
+        )
+        let completed = DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: [
+                DesktopChatTranscriptEntry(
+                    id: "assistant-1",
+                    kind: .assistant,
+                    title: "Assistant",
+                    body: "Token delta",
+                    detail: ""
+                ),
+                DesktopChatTranscriptEntry(
+                    id: "assistant-2",
+                    kind: .assistant,
+                    title: "Assistant",
+                    body: "Final answer",
+                    detail: ""
+                )
+            ],
+            isStreaming: false,
+            statusText: "Completed"
+        )
+
+        #expect(initial != advanced)
+        #expect(advanced != completed)
+        #expect(completed.lastEntryID == "assistant-2")
+    }
+
+    @Test("chat transcript source wires bottom-anchor auto-scroll")
+    @MainActor
+    func chatTranscriptSourceWiresBottomAnchorAutoScroll() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("ScrollViewReader"))
+        #expect(source.contains("DesktopChatTranscriptAutoScroll.Anchor.bottom"))
+        #expect(source.contains("scrollChatTranscriptToBottom"))
+    }
+
+    @Test("chat markdown parser builds assistant display blocks")
+    func chatMarkdownParserBuildsAssistantDisplayBlocks() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        Intro **bold** and _italic_ with `code`.
+
+        - one
+        - two
+
+        1. first
+        2. second
+
+        ```swift
+        let value = 1
+        ```
+
+        | Metric | Value |
+        | --- | ---: |
+        | TTFT | 12 ms |
+        """)
+
+        #expect(blocks == [
+            .paragraph("Intro **bold** and _italic_ with `code`."),
+            .unorderedList(["one", "two"]),
+            .orderedList(["first", "second"]),
+            .codeBlock(language: "swift", code: "let value = 1"),
+            .table(header: ["Metric", "Value"], rows: [["TTFT", "12 ms"]]),
+        ])
+    }
+
+    @Test("chat markdown inline formatter removes markdown markers while preserving readable text")
+    func chatMarkdownInlineFormatterRemovesMarkers() {
+        let attributed = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "**bold** and _italic_ and `code`"
+        )
+        let linked = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "[Melix](https://example.com)"
+        )
+
+        #expect(String(attributed.characters) == "bold and italic and code")
+        #expect(String(linked.characters) == "Melix")
+        #expect(linked.runs.allSatisfy { $0.link == nil })
+    }
+
+    @Test("chat markdown body view hosts paragraph list code and table blocks")
+    @MainActor
+    func chatMarkdownBodyViewHostsParagraphListCodeAndTableBlocks() {
+        let view = hostView(DesktopChatMarkdownBodyView(rawText: """
+        Intro **bold** and _italic_ with `code`.
+
+        - one
+        - two
+
+        1. first
+        2. second
+
+        ```swift
+        let value = 1
+        ```
+
+        | Metric | Value |
+        | --- | --- |
+        | TTFT |
+        | TPS | 20 |
+        """))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat markdown surfaces keep restrained low-border styling")
+    func chatMarkdownSurfacesKeepRestrainedLowBorderStyling() {
+        #expect(
+            DesktopChatMarkdownLayoutMetrics.codeBlockBorderOpacity < MelixDesignTokens.StrokeOpacity.interactive
+        )
+        #expect(
+            DesktopChatMarkdownLayoutMetrics.tableHeaderBackgroundOpacity < MelixDesignTokens.SurfaceOpacity.elevated
+        )
+        #expect(
+            DesktopChatMarkdownLayoutMetrics.tableSurfaceBackgroundOpacity < MelixDesignTokens.SurfaceOpacity.card
+        )
+    }
+
+    @Test("chat markdown rendering is limited to assistant and reasoning rows")
+    func chatMarkdownRenderingIsLimitedToAssistantAndReasoningRows() {
+        #expect(DesktopChatMarkdownRenderer.usesMarkdown(for: .assistant))
+        #expect(DesktopChatMarkdownRenderer.usesMarkdown(for: .reasoning))
+        #expect(DesktopChatMarkdownRenderer.usesMarkdown(for: .user) == false)
+        #expect(DesktopChatMarkdownRenderer.usesMarkdown(for: .tool) == false)
+        #expect(DesktopChatMarkdownRenderer.usesMarkdown(for: .error) == false)
+    }
+
+    @Test("chat markdown renderer sanitizes html and unsafe links before parsing")
+    func chatMarkdownRendererSanitizesHTMLAndUnsafeLinksBeforeParsing() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        <b>Hello</b> [click](javascript:alert(1))
+
+        ```html
+        <b>keep as code</b>
+        [keep](javascript:alert(1))
+        ```
+        """)
+
+        #expect(blocks == [
+            .paragraph("Hello click"),
+            .codeBlock(
+                language: "html",
+                code: "<b>keep as code</b>\n[keep](javascript:alert(1))"
+            ),
+        ])
+    }
+
     @Test("chat session sidebar renders the empty state when no chat sessions exist")
     @MainActor
     func chatSessionSidebarRendersTheEmptyStateWhenNoChatSessionsExist() async throws {
