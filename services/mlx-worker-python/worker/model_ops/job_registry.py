@@ -103,6 +103,7 @@ class ModelOpsJobRegistry:
             "jobs": jobs,
             "adapters": self._adapter_registry(jobs),
             "derived_models": self._derived_model_registry(jobs),
+            "publishes": self._publish_registry(jobs),
             "downloads": self._download_registry(jobs),
             "experiment_groups": self._experiment_groups(),
             }
@@ -604,6 +605,89 @@ class ModelOpsJobRegistry:
             "adapter_manifest_paths": removed_adapter_manifest_paths,
             "activation_job_ids": removed_activation_job_ids,
         }
+
+    @staticmethod
+    def _publish_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        publishes: list[dict[str, Any]] = []
+        for job in jobs:
+            if job["operation"] != "upload" or job["status"] != "completed":
+                continue
+
+            manifest = job.get("manifest") or {}
+            ext = manifest.get("ext") if isinstance(manifest.get("ext"), dict) else {}
+            export_artifact_kind = str(manifest.get("export_artifact_kind", "")).strip()
+            source_artifact_kind = str(manifest.get("source_artifact_kind", ext.get("artifact_kind", ""))).strip()
+            if export_artifact_kind == "" and source_artifact_kind not in {"adapter", "derived_text_model", "converted_model_bundle"}:
+                continue
+
+            raw_lineage = manifest.get("parent_lineage")
+            parent_lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
+            target_repo = str(
+                manifest.get(
+                    "published_repo",
+                    manifest.get("target_repo", ext.get("target_repo", "")),
+                )
+            )
+            publishes.append(
+                {
+                    "job_id": job["job_id"],
+                    "status": "published",
+                    "target_repo": target_repo,
+                    "published_url": str(manifest.get("published_url", "")),
+                    "published_ref": str(manifest.get("published_ref", "")),
+                    "published_files": list(manifest.get("published_files") or []),
+                    "publish_backend": str(
+                        manifest.get(
+                            "upload_backend",
+                            manifest.get("publish_backend", ""),
+                        )
+                    ),
+                    "export_artifact_kind": export_artifact_kind,
+                    "source_artifact_kind": source_artifact_kind,
+                    "distribution_contract": str(manifest.get("distribution_contract", "")),
+                    "source_job_id": str(parent_lineage.get("source_job_id", "")),
+                    "source_artifact_path": str(
+                        parent_lineage.get(
+                            "local_artifact_path",
+                            manifest.get("artifact_path", ""),
+                        )
+                    ),
+                    "source_manifest_path": str(
+                        parent_lineage.get(
+                            "local_manifest_path",
+                            manifest.get("source_manifest_path", ""),
+                        )
+                    ),
+                    "source_model": str(
+                        manifest.get(
+                            "source_model_from_artifact",
+                            manifest.get("source_model", job["source_model"]),
+                        )
+                    ),
+                    "adapter_name": str(
+                        manifest.get(
+                            "adapter_name",
+                            ext.get("adapter_name", ""),
+                        )
+                    ),
+                    "derived_model_id": str(
+                        parent_lineage.get(
+                            "derived_model_id",
+                            manifest.get("derived_model_id", ""),
+                        )
+                    ),
+                    "activation_mode": str(
+                        parent_lineage.get(
+                            "activation_mode",
+                            manifest.get("activation_mode", ""),
+                        )
+                    ),
+                    "parent_lineage": parent_lineage,
+                    "receipt_path": str(job.get("output_path", "")),
+                    "upload_duration_ms": float(manifest.get("upload_duration_ms", 0.0)),
+                }
+            )
+        return publishes
 
     @staticmethod
     def _download_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
