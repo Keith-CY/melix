@@ -295,6 +295,17 @@ swift run melix lora publish \
   --manifest-path /absolute/path/to/activate_adapter/<job-id>/<alias>/manifest.json
 ```
 
+When `--manifest-path` is used, Melix reads the manifest and infers the export kind from its
+`schema_version` / `artifact_kind` / `activation_mode` fields:
+
+- `melix.lora_adapter_package.v1` or `artifact_kind=adapter` → adapter export
+- `melix.derived_text_model.v1` or `activation_mode=fused_derived_model` → merged export
+- `converted_model_bundle` / `quantized_model_bundle` → merged export
+
+For ambiguous manifests or when you want to be explicit, pass `--export-kind (adapter|merged)`.
+The flag also catches operator mistakes — `--export-kind merged` combined with `--adapter-path`
+is rejected with a clear usage error instead of being silently coerced.
+
 Expected publish behavior:
 
 - adapter export uploads a staged adapter bundle containing the adapter manifest plus adapter weights and config
@@ -302,6 +313,24 @@ Expected publish behavior:
 - upload receipts record `export_artifact_kind`, `published_repo`, publish backend, and `parent_lineage`
 - registry snapshots show adapter and merged publish lineage so operators can confirm which local artifact produced each remote repo
 - `swift run melix lora list` now includes published repo and publish artifact kind in the operator-readable table
+
+### Inspect Publish History
+
+Every completed upload is surfaced as a `publishes` entry in the registry snapshot, parallel to
+`adapters` / `derived_models` / `experiment_groups`. CLI operators can browse publish lineage
+directly:
+
+```bash
+swift run melix lora publishes list
+
+swift run melix lora publishes show \
+  --job-id model-ops-0100
+```
+
+`publishes list` emits a fixed-width `JOB_ID / KIND / TARGET_REPO / SOURCE_JOB / ADAPTER/DERIVED`
+table. `publishes show` renders the full lineage (export kind, distribution contract, target
+URL / ref, source artifact path, source manifest path, adapter or derived-model identity,
+activation mode, published files, upload receipt path). Both accept `--json` for pipeline use.
 
 ## Hub Discovery Backend
 
