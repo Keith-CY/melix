@@ -347,12 +347,80 @@ def test_registry_snapshot_applies_text_family_adapter_metadata_from_local_confi
     assert qwen3moe.ext["melix.text.rope_profile"] == "yarn_interleaved"
     assert qwen3moe.ext["melix.text.moe.enabled"] == "true"
     assert qwen3moe.ext["melix.text.moe.expert_count"] == "128"
+    assert qwen3moe.ext["melix.text.moe.expert_count_source"] == "config"
     assert qwen3moe.ext["melix.text.moe.gate_dequant"] == "true"
     assert qwen3moe.ext["melix.lora.family_id"] == "qwen3moe"
     assert qwen3moe.ext["melix.lora.family_kind"] == "moe"
     assert qwen3moe.ext["melix.lora.support_tier"] == "experimental"
+    assert qwen3moe.ext["melix.lora.training_ready"] == "true"
+    assert qwen3moe.ext["melix.lora.default_target_preset"] == "attention"
+
+
+def test_registry_snapshot_keeps_qwen3moe_lora_blocked_without_confirmed_expert_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Qwen3-MoE-Unknown-Experts" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Qwen3-MoE-Unknown-Experts/4bit",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "qwen3_moe",
+            "rope_scaling": {"type": "yarn", "interleaved": True},
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    qwen3moe = discovered["mlx-community/Qwen3-MoE-Unknown-Experts/4bit"]
+
+    assert qwen3moe.ext["text_family_id"] == "qwen3moe"
+    assert qwen3moe.ext["melix.text.moe.expert_count"] == "128"
+    assert qwen3moe.ext["melix.text.moe.expert_count_source"] == "family_default"
+    assert qwen3moe.ext["melix.lora.family_id"] == "qwen3moe"
+    assert qwen3moe.ext["melix.lora.support_tier"] == "experimental"
     assert qwen3moe.ext["melix.lora.training_ready"] == "false"
     assert qwen3moe.ext["melix.lora.default_target_preset"] == "attention"
+
+
+def test_registry_snapshot_does_not_promote_qwen3moe_from_stale_expert_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Qwen3-MoE-Stale-Experts" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Qwen3-MoE-Stale-Experts/4bit",
+        ext={
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.expert_count": "128",
+            "melix.text.moe.expert_count_source": "config",
+        },
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "qwen3_moe",
+            "rope_scaling": {"type": "yarn", "interleaved": True},
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    qwen3moe = discovered["mlx-community/Qwen3-MoE-Stale-Experts/4bit"]
+
+    assert qwen3moe.ext["text_family_id"] == "qwen3moe"
+    assert qwen3moe.ext["melix.text.moe.expert_count"] == "128"
+    assert qwen3moe.ext["melix.text.moe.expert_count_source"] == "metadata"
+    assert qwen3moe.ext["melix.lora.support_tier"] == "experimental"
+    assert qwen3moe.ext["melix.lora.training_ready"] == "false"
 
 
 def test_registry_snapshot_ignores_invalid_model_config_payloads(tmp_path: Path) -> None:

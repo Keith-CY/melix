@@ -52,7 +52,7 @@ The current forward-looking LoRA expansion breakdown is tracked in:
 
 - Melix is intentionally scoped to macOS on Apple Silicon.
 - The current docs should be read as productized local-runtime documentation, not as a promise of cross-platform support.
-- LoRA family coverage is intentionally uneven today: `llama`, `qwen`, `gemma`, and `kimi` are the stable dense-family path; `mixtral` remains experimental through separate MoE hooks; `qwen3moe`, `deepseek-mla`, `mistral4`, `nemotron-h`, and embedding-family models are not yet productized for `train_lora`.
+- LoRA family coverage is intentionally uneven today: `llama`, `qwen`, `gemma`, and `kimi` are the stable dense-family path; `mixtral` and `qwen3moe` are experimental through separate MoE hooks with `attention` defaults; `deepseek-mla`, `mistral4`, `nemotron-h`, and embedding-family models are not yet productized for `train_lora`.
 - Disk-streaming remains an evidence-only boundary today. The repository documents the probes and unsupported-path evidence, but true SSD-backed runtime execution is still not shipped.
 - The historical plan archive is broader than the curated product docs. Use the execution index as an engineering record, not as shorthand for every archived plan being equally product-ready.
 - `progress.md` still tracks active repository-level verification notes. If you are working inside the repo, treat the latest progress log as the operational truth for known local issues.

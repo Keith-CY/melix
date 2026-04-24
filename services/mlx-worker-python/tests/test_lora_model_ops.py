@@ -879,6 +879,225 @@ def test_train_lora_separates_moe_hooks_from_dense_defaults(tmp_path: Path) -> N
     assert unsupported_events[-1].failed.error.details["training_ready"] == "false"
 
 
+def test_train_lora_resolves_qwen3moe_expert_preset_and_adapter_backed_activation(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Route expert adapters."},
+                    {"role": "assistant", "content": "Use deterministic experts."},
+                ]
+            }
+        ],
+    )
+    runner = SuccessfulRunner()
+    service = _build_service(tmp_path, runner)
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    source_model.quant_profile_id = "q4"
+    source_model.ext["text_family_id"] = "qwen3moe"
+    source_model.ext["text_layer_count"] = "1"
+    source_model.ext["melix.text.moe.expert_count"] = "2"
+    source_model.ext["melix.text.moe.expert_count_source"] = "config"
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+        family_id="qwen3moe",
+        family_kind="moe",
+        support_tier="experimental",
+        default_target_preset="attention",
+    )
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "qwen3moe-train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "qlora",
+                    "adapter_name": "melix-qwen3moe-experts-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "experts",
+                    "num_layers": "1",
+                    "derived_model_alias": "melix-qwen3moe-experts",
+                },
+            ),
+            context=None,
+        )
+    )
+    train_payload = json.loads(next(event.manifest for event in train_events if event.HasField("manifest")).manifest_json)
+
+    assert runner.last_train_request is not None
+    assert runner.last_train_request.config.family_id == "qwen3moe"
+    assert runner.last_train_request.config.training_mode == "qlora"
+    assert runner.last_train_request.config.quantization_mode == "quantized_base"
+    assert runner.last_train_request.config.target_modules == ["gate_proj", "up_proj", "down_proj"]
+    assert runner.last_train_request.config.backend_target_modules == [
+        "mlp.experts.0.gate_proj",
+        "mlp.experts.1.gate_proj",
+        "mlp.experts.0.up_proj",
+        "mlp.experts.1.up_proj",
+        "mlp.experts.0.down_proj",
+        "mlp.experts.1.down_proj",
+    ]
+    assert train_payload["target_modules"] == [
+        "model.layers.0.mlp.experts.0.gate_proj",
+        "model.layers.0.mlp.experts.1.gate_proj",
+        "model.layers.0.mlp.experts.0.up_proj",
+        "model.layers.0.mlp.experts.1.up_proj",
+        "model.layers.0.mlp.experts.0.down_proj",
+        "model.layers.0.mlp.experts.1.down_proj",
+    ]
+    assert train_payload["source_model"] == "melix-dev-text"
+    assert train_payload["quantization_mode"] == "quantized_base"
+
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "qwen3moe-activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": train_events[-1].completed.output_path,
+                    "activation_mode": "adapter_backed_runtime",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_payload = json.loads(
+        next(event.manifest for event in activate_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert activation_payload["activation_mode"] == "adapter_backed_runtime"
+    assert activation_payload["source_model_quant_profile_id"] == "q4"
+    assert activation_payload["source_model_ext"]["melix.lora.family_id"] == "qwen3moe"
+    assert activation_payload["source_model_ext"]["melix.text.moe.expert_count"] == "2"
+    assert activation_payload["derived_model_alias"] == "melix-qwen3moe-experts"
+    registered_model = service._core._registry.model_catalog.get(activation_payload["derived_model_id"])
+    assert registered_model is not None
+    assert registered_model.quant_profile_id == "q4"
+    assert registered_model.ext["melix.lora.family_id"] == "qwen3moe"
+    assert registered_model.ext["melix.text.moe.expert_count"] == "2"
+    assert registered_model.ext["melix.text.moe.expert_count_source"] == "config"
+
+
+@pytest.mark.parametrize("unsafe_target", ["embed_tokens", "lm_head"])
+def test_train_lora_rejects_quantized_qwen3moe_unsafe_targets(
+    tmp_path: Path,
+    unsafe_target: str,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / f"dataset-{unsafe_target}",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Unsafe target?"},
+                    {"role": "assistant", "content": "Reject it."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    source_model.quant_profile_id = "q4"
+    source_model.ext["text_family_id"] = "qwen3moe"
+    source_model.ext["melix.text.moe.expert_count"] = "2"
+    source_model.ext["melix.text.moe.expert_count_source"] = "config"
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3-MoE-30B-A3B-Instruct/4bit",
+        family_id="qwen3moe",
+        family_kind="moe",
+        support_tier="experimental",
+        default_target_preset="attention",
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / f"qwen3moe-{unsafe_target}"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "qlora",
+                    "adapter_name": "melix-qwen3moe-unsafe-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": unsafe_target,
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_lora_target_module"
+    assert events[-1].failed.error.details["family_id"] == "qwen3moe"
+    assert events[-1].failed.error.details["target_module"] == unsafe_target
+    assert events[-1].failed.error.details["unsupported_target_class"] == "embedding_or_head"
+
+
+def test_train_lora_rejects_qwen3moe_expert_preset_without_expert_count_metadata(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-missing-expert-count",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Missing experts?"},
+                    {"role": "assistant", "content": "Fail closed."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, SuccessfulRunner())
+    source_model = service._core._registry.model_catalog.get("melix-dev-text")
+    assert source_model is not None
+    source_model.quant_profile_id = "q4"
+    source_model.ext["text_family_id"] = "qwen3moe"
+    source_model.ext["melix.text.moe.expert_count"] = "128"
+    source_model.ext["melix.text.moe.expert_count_source"] = "family_default"
+    _configure_lora_family(
+        source_model,
+        model_path="mlx-community/Qwen3-MoE-Unknown-Experts/4bit",
+        family_id="qwen3moe",
+        family_kind="moe",
+        support_tier="experimental",
+        default_target_preset="attention",
+    )
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "qwen3moe-missing-expert-count"),
+                ext={
+                    "operation": "train_lora",
+                    "training_mode": "qlora",
+                    "adapter_name": "melix-qwen3moe-experts-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "target_modules": "experts",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].failed.error.code == "unsupported_lora_target_module"
+    assert events[-1].failed.error.details["family_id"] == "qwen3moe"
+    assert events[-1].failed.error.details["target_module_class"] == "expert"
+    assert events[-1].failed.error.details["metadata_key"] == "melix.text.moe.expert_count"
+    assert events[-1].failed.error.details["metadata_source_key"] == "melix.text.moe.expert_count_source"
+    assert events[-1].failed.error.details["metadata_source"] == "family_default"
+
+
 def test_training_config_validates_direct_error_paths() -> None:
     non_text_model = common_pb2.ModelSpec(model_id="embed", model_kind="embedding")
     with pytest.raises(Exception) as non_text_error:
@@ -967,6 +1186,12 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
     assert mistral4_hooks["support_tier"] == "experimental"
     assert mistral4_hooks["training_ready"] == "false"
 
+    qwen3moe_hooks = training_config_module._resolve_family_hooks(
+        common_pb2.ModelSpec(model_id="qwen3moe", model_kind="text"),
+        family_id="qwen3moe",
+    )
+    assert qwen3moe_hooks["training_ready"] == "false"
+
     # Mixed preset aliases and literal module names should collapse to one deduplicated target set.
     qwen_targets = training_config_module._resolve_target_modules(
         "@attention,q_proj,attention",
@@ -977,6 +1202,10 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
         "",
         profile=training_config_module._FAMILY_PROFILES["mixtral"],
     ) == ["q_proj", "k_proj", "v_proj", "o_proj"]
+    assert training_config_module._resolve_target_modules(
+        "attention_experts",
+        profile=training_config_module._FAMILY_PROFILES["qwen3moe"],
+    ) == ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     assert training_config_module._backend_target_modules(["standalone.module"]) == ["standalone.module"]
 
     bounded = training_config_module.normalize_training_config(
@@ -1019,6 +1248,41 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
     with pytest.raises(Exception) as float_error:
         training_config_module._float_value("-0.5", default=0.0, minimum=0.0, field_name="dropout")
     assert float_error.value.code == "invalid_argument"
+
+
+def test_quantized_lora_target_safety_uses_exact_leaf_names() -> None:
+    training_config_module._reject_unsafe_quantized_lora_targets(
+        ["classifier.head.weight", "router.score", "model.layers.0.output.gate_proj"],
+        family_id="qwen",
+        training_mode="lora",
+        quantization_mode="quantized_base",
+    )
+
+    with pytest.raises(Exception) as unsafe_error:
+        training_config_module._reject_unsafe_quantized_lora_targets(
+            ["model.embed_tokens"],
+            family_id="qwen",
+            training_mode="lora",
+            quantization_mode="quantized_base",
+        )
+
+    assert unsafe_error.value.code == "unsupported_lora_target_module"
+    assert unsafe_error.value.details["target_module"] == "model.embed_tokens"
+
+
+def test_quantized_base_detection_uses_token_boundaries() -> None:
+    assert training_config_module._is_quantized_base_model(
+        common_pb2.ModelSpec(model_id="qwen", model_path="models/q4_k_m", model_kind="text")
+    )
+    assert training_config_module._is_quantized_base_model(
+        common_pb2.ModelSpec(model_id="qwen", model_path="models/4bit", model_kind="text")
+    )
+    assert not training_config_module._is_quantized_base_model(
+        common_pb2.ModelSpec(model_id="qwen", model_path="models/aq4ua", model_kind="text")
+    )
+    assert not training_config_module._is_quantized_base_model(
+        common_pb2.ModelSpec(model_id="qwen", model_path="models/optiqon", model_kind="text")
+    )
 
 
 def test_resolve_training_dataset_rejects_hf_valid_split_for_local_package(tmp_path: Path) -> None:
