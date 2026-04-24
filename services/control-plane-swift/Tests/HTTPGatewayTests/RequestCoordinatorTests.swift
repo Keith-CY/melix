@@ -1370,6 +1370,47 @@ struct RequestCoordinatorTests {
         #expect(progress.prefillProgressPct == 100)
     }
 
+    @Test("progress wait helper skips snapshots until predicate metadata matches")
+    func progressWaitHelperSkipsSnapshotsUntilPredicateMetadataMatches() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-progress-predicate-helper",
+            laneHint: "text.prefill.background",
+            priority: 50,
+            workerID: "worker-progress-helper"
+        )
+        await schedulerReadModel.recordPrefillProgress(
+            requestID: "req-progress-predicate-helper",
+            processedTokens: 4,
+            totalTokens: 8,
+            restoreStage: "none",
+            cachePressure: 0
+        )
+
+        let updater = Task {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            await schedulerReadModel.recordPhaseTransition(
+                requestID: "req-progress-predicate-helper",
+                phase: .requestPrefilling,
+                laneHint: "text.prefill.background",
+                accelerationMode: .acceleratedPrefill
+            )
+        }
+        defer { updater.cancel() }
+
+        let progress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-progress-predicate-helper",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            matching: { $0.accelerationMode == .acceleratedPrefill }
+        ))
+
+        #expect(progress.prefillProcessedTokens == 4)
+        #expect(progress.prefillTotalTokens == 8)
+        #expect(progress.accelerationMode == .acceleratedPrefill)
+    }
+
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2161,7 +2202,11 @@ struct RequestCoordinatorTests {
         let prefillProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
             requestID: "req-phase-metadata",
-            phase: .requestPrefilling
+            phase: .requestPrefilling,
+            matching: { progress in
+                progress.accelerationMode == .baseline
+                    || progress.accelerationMode == .acceleratedPrefill
+            }
         )
         #expect(
             prefillProgress?.accelerationMode == .baseline
