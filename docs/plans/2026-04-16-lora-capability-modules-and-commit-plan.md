@@ -445,6 +445,18 @@ Those repositories were used as comparison baselines for:
 4. Commit:
    - `git commit -m "feat: separate dense and advanced-family LoRA capability hooks"`
 
+**Status note 2026-04-24:** The first sparse-expert follow-up productizes
+`qwen3moe` as an experimental training-ready MoE family. It keeps the default
+target preset on `attention`, adds explicit `qkv`, `experts`,
+`attention_experts`, and `full` presets, and requires operator evidence before
+promoting expert-targeted adapters beyond the experimental path. Registry
+metadata gates `qwen3moe` training readiness on confirmed MoE expert-count
+metadata from live model config, and expert presets fail closed when the trainer
+cannot read a config-confirmed count. `full` is retained as an operator-facing
+alias for `attention_experts`. The blocked advanced-family boundary remains in
+place for `deepseek-mla`, `mistral4`, `nemotron-h`, embedding families, and
+other unsupported capability classes.
+
 ### Commit slice 6.3: Document family-level support expectations
 
 **Objective:** Make operators understand which families are stable, experimental, or blocked for LoRA workflows.

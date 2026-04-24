@@ -166,8 +166,9 @@ Expected training behavior:
 - Melix supports both `lora` and `qlora` through the same `train_lora` surface
 - if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
 - Melix expands compact target modules or preset groups into family-specific module paths
-- supported preset groups currently include `attention`, `mlp`, `attention_mlp`, and `full`; `qwen` plus `kimi` also accept `qkv`, `gemma` also accepts `gated_mlp`, and experimental `mixtral` also accepts `experts`
+- supported preset groups currently include `attention`, `mlp`, `attention_mlp`, and `full`; `qwen` plus `kimi` also accept `qkv`, `gemma` also accepts `gated_mlp`, experimental `mixtral` accepts `experts`, and experimental `qwen3moe` accepts `qkv`, `experts`, and `attention_experts` (`full` is an alias for `attention_experts`)
 - dense-family defaults stay on the family-owned `attention_mlp` baseline, while experimental MoE families default to `attention` unless the operator explicitly opts into expert modules
+- quantized LoRA and QLoRA reject embedding, LM head, and output-projection target modules; keep quantized runs on attention or expert projection targets
 - Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
 - the completed artifact is `train_lora.adapter.json` with schema `melix.lora_adapter_package.v1`
@@ -184,10 +185,10 @@ Stable LoRA training families:
 Experimental LoRA training families:
 
 - `mixtral` is exposed through separate MoE hooks and currently defaults to `attention` targets only; expert-module presets are available but should be treated as an operator-tuned path
+- `qwen3moe` is exposed through experimental MoE hooks, defaults to `attention`, and supports `qkv`, `experts`, `attention_experts`, and `full`; `full` is an alias for `attention_experts`; expert-module presets expand through `mlp.experts.N.{gate,up,down}_proj`, require `melix.text.moe.expert_count` confirmed from live local model config, and require repeatable operator evidence before wider promotion
 
 Explicitly unsupported or not-yet-productized LoRA families:
 
-- `qwen3moe`
 - `deepseek-mla`
 - `mistral4`
 - `nemotron-h`

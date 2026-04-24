@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from worker.runtime.text_family_adapters import (
+    _inferred_expert_count,
     detect_text_family_identity,
     resolve_text_family_config,
 )
@@ -79,6 +80,8 @@ def test_resolve_text_family_config_inherits_default_route_for_llama_seed_models
     assert resolved.route_kind == "swift_text"
     assert resolved.supported_parsers == ("text",)
     assert resolved.moe_enabled is False
+    assert "melix.text.moe.expert_count_source" not in resolved.capability_metadata()
+    assert "text_moe_expert_count_source" not in resolved.runtime_metadata()
 
 
 def test_resolve_text_family_config_enforces_python_route_and_qwen_parser_for_qwen3moe() -> None:
@@ -101,6 +104,8 @@ def test_resolve_text_family_config_enforces_python_route_and_qwen_parser_for_qw
     assert resolved.rope_profile == "yarn_interleaved"
     assert resolved.moe_enabled is True
     assert resolved.expert_count == 128
+    assert resolved.expert_count_source == "config"
+    assert resolved.runtime_metadata()["text_moe_expert_count_source"] == "config"
     assert resolved.moe_gate_dequant is True
 
 
@@ -120,6 +125,7 @@ def test_resolve_text_family_config_uses_mla_attention_for_deepseek_family() -> 
     assert resolved.attention_profile == "mla"
     assert resolved.moe_enabled is True
     assert resolved.expert_count == 64
+    assert resolved.expert_count_source == "config"
 
 
 def test_resolve_text_family_config_covers_fallback_parsing_and_bool_variants() -> None:
@@ -153,9 +159,69 @@ def test_resolve_text_family_config_covers_fallback_parsing_and_bool_variants() 
 
     assert yarn.rope_profile == "yarn"
     assert yarn.expert_count == 8
+    assert yarn.expert_count_source == "config"
     assert yarn.moe_gate_dequant is False
     assert interleaved.rope_profile == "yarn_interleaved"
     assert interleaved.expert_count == 16
+    assert interleaved.expert_count_source == "config"
     assert interleaved.tool_parser_xml_fallback is False
     assert mla.attention_profile == "mla"
     assert mla.moe_gate_dequant is True
+
+
+def test_resolve_text_family_config_marks_family_default_expert_count_source() -> None:
+    resolved = resolve_text_family_config(
+        {"text_family_id": "qwen3moe"},
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.expert_count == 128
+    assert resolved.expert_count_source == "family_default"
+    assert resolved.capability_metadata()["melix.text.moe.expert_count_source"] == "family_default"
+
+
+def test_resolve_text_family_config_prefers_live_config_over_stale_expert_metadata() -> None:
+    resolved = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.expert_count": "128",
+            "melix.text.moe.expert_count_source": "family_default",
+        },
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe", "num_local_experts": 64},
+        default_route_kind="swift_text",
+    )
+    stale = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.expert_count": "128",
+            "melix.text.moe.expert_count_source": "config",
+        },
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+    preserved_default = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.expert_count": "128",
+            "melix.text.moe.expert_count_source": "family_default",
+        },
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.expert_count == 64
+    assert resolved.expert_count_source == "config"
+    assert stale.expert_count == 128
+    assert stale.expert_count_source == "metadata"
+    assert preserved_default.expert_count == 128
+    assert preserved_default.expert_count_source == "family_default"
+
+
+def test_inferred_expert_count_preserves_config_before_family_default() -> None:
+    assert _inferred_expert_count({"num_experts": 4}, default=128) == 4
+    assert _inferred_expert_count({}, default=128) == 128

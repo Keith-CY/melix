@@ -41,6 +41,7 @@ class ResolvedTextFamilyConfig:
     rope_profile: str
     moe_enabled: bool
     expert_count: int
+    expert_count_source: str
     moe_gate_dequant: bool
 
     def capability_metadata(self) -> dict[str, str]:
@@ -61,6 +62,8 @@ class ResolvedTextFamilyConfig:
         }
         if self.expert_count > 0:
             metadata["melix.text.moe.expert_count"] = str(self.expert_count)
+        if self.expert_count_source and self.expert_count_source != "none":
+            metadata["melix.text.moe.expert_count_source"] = self.expert_count_source
         if self.tool_parser_mode:
             metadata["tool_parser_mode"] = self.tool_parser_mode
         if self.tool_parser_namespaces:
@@ -70,7 +73,7 @@ class ResolvedTextFamilyConfig:
         return metadata
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {
+        metadata = {
             "text_backend_id": self.text_backend_id,
             "text_family_id": self.family_id,
             "model_architecture": self.architecture,
@@ -80,6 +83,9 @@ class ResolvedTextFamilyConfig:
             "text_moe_expert_count": str(self.expert_count),
             "text_moe_gate_dequant": "true" if self.moe_gate_dequant else "false",
         }
+        if self.expert_count_source and self.expert_count_source != "none":
+            metadata["text_moe_expert_count_source"] = self.expert_count_source
+        return metadata
 
 
 _DEFAULT_TEXT_FAMILY_ID = "llama"
@@ -242,10 +248,10 @@ def resolve_text_family_config(
         _split_csv(metadata.get("melix.capability.supported_parsers", ""))
         or descriptor.supported_parsers
     )
-    expert_count = _int_value(
+    expert_count, expert_count_source = _resolved_expert_count(
         metadata,
-        "melix.text.moe.expert_count",
-        default=_inferred_expert_count(config_payload, default=descriptor.default_expert_count),
+        config_payload=config_payload,
+        default=descriptor.default_expert_count,
     )
     moe_enabled = _bool_value(
         metadata,
@@ -280,6 +286,7 @@ def resolve_text_family_config(
         ),
         moe_enabled=moe_enabled,
         expert_count=expert_count if moe_enabled else 0,
+        expert_count_source=expert_count_source if moe_enabled and expert_count > 0 else "none",
         moe_gate_dequant=_bool_value(
             metadata,
             "melix.text.moe.gate_dequant",
@@ -340,6 +347,38 @@ def _inferred_rope_profile(config_payload: Mapping[str, Any] | None, *, default:
 
 
 def _inferred_expert_count(config_payload: Mapping[str, Any] | None, *, default: int) -> int:
+    inferred = _expert_count_from_config(config_payload)
+    if inferred is not None:
+        return inferred
+    return max(0, default)
+
+
+def _resolved_expert_count(
+    metadata: Mapping[str, str],
+    *,
+    config_payload: Mapping[str, Any] | None,
+    default: int,
+) -> tuple[int, str]:
+    inferred = _expert_count_from_config(config_payload)
+    if inferred is not None:
+        return inferred, "config"
+
+    raw_metadata = metadata.get("melix.text.moe.expert_count", "").strip()
+    if raw_metadata:
+        try:
+            metadata_source = metadata.get("melix.text.moe.expert_count_source", "").strip().lower()
+            if metadata_source == "family_default":
+                return max(0, int(raw_metadata)), "family_default"
+            return max(0, int(raw_metadata)), "metadata"
+        except ValueError:
+            pass
+
+    if default > 0:
+        return max(0, default), "family_default"
+    return 0, "none"
+
+
+def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
     config_payload = dict(config_payload or {})
     for key in ("num_local_experts", "num_experts", "moe_num_experts", "n_routed_experts"):
         value = config_payload.get(key)
@@ -354,7 +393,7 @@ def _inferred_expert_count(config_payload: Mapping[str, Any] | None, *, default:
                 return max(0, int(value.strip()))
             except ValueError:
                 continue
-    return max(0, default)
+    return None
 
 
 def _inferred_moe_gate_dequant(config_payload: Mapping[str, Any] | None, *, default: bool) -> bool:
