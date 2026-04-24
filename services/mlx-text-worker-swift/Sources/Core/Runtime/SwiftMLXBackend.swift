@@ -245,6 +245,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -253,9 +254,13 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        let effectiveAcceleration = try resolveSwiftDecodeAcceleration(acceleration)
+        let effectiveAcceleration = try resolveSwiftDecodeAcceleration(
+            acceleration,
+            draftModel: draftModel
+        )
         let prepared = try await makePreparedDecodeGeneration(
             model: model,
+            draftModel: draftModel,
             context: context,
             sampling: sampling,
             maxOutputTokens: maxOutputTokens,
@@ -537,9 +542,14 @@ private func estimatedPrefillGainPercent(
 }
 
 private func resolveSwiftDecodeAcceleration(
-    _ acceleration: Melix_Worker_V1_AccelerationPolicy
+    _ acceleration: Melix_Worker_V1_AccelerationPolicy,
+    draftModel: LoadedTextModel?
 ) throws -> Melix_Worker_V1_AccelerationPolicy {
     guard acceleration.mode == .speculativeDecode else {
+        return acceleration
+    }
+
+    if draftModel != nil {
         return acceleration
     }
 
@@ -550,7 +560,7 @@ private func resolveSwiftDecodeAcceleration(
     }
 
     throw RuntimeUnavailableError(
-        message: "Speculative decode is not yet available for the Swift MLX backend."
+        message: "Speculative decode requires a loaded draft model for the Swift MLX backend."
     )
 }
 
@@ -667,10 +677,518 @@ private func activeKVRuntimeQuantizationRatioPercent(
     }
     return activeKVQuantizationRatioPercent(for: normalized)
 }
+
+private struct SpeculativeTokenMetadata: Sendable {
+    let unknownTokenID: Int?
+    let eosTokenID: Int?
+    let additionalEOSTokenIDs: Set<Int>
+}
+
+private struct SpeculativeDecodeRuntimeState: @unchecked Sendable {
+    var cache: [KVCache]
+    var output: LMOutput
+    let promptTokenCount: Int
+    let prefillQuantizeMicros: Int
+}
+
+private struct SpeculativeModelStepInput: @unchecked Sendable {
+    var state: SpeculativeDecodeRuntimeState
+    let tokenIDs: [Int]
+}
+
+private func makePreparedSpeculativeDecodeEvents(
+    targetContainer: ModelContainer,
+    draftContainer: ModelContainer,
+    decodeState: PreparedDecodeState,
+    targetContext: ModelContext,
+    parameters: GenerateParameters,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) async throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
+    let promptTokenIDs = decodeState.input.text.tokens.asArray(Int.self)
+    let targetCache = decodeState.cache
+    let targetOutput = try makeInitialDecodeOutput(
+        decodeState: decodeState,
+        context: targetContext,
+        cache: targetCache
+    )
+    eval(targetOutput.logits)
+
+    let initialTargetState = SpeculativeDecodeRuntimeState(
+        cache: targetCache,
+        output: targetOutput,
+        promptTokenCount: promptTokenIDs.count,
+        prefillQuantizeMicros: decodeState.prefillQuantizeMicros
+    )
+    let initialDraftState = try await makeRebuiltSpeculativeDecodeState(
+        container: draftContainer,
+        tokenIDs: promptTokenIDs,
+        promptTokenCount: promptTokenIDs.count,
+        prefillQuantizeMicros: 0,
+        parameters: parameters
+    )
+    let additionalEOSTokenIDs = Set(
+        targetContext.configuration.extraEOSTokens.compactMap {
+            targetContext.tokenizer.convertTokenToId($0)
+        }
+    )
+    let tokenMetadata = SpeculativeTokenMetadata(
+        unknownTokenID: targetContext.tokenizer.unknownTokenId,
+        eosTokenID: targetContext.tokenizer.eosTokenId,
+        additionalEOSTokenIDs: additionalEOSTokenIDs
+    )
+    let maxDraftTokens = max(1, Int(acceleration.numDraftTokens == 0 ? 4 : acceleration.numDraftTokens))
+    let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
+
+    let task = Task {
+        do {
+            var targetState = initialTargetState
+            var draftState = initialDraftState
+            var generatedTokenIDs: [Int] = []
+            var generatedTokenCount = 0
+            var acceptedTokenCount = 0
+            var rejectedTokenCount = 0
+            var proposedTokenCount = 0
+            var runtimeFallbackCount = 0
+            var draftProposeMicros = 0
+            var targetVerifyMicros = 0
+            var forceBaselineDecode = false
+            var targetProcessor = parameters.processor()
+            var draftProcessor = parameters.processor()
+            let targetSampler = parameters.sampler()
+            let draftSampler = parameters.sampler()
+            var detokenizer = NaiveStreamingDetokenizer(tokenizer: targetContext.tokenizer)
+
+            func resetProcessors(prefixTokenIDs: [Int]) {
+                let prefix = MLXArray(prefixTokenIDs)
+                targetProcessor = parameters.processor()
+                draftProcessor = parameters.processor()
+                targetProcessor?.prompt(prefix)
+                draftProcessor?.prompt(prefix)
+            }
+
+            resetProcessors(prefixTokenIDs: promptTokenIDs)
+            let startedAt = Date.timeIntervalSinceReferenceDate
+
+            var finished = false
+            while !finished && (parameters.maxTokens.map { generatedTokenCount < $0 } ?? true) {
+                if Task.isCancelled {
+                    break
+                }
+
+                if forceBaselineDecode {
+                    let targetToken = sampleNextToken(
+                        logits: targetState.output.logits,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        break
+                    }
+
+                    generatedTokenIDs.append(targetTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: targetTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    targetState = advanceSpeculativeDecodeState(
+                        context: targetContext,
+                        state: targetState,
+                        tokenIDs: [targetTokenID]
+                    )
+                    continue
+                }
+
+                let remainingTokens = parameters.maxTokens.map { max(0, $0 - generatedTokenCount) } ?? maxDraftTokens
+                guard remainingTokens > 0 else {
+                    break
+                }
+
+                let verifiedDecisionCount = acceptedTokenCount + rejectedTokenCount
+                let proposalWindow = verifiedDecisionCount < 4 ? 1 : maxDraftTokens
+                let proposalCount = min(proposalWindow, remainingTokens)
+                var proposedTokenIDs: [Int] = []
+                let proposalStartedAt = Date.timeIntervalSinceReferenceDate
+                for _ in 0 ..< proposalCount {
+                    if Task.isCancelled {
+                        finished = true
+                        break
+                    }
+
+                    let draftToken = sampleNextToken(
+                        logits: draftState.output.logits,
+                        processor: &draftProcessor,
+                        sampler: draftSampler
+                    )
+                    let draftTokenID = draftToken.item(Int.self)
+                    proposedTokenIDs.append(draftTokenID)
+
+                    draftState = try await advanceSpeculativeDecodeState(
+                        container: draftContainer,
+                        state: draftState,
+                        tokenIDs: [draftTokenID]
+                    )
+                }
+                draftProposeMicros += elapsedMicros(since: proposalStartedAt)
+                proposedTokenCount += proposedTokenIDs.count
+
+                if finished || proposedTokenIDs.isEmpty {
+                    break
+                }
+
+                if proposedTokenIDs.count == 1 {
+                    let verifyStartedAt = Date.timeIntervalSinceReferenceDate
+                    let proposedTokenID = proposedTokenIDs[0]
+                    let targetToken = sampleNextToken(
+                        logits: targetState.output.logits,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    targetVerifyMicros += elapsedMicros(since: verifyStartedAt)
+
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        break
+                    }
+
+                    let emittedTokenID: Int
+                    let acceptedProposal = targetTokenID == proposedTokenID
+                    if acceptedProposal {
+                        acceptedTokenCount += 1
+                        emittedTokenID = proposedTokenID
+                    } else {
+                        rejectedTokenCount += 1
+                        emittedTokenID = targetTokenID
+                    }
+
+                    generatedTokenIDs.append(emittedTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: emittedTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    targetState = advanceSpeculativeDecodeState(
+                        context: targetContext,
+                        state: targetState,
+                        tokenIDs: [emittedTokenID]
+                    )
+
+                    if shouldFallbackSpeculativeDecodeRuntime(
+                        acceptedTokenCount: acceptedTokenCount,
+                        rejectedTokenCount: rejectedTokenCount,
+                        proposedTokenCount: proposedTokenCount,
+                        draftProposeMicros: draftProposeMicros,
+                        targetVerifyMicros: targetVerifyMicros
+                    ) {
+                        forceBaselineDecode = true
+                        runtimeFallbackCount = 1
+                        continue
+                    }
+
+                    if !acceptedProposal {
+                        let rebuiltPrefix = promptTokenIDs + generatedTokenIDs
+                        draftState = try await makeRebuiltSpeculativeDecodeState(
+                            container: draftContainer,
+                            tokenIDs: rebuiltPrefix,
+                            promptTokenCount: promptTokenIDs.count,
+                            prefillQuantizeMicros: 0,
+                            parameters: parameters
+                        )
+                        resetProcessors(prefixTokenIDs: rebuiltPrefix)
+                    }
+                    continue
+                }
+
+                let verifyStartedAt = Date.timeIntervalSinceReferenceDate
+                let verifiedTargetState = advanceSpeculativeDecodeState(
+                    context: targetContext,
+                    state: targetState,
+                    tokenIDs: proposedTokenIDs
+                )
+
+                var rejectionTokenID: Int?
+                var acceptedThisRound = 0
+                for (index, proposedTokenID) in proposedTokenIDs.enumerated() {
+                    if Task.isCancelled {
+                        finished = true
+                        break
+                    }
+
+                    let targetLogits: MLXArray
+                    if index == 0 {
+                        targetLogits = targetState.output.logits
+                    } else {
+                        targetLogits = verifiedTargetState.output.logits
+                    }
+                    let targetToken = sampleNextToken(
+                        logits: targetLogits,
+                        position: index == 0 ? nil : index - 1,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        finished = true
+                        break
+                    }
+
+                    if targetTokenID == proposedTokenID {
+                        acceptedTokenCount += 1
+                        acceptedThisRound += 1
+                        generatedTokenIDs.append(proposedTokenID)
+                        generatedTokenCount += 1
+                        detokenizer.append(token: proposedTokenID)
+                        if let chunk = detokenizer.next() {
+                            continuation.yield(.chunk(chunk))
+                        }
+
+                        if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                            finished = true
+                            break
+                        }
+                    } else {
+                        rejectedTokenCount += 1
+                        rejectionTokenID = targetTokenID
+                        break
+                    }
+                }
+                targetVerifyMicros += elapsedMicros(since: verifyStartedAt)
+
+                if finished {
+                    break
+                }
+
+                if let rejectionTokenID {
+                    generatedTokenIDs.append(rejectionTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: rejectionTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    let rebuiltPrefix = promptTokenIDs + generatedTokenIDs
+                    targetState = try makeRebuiltSpeculativeDecodeState(
+                        context: targetContext,
+                        tokenIDs: rebuiltPrefix,
+                        promptTokenCount: promptTokenIDs.count,
+                        prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
+                        parameters: parameters
+                    )
+                    draftState = try await makeRebuiltSpeculativeDecodeState(
+                        container: draftContainer,
+                        tokenIDs: rebuiltPrefix,
+                        promptTokenCount: promptTokenIDs.count,
+                        prefillQuantizeMicros: 0,
+                        parameters: parameters
+                    )
+                    resetProcessors(prefixTokenIDs: rebuiltPrefix)
+                } else if acceptedThisRound == proposedTokenIDs.count {
+                    targetState = verifiedTargetState
+                }
+
+                if shouldFallbackSpeculativeDecodeRuntime(
+                    acceptedTokenCount: acceptedTokenCount,
+                    rejectedTokenCount: rejectedTokenCount,
+                    proposedTokenCount: proposedTokenCount,
+                    draftProposeMicros: draftProposeMicros,
+                    targetVerifyMicros: targetVerifyMicros
+                ) {
+                    forceBaselineDecode = true
+                    runtimeFallbackCount = 1
+                }
+            }
+
+            let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            continuation.yield(.summary(
+                TextGenerationSummary(
+                    promptTokens: promptTokenIDs.count,
+                    completionTokens: generatedTokenCount,
+                    tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    speculativeAcceptedTokens: acceptedTokenCount,
+                    speculativeRejectedTokens: rejectedTokenCount,
+                    speculativeFallbackCount: runtimeFallbackCount,
+                    speculativeDraftProposeMillis: milliseconds(fromMicros: draftProposeMicros),
+                    speculativeTargetVerifyMillis: milliseconds(fromMicros: targetVerifyMicros)
+                )
+            ))
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+
+private func makeRebuiltSpeculativeDecodeState(
+    container: ModelContainer,
+    tokenIDs: [Int],
+    promptTokenCount: Int,
+    prefillQuantizeMicros: Int,
+    parameters: GenerateParameters
+) async throws -> SpeculativeDecodeRuntimeState {
+    try await container.perform { context in
+        let input = LMInput(tokens: MLXArray(tokenIDs))
+        let cache = context.model.newCache(parameters: nil)
+        let prepared = try context.model.prepare(
+            input,
+            cache: cache,
+            windowSize: parameters.prefillStepSize
+        )
+        let output = try makeInitialDecodeOutput(
+            input: input,
+            prepared: prepared,
+            context: context,
+            cache: cache
+        )
+        eval(output.logits)
+        return SpeculativeDecodeRuntimeState(
+            cache: cache,
+            output: output,
+            promptTokenCount: promptTokenCount,
+            prefillQuantizeMicros: prefillQuantizeMicros
+        )
+    }
+}
+
+private func makeRebuiltSpeculativeDecodeState(
+    context: ModelContext,
+    tokenIDs: [Int],
+    promptTokenCount: Int,
+    prefillQuantizeMicros: Int,
+    parameters: GenerateParameters
+) throws -> SpeculativeDecodeRuntimeState {
+    let input = LMInput(tokens: MLXArray(tokenIDs))
+    let cache = context.model.newCache(parameters: nil)
+    let prepared = try context.model.prepare(
+        input,
+        cache: cache,
+        windowSize: parameters.prefillStepSize
+    )
+    let output = try makeInitialDecodeOutput(
+        input: input,
+        prepared: prepared,
+        context: context,
+        cache: cache
+    )
+    eval(output.logits)
+    return SpeculativeDecodeRuntimeState(
+        cache: cache,
+        output: output,
+        promptTokenCount: promptTokenCount,
+        prefillQuantizeMicros: prefillQuantizeMicros
+    )
+}
+
+private func advanceSpeculativeDecodeState(
+    container: ModelContainer,
+    state: SpeculativeDecodeRuntimeState,
+    tokenIDs: [Int]
+) async throws -> SpeculativeDecodeRuntimeState {
+    guard !tokenIDs.isEmpty else {
+        return state
+    }
+
+    let input = SpeculativeModelStepInput(state: state, tokenIDs: tokenIDs)
+    return await container.perform(values: input) { context, input in
+        var state = input.state
+        let nextInput = LMInput.Text(tokens: MLXArray(input.tokenIDs))
+        state.output = context.model(
+            nextInput[text: .newAxis],
+            cache: state.cache.isEmpty ? nil : state.cache,
+            state: state.output.state
+        )
+        eval(state.output.logits)
+        return state
+    }
+}
+
+private func advanceSpeculativeDecodeState(
+    context: ModelContext,
+    state: SpeculativeDecodeRuntimeState,
+    tokenIDs: [Int]
+) -> SpeculativeDecodeRuntimeState {
+    guard !tokenIDs.isEmpty else {
+        return state
+    }
+
+    var state = state
+    let nextInput = LMInput.Text(tokens: MLXArray(tokenIDs))
+    state.output = context.model(
+        nextInput[text: .newAxis],
+        cache: state.cache.isEmpty ? nil : state.cache,
+        state: state.output.state
+    )
+    eval(state.output.logits)
+    return state
+}
+
+private func isSpeculativeTerminalToken(
+    _ tokenID: Int,
+    metadata: SpeculativeTokenMetadata
+) -> Bool {
+    if let unknownTokenID = metadata.unknownTokenID, tokenID == unknownTokenID {
+        return true
+    }
+    if let eosTokenID = metadata.eosTokenID, tokenID == eosTokenID {
+        return true
+    }
+    return metadata.additionalEOSTokenIDs.contains(tokenID)
+}
+
+private func shouldFallbackSpeculativeDecodeRuntime(
+    acceptedTokenCount: Int,
+    rejectedTokenCount: Int,
+    proposedTokenCount: Int,
+    draftProposeMicros: Int,
+    targetVerifyMicros: Int
+) -> Bool {
+    let verifiedTokenCount = acceptedTokenCount + rejectedTokenCount
+    if verifiedTokenCount == 1, acceptedTokenCount == 0, rejectedTokenCount == 1 {
+        return true
+    }
+    guard verifiedTokenCount >= 4, proposedTokenCount >= 4 else {
+        return false
+    }
+
+    let acceptanceRatePercent = (acceptedTokenCount * 100) / max(verifiedTokenCount, 1)
+    if acceptanceRatePercent < 75 {
+        return true
+    }
+
+    let draftMicrosPerProposal = Double(draftProposeMicros) / Double(max(proposedTokenCount, 1))
+    let targetMicrosPerVerifiedToken = Double(targetVerifyMicros) / Double(max(verifiedTokenCount, 1))
+    return draftMicrosPerProposal >= targetMicrosPerVerifiedToken * 0.75
+}
+
+private func milliseconds(fromMicros micros: Int) -> Int {
+    max(0, Int((Double(micros) / 1_000.0).rounded()))
+}
 #endif
 
 private func makePreparedDecodeGeneration(
     model: LoadedTextModel,
+    draftModel: LoadedTextModel?,
     context: TextPrefillContext,
     sampling: Melix_Worker_V1_SamplingConfig,
     maxOutputTokens: UInt32,
@@ -699,6 +1217,30 @@ private func makePreparedDecodeGeneration(
         decodeStepSize: decodeStepSize,
         acceleration: acceleration
     )
+
+    if acceleration.mode == .speculativeDecode {
+        guard let draftModel,
+              let draftContainer = draftModel.storage as? ModelContainer
+        else {
+            throw RuntimeUnavailableError(
+                message: "Speculative decode requires a loaded Swift MLX draft model container."
+            )
+        }
+        let runtimeEvents = try await container.perform(values: decodeState) { targetContext, decodeState in
+            try await makePreparedSpeculativeDecodeEvents(
+                targetContainer: container,
+                draftContainer: draftContainer,
+                decodeState: decodeState,
+                targetContext: targetContext,
+                parameters: parameters,
+                acceleration: acceleration
+            )
+        }
+        return PreparedTextGeneration(
+            promptTokens: decodeState.input.text.tokens.size,
+            runtimeEvents: runtimeEvents
+        )
+    }
 
     let runtimeEvents = try await container.perform(values: decodeState) { modelContext, decodeState in
         try makePreparedDecodeEvents(
@@ -904,7 +1446,21 @@ private func makeInitialDecodeOutput(
     context: ModelContext,
     cache: [KVCache]
 ) throws -> LMOutput {
-    switch decodeState.prepared {
+    try makeInitialDecodeOutput(
+        input: decodeState.input,
+        prepared: decodeState.prepared,
+        context: context,
+        cache: cache
+    )
+}
+
+private func makeInitialDecodeOutput(
+    input: LMInput,
+    prepared: PrepareResult,
+    context: ModelContext,
+    cache: [KVCache]
+) throws -> LMOutput {
+    switch prepared {
     case .tokens(let tokens):
         return context.model(
             tokens[text: .newAxis],
@@ -918,12 +1474,18 @@ private func makeInitialDecodeOutput(
 
 private func sampleNextToken(
     logits: MLXArray,
+    position: Int? = nil,
     processor: inout (any LogitProcessor)?,
     sampler: any LogitSampler
 ) -> MLXArray {
-    var logits = logits[0..., -1, 0...]
-    logits = processor?.process(logits: logits) ?? logits
-    let token = sampler.sample(logits: logits)
+    var selectedLogits: MLXArray
+    if let position {
+        selectedLogits = logits[0..., position, 0...]
+    } else {
+        selectedLogits = logits[0..., -1, 0...]
+    }
+    selectedLogits = processor?.process(logits: selectedLogits) ?? selectedLogits
+    let token = sampler.sample(logits: selectedLogits)
     processor?.didSample(token: token)
     return token
 }

@@ -493,7 +493,7 @@ final class WorkerScaffoldTests: XCTestCase {
             [.rotating, .hybrid]
         )
         XCTAssertTrue(response.capabilities.execution.supportsContinuousBatching)
-        XCTAssertFalse(response.capabilities.execution.supportsSpeculativeDecoding)
+        XCTAssertTrue(response.capabilities.execution.supportsSpeculativeDecoding)
         XCTAssertEqual(
             response.capabilities.ext.map { $0.name },
             ["engine_family", "accelerated_prefill", "sparse_prefill", "active_kv_quantized"]
@@ -953,6 +953,61 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.promptTokens, promptTokens.count)
         XCTAssertGreaterThan(summary.completionTokens, 0)
         XCTAssertNotNil(summary.tokensPerSecond)
+    }
+
+    func testAutoSwiftMLXBackendDecodeUsesLiveSpeculativeDraftBridge() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .speculativeDecode
+        acceleration.draftModelID = "melix-tests/draft"
+        acceleration.numDraftTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let targetModel = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let draftModel = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: targetModel,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge speculative decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-speculative-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: targetModel,
+                    draftModel: draftModel,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        XCTAssertFalse(renderedTokenChunks(from: events).joined().isEmpty)
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.promptTokens, promptTokens.count)
+        XCTAssertGreaterThan(summary.completionTokens, 0)
+        XCTAssertNotNil(summary.tokensPerSecond)
+        XCTAssertNotNil(summary.speculativeAcceptedTokens)
+        XCTAssertNotNil(summary.speculativeRejectedTokens)
+        XCTAssertNotNil(summary.speculativeDraftProposeMillis)
+        XCTAssertNotNil(summary.speculativeTargetVerifyMillis)
     }
 
     func testAutoSwiftMLXBackendDecodeReportsTurboQuantFusedRuntimeRoute() async throws {
@@ -3583,6 +3638,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.first?.accelerationMode, .baseline)
         XCTAssertFalse(matches(recorded.first?.payload, .accelerationApplied))
         XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_fallback_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_draft_model_configured"], 0)
     }
 
     func testDecodeStreamingRpcReturnsStructuredUnimplementedWhenSpeculativeDecodeCannotFallback() async throws {
@@ -3648,6 +3705,91 @@ final class WorkerScaffoldTests: XCTestCase {
         let recorded = await writer.snapshot()
         XCTAssertEqual(recorded.count, 1)
         XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
+    }
+
+    func testDecodeStreamingRpcUsesLoadedDraftModelForLiveSpeculativeDecode() async throws {
+        let backend = FakeRuntimeBackend(decodedChunks: ["spec", " decode"])
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: backend
+        )
+        let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text-draft"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-live-spec-prefill"
+        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("live speculative decode")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-live-spec-decode"
+        request.execution.modelHandle = targetLoadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.execution.acceleration.draftModelID = "melix-dev-text-draft"
+        request.execution.acceleration.numDraftTokens = 4
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let decodedDraftModelID = await backend.lastDecodedDraftModelID()
+        XCTAssertEqual(recorded.first?.accelerationApplied.policy.mode, .speculativeDecode)
+        XCTAssertEqual(decodedDraftModelID, "melix-dev-text-draft")
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_fallback_count"], 0)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_draft_model_configured"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_num_draft_tokens"], 4)
     }
 
     func testDecodeStreamingRpcCanBeAbortedWithoutUsageTrailer() async throws {
@@ -3780,6 +3922,8 @@ final class WorkerScaffoldTests: XCTestCase {
         request.execution.modelHandle = loadResponse.modelHandle
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
+        request.execution.acceleration.draftModelID = "melix-dev-text-draft"
+        request.execution.acceleration.numDraftTokens = 4
         request.decodeHandle = prefillResponse.decodeHandle
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -3797,8 +3941,12 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let recorded = await writer.snapshot()
         XCTAssertEqual(recorded.first?.accelerationApplied.policy.mode, .speculativeDecode)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_accepted_tokens"], 2)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_rejected_tokens"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_acceptance_rate"], 66)
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_rollback_rate"], 33)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_draft_model_configured"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.speculative_num_draft_tokens"], 4)
     }
 
     func testDecodeStreamingRpcRecordsActiveKVQuantizationRatio() async throws {
@@ -7818,6 +7966,19 @@ private actor FakeRuntimeBackendStorage {
 }
 
 @available(macOS 15.0, *)
+private actor FakeRuntimeBackendDecodeStorage {
+    private var lastDraftModelID: String?
+
+    func record(draftModel: LoadedTextModel?) {
+        lastDraftModelID = (draftModel?.storage as? [String: String])?["model_id"]
+    }
+
+    func snapshotLastDraftModelID() -> String? {
+        lastDraftModelID
+    }
+}
+
+@available(macOS 15.0, *)
 private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable {
     let runtimeName: String = "fake-mlx-swift"
 
@@ -7832,6 +7993,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
     private let decodeDelayNanos: UInt64
     private let activeKVProbeSummary: ActiveKVProbeSummary?
     private let storage = FakeRuntimeBackendStorage()
+    private let decodeStorage = FakeRuntimeBackendDecodeStorage()
     private let unloadedStorage = FakeRuntimeBackendUnloadStorage()
 
     init(
@@ -7943,6 +8105,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -7951,6 +8114,7 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        await decodeStorage.record(draftModel: draftModel)
         if let decodeError {
             throw decodeError
         }
@@ -8000,6 +8164,10 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
 
     func unloadedModelCount() async -> Int {
         await unloadedStorage.count()
+    }
+
+    func lastDecodedDraftModelID() async -> String? {
+        await decodeStorage.snapshotLastDraftModelID()
     }
 }
 

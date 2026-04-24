@@ -566,8 +566,13 @@ actor WorkerRuntimeRegistry {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        try await runtime.decodeEvents(
+        let draftModel = loadedDraftModel(
+            id: acceleration.draftModelID,
+            excludingModelHandle: session.loadedModel.handle
+        )?.runtimeModel
+        return try await runtime.decodeEvents(
             model: session.loadedModel.runtimeModel,
+            draftModel: draftModel,
             context: session.prefill.context,
             sampling: sampling,
             maxOutputTokens: maxOutputTokens,
@@ -579,7 +584,42 @@ actor WorkerRuntimeRegistry {
     }
 
     func supportsSpeculativeDecoding() -> Bool {
-        configuration.backendMode.lowercased() == "deterministic"
+        switch configuration.backendMode.lowercased() {
+        case "deterministic", "swift", "auto":
+            return true
+        default:
+            return false
+        }
+    }
+
+    func requiresLoadedDraftModelForSpeculativeDecoding() -> Bool {
+        configuration.backendMode.lowercased() != "deterministic"
+    }
+
+    func hasLoadedDraftModel(id: String, excludingModelHandle: String) -> Bool {
+        loadedDraftModel(id: id, excludingModelHandle: excludingModelHandle) != nil
+    }
+
+    private func loadedDraftModel(
+        id rawID: String,
+        excludingModelHandle: String
+    ) -> LoadedModelRecord? {
+        let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else {
+            return nil
+        }
+        if let byHandle = loadedModels[id], byHandle.handle != excludingModelHandle {
+            return byHandle
+        }
+
+        return loadedModels.values.first { candidate in
+            guard candidate.handle != excludingModelHandle else {
+                return false
+            }
+            return candidate.spec.modelID == id
+                || candidate.spec.modelPath == id
+                || candidate.spec.settings.alias == id
+        }
     }
 
     func supportsAcceleratedPrefill() -> Bool {

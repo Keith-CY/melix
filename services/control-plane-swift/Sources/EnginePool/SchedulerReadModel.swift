@@ -318,6 +318,7 @@ public actor SchedulerReadModel {
         totalTokens: UInt32,
         restoreStage: String,
         cachePressure: Double,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode? = nil,
         source: String = "scheduler"
     ) async {
         guard var record = requestRecords[requestID] else {
@@ -350,6 +351,9 @@ public actor SchedulerReadModel {
         progress.prefillProgressPct = progressPct
         progress.restoreStage = restoreStage
         progress.cachePressure = cachePressure
+        if let accelerationMode {
+            progress.accelerationMode = accelerationMode
+        }
         populateSchedulerSnapshot(into: &progress)
 
         record.phase = .requestPrefilling

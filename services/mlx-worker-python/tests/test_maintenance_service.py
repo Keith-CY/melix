@@ -2793,7 +2793,53 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
         model_catalog=WorkerModelCatalog(),
     )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    run_dir = report_path.parent
+    summary = json.loads((run_dir / "bench-summary.json").read_text(encoding="utf-8"))
+    report = report_path.read_text(encoding="utf-8")
+
+    assert summary["parameters"]["runtime_live_model"] == "true"
+    assert summary["parameters"]["runtime_name"] == "fast-benchmark"
+    assert summary["parameters"]["runtime_model_handle"] == loaded.handle
+    assert "runtime_name: fast-benchmark" in report
+
+
+def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+
+    with pytest.raises(ModelOperationError, match="requires a loaded live model runtime"):
+        list(
+            service.RunBench(
+                maintenance_pb2.RunBenchRequest(
+                    model_handle=loaded.handle,
+                    suites=["smoke"],
+                    parameters={"require_live_model": "true"},
+                ),
+                context=None,
+            )
+        )
 
 
 def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
@@ -4005,6 +4051,17 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         "reasoning_mode": "step-by-step",
         "structured_output_mode": "json",
     }
+    expected_job_parameters = {
+        **bench_parameters,
+        "runtime_live_model": "false",
+        "runtime_model_handle": "melix-dev-text::1",
+        "runtime_kind": "text",
+        "runtime_name": "deterministic-text",
+        "runtime_model_id": "melix-dev-text",
+        "runtime_model_path": "models/melix-dev-text",
+        "runtime_source_kind": "",
+        "runtime_source_repo": "",
+    }
     job_manifest = run_dir / "bench-job.json"
     summary_manifest = run_dir / "bench-summary.json"
     context_rows_path = run_dir / "bench-context-rows.jsonl"
@@ -4059,9 +4116,9 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         cache_profile=job_payload["cache_profile"],
         reasoning_mode=job_payload["reasoning_mode"],
         structured_output_mode=job_payload["structured_output_mode"],
-        request_p50_ms=job_payload["request_p50_ms"],
-        request_p95_ms=job_payload["request_p95_ms"],
-        parameters=bench_parameters,
+            request_p50_ms=job_payload["request_p50_ms"],
+            request_p95_ms=job_payload["request_p95_ms"],
+            parameters=expected_job_parameters,
         status="completed",
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],

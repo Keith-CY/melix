@@ -28,11 +28,20 @@ struct TextDecodeEngine: Sendable {
                 Task { await registry.finishDecode() }
             }
 
-            let acceleration = try resolveDecodeAcceleration(
+            let accelerationResolution = try await resolveDecodeAcceleration(
                 requested: request.execution.acceleration,
                 stored: session.prefill.acceleration,
-                supportsSpeculative: await registry.supportsSpeculativeDecoding()
+                supportsSpeculative: await registry.supportsSpeculativeDecoding(),
+                requiresLoadedDraftModel: await registry.requiresLoadedDraftModelForSpeculativeDecoding(),
+                hasLoadedDraftModel: { draftModelID in
+                    await registry.hasLoadedDraftModel(
+                        id: draftModelID,
+                        excludingModelHandle: session.loadedModel.handle
+                    )
+                }
             )
+            let acceleration = accelerationResolution.policy
+            recordSpeculativeRequestMetrics(accelerationResolution)
 
             var sampling = request.sampling
             if request.maxOutputTokens > 0 {
@@ -57,6 +66,9 @@ struct TextDecodeEngine: Sendable {
             var tokensPerSecond: Double?
             var speculativeAccepted: Int?
             var speculativeRejected: Int?
+            var speculativeFallbackCount: Int?
+            var speculativeDraftProposeMillis: Int?
+            var speculativeTargetVerifyMillis: Int?
             var activeKVProbe: ActiveKVProbeSummary?
 
             if acceleration.mode != .baseline {
@@ -150,6 +162,9 @@ struct TextDecodeEngine: Sendable {
                     tokensPerSecond = summary.tokensPerSecond
                     speculativeAccepted = summary.speculativeAcceptedTokens
                     speculativeRejected = summary.speculativeRejectedTokens
+                    speculativeFallbackCount = summary.speculativeFallbackCount
+                    speculativeDraftProposeMillis = summary.speculativeDraftProposeMillis
+                    speculativeTargetVerifyMillis = summary.speculativeTargetVerifyMillis
                     activeKVProbe = summary.activeKVProbe
                 }
             }
@@ -240,7 +255,10 @@ struct TextDecodeEngine: Sendable {
             recordActiveKVProbeMetrics(activeKVProbe)
             recordSpeculativeMetrics(
                 accepted: speculativeAccepted,
-                rejected: speculativeRejected
+                rejected: speculativeRejected,
+                fallbackCount: speculativeFallbackCount,
+                draftProposeMillis: speculativeDraftProposeMillis,
+                targetVerifyMillis: speculativeTargetVerifyMillis
             )
         } catch let error as WorkerRuntimeRegistryError where error == .unknownDecodeHandle {
             metrics.increment("swift_text.rpc_error_count")
@@ -279,13 +297,43 @@ struct TextDecodeEngine: Sendable {
 
     private func recordSpeculativeMetrics(
         accepted: Int?,
-        rejected: Int?
+        rejected: Int?,
+        fallbackCount: Int?,
+        draftProposeMillis: Int?,
+        targetVerifyMillis: Int?
     ) {
         let accepted = max(0, accepted ?? 0)
         let rejected = max(0, rejected ?? 0)
         let total = max(accepted + rejected, 1)
+        metrics.set("swift_text.speculative_accepted_tokens", value: accepted)
+        metrics.set("swift_text.speculative_rejected_tokens", value: rejected)
         metrics.set("swift_text.speculative_acceptance_rate", value: (accepted * 100) / total)
         metrics.set("swift_text.speculative_rollback_rate", value: (rejected * 100) / total)
+        if let fallbackCount, fallbackCount > 0 {
+            metrics.increment("swift_text.speculative_fallback_count", by: fallbackCount)
+        }
+        metrics.set("swift_text.speculative_draft_propose_ms", value: max(0, draftProposeMillis ?? 0))
+        metrics.set("swift_text.speculative_target_verify_ms", value: max(0, targetVerifyMillis ?? 0))
+    }
+
+    private func recordSpeculativeRequestMetrics(_ resolution: DecodeAccelerationResolution) {
+        guard resolution.requestedPolicy.mode == .speculativeDecode else {
+            metrics.set("swift_text.speculative_draft_model_configured", value: 0)
+            metrics.set("swift_text.speculative_num_draft_tokens", value: 0)
+            return
+        }
+
+        metrics.set(
+            "swift_text.speculative_draft_model_configured",
+            value: resolution.requestedPolicy.draftModelID.isEmpty ? 0 : 1
+        )
+        metrics.set(
+            "swift_text.speculative_num_draft_tokens",
+            value: Int(resolution.requestedPolicy.numDraftTokens)
+        )
+        if resolution.fallbackReason != nil {
+            metrics.increment("swift_text.speculative_fallback_count")
+        }
     }
 
     private func recordActiveKVProbeMetrics(_ probe: ActiveKVProbeSummary?) {
@@ -393,11 +441,19 @@ private struct DecodeAccelerationError: LocalizedError {
     }
 }
 
+private struct DecodeAccelerationResolution {
+    let policy: Melix_Worker_V1_AccelerationPolicy
+    let requestedPolicy: Melix_Worker_V1_AccelerationPolicy
+    let fallbackReason: String?
+}
+
 private func resolveDecodeAcceleration(
     requested: Melix_Worker_V1_AccelerationPolicy,
     stored: Melix_Worker_V1_AccelerationPolicy,
-    supportsSpeculative: Bool
-) throws -> Melix_Worker_V1_AccelerationPolicy {
+    supportsSpeculative: Bool,
+    requiresLoadedDraftModel: Bool,
+    hasLoadedDraftModel: @escaping @Sendable (String) async -> Bool
+) async throws -> DecodeAccelerationResolution {
     var resolved = requested
     if resolved.mode == .unspecified {
         resolved = stored
@@ -405,10 +461,16 @@ private func resolveDecodeAcceleration(
     if resolved.mode == .unspecified {
         resolved.mode = .baseline
     }
+    let requestedPolicy = resolved
 
     if resolved.mode == .speculativeDecode && !supportsSpeculative {
         if resolved.allowBaselineFallback {
             resolved.mode = .baseline
+            return DecodeAccelerationResolution(
+                policy: resolved,
+                requestedPolicy: requestedPolicy,
+                fallbackReason: "backend_unsupported"
+            )
         } else {
             throw DecodeAccelerationError(
                 message: "Speculative decode is not available for the active Swift text backend."
@@ -416,7 +478,30 @@ private func resolveDecodeAcceleration(
         }
     }
 
-    return resolved
+    if resolved.mode == .speculativeDecode && requiresLoadedDraftModel {
+        let draftModelID = resolved.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftAvailable = draftModelID.isEmpty ? false : await hasLoadedDraftModel(draftModelID)
+        if !draftAvailable {
+            if resolved.allowBaselineFallback {
+                resolved.mode = .baseline
+                return DecodeAccelerationResolution(
+                    policy: resolved,
+                    requestedPolicy: requestedPolicy,
+                    fallbackReason: "draft_model_unavailable"
+                )
+            } else {
+                throw DecodeAccelerationError(
+                    message: "Speculative decode requires a loaded draft model for the active Swift text backend."
+                )
+            }
+        }
+    }
+
+    return DecodeAccelerationResolution(
+        policy: resolved,
+        requestedPolicy: requestedPolicy,
+        fallbackReason: nil
+    )
 }
 
 private func effectiveRequestID(

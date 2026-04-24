@@ -234,6 +234,13 @@ class EvaluationCore:
         job_id = self._next_job_id()
         run_root = self._run_root(job_id)
         loaded_model = self._loaded_model_for_execution(model_handle)
+        job_parameters = {"dataset_root": str(dataset_root)}
+        if parameters:
+            job_parameters.update(parameters)
+        runtime_evidence = EvaluationCore._runtime_evidence_for_loaded_model(loaded_model)
+        job_parameters.update(runtime_evidence)
+        if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
+            EvaluationCore._validate_required_live_model(runtime_evidence, operation="evaluation")
         self._validate_task_kind_against_dataset(
             dataset_id=str(manifest["dataset_id"]),
             samples=list(few_shot_examples) + list(selected),
@@ -249,9 +256,6 @@ class EvaluationCore:
         resolved_model_id = (
             getattr(getattr(loaded_model, "spec", None), "model_id", "") if loaded_model is not None else ""
         ) or model_id
-        job_parameters = {"dataset_root": str(dataset_root)}
-        if parameters:
-            job_parameters.update(parameters)
         job_parameters.setdefault("task_kind", resolved_task_kind)
         job_parameters["requested_few_shot"] = str(requested_few_shot)
         job_parameters["effective_few_shot"] = str(resolved_few_shot)
@@ -818,6 +822,74 @@ class EvaluationCore:
         if not model_handle or self._registry is None:
             return None
         return self._registry.get_loaded_model(model_handle)
+
+    @staticmethod
+    def _truthy_parameter(parameters: dict[str, str], key: str) -> bool:
+        raw_value = parameters.get(key, parameters.get(f"melix.{key}", ""))
+        return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _runtime_evidence_for_loaded_model(loaded_model) -> dict[str, str]:
+        if loaded_model is None:
+            return {
+                "runtime_live_model": "false",
+                "runtime_model_handle": "",
+                "runtime_kind": "",
+                "runtime_name": "",
+                "runtime_model_id": "",
+                "runtime_model_path": "",
+                "runtime_source_kind": "",
+                "runtime_source_repo": "",
+            }
+
+        spec = getattr(loaded_model, "spec", None)
+        runtime = getattr(loaded_model, "runtime", None)
+        runtime_name = str(getattr(runtime, "runtime_name", "") or "")
+        runtime_kind = str(getattr(loaded_model, "runtime_kind", "") or "")
+        model_id = str(getattr(spec, "model_id", "") or "")
+        model_path = str(getattr(spec, "model_path", "") or "")
+        ext = getattr(spec, "ext", {}) if spec is not None else {}
+        source_kind = str(ext.get("melix.source_kind", "") if hasattr(ext, "get") else "")
+        source_repo = str(
+            ext.get("melix.hf_repo_id", "")
+            or ext.get("melix.source_repo", "")
+            or ext.get("melix.model_path", "")
+            if hasattr(ext, "get")
+            else ""
+        )
+        live_model = EvaluationCore._runtime_name_is_live(runtime_name)
+        return {
+            "runtime_live_model": "true" if live_model else "false",
+            "runtime_model_handle": str(getattr(loaded_model, "handle", "") or ""),
+            "runtime_kind": runtime_kind,
+            "runtime_name": runtime_name,
+            "runtime_model_id": model_id,
+            "runtime_model_path": model_path,
+            "runtime_source_kind": source_kind,
+            "runtime_source_repo": source_repo,
+        }
+
+    @staticmethod
+    def _runtime_name_is_live(runtime_name: str) -> bool:
+        normalized = runtime_name.strip().lower()
+        if not normalized:
+            return False
+        if normalized.startswith("deterministic"):
+            return False
+        if "unavailable" in normalized:
+            return False
+        return True
+
+    @staticmethod
+    def _validate_required_live_model(runtime_evidence: dict[str, str], *, operation: str) -> None:
+        if runtime_evidence.get("runtime_live_model") == "true" and runtime_evidence.get("runtime_model_handle"):
+            return
+        runtime_name = runtime_evidence.get("runtime_name", "") or "missing"
+        model_handle = runtime_evidence.get("runtime_model_handle", "") or "missing"
+        raise ValueError(
+            f"{operation} requires a loaded live model runtime; "
+            f"runtime_name={runtime_name}; model_handle={model_handle}"
+        )
 
     @staticmethod
     def _resolve_int_parameter(
