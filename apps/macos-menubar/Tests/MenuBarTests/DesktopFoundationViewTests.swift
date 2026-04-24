@@ -70,6 +70,14 @@ struct DesktopFoundationViewTests {
         #expect(MelixDesignTokens.BubbleOpacity.error == 0.12)
     }
 
+    @Test("lora visual polish tokens use a white marketing background with clearer hierarchy")
+    func loraVisualPolishTokensUseWhiteMarketingBackground() {
+        #expect(DesktopLoRAVisualPolish.sectionSurfaceOpacity == 0.04)
+        #expect(DesktopLoRAVisualPolish.metricSurfaceOpacity == 0.032)
+        #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == 0.14)
+        #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
+    }
+
     @Test("logo svg resource mirrors the design system asset")
     func logoSVGResourceMirrorsDesignSystemAsset() throws {
         let root = try repositoryRootForDesktopFoundationTests()
@@ -1172,6 +1180,53 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains(RuntimeLoraActivationMode.adapterBackedRuntime.title))
     }
 
+    @Test("training core setup uses editorial field groups instead of one large form slab")
+    @MainActor
+    func trainingCoreSetupUsesEditorialFieldGroups() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1200, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Run Identity"))
+        #expect(renderedTexts.contains("Dataset & Mode"))
+        #expect(renderedTexts.contains("Delivery"))
+    }
+
+    @Test("training surface adopts the system design guide overview hierarchy")
+    @MainActor
+    func trainingSurfaceAdoptsSystemDesignGuideOverviewHierarchy() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1900)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Primary Model"))
+        #expect(renderedTexts.contains("Workflow Snapshot"))
+        #expect(renderedTexts.contains("Run Draft"))
+        #expect(renderedTexts.contains("Adapter Registry"))
+        #expect(renderedTexts.contains("Experiment Groups"))
+        #expect(renderedTexts.contains("Training History"))
+        #expect(renderedTexts.contains("Workflow Actions") == false)
+        #expect(renderedTexts.contains("Selected Configuration") == false)
+        #expect(renderedTexts.contains("Training Configuration") == false)
+        #expect(renderedTexts.contains("Adapter Activation") == false)
+        #expect(renderedTexts.contains("Saved Adapters") == false)
+        #expect(renderedTexts.contains("Training Jobs") == false)
+    }
+
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
     @MainActor
     func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {
@@ -2261,6 +2316,65 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.benchmarkHistory.count == 3)
         #expect(viewModel.benchmarkMetricCards.isEmpty == false)
         #expect(viewModel.benchmarkChartPoints.count == 2)
+    }
+
+    @Test("diagnostics uses report-first section titles across stages")
+    @MainActor
+    func diagnosticsUsesReportFirstSectionTitlesAcrossStages() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        await viewModel.refreshBenchmarkHistory()
+
+        let benchmarkView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let benchmarkTexts = renderedTextValues(in: benchmarkView)
+        #expect(benchmarkTexts.contains("Bench Report"))
+        #expect(benchmarkTexts.contains("Benchmark Snapshot") == false)
+        #expect(benchmarkTexts.contains("Benchmark Results") == false)
+
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.preferredDiagnosticsStage = .matrix
+        let matrixView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let matrixTexts = renderedTextValues(in: matrixView)
+        #expect(matrixTexts.contains("Matrix Report"))
+        #expect(matrixTexts.contains("Matrix Snapshot") == false)
+        #expect(matrixTexts.contains("Matrix Results") == false)
+
+        viewModel.preferredDiagnosticsStage = .evaluation
+        let evaluationView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let evaluationTexts = renderedTextValues(in: evaluationView)
+        #expect(evaluationTexts.contains("Evaluation Report"))
+        #expect(evaluationTexts.contains("Evaluation Snapshot") == false)
     }
 
     @Test("workspace diagnostics renders matrix benchmark controls history and charts")
