@@ -1827,7 +1827,8 @@ struct MelixCLIRunnerTests {
                   "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                   "ext": {
                     "melix.source_kind": "hub_repo",
-                    "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+                    "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "melix.model_path": "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123"
                   }
                 }
                 """#
@@ -1846,6 +1847,10 @@ struct MelixCLIRunnerTests {
         )
         #expect(payload["source_kind"] as? String == "hub_repo")
         #expect(payload["source_locator"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(
+            payload["managed_model_path"] as? String !=
+                "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123"
+        )
     }
 
     @Test("model import forwards a local import operation and renders a managed model receipt")

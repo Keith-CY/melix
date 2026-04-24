@@ -2692,7 +2692,8 @@ struct OpenAIHandlerTests {
                         "melix.registry_organization_id": "mlx-community",
                         "melix.registry_model_name": "Qwen2.5-7B-Instruct",
                         "melix.registry_variant_id": "q4f16",
-                        "melix.model_path": "/tmp/registry-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        "melix.registry_descriptor_path": "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
+                        "melix.model_path": "/tmp/hf-cache/models--mlx-community--Qwen2.5-7B-Instruct/snapshots/abc123",
                     ],
                 ],
             ]
@@ -2745,7 +2746,9 @@ struct OpenAIHandlerTests {
         #expect(metadata["melix.registry_organization_id"] as? String == "mlx-community")
         #expect(metadata["melix.registry_model_name"] as? String == "Qwen2.5-7B-Instruct")
         #expect(metadata["melix.registry_variant_id"] as? String == "q4f16")
+        #expect(metadata["melix.registry_descriptor_path"] as? String == "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
         #expect(metadata["melix.registry_relative_path"] as? String == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
+        #expect(metadata["melix.model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen2.5-7B-Instruct/snapshots/abc123")
     }
 
     @Test("registry model-ops stub covers unavailable control paths")

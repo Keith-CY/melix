@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from scripts.real_model_support import (
     REAL_SMALL_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
+    _descriptor_runtime_model_path,
     build_runtime_model_preflight,
     resolve_real_small_text_model_path,
     resolve_real_small_text_model_source,
@@ -37,6 +39,44 @@ def test_real_small_model_source_can_use_managed_model_root(tmp_path: Path) -> N
         / "main"
     )
     managed_model_dir.mkdir(parents=True)
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True)
+    (hf_snapshot / "model.safetensors").write_bytes(b"weights")
+    (managed_model_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.model_registry_manifest.v1",
+                "model_id": REAL_SMALL_TEXT_MODEL_ID,
+                "ext": {
+                    "melix.model_path": str(hf_snapshot),
+                    "melix.registry_descriptor_path": str(managed_model_dir),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = resolve_real_small_text_model_source(
+        environment={"MELIX_MANAGED_MODEL_ROOT": str(tmp_path / "managed")},
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(hf_snapshot.resolve())
+    assert source.source_resolution_mode == "managed_model_path"
+
+
+def test_real_small_model_source_preserves_old_copied_managed_layout_fallback(tmp_path: Path) -> None:
+    managed_model_dir = (
+        tmp_path
+        / "managed"
+        / "huggingface"
+        / "mlx-community"
+        / "Qwen3.5-0.8B-OptiQ-4bit"
+        / "main"
+    )
+    managed_model_dir.mkdir(parents=True)
+    (managed_model_dir / "model.safetensors").write_bytes(b"weights")
 
     source = resolve_real_small_text_model_source(
         environment={"MELIX_MANAGED_MODEL_ROOT": str(tmp_path / "managed")},
@@ -45,6 +85,24 @@ def test_real_small_model_source_can_use_managed_model_root(tmp_path: Path) -> N
     assert source.live is False
     assert source.local_model_path == str(managed_model_dir.resolve())
     assert source.source_resolution_mode == "managed_model_path"
+
+
+def test_descriptor_runtime_model_path_ignores_invalid_descriptor_manifests(tmp_path: Path) -> None:
+    missing_runtime = tmp_path / "missing-runtime"
+    manifest_payloads = [
+        "{",
+        "[]",
+        json.dumps({"ext": "invalid"}),
+        json.dumps({"ext": {}}),
+        json.dumps({"ext": {"melix.model_path": str(missing_runtime)}}),
+    ]
+
+    for index, payload in enumerate(manifest_payloads):
+        descriptor_dir = tmp_path / f"descriptor-{index}"
+        descriptor_dir.mkdir()
+        (descriptor_dir / "manifest.json").write_text(payload + "\n", encoding="utf-8")
+
+        assert _descriptor_runtime_model_path(descriptor_dir) is None
 
 
 def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path: Path) -> None:

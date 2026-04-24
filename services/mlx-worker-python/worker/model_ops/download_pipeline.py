@@ -277,6 +277,7 @@ class DownloadPipeline:
             job_id=job_id,
             output_dir=output_dir,
             output_path=materialized_dir,
+            runtime_model_path=source_dir,
             state_path=state_path,
             repo_id=repo_id,
             revision=revision,
@@ -368,13 +369,9 @@ class DownloadPipeline:
                 message="huggingface_hub is required for managed hub imports.",
             ) from exc
 
-        cache_dir = output_dir / "hf-cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
         downloaded = snapshot_download(
             repo_id=repo_id,
             revision=revision,
-            local_dir_use_symlinks=False,
-            cache_dir=os.fspath(cache_dir),
         )
         return Path(downloaded).resolve()
 
@@ -389,15 +386,15 @@ class DownloadPipeline:
     ) -> Path:
         organization_id, model_name = repo_id.split("/", maxsplit=1)
         materialized_dir = managed_root / "huggingface" / organization_id / model_name / revision
-        materialized_dir.parent.mkdir(parents=True, exist_ok=True)
         if materialized_dir.exists():
             shutil.rmtree(materialized_dir)
-        shutil.copytree(source_dir, materialized_dir)
+        materialized_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = materialized_dir / "manifest.json"
         manifest_payload = self._managed_registry_manifest_payload(
             repo_id=repo_id,
             revision=revision,
-            model_path=materialized_dir,
+            runtime_model_path=source_dir.resolve(),
+            descriptor_path=materialized_dir,
             ext=ext,
         )
         manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -408,7 +405,8 @@ class DownloadPipeline:
         *,
         repo_id: str,
         revision: str,
-        model_path: Path,
+        runtime_model_path: Path,
+        descriptor_path: Path,
         ext: dict[str, str],
     ) -> dict[str, Any]:
         organization_id, model_name = repo_id.split("/", maxsplit=1)
@@ -444,7 +442,8 @@ class DownloadPipeline:
                 "melix.hf_repo_id": repo_id,
                 "melix.hf_revision": revision,
                 "melix.managed_import": "true",
-                "melix.model_path": str(model_path),
+                "melix.model_path": str(runtime_model_path),
+                "melix.registry_descriptor_path": str(descriptor_path),
                 "melix.capability.supported_tasks": capability_tasks,
                 "melix.capability.supported_modalities": capability_modalities,
             },
@@ -457,6 +456,7 @@ class DownloadPipeline:
         job_id: str,
         output_dir: Path,
         output_path: Path,
+        runtime_model_path: Path,
         state_path: Path,
         repo_id: str,
         revision: str,
@@ -493,6 +493,8 @@ class DownloadPipeline:
                 "melix.source_kind": "hub_repo",
                 "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
+                "melix.model_path": str(runtime_model_path),
+                "melix.registry_descriptor_path": str(output_path),
             },
             "metrics": {
                 "download.resume_success_rate": 0.0,

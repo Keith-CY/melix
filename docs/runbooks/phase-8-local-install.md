@@ -128,6 +128,8 @@ curl -sS http://127.0.0.1:11434/v1/models
 
 Registry-discovered models are synchronized on demand before `/v1/models` is rendered. The response metadata includes the structured `melix.registry_*` identity fields plus `melix.model_path` for each discovered registry model.
 
+Managed Hugging Face imports use a descriptor/cache split. The managed root contains the Melix descriptor path, for example `huggingface/mlx-community/Qwen3-0.6B-4bit/main/manifest.json`, while `melix.model_path` points to the actual Hugging Face snapshot under the standard cache (`HUGGINGFACE_HUB_CACHE`, `HF_HOME/hub`, or `~/.cache/huggingface/hub`). Use `melix.registry_descriptor_path` when debugging Melix registry metadata and `melix.model_path` when debugging runtime loading. Local imports are unchanged and still copy model files into `local/<model-id>/<revision>` under the managed root.
+
 For deterministic install smoke without `launchctl`, validate asset generation only:
 
 ```bash

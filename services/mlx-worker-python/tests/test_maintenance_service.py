@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -639,7 +640,7 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
-def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
+def test_download_job_writes_managed_hub_descriptor_without_copying_snapshot_weights(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-models"
     source_dir = tmp_path / "hub-source"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -676,16 +677,21 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
     )
 
     manifest = json.loads((tmp_path / "download-managed" / "download.state.json").read_text(encoding="utf-8"))
-    materialized_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main"
-    registry_manifest = json.loads((materialized_dir / "manifest.json").read_text(encoding="utf-8"))
+    descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main"
+    registry_manifest = json.loads((descriptor_dir / "manifest.json").read_text(encoding="utf-8"))
 
-    assert events[-1].completed.output_path == str(materialized_dir)
+    assert events[-1].completed.output_path == str(descriptor_dir)
     assert manifest["ext"]["melix.source_kind"] == "hub_repo"
     assert manifest["ext"]["melix.hf_repo_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
     assert manifest["ext"]["melix.hf_revision"] == "main"
     assert manifest["ext"]["melix.managed_import"] == "true"
+    assert not (descriptor_dir / "config.json").exists()
+    assert not (descriptor_dir / "tokenizer.json").exists()
+    assert not (descriptor_dir / "model.safetensors").exists()
     assert registry_manifest["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
     assert registry_manifest["provider_id"] == "huggingface"
+    assert registry_manifest["ext"]["melix.model_path"] == str(source_dir.resolve())
+    assert registry_manifest["ext"]["melix.registry_descriptor_path"] == str(descriptor_dir)
 
     snapshot_events = list(
         service.ConvertModel(
@@ -702,8 +708,73 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
         next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
     )
     discovered_ids = [model["model_id"] for model in snapshot_payload["model_registry"]["models"]]
+    discovered = {
+        model["model_id"]: model
+        for model in snapshot_payload["model_registry"]["models"]
+    }["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]
 
     assert "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" in discovered_ids
+    assert discovered["model_path"] == str(source_dir.resolve())
+    assert discovered["ext"]["melix.model_path"] == str(source_dir.resolve())
+    assert discovered["ext"]["melix.registry_descriptor_path"] == str(descriptor_dir)
+
+
+def test_managed_hub_repo_download_uses_standard_huggingface_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    managed_root = tmp_path / "managed-models"
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True, exist_ok=True)
+    (hf_snapshot / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (hf_snapshot / "model.safetensors").write_bytes(b"weights")
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return str(hf_snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/Tiny",
+                output_dir=str(tmp_path / "download-managed-cache"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "mlx-community/Tiny",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "melix.managed_root": str(managed_root),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Tiny" / "main"
+    registry_manifest = json.loads((descriptor_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert calls == [{"repo_id": "mlx-community/Tiny", "revision": "main"}]
+    assert not (tmp_path / "download-managed-cache" / "hf-cache").exists()
+    assert events[-1].completed.output_path == str(descriptor_dir)
+    assert registry_manifest["ext"]["melix.model_path"] == str(hf_snapshot.resolve())
+    assert not (descriptor_dir / "model.safetensors").exists()
 
 
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:

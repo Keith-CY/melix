@@ -763,7 +763,9 @@ class WorkerModelCatalog:
                 model.ext["melix.registry_root_path"] = str(root)
                 model.ext["melix.registry_root_order"] = str(index)
                 model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
-                model.ext["melix.model_path"] = str(manifest_path.parent)
+                model.ext["melix.registry_descriptor_path"] = str(manifest_path.parent)
+                if not _normalized(model.ext.get("melix.model_path")):
+                    model.ext["melix.model_path"] = str(manifest_path.parent)
                 discovered_models[model_id] = model
                 accepted_model_ids.append(model_id)
 
@@ -856,7 +858,11 @@ class WorkerModelCatalog:
         parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
-        config_payload = _load_model_config_payload(manifest_path.parent)
+        runtime_model_path = _normalized(normalized_ext.get("melix.model_path")) or str(manifest_path.parent)
+        runtime_model_dir = Path(runtime_model_path).expanduser()
+        if _normalized(normalized_ext.get("melix.model_path")):
+            normalized_ext["melix.model_path"] = runtime_model_path
+        config_payload = _load_model_config_payload(runtime_model_dir)
         model_kind = (
             "vlm"
             if requested_model_kind == "text" and _is_gemma4_vlm_config(config_payload)
@@ -865,7 +871,7 @@ class WorkerModelCatalog:
         if model_kind == "text":
             normalized_ext.update(
                 _text_capability_metadata(
-                    model_path=str(manifest_path.parent),
+                    model_path=runtime_model_path,
                     metadata=normalized_ext,
                     config_payload=config_payload,
                     default_route_kind="python_text_compatibility",
@@ -874,8 +880,8 @@ class WorkerModelCatalog:
         if model_kind == "vlm":
             normalized_ext.update(
                 _vlm_capability_metadata(
-                    model_path=str(manifest_path.parent),
-                    model_dir=manifest_path.parent,
+                    model_path=runtime_model_path,
+                    model_dir=runtime_model_dir,
                     metadata=normalized_ext,
                     config_payload=config_payload,
                 )
@@ -883,16 +889,16 @@ class WorkerModelCatalog:
         if model_kind == "image":
             normalized_ext.update(
                 _image_capability_metadata(
-                    model_path=str(manifest_path.parent),
+                    model_path=runtime_model_path,
                     metadata=normalized_ext,
                     default_task_kind=normalized_ext.get("melix.image.task_kind", "text-to-image"),
                 )
             )
-        _merge_generation_config_metadata(manifest_path.parent, ext=normalized_ext)
+        _merge_generation_config_metadata(runtime_model_dir, ext=normalized_ext)
 
         return model_id, common_pb2.ModelSpec(
             model_id=model_id,
-            model_path=str(manifest_path.parent),
+            model_path=runtime_model_path,
             model_kind=model_kind,
             revision=revision,
             tokenizer_hash=tokenizer_hash,

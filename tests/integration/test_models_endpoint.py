@@ -48,12 +48,19 @@ def test_models_endpoint_reports_the_discovered_dev_model_before_first_text_requ
 
 def test_models_endpoint_exposes_structured_registry_identity_metadata(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry-root"
+    runtime_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Qwen2.5-7B-Instruct" / "snapshots" / "abc123"
+    descriptor_dir = registry_root / "huggingface" / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit"
+    runtime_snapshot.mkdir(parents=True)
     _write_registry_manifest(
-        registry_root / "huggingface" / "mlx-community" / "Qwen2.5-7B-Instruct" / "4bit",
+        descriptor_dir,
         model_id="mlx-community/Qwen2.5-7B-Instruct/4bit",
         manifest_fields={
             "provider_id": "hf-mirror",
             "variant_id": "q4f16",
+            "ext": {
+                "melix.model_path": str(runtime_snapshot),
+                "melix.registry_descriptor_path": str(descriptor_dir),
+            },
         },
     )
 
@@ -78,5 +85,7 @@ def test_models_endpoint_exposes_structured_registry_identity_metadata(tmp_path:
         assert discovered["metadata"]["melix.registry_model_name"] == "Qwen2.5-7B-Instruct"
         assert discovered["metadata"]["melix.registry_variant_id"] == "q4f16"
         assert discovered["metadata"]["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit"
+        assert discovered["metadata"]["melix.registry_descriptor_path"] == str(descriptor_dir)
+        assert discovered["metadata"]["melix.model_path"] == str(runtime_snapshot)
     finally:
         stack.stop()

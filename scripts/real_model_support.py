@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -227,8 +228,37 @@ def _managed_huggingface_model_path(model_id: str, environment: Mapping[str, str
     if not managed_root:
         return None
     candidate = Path(managed_root).expanduser().resolve() / "huggingface" / Path(model_id) / "main"
-    if candidate.is_dir():
+    if not candidate.is_dir():
+        return None
+
+    descriptor_model_path = _descriptor_runtime_model_path(candidate)
+    if descriptor_model_path is not None:
+        return descriptor_model_path
+
+    if _has_recognized_model_weight_files(candidate):
         return candidate
+    return None
+
+
+def _descriptor_runtime_model_path(descriptor_dir: Path) -> Path | None:
+    manifest_path = descriptor_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    ext = payload.get("ext", {})
+    if not isinstance(ext, dict):
+        return None
+    raw_model_path = str(ext.get("melix.model_path", "")).strip()
+    if not raw_model_path:
+        return None
+    runtime_path = Path(raw_model_path).expanduser().resolve()
+    if runtime_path.is_dir():
+        return runtime_path
     return None
 
 

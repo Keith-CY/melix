@@ -208,6 +208,44 @@ def test_registry_snapshot_prepends_managed_root_ahead_of_configured_roots(tmp_p
     assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
 
 
+def test_registry_snapshot_preserves_external_runtime_model_path_from_manifest(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-root"
+    runtime_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / "abc123"
+    descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3-0.6B-4bit" / "main"
+    runtime_snapshot.mkdir(parents=True, exist_ok=True)
+    _write_model_config(
+        runtime_snapshot,
+        {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+        },
+    )
+    _write_registry_manifest(
+        descriptor_dir,
+        model_id="mlx-community/Qwen3-0.6B-4bit",
+        ext={
+            "melix.model_path": str(runtime_snapshot),
+            "melix.registry_descriptor_path": str(descriptor_dir),
+        },
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Qwen3-0.6B-4bit"]
+
+    assert model.model_path == str(runtime_snapshot)
+    assert model.ext["melix.model_path"] == str(runtime_snapshot)
+    assert model.ext["melix.registry_descriptor_path"] == str(descriptor_dir)
+    assert model.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen3-0.6B-4bit/main"
+    assert model.ext["detected_architecture"] == "qwen3"
+
+
 def test_registry_snapshot_explicit_root_override_reorders_precedence_without_changing_root_identity(
     tmp_path: Path,
 ) -> None:
