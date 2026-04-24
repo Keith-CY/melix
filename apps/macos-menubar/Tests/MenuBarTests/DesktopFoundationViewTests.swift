@@ -70,6 +70,14 @@ struct DesktopFoundationViewTests {
         #expect(MelixDesignTokens.BubbleOpacity.error == 0.12)
     }
 
+    @Test("lora visual polish tokens use a white marketing background with clearer hierarchy")
+    func loraVisualPolishTokensUseWhiteMarketingBackground() {
+        #expect(DesktopLoRAVisualPolish.sectionSurfaceOpacity == 0.04)
+        #expect(DesktopLoRAVisualPolish.metricSurfaceOpacity == 0.032)
+        #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == 0.14)
+        #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
+    }
+
     @Test("logo svg resource mirrors the design system asset")
     func logoSVGResourceMirrorsDesignSystemAsset() throws {
         let root = try repositoryRootForDesktopFoundationTests()
@@ -1155,10 +1163,14 @@ struct DesktopFoundationViewTests {
 
         let view = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
+        let summaryItems = DesktopTrainingToolSectionView.summaryItems(for: viewModel)
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopTrainingWorkspaceDefaults.showsAdvancedParameters == false)
         #expect(DesktopTrainingWorkspaceDefaults.advancedParametersTitle == "Advanced Training Parameters")
+        #expect(summaryItems.count == 4)
+        #expect(summaryItems.first(where: { $0.title == "Dataset" })?.detail == "Local package dataset")
+        #expect(summaryItems.first(where: { $0.title == "Preset" })?.detail == "Auto experiment grouping")
         #expect(renderedTexts.contains(viewModel.selectedLoraModelID))
         #expect(renderedTexts.contains(viewModel.loraAdapterName))
         #expect(renderedTexts.contains(viewModel.loraTargetRepo))
@@ -1166,6 +1178,193 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Alpha") == false)
         #expect(renderedTexts.contains("Dropout") == false)
         #expect(renderedTexts.contains(RuntimeLoraActivationMode.adapterBackedRuntime.title))
+    }
+
+    @Test("training core setup uses editorial field groups instead of one large form slab")
+    @MainActor
+    func trainingCoreSetupUsesEditorialFieldGroups() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1200, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Run Identity"))
+        #expect(renderedTexts.contains("Dataset & Mode"))
+        #expect(renderedTexts.contains("Delivery"))
+    }
+
+    @Test("training surface adopts the system design guide overview hierarchy")
+    @MainActor
+    func trainingSurfaceAdoptsSystemDesignGuideOverviewHierarchy() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1900)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Primary Model"))
+        #expect(renderedTexts.contains("Workflow Snapshot"))
+        #expect(renderedTexts.contains("Run Draft"))
+        #expect(renderedTexts.contains("Adapter Registry"))
+        #expect(renderedTexts.contains("Experiment Groups"))
+        #expect(renderedTexts.contains("Training History"))
+        #expect(renderedTexts.contains("Workflow Actions") == false)
+        #expect(renderedTexts.contains("Selected Configuration") == false)
+        #expect(renderedTexts.contains("Training Configuration") == false)
+        #expect(renderedTexts.contains("Adapter Activation") == false)
+        #expect(renderedTexts.contains("Saved Adapters") == false)
+        #expect(renderedTexts.contains("Training Jobs") == false)
+    }
+
+    @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
+    @MainActor
+    func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraHFDatasetPath = "HuggingFaceH4/ultrachat_200k"
+        viewModel.loraHFDatasetName = "train_sft"
+        viewModel.loraHFDatasetRevision = "test_sft"
+        viewModel.loraHFTrainSplit = "train"
+        viewModel.loraHFValidSplit = "test"
+
+        let view = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("HuggingFaceH4/ultrachat_200k"))
+        #expect(renderedTexts.contains("train_sft") == false)
+        #expect(renderedTexts.contains("test_sft") == false)
+        #expect(renderedTexts.contains("messages") == false)
+    }
+
+    @Test("training expanded reveals render dataset mapping and advanced tuning fields")
+    @MainActor
+    func trainingExpandedRevealsRenderDatasetMappingAndAdvancedTuningFields() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.loraDatasetSourceKind = .huggingFaceDataset
+        viewModel.loraHFDatasetPath = "HuggingFaceH4/ultrachat_200k"
+        viewModel.loraHFDatasetName = "train_sft"
+        viewModel.loraHFDatasetRevision = "test_sft"
+        viewModel.loraHFTrainSplit = "train"
+        viewModel.loraHFValidSplit = "test"
+        viewModel.loraTextFeature = "messages"
+        viewModel.loraPromptFeature = "prompt"
+        viewModel.loraCompletionFeature = "completion"
+        viewModel.loraChatFeature = "chat"
+        viewModel.loraRank = "32"
+        viewModel.loraAlpha = "64"
+        viewModel.loraDropout = "0.10"
+        viewModel.loraBatchSize = "4"
+        viewModel.loraEpochs = "3"
+        viewModel.loraLearningRate = "2e-4"
+        viewModel.loraMaxSeqLength = "8192"
+        viewModel.loraTargetModules = "q_proj,v_proj"
+        viewModel.loraNumLayers = "24"
+        viewModel.loraDerivedModelAlias = "melix-qwen35-acceptance"
+        viewModel.loraResponseOnly = true
+        viewModel.loraMaskPrompt = true
+        viewModel.loraGradientCheckpointing = true
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(
+                viewModel: viewModel,
+                showsAdvanced: true,
+                showsDatasetMapping: true
+            )
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("train_sft"))
+        #expect(renderedTexts.contains("test_sft"))
+        #expect(renderedTexts.contains("messages"))
+        #expect(renderedTexts.contains("prompt"))
+        #expect(renderedTexts.contains("completion"))
+        #expect(renderedTexts.contains("chat"))
+        #expect(renderedTexts.contains("32"))
+        #expect(renderedTexts.contains("64"))
+        #expect(renderedTexts.contains("0.10"))
+        #expect(renderedTexts.contains("8192"))
+        #expect(renderedTexts.contains("q_proj,v_proj"))
+        #expect(renderedTexts.contains("24"))
+        #expect(renderedTexts.contains("melix-qwen35-acceptance"))
+    }
+
+    @Test("training workspace renders grouped experiments adapters and job history with reuse actions")
+    @MainActor
+    func trainingWorkspaceRendersGroupedExperimentsAdaptersAndJobHistory() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeTrainingWorkspaceRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.selectedAdapterPackageID = "adapter-1"
+
+        #expect(viewModel.loraExperimentGroups.count == 2)
+        #expect(viewModel.adapterPackages.count == 2)
+        #expect(viewModel.trainingHistory.count == 2)
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1200, height: 2400)
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedAdapterPackage?.adapterName == "qwen35-acceptance")
+        #expect(viewModel.loraExperimentGroups.first?.title == "Phase 8 Acceptance")
+        #expect(viewModel.loraExperimentGroups.first?.resumeReadySummaryText == "1 of 2 runs resume-ready")
+        #expect(viewModel.trainingHistory.first?.adapterName == "qwen35-acceptance")
+    }
+
+    @Test("training idle workflow promotes resume ready groups when no adapter is selected")
+    @MainActor
+    func trainingIdleWorkflowPromotesResumeReadyGroupsWhenNoAdapterIsSelected() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeResumeReadyExperimentGroupsRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.adapterPackages.isEmpty)
+        #expect(viewModel.loraExperimentGroups.count == 1)
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1200, height: 2400)
+        )
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedAdapterPackage == nil)
+        #expect(viewModel.loraExperimentGroups.first?.resumeReadySummaryText == "1 of 2 runs resume-ready")
     }
 
     @Test("training tool section renders populated adapter activation state and dispatches actions")
@@ -1204,6 +1403,73 @@ struct DesktopFoundationViewTests {
         #expect(await client.recordedActions.contains("operation:activate_adapter:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:upload:melix-dev-text"))
         #expect(await client.recordedActions.contains("operation:remove_derived_model:melix-dev-text"))
+    }
+
+    @Test("training tool section renders workflow status feedback for activation progress and success")
+    @MainActor
+    func trainingToolSectionRendersWorkflowStatusFeedback() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperationDelay(.milliseconds(120))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: #"{"operation":"activate_adapter","derived_model_path":"/tmp/melix-activate/activate_adapter.derived_model.json"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let task = Task { await DesktopTrainingToolSectionView(viewModel: viewModel).activateAdapter() }
+        try await Task.sleep(for: .milliseconds(20))
+
+        let pendingView = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
+        #expect(pendingView.subviews.isEmpty == false)
+        #expect(viewModel.loraWorkflowStatus?.phase == .running)
+        #expect(viewModel.loraWorkflowStatus?.title == "Activating Adapter")
+
+        await task.value
+
+        let completedView = hostView(DesktopTrainingToolSectionView(viewModel: viewModel))
+        #expect(completedView.subviews.isEmpty == false)
+        #expect(viewModel.loraWorkflowStatus?.phase == .succeeded)
+        #expect(viewModel.loraWorkflowStatus?.title == "Adapter Activated")
+        #expect(viewModel.loraWorkflowStatus?.detail.contains("activate_adapter.derived_model.json") == true)
+    }
+
+    @Test("diagnostics empty states explain how to unlock benchmark and evaluation evidence")
+    @MainActor
+    func diagnosticsEmptyStatesExplainHowToUnlockEvidence() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let section = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        let view = hostView(section)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.emptyBenchmarkTitle == "No Benchmark Results Yet")
+        #expect(DesktopDiagnosticsToolSectionView.emptyBenchmarkDetail == "Run Benchmark to capture latency and throughput history.")
+        #expect(DesktopDiagnosticsToolSectionView.emptyEvaluationTitle == "No Evaluation Results Yet")
+        #expect(DesktopDiagnosticsToolSectionView.emptyEvaluationDetail == "Run Evaluation to inspect scores and sample previews.")
+        #expect(viewModel.benchmarkMetricCards.isEmpty)
+        #expect(viewModel.evaluationMetricCards.isEmpty)
     }
 
     @Test("training tool section remove-derived helper surfaces local guard rails without an activated adapter")
@@ -2040,11 +2306,75 @@ struct DesktopFoundationViewTests {
         viewModel.selectBenchmarkMetric("bench.smoke.tokens_per_second")
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+        let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected run ") }))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
+        #expect(selectedRunIndex < configIndex)
         #expect(viewModel.benchmarkHistory.count == 3)
         #expect(viewModel.benchmarkMetricCards.isEmpty == false)
         #expect(viewModel.benchmarkChartPoints.count == 2)
+    }
+
+    @Test("diagnostics uses report-first section titles across stages")
+    @MainActor
+    func diagnosticsUsesReportFirstSectionTitlesAcrossStages() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        await viewModel.refreshBenchmarkHistory()
+
+        let benchmarkView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let benchmarkTexts = renderedTextValues(in: benchmarkView)
+        #expect(benchmarkTexts.contains("Bench Report"))
+        #expect(benchmarkTexts.contains("Benchmark Snapshot") == false)
+        #expect(benchmarkTexts.contains("Benchmark Results") == false)
+
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.preferredDiagnosticsStage = .matrix
+        let matrixView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let matrixTexts = renderedTextValues(in: matrixView)
+        #expect(matrixTexts.contains("Matrix Report"))
+        #expect(matrixTexts.contains("Matrix Snapshot") == false)
+        #expect(matrixTexts.contains("Matrix Results") == false)
+
+        viewModel.preferredDiagnosticsStage = .evaluation
+        let evaluationView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let evaluationTexts = renderedTextValues(in: evaluationView)
+        #expect(evaluationTexts.contains("Evaluation Report"))
+        #expect(evaluationTexts.contains("Evaluation Snapshot") == false)
     }
 
     @Test("workspace diagnostics renders matrix benchmark controls history and charts")
@@ -2074,9 +2404,15 @@ struct DesktopFoundationViewTests {
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
+        let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected matrix run ") }))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .matrix)
+        #expect(selectedRunIndex < configIndex)
+        #expect(renderedTexts.contains("Benchmark"))
         #expect(renderedTexts.contains("Matrix"))
+        #expect(renderedTexts.contains("Evaluation"))
         #expect(renderedTexts.contains("Requests"))
         #expect(renderedTexts.contains("Duration"))
         #expect(viewModel.benchmarkMatrixHistory.count == 2)
@@ -2171,6 +2507,7 @@ struct DesktopFoundationViewTests {
         let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
         #expect(renderedTexts.contains("Compare"))
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
@@ -2393,6 +2730,10 @@ struct DesktopFoundationViewTests {
         let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
+        #expect(renderedTexts.contains("Benchmark"))
+        #expect(renderedTexts.contains("Matrix"))
+        #expect(renderedTexts.contains("Evaluation"))
         #expect(renderedTexts.contains("Catalog Model"))
         #expect(renderedTexts.contains("Hugging Face Repo"))
         #expect(renderedTexts.contains("Melix Dev Text • melix-dev-text"))
@@ -2400,8 +2741,8 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Partial Prefix"))
         #expect(renderedTexts.contains("Enabled"))
         #expect(renderedTexts.contains("Json Schema"))
-        #expect(renderedTexts.contains("multiple_choice_accuracy"))
-        #expect(renderedTexts.contains("sandboxed"))
+        #expect(renderedTexts.contains("multiple_choice_accuracy") == false)
+        #expect(renderedTexts.contains("sandboxed") == false)
 
     }
 
@@ -2420,8 +2761,16 @@ struct DesktopFoundationViewTests {
         await viewModel.refreshEvaluationHistory()
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+        let selectedEvalIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected eval ") }))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Catalog Model"))
 
         #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
+        #expect(selectedEvalIndex < configIndex)
+        #expect(renderedTexts.contains("Compare"))
+        #expect(renderedTexts.contains("multiple_choice_accuracy"))
+        #expect(renderedTexts.contains("sandboxed"))
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
@@ -5039,6 +5388,15 @@ private func hostView<Content: View>(_ rootView: Content) -> NSView {
 }
 
 @MainActor
+private func hostView<Content: View>(_ rootView: Content, size: CGSize) -> NSView {
+    let controller = NSHostingController(rootView: rootView)
+    let view = controller.view
+    view.frame = NSRect(origin: .zero, size: size)
+    view.layoutSubtreeIfNeeded()
+    return view
+}
+
+@MainActor
 private func renderedTextValues(in rootView: NSView) -> [String] {
     var values: [String] = []
 
@@ -5392,6 +5750,191 @@ private func makePendingRegistrySnapshotManifest() -> String {
           "training_duration_ms": 950,
           "activation_duration_ms": 0,
           "adapter_publish_ms": 0
+        }
+      ],
+      "derived_models": []
+    }
+    """#
+}
+
+private func makeTrainingWorkspaceRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [
+        {
+          "job_id": "job-1",
+          "operation": "train_lora",
+          "source_model": "melix-dev-text",
+          "status": "completed",
+          "stage": "packaged",
+          "pct": 1.0,
+          "output_path": "/tmp/phase8/job-1/manifest.json",
+          "manifest": {
+            "adapter_name": "qwen35-acceptance",
+            "dataset_uri": "HuggingFaceH4/ultrachat_200k",
+            "target_repo": "melix/qwen35-acceptance",
+            "preset_id": "quality_adapter",
+            "preset_title": "Quality Adapter",
+            "checkpoint_count": 3,
+            "resume_ready": true,
+            "tokens_per_second": 58.4,
+            "peak_memory_gb": 6.8
+          }
+        },
+        {
+          "job_id": "job-2",
+          "operation": "train_lora",
+          "source_model": "melix-dev-text",
+          "status": "completed",
+          "stage": "packaged",
+          "pct": 1.0,
+          "output_path": "/tmp/phase8/job-2/manifest.json",
+          "manifest": {
+            "adapter_name": "qwen35-fallback",
+            "dataset_uri": "datasets/melix-dev",
+            "target_repo": "melix/qwen35-fallback",
+            "preset_id": "balanced_adapter",
+            "preset_title": "Balanced Adapter",
+            "checkpoint_count": 1,
+            "resume_ready": false,
+            "tokens_per_second": 42.1,
+            "peak_memory_gb": 5.4
+          }
+        }
+      ],
+      "adapters": [
+        {
+          "adapter_id": "adapter-1",
+          "job_id": "job-1",
+          "adapter_name": "qwen35-acceptance",
+          "source_model": "melix-dev-text",
+          "dataset_uri": "HuggingFaceH4/ultrachat_200k",
+          "output_path": "/tmp/phase8/adapter-1/manifest.json",
+          "activation_status": "activated",
+          "derived_model_id": "melix-qwen35-acceptance",
+          "derived_model_path": "/tmp/phase8/derived/model",
+          "exportable_state": "ready",
+          "published_state": "not_published",
+          "target_repo": "melix/qwen35-acceptance",
+          "published_repo": "",
+          "status": "ready",
+          "response_only": true,
+          "gradient_checkpointing": true,
+          "preset_id": "quality_adapter",
+          "preset_title": "Quality Adapter",
+          "checkpoint_count": 3,
+          "resume_ready": true,
+          "tokens_per_second": 58.4,
+          "peak_memory_gb": 6.8,
+          "training_duration_ms": 480000,
+          "activation_duration_ms": 14000,
+          "adapter_publish_ms": 0
+        },
+        {
+          "adapter_id": "adapter-2",
+          "job_id": "job-2",
+          "adapter_name": "qwen35-fallback",
+          "source_model": "melix-dev-text",
+          "dataset_uri": "datasets/melix-dev",
+          "output_path": "/tmp/phase8/adapter-2/manifest.json",
+          "activation_status": "pending_activation",
+          "derived_model_id": "",
+          "derived_model_path": "",
+          "exportable_state": "local_only",
+          "published_state": "not_published",
+          "target_repo": "",
+          "published_repo": "",
+          "status": "ready",
+          "response_only": false,
+          "gradient_checkpointing": false,
+          "preset_id": "balanced_adapter",
+          "preset_title": "Balanced Adapter",
+          "checkpoint_count": 1,
+          "resume_ready": false,
+          "tokens_per_second": 42.1,
+          "peak_memory_gb": 5.4,
+          "training_duration_ms": 240000,
+          "activation_duration_ms": 0,
+          "adapter_publish_ms": 0
+        }
+      ],
+      "experiment_groups": [
+        {
+          "group_id": "phase8-acceptance",
+          "title": "Phase 8 Acceptance",
+          "adapter_name": "qwen35-acceptance",
+          "source_model": "melix-dev-text",
+          "run_count": 2,
+          "latest_preset_title": "Quality Adapter",
+          "latest_tokens_per_second": 58.4,
+          "latest_peak_memory_gb": 6.8,
+          "latest_checkpoint_count": 3,
+          "latest_resume_ready": true,
+          "best_run_id": "run-best",
+          "best_loss": 0.143,
+          "recommended_manifest_path": "/tmp/phase8/best/manifest.json",
+          "resume_ready_run_ids": ["run-best"],
+          "checkpoint_lineage": [
+            { "run_id": "run-best", "checkpoint_count": 3, "resume_ready": true },
+            { "run_id": "run-prev", "checkpoint_count": 2, "resume_ready": false }
+          ]
+        },
+        {
+          "group_id": "phase8-fallback",
+          "title": "Fallback Group",
+          "adapter_name": "qwen35-fallback",
+          "source_model": "melix-dev-text",
+          "run_count": 1,
+          "latest_preset_title": "Balanced Adapter",
+          "latest_tokens_per_second": 42.1,
+          "latest_peak_memory_gb": 5.4,
+          "latest_checkpoint_count": 1,
+          "latest_resume_ready": false,
+          "best_run_id": "run-fallback",
+          "best_loss": 0.271,
+          "recommended_manifest_path": "",
+          "resume_ready_run_ids": [],
+          "checkpoint_lineage": []
+        }
+      ],
+      "derived_models": [
+        {
+          "model_id": "melix-qwen35-acceptance",
+          "model_path": "/tmp/phase8/derived/model",
+          "adapter_set_hash": "adapter-alpha",
+          "source_model": "melix-dev-text",
+          "activation_mode": "fused_derived_model",
+          "status": "activated"
+        }
+      ]
+    }
+    """#
+}
+
+private func makeResumeReadyExperimentGroupsRegistrySnapshotManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "jobs": [],
+      "adapters": [],
+      "experiment_groups": [
+        {
+          "group_id": "phase8-acceptance",
+          "title": "Phase 8 Acceptance",
+          "adapter_name": "qwen35-acceptance",
+          "source_model": "melix-dev-text",
+          "run_count": 2,
+          "latest_preset_title": "Quality Adapter",
+          "latest_tokens_per_second": 58.4,
+          "latest_peak_memory_gb": 6.8,
+          "latest_checkpoint_count": 3,
+          "latest_resume_ready": true,
+          "best_run_id": "run-best",
+          "best_loss": 0.143,
+          "recommended_manifest_path": "/tmp/phase8/best/manifest.json",
+          "resume_ready_run_ids": ["run-best"],
+          "checkpoint_lineage": []
         }
       ],
       "derived_models": []

@@ -1114,6 +1114,8 @@ private struct DesktopToolsWorkspaceView: View {
     }
 
     var body: some View {
+        let workspaceBackground = toolsWorkspaceBackground
+
         HStack(spacing: 0) {
             DesktopWorkspacePaneSlot(
                 role: .sidebar,
@@ -1154,6 +1156,7 @@ private struct DesktopToolsWorkspaceView: View {
                 }
                 .padding(20)
             }
+            .background(workspaceBackground)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             DesktopWorkspacePaneSlot(
@@ -1197,6 +1200,16 @@ private struct DesktopToolsWorkspaceView: View {
                 }
                 .padding(20)
             }
+        }
+        .background(workspaceBackground)
+    }
+
+    private var toolsWorkspaceBackground: Color {
+        switch viewModel.selectedToolSection {
+        case .training, .diagnostics:
+            return DesktopLoRAVisualPolish.pageBackgroundColor
+        case .modelsLibrary, .downloads, .logs, .settings:
+            return Color(nsColor: .windowBackgroundColor)
         }
     }
 }
@@ -1409,341 +1422,821 @@ struct DesktopAudioSetupNoticeRow: View {
 struct DesktopTrainingToolSectionView: View {
     let viewModel: RuntimeViewModel
     @State private var showsAdvanced = DesktopTrainingWorkspaceDefaults.showsAdvancedParameters
+    @State private var showsDatasetMapping = false
+
+    init(
+        viewModel: RuntimeViewModel,
+        showsAdvanced: Bool = DesktopTrainingWorkspaceDefaults.showsAdvancedParameters,
+        showsDatasetMapping: Bool = false
+    ) {
+        self.viewModel = viewModel
+        _showsAdvanced = State(initialValue: showsAdvanced)
+        _showsDatasetMapping = State(initialValue: showsDatasetMapping)
+    }
+
+    static func summaryItems(for viewModel: RuntimeViewModel) -> [DesktopTrainingSummaryItem] {
+        [
+            DesktopTrainingSummaryItem(
+                title: "Base Model",
+                value: viewModel.selectedLoraModelID,
+                detail: viewModel.loraTrainingMode.title
+            ),
+            DesktopTrainingSummaryItem(
+                title: "Dataset",
+                value: datasetSummaryValue(for: viewModel),
+                detail: datasetSummaryDetail(for: viewModel)
+            ),
+            DesktopTrainingSummaryItem(
+                title: "Preset",
+                value: viewModel.selectedLoraTrainingPreset.title,
+                detail: experimentGroupSummary(for: viewModel)
+            ),
+            DesktopTrainingSummaryItem(
+                title: "Activation",
+                value: viewModel.loraActivationMode.title,
+                detail: viewModel.loraTargetRepo.isEmpty ? "Target repo pending" : viewModel.loraTargetRepo
+            ),
+        ]
+    }
+
+    private static func datasetSummaryValue(for viewModel: RuntimeViewModel) -> String {
+        switch viewModel.loraDatasetSourceKind {
+        case .localPackage:
+            return viewModel.loraDatasetURI.isEmpty ? "Dataset pending" : viewModel.loraDatasetURI
+        case .huggingFaceDataset:
+            return viewModel.loraHFDatasetPath.isEmpty ? "HF dataset pending" : viewModel.loraHFDatasetPath
+        }
+    }
+
+    private static func datasetSummaryDetail(for viewModel: RuntimeViewModel) -> String {
+        switch viewModel.loraDatasetSourceKind {
+        case .localPackage:
+            return "Local package dataset"
+        case .huggingFaceDataset:
+            let config = viewModel.loraHFDatasetName.isEmpty ? "default config" : viewModel.loraHFDatasetName
+            return "Hugging Face dataset • \(config)"
+        }
+    }
+
+    private static func experimentGroupSummary(for viewModel: RuntimeViewModel) -> String {
+        viewModel.loraExperimentGroupID.isEmpty ? "Auto experiment grouping" : viewModel.loraExperimentGroupID
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Train adapters from a local package or a controlled Hugging Face dataset, then activate the saved adapter into a derived text model.")
                 .foregroundStyle(.secondary)
 
-            GroupBox("Training Configuration") {
+            DesktopEditorialSectionCard("Primary Model") {
+                primaryModelContent
+            }
+
+            DesktopEditorialSectionCard("Workflow Snapshot") {
+                workflowSnapshotContent
+            }
+
+            DesktopEditorialSectionCard("Run Draft") {
+                trainingConfigurationContent
+            }
+
+            DesktopEditorialSectionCard("Adapter Registry") {
+                adapterRegistryContent
+            }
+
+            DesktopEditorialSectionCard("Experiment Groups") {
+                experimentGroupsContent
+            }
+
+            DesktopEditorialSectionCard("Training History") {
+                trainingJobsContent
+            }
+        }
+    }
+
+    private var primaryModelContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            DesktopPassiveHeadlineButton(title: primaryModelTitle)
+
+            Text(primaryModelDetailText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            workflowActionBar
+
+            Text(workflowActionHelperText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var workflowSnapshotContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            workflowStatusContent
+
+            Divider()
+
+            selectedConfigurationContent
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var workflowActionBar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Button("Train LoRA", action: startTrainLoRATask)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.isLoraWorkflowActionInProgress)
+
+                Button("Activate Adapter", action: startActivateAdapterTask)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.selectedAdapterPackage == nil || viewModel.isLoraWorkflowActionInProgress)
+
+                Menu {
+                    Button("Publish Adapter", action: startPublishAdapterTask)
+                        .disabled(viewModel.selectedAdapterPackage == nil || viewModel.isLoraWorkflowActionInProgress)
+
+                    Button("Remove Derived Model", action: startRemoveDerivedModelTask)
+                        .disabled(
+                            (viewModel.selectedAdapterPackage?.derivedModelID.isEmpty ?? true)
+                            || viewModel.isLoraWorkflowActionInProgress
+                        )
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("More LoRA Actions")
+                .accessibilityLabel("More LoRA Actions")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var workflowActionHelperText: String {
+        if viewModel.isLoraWorkflowActionInProgress {
+            return "One LoRA action is currently running. Wait for it to finish before starting another workflow."
+        }
+        if let adapter = viewModel.selectedAdapterPackage {
+            return adapter.derivedModelID.isEmpty
+                ? "Activate the selected adapter when you want to expose it as a runtime target."
+                : "The selected adapter already has a derived runtime target available."
+        }
+        return "Start training first, then activate or publish the resulting adapter package."
+    }
+
+    private var primaryModelTitle: String {
+        viewModel.selectedLoraModelID.isEmpty ? "No Base Model Selected" : viewModel.selectedLoraModelID
+    }
+
+    private var primaryModelDetailText: String {
+        let datasetMode = viewModel.loraDatasetSourceKind.title
+        let trainingMode = viewModel.loraTrainingMode.title
+        let activation = viewModel.loraActivationMode.title
+        if let adapter = viewModel.selectedAdapterPackage {
+            return "\(trainingMode) • \(datasetMode) • \(activation) • \(adapter.activationStatusText.lowercased())"
+        }
+        return "\(trainingMode) • \(datasetMode) • \(activation)"
+    }
+
+    private var selectedConfigurationContent: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)], spacing: 14) {
+            ForEach(Self.summaryItems(for: viewModel)) { item in
+                DesktopTrainingSummaryValueView(item: item)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var workflowStatusContent: some View {
+        if let status = viewModel.loraWorkflowStatus {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: status.phase.symbolName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(workflowStatusColor(for: status.phase))
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text(status.title)
+                                .font(.headline)
+                            if status.phase == .running {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Spacer(minLength: 12)
+                            Text(status.phase.badgeTitle)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.secondary.opacity(0.08), in: Capsule())
+                        }
+                        if !status.detail.isEmpty {
+                            Text(status.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+        } else {
+            DesktopInlineEmptyStateView(
+                title: idleWorkflowTitle,
+                detail: idleWorkflowDetail,
+                symbolName: idleWorkflowSymbolName
+            )
+        }
+    }
+
+    private var trainingConfigurationContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            DesktopEditorialSubsection(
+                "Core Setup",
+                detail: "Define the next run target, dataset, and activation path."
+            ) {
+                coreTrainingSetupContent
+            }
+
+            if viewModel.loraDatasetSourceKind == .huggingFaceDataset {
+                Divider()
+
+                DesktopExpandableSettingRow(
+                    title: "Dataset Mapping",
+                    detail: datasetMappingSummaryText,
+                    isExpanded: showsDatasetMapping
+                ) {
+                    showsDatasetMapping.toggle()
+                }
+
+                if showsDatasetMapping {
+                    datasetMappingContent
+                }
+            }
+
+            Divider()
+
+            DesktopExpandableSettingRow(
+                title: DesktopTrainingWorkspaceDefaults.advancedParametersTitle,
+                detail: advancedParametersSummaryText,
+                isExpanded: showsAdvanced
+            ) {
+                showsAdvanced.toggle()
+            }
+
+            if showsAdvanced {
+                advancedParametersContent
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var coreTrainingSetupContent: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(minimum: 260), spacing: 16, alignment: .top),
+                GridItem(.flexible(minimum: 260), spacing: 16, alignment: .top),
+            ],
+            alignment: .leading,
+            spacing: 16
+        ) {
+            DesktopEditorialFieldGroup(
+                "Run Identity",
+                detail: "Choose the base model and the adapter name for the next artifact."
+            ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("Base Model", selection: stringBinding(\.selectedLoraModelID)) {
-                        ForEach(viewModel.loraCapableModels, id: \.modelID) { model in
-                            Text(model.modelID).tag(model.modelID)
+                    DesktopEditorialField("Base Model") {
+                        Picker("Base Model", selection: stringBinding(\.selectedLoraModelID)) {
+                            ForEach(viewModel.loraCapableModels, id: \.modelID) { model in
+                                Text(model.modelID).tag(model.modelID)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+
+                    DesktopEditorialField("Adapter Name") {
+                        TextField("Adapter Name", text: stringBinding(\.loraAdapterName))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+            }
+
+            DesktopEditorialFieldGroup(
+                "Dataset & Mode",
+                detail: "Select the dataset source, the training mode, and the preset."
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    DesktopEditorialField("Dataset Source") {
+                        Picker("Dataset Source", selection: datasetSourceBinding()) {
+                            ForEach(RuntimeLoraDatasetSourceKind.allCases) { source in
+                                Text(source.title).tag(source)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 340, alignment: .leading)
+                    }
+
+                    DesktopEditorialField(viewModel.loraDatasetSourceKind == .localPackage ? "Dataset URI" : "HF Dataset Path") {
+                        if viewModel.loraDatasetSourceKind == .localPackage {
+                            TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            TextField("HF Dataset Path", text: stringBinding(\.loraHFDatasetPath))
+                                .textFieldStyle(.roundedBorder)
                         }
                     }
-                    .pickerStyle(.menu)
 
-                    Picker("Dataset Source", selection: datasetSourceBinding()) {
-                        ForEach(RuntimeLoraDatasetSourceKind.allCases) { source in
-                            Text(source.title).tag(source)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Training Mode")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                    DesktopEditorialField("Training Mode") {
                         Picker("Training Mode", selection: trainingModeBinding()) {
                             ForEach(RuntimeLoraTrainingMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
                         }
+                        .labelsHidden()
                         .pickerStyle(.segmented)
+                        .frame(maxWidth: 340, alignment: .leading)
                     }
 
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Preset")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Picker("Preset", selection: trainingPresetBinding()) {
-                                ForEach(RuntimeLoraTrainingPreset.allCases) { preset in
-                                    Text(preset.title).tag(preset)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Experiment Group")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            TextField("Optional group id", text: stringBinding(\.loraExperimentGroupID))
-                                .textFieldStyle(.roundedBorder)
-                            Text("Leave blank to derive from base model and adapter name.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    if viewModel.loraDatasetSourceKind == .localPackage {
-                        TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
-                            .textFieldStyle(.roundedBorder)
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TextField("HF Dataset Path", text: stringBinding(\.loraHFDatasetPath))
-                                .textFieldStyle(.roundedBorder)
-
-                            HStack {
-                                TextField("Config / Name", text: stringBinding(\.loraHFDatasetName))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Revision", text: stringBinding(\.loraHFDatasetRevision))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                TextField("Train Split", text: stringBinding(\.loraHFTrainSplit))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Valid Split", text: stringBinding(\.loraHFValidSplit))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                TextField("Text Feature", text: stringBinding(\.loraTextFeature))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Prompt Feature", text: stringBinding(\.loraPromptFeature))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                TextField("Completion Feature", text: stringBinding(\.loraCompletionFeature))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Chat Feature", text: stringBinding(\.loraChatFeature))
-                                    .textFieldStyle(.roundedBorder)
+                    DesktopEditorialField("Preset") {
+                        Picker("Preset", selection: trainingPresetBinding()) {
+                            ForEach(RuntimeLoraTrainingPreset.allCases) { preset in
+                                Text(preset.title).tag(preset)
                             }
                         }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
                     }
+                }
+            }
 
-                    HStack {
-                        TextField("Adapter Name", text: stringBinding(\.loraAdapterName))
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Target Repo", text: stringBinding(\.loraTargetRepo))
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Activation Mode")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+            DesktopEditorialFieldGroup(
+                "Delivery",
+                detail: "Define activation, routing, and experiment lineage for the resulting adapter."
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    DesktopEditorialField("Activation Mode") {
                         Picker("Activation Mode", selection: activationModeBinding()) {
                             ForEach(RuntimeLoraActivationMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
                         }
+                        .labelsHidden()
                         .pickerStyle(.segmented)
+                        .frame(maxWidth: 360, alignment: .leading)
                     }
 
-                    DisclosureGroup(DesktopTrainingWorkspaceDefaults.advancedParametersTitle, isExpanded: $showsAdvanced) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                TextField("Rank", text: stringBinding(\.loraRank))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Alpha", text: stringBinding(\.loraAlpha))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Dropout", text: stringBinding(\.loraDropout))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                TextField("Batch Size", text: stringBinding(\.loraBatchSize))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Epochs", text: stringBinding(\.loraEpochs))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                TextField("Target Modules", text: stringBinding(\.loraTargetModules))
-                                    .textFieldStyle(.roundedBorder)
-                                TextField("Num Layers", text: stringBinding(\.loraNumLayers))
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
-                                .textFieldStyle(.roundedBorder)
-
-                            HStack {
-                                Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
-                                Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
-                                Toggle("Gradient Checkpointing", isOn: boolBinding(\.loraGradientCheckpointing))
-                            }
-                        }
-                        .padding(.top, 8)
+                    DesktopEditorialField(
+                        "Experiment Group",
+                        detail: "Leave blank to derive from the base model and adapter name."
+                    ) {
+                        TextField("Optional group id", text: stringBinding(\.loraExperimentGroupID))
+                            .textFieldStyle(.roundedBorder)
                     }
 
-                    HStack {
-                        Button("Train LoRA", action: startTrainLoRATask)
-                        .buttonStyle(.borderedProminent)
-
-                        Button("Activate Adapter", action: startActivateAdapterTask)
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.selectedAdapterPackage == nil)
-
-                        Button("Remove Derived Model", action: startRemoveDerivedModelTask)
-                            .buttonStyle(.bordered)
-                            .disabled(
-                                viewModel.selectedAdapterPackage?.derivedModelID.isEmpty ?? true
-                            )
-
-                        Button("Publish Adapter", action: startPublishAdapterTask)
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.selectedAdapterPackage == nil)
+                    DesktopEditorialField("Target Repo") {
+                        TextField("Target Repo", text: stringBinding(\.loraTargetRepo))
+                            .textFieldStyle(.roundedBorder)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
 
-            GroupBox("Adapter Activation") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if viewModel.adapterPackages.isEmpty {
-                        Text("No adapter packages yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker("Selected Adapter", selection: stringBinding(\.selectedAdapterPackageID)) {
-                            ForEach(viewModel.adapterPackages) { adapter in
-                                Text("\(adapter.adapterName) • \(adapter.statusText)").tag(adapter.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        if let adapter = viewModel.selectedAdapterPackage {
-                            Text("Saved artifact: \(adapter.outputPath)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(adapter.experimentSummaryText) • \(adapter.performanceSummaryText)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if !adapter.derivedModelID.isEmpty {
-                                Text("Derived model: \(adapter.derivedModelID)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+    private var datasetMappingContent: some View {
+        DesktopEditorialSubsection(
+            "Dataset Mapping",
+            detail: "Only expand when the dataset schema or split layout changes."
+        ) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
+                DesktopEditorialField("Config / Name") {
+                    TextField("Config / Name", text: stringBinding(\.loraHFDatasetName))
+                        .textFieldStyle(.roundedBorder)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            HStack {
-                Text("Saved adapters and historical jobs come from the shared registry snapshot.")
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            GroupBox("Adapters") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if viewModel.adapterPackages.isEmpty {
-                        Text("No adapter packages yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(viewModel.adapterPackages) { adapter in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(adapter.adapterName)
-                                    .font(.headline)
-                                Text("\(adapter.statusText) • \(adapter.datasetURI)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(adapter.experimentSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(adapter.performanceSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                DesktopEditorialField("Revision") {
+                    TextField("Revision", text: stringBinding(\.loraHFDatasetRevision))
+                        .textFieldStyle(.roundedBorder)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox("Training Jobs") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if viewModel.trainingHistory.isEmpty {
-                        Text("No training history yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(viewModel.trainingHistory) { entry in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(entry.adapterName)
-                                    .font(.headline)
-                                Text("\(entry.statusText) • \(entry.datasetURI)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(entry.stageText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(entry.experimentSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(entry.performanceSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                DesktopEditorialField("Train Split") {
+                    TextField("Train Split", text: stringBinding(\.loraHFTrainSplit))
+                        .textFieldStyle(.roundedBorder)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                DesktopEditorialField("Valid Split") {
+                    TextField("Valid Split", text: stringBinding(\.loraHFValidSplit))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Text Feature") {
+                    TextField("Text Feature", text: stringBinding(\.loraTextFeature))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Prompt Feature") {
+                    TextField("Prompt Feature", text: stringBinding(\.loraPromptFeature))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Completion Feature") {
+                    TextField("Completion Feature", text: stringBinding(\.loraCompletionFeature))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Chat Feature") {
+                    TextField("Chat Feature", text: stringBinding(\.loraChatFeature))
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+        }
+    }
+
+    private var advancedParametersContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
+                DesktopEditorialField("Rank") {
+                    TextField("Rank", text: stringBinding(\.loraRank))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Alpha") {
+                    TextField("Alpha", text: stringBinding(\.loraAlpha))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Dropout") {
+                    TextField("Dropout", text: stringBinding(\.loraDropout))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Batch Size") {
+                    TextField("Batch Size", text: stringBinding(\.loraBatchSize))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Epochs") {
+                    TextField("Epochs", text: stringBinding(\.loraEpochs))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Learning Rate") {
+                    TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Max Seq Length") {
+                    TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Target Modules") {
+                    TextField("Target Modules", text: stringBinding(\.loraTargetModules))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Num Layers") {
+                    TextField("Num Layers", text: stringBinding(\.loraNumLayers))
+                        .textFieldStyle(.roundedBorder)
+                }
+                DesktopEditorialField("Derived Model Alias") {
+                    TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
+                        .textFieldStyle(.roundedBorder)
+                }
             }
 
-            GroupBox("Experiment Groups") {
+            DesktopEditorialFieldGroup("Behavior Flags") {
                 VStack(alignment: .leading, spacing: 10) {
-                    if viewModel.loraExperimentGroups.isEmpty {
-                        Text("No grouped LoRA runs yet.")
+                    Toggle("Response Only", isOn: boolBinding(\.loraResponseOnly))
+                    Toggle("Mask Prompt", isOn: boolBinding(\.loraMaskPrompt))
+                    Toggle("Gradient Checkpointing", isOn: boolBinding(\.loraGradientCheckpointing))
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private var adapterRegistryContent: some View {
+        if viewModel.adapterPackages.isEmpty {
+            DesktopInlineEmptyStateView(
+                title: "No Adapter Packages Yet",
+                detail: "Train a LoRA run or refresh registry snapshots to inspect saved adapters and activation targets.",
+                symbolName: "shippingbox"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                adapterActivationContent
+
+                Divider()
+
+                adaptersContent
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var adapterActivationContent: some View {
+        if viewModel.adapterPackages.isEmpty {
+            DesktopInlineEmptyStateView(
+                title: "No Adapter Packages Yet",
+                detail: "Train a LoRA run or refresh registry snapshots to inspect saved adapters and activation targets.",
+                symbolName: "shippingbox"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Selected Adapter", selection: stringBinding(\.selectedAdapterPackageID)) {
+                    ForEach(viewModel.adapterPackages) { adapter in
+                        Text("\(adapter.adapterName) • \(adapter.statusText)").tag(adapter.id)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if let adapter = viewModel.selectedAdapterPackage {
+                    Text(adapter.adapterName)
+                        .font(.headline)
+                    Text("\(adapter.statusText) • \(adapter.activationStatusText) • \(adapter.exportabilityText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(adapter.experimentSummaryText) • \(adapter.performanceSummaryText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !adapter.targetRepo.isEmpty {
+                        Text("Target repo: \(adapter.targetRepo)")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(viewModel.loraExperimentGroups) { group in
+                    }
+                    if !adapter.publishedRepo.isEmpty {
+                        Text("Published repo: \(adapter.publishedRepo)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !adapter.derivedModelID.isEmpty {
+                        Text("Derived model: \(adapter.derivedModelID)")
+                            .font(.caption.weight(.semibold))
+                    }
+                    if !adapter.derivedModelPath.isEmpty || !adapter.outputPath.isEmpty {
+                        DisclosureGroup("Artifact Paths") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if !adapter.derivedModelPath.isEmpty {
+                                    Text(adapter.derivedModelPath)
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                if !adapter.outputPath.isEmpty {
+                                    Text("Adapter manifest: \(adapter.outputPath)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    @ViewBuilder
+    private var experimentGroupsContent: some View {
+        if viewModel.loraExperimentGroups.isEmpty {
+            DesktopInlineEmptyStateView(
+                title: "No Grouped LoRA Runs Yet",
+                detail: "Run multiple experiments with the same adapter family to unlock resume and best-checkpoint recommendations.",
+                symbolName: "square.stack.3d.forward.dottedline"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(viewModel.loraExperimentGroups.enumerated()), id: \.element.id) { index, group in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(group.title.isEmpty ? group.groupID : group.title)
-                                            .font(.headline)
-                                        Text("\(group.runCount) runs • \(group.latestPresetTitle)")
+                                Text(group.title.isEmpty ? group.groupID : group.title)
+                                    .font(.headline)
+                                Text("\(group.runCount) runs • \(group.latestPresetTitle)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Use Group") {
+                                viewModel.loraExperimentGroupID = group.groupID
+                                viewModel.loraResumeFromManifestPath = ""
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button("Resume From Best") {
+                                viewModel.loraExperimentGroupID = group.groupID
+                                viewModel.loraResumeFromManifestPath = group.recommendedManifestPath
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(group.recommendedManifestPath.isEmpty)
+                        }
+                        Text(group.experimentSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(group.performanceSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Best loss \(String(format: "%.3f", group.bestLoss))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !group.recommendedManifestPath.isEmpty {
+                            DisclosureGroup("Best checkpoint manifest") {
+                                Text(group.recommendedManifestPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .padding(.top, 4)
+                            }
+                            .font(.caption)
+                        }
+                        Text(group.resumeReadySummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !group.checkpointLineage.isEmpty {
+                            DisclosureGroup("Checkpoint lineage") {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ForEach(group.checkpointLineage) { entry in
+                                        Text("\(entry.runID) • \(entry.checkpointCount) checkpoints • \(entry.resumeReady ? "resume ready" : "resume unavailable")")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
-                                    Spacer()
-                                    Button("Use Group") {
-                                        viewModel.loraExperimentGroupID = group.groupID
-                                        viewModel.loraResumeFromManifestPath = ""
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    Button("Resume From Best") {
-                                        viewModel.loraExperimentGroupID = group.groupID
-                                        viewModel.loraResumeFromManifestPath = group.recommendedManifestPath
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .disabled(group.recommendedManifestPath.isEmpty)
                                 }
-                                Text(group.experimentSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(group.performanceSummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text("Best loss \(String(format: "%.3f", group.bestLoss)) • \(group.recommendedManifestPath)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(group.resumeReadySummaryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !group.checkpointLineage.isEmpty {
-                                    DisclosureGroup("Checkpoint lineage") {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            ForEach(group.checkpointLineage) { entry in
-                                                Text("\(entry.runID) • \(entry.checkpointCount) checkpoints • \(entry.resumeReady ? "resume ready" : "resume unavailable")")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        .padding(.top, 4)
-                                    }
-                                    .font(.caption)
-                                }
+                                .padding(.top, 4)
                             }
-                            .padding(.vertical, 4)
+                            .font(.caption)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+
+                    if index < viewModel.loraExperimentGroups.count - 1 {
+                        Divider()
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    @ViewBuilder
+    private var adaptersContent: some View {
+        if viewModel.adapterPackages.isEmpty {
+            DesktopInlineEmptyStateView(
+                title: "No Saved Adapters Yet",
+                detail: "Completed LoRA runs will land here with target repo, activation readiness, and performance summaries.",
+                symbolName: "tray"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(viewModel.adapterPackages.enumerated()), id: \.element.id) { index, adapter in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(adapter.adapterName)
+                                .font(.headline)
+                            Spacer()
+                            Text(adapter.statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(adapter.sourceModel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !adapter.datasetURI.isEmpty {
+                            Text(adapter.datasetURI)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("\(adapter.experimentSummaryText) • \(adapter.performanceSummaryText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !adapter.targetRepo.isEmpty {
+                            Text("Target repo: \(adapter.targetRepo)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !adapter.outputPath.isEmpty {
+                            DisclosureGroup("Manifest path") {
+                                Text(adapter.outputPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .padding(.top, 4)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+
+                    if index < viewModel.adapterPackages.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trainingJobsContent: some View {
+        if viewModel.trainingHistory.isEmpty {
+            DesktopInlineEmptyStateView(
+                title: "No Training Jobs Yet",
+                detail: "Run LoRA training to capture loss, throughput, memory, and checkpoint lineage across experiments.",
+                symbolName: "chart.line.uptrend.xyaxis"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(viewModel.trainingHistory.enumerated()), id: \.element.id) { index, entry in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(entry.adapterName)
+                                .font(.headline)
+                            Spacer()
+                            Text(entry.statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(entry.stageText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !entry.datasetURI.isEmpty {
+                            Text(entry.datasetURI)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("\(entry.experimentSummaryText) • \(entry.performanceSummaryText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !entry.outputPath.isEmpty {
+                            DisclosureGroup("Run artifact path") {
+                                Text(entry.outputPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .padding(.top, 4)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+
+                    if index < viewModel.trainingHistory.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
+    private var idleWorkflowTitle: String {
+        if let adapter = viewModel.selectedAdapterPackage {
+            return adapter.derivedModelID.isEmpty ? "Ready to Activate" : "Adapter Ready"
+        }
+        if viewModel.loraExperimentGroups.isEmpty == false {
+            return "Resume-Ready Runs Available"
+        }
+        return "Ready to Train"
+    }
+
+    private var idleWorkflowDetail: String {
+        if let adapter = viewModel.selectedAdapterPackage {
+            if adapter.derivedModelID.isEmpty {
+                return "Select Activate Adapter to attach \(adapter.adapterName) to the current base model."
+            }
+            return "\(adapter.adapterName) is already available as \(adapter.derivedModelID)."
+        }
+        if let group = viewModel.loraExperimentGroups.first {
+            return group.resumeReadySummaryText
+        }
+        return "Configure the dataset, preset, and adapter settings, then start a LoRA run."
+    }
+
+    private var idleWorkflowSymbolName: String {
+        if let adapter = viewModel.selectedAdapterPackage {
+            return adapter.derivedModelID.isEmpty ? "bolt.horizontal.circle" : "checkmark.circle"
+        }
+        if viewModel.loraExperimentGroups.isEmpty == false {
+            return "arrow.trianglehead.branch"
+        }
+        return "sparkles"
+    }
+
+    private func workflowStatusColor(for phase: RuntimeLoraWorkflowPhase) -> Color {
+        switch phase {
+        case .running:
+            return MelixDesignTokens.accent
+        case .succeeded:
+            return .green
+        case .failed:
+            return .orange
+        }
+    }
+
+    private var advancedParametersSummaryText: String {
+        "Rank \(viewModel.loraRank) • Alpha \(viewModel.loraAlpha) • Dropout \(viewModel.loraDropout) • Batch \(viewModel.loraBatchSize) • Epochs \(viewModel.loraEpochs)"
+    }
+
+    private var datasetMappingSummaryText: String {
+        let config = viewModel.loraHFDatasetName.isEmpty ? "default config" : viewModel.loraHFDatasetName
+        let train = viewModel.loraHFTrainSplit.isEmpty ? "train split pending" : viewModel.loraHFTrainSplit
+        let valid = viewModel.loraHFValidSplit.isEmpty ? "valid split pending" : viewModel.loraHFValidSplit
+        return "\(config) • train \(train) • valid \(valid)"
     }
 
     private func stringBinding(_ keyPath: ReferenceWritableKeyPath<RuntimeViewModel, String>) -> Binding<String> {
@@ -1826,9 +2319,340 @@ enum DesktopTrainingWorkspaceDefaults {
     static let advancedParametersTitle = "Advanced Training Parameters"
 }
 
+enum DesktopLoRAVisualPolish {
+    static let pageBackgroundNSColor = NSColor.white
+    static let pageBackgroundColor = Color(nsColor: pageBackgroundNSColor)
+    static let sectionSurfaceOpacity = 0.04
+    static let metricSurfaceOpacity = 0.032
+    static let selectedHistorySurfaceOpacity = 0.14
+    static let chartFillOpacity = 0.24
+}
+
+struct DesktopTrainingSummaryItem: Equatable, Identifiable {
+    let title: String
+    let value: String
+    let detail: String
+
+    var id: String {
+        title
+    }
+}
+
+private struct DesktopEditorialSectionCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            DesktopPassiveSectionLabel(title: title)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(MelixDesignTokens.Spacing.panelInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopPassiveSectionLabel: View {
+    let title: String
+
+    var body: some View {
+        TextField("", text: .constant(title))
+            .textFieldStyle(.plain)
+            .allowsHitTesting(false)
+            .melixSectionLabel()
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopEditorialSubsection<Content: View>: View {
+    let title: String
+    let detail: String?
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if let detail, detail.isEmpty == false {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopTrainingSummaryValueView: View {
+    let item: DesktopTrainingSummaryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.title).melixSectionLabel()
+            Text(item.value)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(item.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopEditorialFieldGroup<Content: View>: View {
+    let title: String
+    let detail: String?
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DesktopPassiveHeadlineButton(title: title)
+            if let detail, detail.isEmpty == false {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopEditorialField<Content: View>: View {
+    let title: String
+    let detail: String?
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+            if let detail, detail.isEmpty == false {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopEditorialMetricItem: Identifiable {
+    let title: String
+    let value: String
+    let detail: String
+
+    var id: String {
+        "\(title)|\(value)|\(detail)"
+    }
+}
+
+private struct DesktopEditorialMetricCardView: View {
+    let item: DesktopEditorialMetricItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(item.value)
+                .font(.headline)
+                .monospacedDigit()
+            if item.detail.isEmpty == false {
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopPassiveHeadlineButton: View {
+    let title: String
+
+    var body: some View {
+        TextField("", text: .constant(title))
+            .textFieldStyle(.plain)
+            .allowsHitTesting(false)
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopExpandableSettingRow: View {
+    let title: String
+    let detail: String
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle")
+                    .foregroundStyle(MelixDesignTokens.accent)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(12)
+            .background(
+                Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct DesktopInlineEmptyStateView: View {
+    let title: String
+    let detail: String
+    let symbolName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbolName)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                Text(title)
+                    .font(.headline)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+enum DesktopDiagnosticsStage: String, CaseIterable, Identifiable {
+    case benchmark
+    case matrix
+    case evaluation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .benchmark:
+            return "Benchmark"
+        case .matrix:
+            return "Matrix"
+        case .evaluation:
+            return "Evaluation"
+        }
+    }
+}
+
 struct DesktopDiagnosticsToolSectionView: View {
+    static let emptyBenchmarkTitle = "No Benchmark Results Yet"
+    static let emptyBenchmarkDetail = "Run Benchmark to capture latency and throughput history."
+    static let emptyEvaluationTitle = "No Evaluation Results Yet"
+    static let emptyEvaluationDetail = "Run Evaluation to inspect scores and sample previews."
+
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
+    @State private var selectedStage: DesktopDiagnosticsStage
+
+    init(viewModel: RuntimeViewModel, foundation: DesktopFoundationState) {
+        self.viewModel = viewModel
+        self.foundation = foundation
+        _selectedStage = State(initialValue: Self.initialStage(for: viewModel))
+    }
+
+    static func initialStage(for viewModel: RuntimeViewModel) -> DesktopDiagnosticsStage {
+        if let preferredStage = viewModel.preferredDiagnosticsStage {
+            switch preferredStage {
+            case .benchmark:
+                return .benchmark
+            case .matrix:
+                return .matrix
+            case .evaluation:
+                return .evaluation
+            }
+        }
+        if viewModel.selectedBenchmarkPresentationMode == .matrix {
+            return .matrix
+        }
+        if viewModel.benchmarkHistory.isEmpty == false {
+            return .benchmark
+        }
+        if viewModel.benchmarkMatrixHistory.isEmpty == false {
+            return .matrix
+        }
+        if viewModel.selectedEvaluationMode == .compare
+            || viewModel.selectedEvaluationHistoryJobID.isEmpty == false {
+            return .evaluation
+        }
+        if viewModel.evaluationHistory.isEmpty == false
+            && viewModel.benchmarkHistory.isEmpty
+            && viewModel.benchmarkMatrixHistory.isEmpty {
+            return .evaluation
+        }
+        return .benchmark
+    }
 
     func inspectPrimaryModel() async {
         await viewModel.inspectPrimaryModel()
@@ -1839,6 +2663,7 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func runBenchmark() async {
+        applyDiagnosticsStage(.benchmark)
         await viewModel.runBench()
     }
 
@@ -1851,6 +2676,7 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func runBenchmarkMatrix() async {
+        applyDiagnosticsStage(.matrix)
         await viewModel.runBenchMatrix()
     }
 
@@ -1867,10 +2693,12 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     func runEvaluation() async {
+        applyDiagnosticsStage(.evaluation)
         await viewModel.runEvaluation()
     }
 
     func runEvaluationCompare() async {
+        applyDiagnosticsStage(.evaluation)
         viewModel.selectedEvaluationMode = .compare
         await viewModel.runEvaluation()
     }
@@ -1999,74 +2827,257 @@ struct DesktopDiagnosticsToolSectionView: View {
         ) || viewModel.selectedEvaluationSuiteIDs.isEmpty
     }
 
+    private func applyDiagnosticsStage(_ stage: DesktopDiagnosticsStage) {
+        selectedStage = stage
+        switch stage {
+        case .benchmark:
+            viewModel.preferredDiagnosticsStage = .benchmark
+            viewModel.selectedBenchmarkPresentationMode = .standard
+        case .matrix:
+            viewModel.preferredDiagnosticsStage = .matrix
+            viewModel.selectedBenchmarkPresentationMode = .matrix
+        case .evaluation:
+            viewModel.preferredDiagnosticsStage = .evaluation
+            break
+        }
+    }
+
+    private var benchmarkSnapshotEntry: RuntimeBenchmarkHistoryEntryState? {
+        viewModel.selectedBenchmarkHistoryEntry ?? viewModel.benchmarkHistory.first
+    }
+
+    private var matrixSnapshotEntry: RuntimeBenchmarkMatrixHistoryEntryState? {
+        viewModel.selectedBenchmarkMatrixHistoryEntry ?? viewModel.benchmarkMatrixHistory.first
+    }
+
+    private var evaluationSnapshotEntry: RuntimeEvaluationHistoryEntryState? {
+        viewModel.selectedEvaluationHistoryEntry ?? viewModel.evaluationHistory.first
+    }
+
+    private var benchmarkSnapshotItems: [DesktopEditorialMetricItem] {
+        Array(viewModel.benchmarkMetricCards.prefix(4)).map { metric in
+            DesktopEditorialMetricItem(
+                title: metric.metricLabel,
+                value: metric.valueText,
+                detail: metric.suiteTitle
+            )
+        }
+    }
+
+    private var matrixSnapshotItems: [DesktopEditorialMetricItem] {
+        Array(viewModel.benchmarkMatrixSummaryCards.prefix(4)).map { card in
+            DesktopEditorialMetricItem(
+                title: card.title,
+                value: card.valueText,
+                detail: card.detail
+            )
+        }
+    }
+
+    private var evaluationSnapshotItems: [DesktopEditorialMetricItem] {
+        Array(viewModel.evaluationMetricCards.prefix(4)).map { metric in
+            DesktopEditorialMetricItem(
+                title: metric.metricLabel,
+                value: metric.valueText,
+                detail: [metric.suiteTitle, metric.verdictText].filter { $0.isEmpty == false }.joined(separator: " • ")
+            )
+        }
+    }
+
+    private var diagnosticsSnapshotTitle: String {
+        switch selectedStage {
+        case .benchmark:
+            return "Bench Report"
+        case .matrix:
+            return "Matrix Report"
+        case .evaluation:
+            return "Evaluation Report"
+        }
+    }
+
+    @ViewBuilder
+    private var diagnosticsSnapshotContent: some View {
+        switch selectedStage {
+        case .benchmark:
+            benchmarkSnapshotContent
+        case .matrix:
+            matrixSnapshotContent
+        case .evaluation:
+            evaluationSnapshotContent
+        }
+    }
+
+    @ViewBuilder
+    private var benchmarkSnapshotContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let entry = benchmarkSnapshotEntry {
+                DesktopPassiveHeadlineButton(
+                    title: "Selected run \(entry.jobID) • \(entry.suiteTitle) • \(entry.createdAtText)"
+                )
+                Text(benchmarkSelectionSubtitle(for: entry))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if benchmarkSnapshotItems.isEmpty {
+                DesktopInlineEmptyStateView(
+                    title: Self.emptyBenchmarkTitle,
+                    detail: Self.emptyBenchmarkDetail,
+                    symbolName: "gauge.with.dots.needle.67percent"
+                )
+            } else {
+                snapshotMetricGrid(items: benchmarkSnapshotItems)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var matrixSnapshotContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let entry = matrixSnapshotEntry {
+                DesktopPassiveHeadlineButton(
+                    title: "Selected matrix run \(entry.jobID) • \(entry.createdAtText)"
+                )
+                Text(matrixSelectionSubtitle(for: entry))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if matrixSnapshotItems.isEmpty {
+                DesktopInlineEmptyStateView(
+                    title: Self.emptyBenchmarkTitle,
+                    detail: Self.emptyBenchmarkDetail,
+                    symbolName: "gauge.with.dots.needle.67percent"
+                )
+            } else {
+                snapshotMetricGrid(items: matrixSnapshotItems)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var evaluationSnapshotContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let entry = evaluationSnapshotEntry {
+                DesktopPassiveHeadlineButton(
+                    title: "Selected eval \(entry.jobID) • \(entry.suiteTitle) • \(entry.createdAtText)"
+                )
+                Text(evaluationSelectionSubtitle(for: entry))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if evaluationSnapshotItems.isEmpty {
+                DesktopInlineEmptyStateView(
+                    title: Self.emptyEvaluationTitle,
+                    detail: Self.emptyEvaluationDetail,
+                    symbolName: "checkmark.bubble"
+                )
+            } else {
+                snapshotMetricGrid(items: evaluationSnapshotItems)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func snapshotMetricGrid(items: [DesktopEditorialMetricItem]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+            ForEach(items) { item in
+                DesktopEditorialMetricCardView(item: item)
+            }
+        }
+    }
+
+    private func benchmarkSelectionSubtitle(for entry: RuntimeBenchmarkHistoryEntryState) -> String {
+        let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetLabel)"
+    }
+
+    private func matrixSelectionSubtitle(for entry: RuntimeBenchmarkMatrixHistoryEntryState) -> String {
+        let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+        return "\(entry.taskTitle) • \(selectedSource) • \(entry.suiteSummary) • \(entry.cellCountText)"
+    }
+
+    private func evaluationSelectionSubtitle(for entry: RuntimeEvaluationHistoryEntryState) -> String {
+        let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
+        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetID)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            MelixSectionCard("Diagnostics Actions") {
-                HStack(spacing: 8) {
-                    Button("Inspect", action: startInspectTask)
-                    Button("Doctor", action: startDoctorTask)
-                    if viewModel.selectedBenchmarkPresentationMode == .standard {
-                        Button("Run Benchmark", action: startBenchmarkTask)
-                            .disabled(benchmarkRunDisabled)
-                    } else {
-                        Button("Run Matrix", action: startBenchmarkMatrixTask)
-                            .disabled(benchmarkRunDisabled)
-                    }
-                    Button("Run Evaluation", action: startEvaluationTask)
-                        .disabled(evaluationRunDisabled)
-                    Button("Run Comparison", action: startEvaluationCompareTask)
-                        .disabled(evaluationRunDisabled)
-                    Menu {
-                        if viewModel.selectedBenchmarkPresentationMode == .standard {
-                            Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
-                            Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
-                                .disabled(viewModel.benchmarkHistory.isEmpty)
-                        } else {
-                            Button("Refresh Matrix", action: startRefreshBenchmarkMatrixResultsTask)
-                            Button("Export Matrix Summary", action: startExportBenchmarkMatrixSummaryCSVTask)
-                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
-                            Button("Export Matrix Requests", action: startExportBenchmarkMatrixRequestsCSVTask)
-                                .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
-                        }
-                        Button("Refresh Eval", action: startRefreshEvaluationResultsTask)
-                        Button("Export Eval Summary", action: startExportEvaluationSummaryCSVTask)
-                            .disabled(viewModel.evaluationHistory.isEmpty)
-                        Button("Export Eval Samples", action: startExportEvaluationSamplesCSVTask)
-                            .disabled(viewModel.evaluationHistory.isEmpty)
-                        Button("Export Eval JSONL", action: startExportEvaluationSamplesJSONLTask)
-                            .disabled(viewModel.evaluationHistory.isEmpty)
-                        Button("Refresh Tooling", action: startRefreshToolingTask)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("More Diagnostics Actions")
-                    .accessibilityLabel("More Diagnostics Actions")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if let info = viewModel.selectedModelInfo {
-                MelixSectionCard("Model Info") {
-                    DesktopModelInfoSummaryView(info: info)
-                }
-            }
-
-            MelixSectionCard("Benchmark Configuration") {
+            DesktopEditorialSectionCard("Diagnostics Actions") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker(
-                        "Benchmark Mode",
+                        "Diagnostics Stage",
                         selection: Binding(
-                            get: { viewModel.selectedBenchmarkPresentationMode },
-                            set: { viewModel.selectedBenchmarkPresentationMode = $0 }
+                            get: { selectedStage },
+                            set: { applyDiagnosticsStage($0) }
                         )
                     ) {
-                        ForEach(RuntimeBenchmarkPresentationMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                        ForEach(DesktopDiagnosticsStage.allCases) { stage in
+                            Text(stage.title).tag(stage)
                         }
                     }
                     .pickerStyle(.segmented)
 
+                    HStack(spacing: 8) {
+                        Button("Inspect", action: startInspectTask)
+                        Button("Doctor", action: startDoctorTask)
+                        switch selectedStage {
+                        case .benchmark:
+                            Button("Run Benchmark", action: startBenchmarkTask)
+                                .disabled(benchmarkRunDisabled)
+                        case .matrix:
+                            Button("Run Matrix", action: startBenchmarkMatrixTask)
+                                .disabled(benchmarkRunDisabled)
+                        case .evaluation:
+                            Button("Run Evaluation", action: startEvaluationTask)
+                                .disabled(evaluationRunDisabled)
+                            Button("Run Comparison", action: startEvaluationCompareTask)
+                                .disabled(evaluationRunDisabled)
+                        }
+
+                        Menu {
+                            switch selectedStage {
+                            case .benchmark:
+                                Button("Refresh Bench", action: startRefreshBenchmarkResultsTask)
+                                Button("Export Bench CSV", action: startExportBenchmarkCSVTask)
+                                    .disabled(viewModel.benchmarkHistory.isEmpty)
+                            case .matrix:
+                                Button("Refresh Matrix", action: startRefreshBenchmarkMatrixResultsTask)
+                                Button("Export Matrix Summary", action: startExportBenchmarkMatrixSummaryCSVTask)
+                                    .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                                Button("Export Matrix Requests", action: startExportBenchmarkMatrixRequestsCSVTask)
+                                    .disabled(viewModel.benchmarkMatrixHistory.isEmpty)
+                            case .evaluation:
+                                Button("Refresh Eval", action: startRefreshEvaluationResultsTask)
+                                Button("Export Eval Summary", action: startExportEvaluationSummaryCSVTask)
+                                    .disabled(viewModel.evaluationHistory.isEmpty)
+                                Button("Export Eval Samples", action: startExportEvaluationSamplesCSVTask)
+                                    .disabled(viewModel.evaluationHistory.isEmpty)
+                                Button("Export Eval JSONL", action: startExportEvaluationSamplesJSONLTask)
+                                    .disabled(viewModel.evaluationHistory.isEmpty)
+                            }
+                            Button("Refresh Tooling", action: startRefreshToolingTask)
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .help("More Diagnostics Actions")
+                        .accessibilityLabel("More Diagnostics Actions")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            DesktopEditorialSectionCard(diagnosticsSnapshotTitle) {
+                diagnosticsSnapshotContent
+            }
+
+            if selectedStage != .evaluation {
+                DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
+                VStack(alignment: .leading, spacing: 12) {
                     Picker(
                         "Benchmark Target",
                         selection: Binding(
@@ -2127,10 +3138,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
                                             .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
                                     }
-                                    Text(suite.datasetLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                     Text("config \(suite.datasetName) • \(suite.defaultsText)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(suite.datasetLabel)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -2138,8 +3149,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 .padding(12)
                                 .background(
                                     viewModel.selectedBenchmarkSuiteIDs.contains(suite.id)
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.secondary.opacity(0.06),
+                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
@@ -2172,8 +3183,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchContextLengths.contains(contextLength)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2199,8 +3210,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchBatchSizes.contains(batchSize)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2310,8 +3321,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchContextLengths.contains(contextLength)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2337,8 +3348,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchGenerationLengths.contains(generationLength)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2364,8 +3375,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchBatchSizes.contains(batchSize)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2391,8 +3402,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchMatrixCacheProfiles.contains(option)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2418,8 +3429,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchMatrixReasoningModes.contains(option)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2445,8 +3456,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchMatrixStructuredOutputModes.contains(option)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2472,8 +3483,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                                 .padding(.horizontal, 10)
                                                 .background(
                                                     viewModel.selectedBenchMatrixConcurrencyLevels.contains(option)
-                                                    ? Color.accentColor.opacity(0.16)
-                                                    : Color.secondary.opacity(0.08),
+                                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                                     in: Capsule()
                                                 )
                                         }
@@ -2549,14 +3560,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            if let report = viewModel.lastDoctorReport {
-                MelixSectionCard("Doctor Report") {
-                    DesktopDoctorReportSummaryView(report: report)
-                }
             }
 
-            MelixSectionCard("Benchmark Results") {
+            if selectedStage != .evaluation {
+                DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Analysis" : "Bench Analysis") {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.selectedBenchmarkPresentationMode == .standard {
                         if let selectedEntry = viewModel.selectedBenchmarkHistoryEntry {
@@ -2569,8 +3576,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
 
                         if viewModel.benchmarkMetricOptions.isEmpty {
-                            Text("Run a benchmark or refresh persisted results to visualize history.")
-                                .foregroundStyle(.secondary)
+                            DesktopInlineEmptyStateView(
+                                title: Self.emptyBenchmarkTitle,
+                                detail: Self.emptyBenchmarkDetail,
+                                symbolName: "gauge.with.dots.needle.67percent"
+                            )
                         } else {
                             Picker(
                                 "Metric",
@@ -2587,33 +3597,44 @@ struct DesktopDiagnosticsToolSectionView: View {
 
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
                                 ForEach(viewModel.benchmarkMetricCards.prefix(6)) { metric in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(metric.metricLabel)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Text(metric.valueText)
-                                            .font(.headline)
-                                            .monospacedDigit()
-                                        Text(metric.suiteTitle)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(12)
-                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                    DesktopEditorialMetricCardView(
+                                        item: DesktopEditorialMetricItem(
+                                            title: metric.metricLabel,
+                                            value: metric.valueText,
+                                            detail: metric.suiteTitle
+                                        )
+                                    )
                                 }
                             }
 
                             if viewModel.benchmarkChartPoints.isEmpty == false {
                                 Chart(viewModel.benchmarkChartPoints) { point in
-                                    BarMark(
+                                    AreaMark(
                                         x: .value("Run", point.createdAtLabel),
                                         y: .value("Value", point.value)
                                     )
-                                    .foregroundStyle(by: .value("Suite", point.suiteTitle))
+                                    .interpolationMethod(.catmullRom)
+                                    .foregroundStyle(
+                                        MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.chartFillOpacity)
+                                    )
+
+                                    LineMark(
+                                        x: .value("Run", point.createdAtLabel),
+                                        y: .value("Value", point.value)
+                                    )
+                                    .interpolationMethod(.catmullRom)
+                                    .lineStyle(StrokeStyle(lineWidth: 2))
+                                    .foregroundStyle(MelixDesignTokens.accent)
+
+                                    PointMark(
+                                        x: .value("Run", point.createdAtLabel),
+                                        y: .value("Value", point.value)
+                                    )
+                                    .symbolSize(28)
+                                    .foregroundStyle(MelixDesignTokens.accent.opacity(0.9))
                                 }
                                 .frame(height: 240)
-                                .chartLegend(position: .bottom)
+                                .chartLegend(.hidden)
                             }
                         }
                     } else {
@@ -2627,25 +3648,21 @@ struct DesktopDiagnosticsToolSectionView: View {
                         }
 
                         if viewModel.benchmarkMatrixSummaryRows.isEmpty {
-                            Text("Run a matrix benchmark or refresh persisted results to inspect matrix summaries.")
-                                .foregroundStyle(.secondary)
+                            DesktopInlineEmptyStateView(
+                                title: Self.emptyBenchmarkTitle,
+                                detail: Self.emptyBenchmarkDetail,
+                                symbolName: "gauge.with.dots.needle.67percent"
+                            )
                         } else {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
                                 ForEach(viewModel.benchmarkMatrixSummaryCards) { card in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(card.title)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Text(card.valueText)
-                                            .font(.headline)
-                                            .monospacedDigit()
-                                        Text(card.detail)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(12)
-                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                    DesktopEditorialMetricCardView(
+                                        item: DesktopEditorialMetricItem(
+                                            title: card.title,
+                                            value: card.valueText,
+                                            detail: card.detail
+                                        )
+                                    )
                                 }
                             }
 
@@ -2675,7 +3692,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(12)
-                                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                    .background(
+                                        Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                                        in: RoundedRectangle(cornerRadius: 12)
+                                    )
                                 }
                             }
 
@@ -2689,10 +3709,21 @@ struct DesktopDiagnosticsToolSectionView: View {
                                             x: .value("Context", point.xValue),
                                             y: .value("TTFT", point.yValue)
                                         )
-                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                        .interpolationMethod(.catmullRom)
+                                        .lineStyle(StrokeStyle(lineWidth: 2))
+                                        .foregroundStyle(MelixDesignTokens.accent)
+
+                                        PointMark(
+                                            x: .value("Context", point.xValue),
+                                            y: .value("TTFT", point.yValue)
+                                        )
+                                        .symbolSize(24)
+                                        .foregroundStyle(
+                                            MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.chartFillOpacity + 0.5)
+                                        )
                                     }
                                     .frame(height: 220)
-                                    .chartLegend(position: .bottom)
+                                    .chartLegend(.hidden)
                                 }
                             }
 
@@ -2706,10 +3737,12 @@ struct DesktopDiagnosticsToolSectionView: View {
                                             x: .value("Batch", point.xValue),
                                             y: .value("Throughput", point.yValue)
                                         )
-                                        .foregroundStyle(by: .value("Series", point.seriesTitle))
+                                        .foregroundStyle(
+                                            MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.chartFillOpacity)
+                                        )
                                     }
                                     .frame(height: 220)
-                                    .chartLegend(position: .bottom)
+                                    .chartLegend(.hidden)
                                 }
                             }
                         }
@@ -2717,8 +3750,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
 
-            MelixSectionCard("Benchmark History") {
+            if selectedStage != .evaluation {
+                DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix History" : "Bench History") {
                 VStack(alignment: .leading, spacing: 10) {
                     if viewModel.selectedBenchmarkPresentationMode == .standard {
                         ForEach(viewModel.benchmarkHistory.prefix(12)) { entry in
@@ -2751,16 +3786,19 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 .padding(12)
                                 .background(
                                     viewModel.selectedBenchmarkHistoryJobID == entry.jobID
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.secondary.opacity(0.06),
+                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
                             .buttonStyle(.plain)
                         }
                         if viewModel.benchmarkHistory.isEmpty {
-                            Text("No persisted benchmark history yet.")
-                                .foregroundStyle(.secondary)
+                            DesktopInlineEmptyStateView(
+                                title: Self.emptyBenchmarkTitle,
+                                detail: Self.emptyBenchmarkDetail,
+                                symbolName: "gauge.with.dots.needle.67percent"
+                            )
                         }
                     } else {
                         ForEach(viewModel.benchmarkMatrixHistory.prefix(12)) { entry in
@@ -2788,23 +3826,28 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 .padding(12)
                                 .background(
                                     viewModel.selectedBenchmarkMatrixHistoryJobID == entry.jobID
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.secondary.opacity(0.06),
+                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
                             .buttonStyle(.plain)
                         }
                         if viewModel.benchmarkMatrixHistory.isEmpty {
-                            Text("No persisted benchmark matrix history yet.")
-                                .foregroundStyle(.secondary)
+                            DesktopInlineEmptyStateView(
+                                title: Self.emptyBenchmarkTitle,
+                                detail: Self.emptyBenchmarkDetail,
+                                symbolName: "gauge.with.dots.needle.67percent"
+                            )
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
 
-            MelixSectionCard("Evaluation Configuration") {
+            if selectedStage == .evaluation {
+                DesktopEditorialSectionCard("Evaluation Configuration") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker(
                         "Evaluation Target",
@@ -3034,10 +4077,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         Image(systemName: viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
                                             .foregroundStyle(viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
                                     }
-                                    Text(suite.datasetID)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                     Text("\(suite.scoreLabel) • \(suite.defaultsText)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(suite.datasetID)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -3045,8 +4088,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 .padding(12)
                                 .background(
                                     viewModel.selectedEvaluationSuiteIDs.contains(suite.id)
-                                    ? Color.accentColor.opacity(0.12)
-                                    : Color.secondary.opacity(0.06),
+                                    ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                    : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
                             }
@@ -3105,8 +4148,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         .padding(.horizontal, 10)
                                         .background(
                                             isSelected
-                                            ? Color.accentColor.opacity(0.12)
-                                            : Color.secondary.opacity(0.06),
+                                            ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                            : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                             in: RoundedRectangle(cornerRadius: 10)
                                         )
                                     }
@@ -3183,8 +4226,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
 
-            MelixSectionCard("Evaluation Results") {
+            if selectedStage == .evaluation {
+                DesktopEditorialSectionCard("Evaluation Results") {
                 VStack(alignment: .leading, spacing: 8) {
                     if let selectedEntry = viewModel.selectedEvaluationHistoryEntry {
                         Text("Selected eval \(selectedEntry.jobID) • \(selectedEntry.suiteTitle) • \(selectedEntry.createdAtText)")
@@ -3196,8 +4241,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                     }
 
                     if viewModel.evaluationMetricCards.isEmpty {
-                        Text("Run an evaluation or refresh persisted results to inspect scores and samples.")
-                            .foregroundStyle(.secondary)
+                        DesktopInlineEmptyStateView(
+                            title: Self.emptyEvaluationTitle,
+                            detail: Self.emptyEvaluationDetail,
+                            symbolName: "checkmark.bubble"
+                        )
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
                             ForEach(viewModel.evaluationMetricCards.prefix(8)) { metric in
@@ -3214,8 +4262,10 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
 
-            MelixSectionCard("Evaluation History") {
+            if selectedStage == .evaluation {
+                DesktopEditorialSectionCard("Evaluation History") {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(viewModel.evaluationHistory.prefix(12)) { entry in
                         Button {
@@ -3247,22 +4297,38 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .padding(12)
                             .background(
                                 viewModel.selectedEvaluationHistoryJobID == entry.jobID
-                                ? Color.accentColor.opacity(0.12)
-                                : Color.secondary.opacity(0.06),
+                                ? MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity)
+                                : Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
                                 in: RoundedRectangle(cornerRadius: 12)
                             )
                         }
                         .buttonStyle(.plain)
                     }
                     if viewModel.evaluationHistory.isEmpty {
-                        Text("No persisted evaluation history yet.")
-                            .foregroundStyle(.secondary)
+                        DesktopInlineEmptyStateView(
+                            title: Self.emptyEvaluationTitle,
+                            detail: Self.emptyEvaluationDetail,
+                            symbolName: "checkmark.bubble"
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
 
-            MelixSectionCard("Runtime Metrics Snapshot") {
+            if let info = viewModel.selectedModelInfo {
+                DesktopEditorialSectionCard("Model Info") {
+                    DesktopModelInfoSummaryView(info: info)
+                }
+            }
+
+            if let report = viewModel.lastDoctorReport {
+                DesktopEditorialSectionCard("Doctor Report") {
+                    DesktopDoctorReportSummaryView(report: report)
+                }
+            }
+
+            DesktopEditorialSectionCard("Runtime Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
                         HStack {
@@ -3920,7 +4986,10 @@ struct DesktopEvaluationMetricCardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
     }
 
     var evidenceLines: [String] {
@@ -3978,7 +5047,10 @@ struct DesktopEvaluationSamplePreviewCardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
     }
 
     var categoryAndSubjectText: String? {

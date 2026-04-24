@@ -152,6 +152,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelSettingsError: Error?
     private var modelInfoError: Error?
     private var modelOperationError: Error?
+    private var modelOperationDelay: Duration = .zero
     private var doctorError: Error?
     private var benchError: Error?
     private var benchMatrixError: Error?
@@ -178,6 +179,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
     private var modelOperationResponsesByName: [String: Melix_Controlplane_V1_ModelOperationResult] = [:]
+    private var modelOperationErrorsByName: [String: Error] = [:]
     private var doctorResponse = FakeControlPlaneXPCClient.defaultDoctorReport()
     private var hubSearchResult = Melix_Controlplane_V1_HubSearchResult()
     private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
@@ -336,6 +338,25 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func configureModelOperation(_ operation: Melix_Controlplane_V1_ModelOperationResult) {
         modelOperationResponse = operation
+    }
+
+    func configureModelOperationError(_ error: Error?) {
+        modelOperationError = error
+    }
+
+    func configureModelOperationError(
+        _ error: Error?,
+        forNamedOperation operationName: String
+    ) {
+        if let error {
+            modelOperationErrorsByName[operationName] = error
+        } else {
+            modelOperationErrorsByName.removeValue(forKey: operationName)
+        }
+    }
+
+    func configureModelOperationDelay(_ delay: Duration) {
+        modelOperationDelay = delay
     }
 
     func configureModelOperation(
@@ -696,6 +717,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 ext: ext
             )
         )
+        if modelOperationDelay > .zero {
+            try? await Task.sleep(for: modelOperationDelay)
+        }
+        if let namedError = modelOperationErrorsByName[operation] {
+            throw namedError
+        }
         if let modelOperationError {
             throw modelOperationError
         }
