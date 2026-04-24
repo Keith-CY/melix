@@ -615,76 +615,78 @@ class ModelOpsJobRegistry:
 
             manifest = job.get("manifest") or {}
             ext = manifest.get("ext") if isinstance(manifest.get("ext"), dict) else {}
-            export_artifact_kind = str(manifest.get("export_artifact_kind", "")).strip()
-            source_artifact_kind = str(manifest.get("source_artifact_kind", ext.get("artifact_kind", ""))).strip()
-            if export_artifact_kind == "" and source_artifact_kind not in {"adapter", "derived_text_model", "converted_model_bundle"}:
+            # `or ""` guards against the key being present with a JSON `null`
+            # value — `str(None)` would otherwise corrupt the field to "None"
+            # and bypass the empty-string gate below.
+            export_artifact_kind = str(manifest.get("export_artifact_kind") or "").strip()
+            source_artifact_kind = str(
+                manifest.get("source_artifact_kind") or ext.get("artifact_kind") or ""
+            ).strip()
+            if export_artifact_kind == "" and source_artifact_kind not in {
+                "adapter",
+                "derived_text_model",
+                "converted_model_bundle",
+                "quantized_model_bundle",
+            }:
                 continue
 
             raw_lineage = manifest.get("parent_lineage")
             parent_lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
             target_repo = str(
-                manifest.get(
-                    "published_repo",
-                    manifest.get("target_repo", ext.get("target_repo", "")),
-                )
+                manifest.get("published_repo")
+                or manifest.get("target_repo")
+                or ext.get("target_repo")
+                or ""
             )
             publishes.append(
                 {
                     "job_id": job["job_id"],
                     "status": "published",
                     "target_repo": target_repo,
-                    "published_url": str(manifest.get("published_url", "")),
-                    "published_ref": str(manifest.get("published_ref", "")),
+                    "published_url": str(manifest.get("published_url") or ""),
+                    "published_ref": str(manifest.get("published_ref") or ""),
                     "published_files": list(manifest.get("published_files") or []),
                     "publish_backend": str(
-                        manifest.get(
-                            "upload_backend",
-                            manifest.get("publish_backend", ""),
-                        )
+                        manifest.get("upload_backend")
+                        or manifest.get("publish_backend")
+                        or ""
                     ),
                     "export_artifact_kind": export_artifact_kind,
                     "source_artifact_kind": source_artifact_kind,
-                    "distribution_contract": str(manifest.get("distribution_contract", "")),
-                    "source_job_id": str(parent_lineage.get("source_job_id", "")),
+                    "distribution_contract": str(manifest.get("distribution_contract") or ""),
+                    "source_job_id": str(parent_lineage.get("source_job_id") or ""),
                     "source_artifact_path": str(
-                        parent_lineage.get(
-                            "local_artifact_path",
-                            manifest.get("artifact_path", ""),
-                        )
+                        parent_lineage.get("local_artifact_path")
+                        or manifest.get("artifact_path")
+                        or ""
                     ),
                     "source_manifest_path": str(
-                        parent_lineage.get(
-                            "local_manifest_path",
-                            manifest.get("source_manifest_path", ""),
-                        )
+                        parent_lineage.get("local_manifest_path")
+                        or manifest.get("source_manifest_path")
+                        or ""
                     ),
                     "source_model": str(
-                        manifest.get(
-                            "source_model_from_artifact",
-                            manifest.get("source_model", job["source_model"]),
-                        )
+                        manifest.get("source_model_from_artifact")
+                        or manifest.get("source_model")
+                        or job["source_model"]
+                        or ""
                     ),
                     "adapter_name": str(
-                        manifest.get(
-                            "adapter_name",
-                            ext.get("adapter_name", ""),
-                        )
+                        manifest.get("adapter_name") or ext.get("adapter_name") or ""
                     ),
                     "derived_model_id": str(
-                        parent_lineage.get(
-                            "derived_model_id",
-                            manifest.get("derived_model_id", ""),
-                        )
+                        parent_lineage.get("derived_model_id")
+                        or manifest.get("derived_model_id")
+                        or ""
                     ),
                     "activation_mode": str(
-                        parent_lineage.get(
-                            "activation_mode",
-                            manifest.get("activation_mode", ""),
-                        )
+                        parent_lineage.get("activation_mode")
+                        or manifest.get("activation_mode")
+                        or ""
                     ),
                     "parent_lineage": parent_lineage,
-                    "receipt_path": str(job.get("output_path", "")),
-                    "upload_duration_ms": float(manifest.get("upload_duration_ms", 0.0)),
+                    "receipt_path": str(job.get("output_path") or ""),
+                    "upload_duration_ms": float(manifest.get("upload_duration_ms") or 0.0),
                 }
             )
         return publishes

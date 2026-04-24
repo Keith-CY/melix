@@ -2884,6 +2884,35 @@ struct MelixCLIRunnerTests {
         }
     }
 
+    @Test("lora publishes show truncates the known-jobs list past 10 entries")
+    func loraPublishesShowTruncatesKnownJobList() async throws {
+        let client = StubControlPlaneXPCClient()
+        let publishes = (1...15).map { index -> String in
+            let jobID = "model-ops-\(String(format: "%04d", index))"
+            return """
+            {"job_id":"\(jobID)","status":"published","target_repo":"melix/adapters/\(jobID)","export_artifact_kind":"adapter_export"}
+            """
+        }.joined(separator: ",")
+        let manifest = "{\"operation\":\"registry_snapshot\",\"publishes\":[\(publishes)]}"
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: manifest))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublishesShow(.init(modelID: "melix-dev-text", jobID: "missing"))
+            )
+            Issue.record("Expected publishes show to throw for an unknown job id")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("… (5 more)"))
+                #expect(message.contains("model-ops-0001"))
+                // 11th+ jobs must not be listed verbatim.
+                #expect(message.contains("model-ops-0012") == false)
+            } else {
+                Issue.record("Expected missingRequired error, got \(error)")
+            }
+        }
+    }
+
     @Test("lora publishes list surfaces a readable message when no publishes are recorded")
     func loraPublishesListRendersEmptyMessage() async throws {
         let client = StubControlPlaneXPCClient()
@@ -3449,6 +3478,176 @@ struct MelixCLIRunnerTests {
         #expect(mergedCall.ext["artifact_kind"] == "merged_export")
         #expect(mergedCall.ext["artifact_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
         #expect(mergedCall.ext["artifact_manifest_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
+    }
+
+    @Test("lora publish infers adapter export from the manifest schema at runtime")
+    func loraPublishInfersAdapterExportFromManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-adapter-infer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "artifact_kind": "adapter",
+                "adapter_name": "demo",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/inferred-adapter"))
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/adapters/demo",
+                    exportKind: nil,
+                    artifactPath: manifestURL.path,
+                    artifactManifestPath: manifestURL.path
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "adapter_export")
+    }
+
+    @Test("lora publish infers merged export from a fused derived-model manifest at runtime")
+    func loraPublishInfersMergedExportFromManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-merged-infer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("manifest.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.derived_text_model.v1",
+                "activation_mode": "fused_derived_model",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/inferred-merged"))
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/models/demo",
+                    exportKind: nil,
+                    artifactPath: manifestURL.path,
+                    artifactManifestPath: manifestURL.path
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "merged_export")
+    }
+
+    @Test("lora publish rejects an explicit --export-kind that contradicts the manifest content")
+    func loraPublishRejectsExportKindMismatchAgainstManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-mismatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "artifact_kind": "adapter",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublish(
+                    .init(
+                        modelID: "melix-dev-text",
+                        targetRepo: "melix/models/demo",
+                        exportKind: .mergedExport,
+                        artifactPath: manifestURL.path,
+                        artifactManifestPath: manifestURL.path
+                    )
+                )
+            )
+            Issue.record("Expected publish to reject mismatched --export-kind vs manifest")
+        } catch let error as MelixCLIError {
+            if case .usage(let message) = error {
+                #expect(message.contains("--export-kind merged"))
+                #expect(message.contains("adapter"))
+            } else {
+                Issue.record("Expected .usage error, got \(error)")
+            }
+        }
+        #expect(await client.lastModelOperationCall == nil)
+    }
+
+    @Test("lora publish errors when the manifest cannot be inferred and --export-kind is absent")
+    func loraPublishErrorsOnAmbiguousManifestWithoutExportKind() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-ambiguous-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("unknown.json")
+        try "{}".write(to: manifestURL, atomically: true, encoding: .utf8)
+
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublish(
+                    .init(
+                        modelID: "melix-dev-text",
+                        targetRepo: "melix/models/demo",
+                        exportKind: nil,
+                        artifactPath: manifestURL.path,
+                        artifactManifestPath: manifestURL.path
+                    )
+                )
+            )
+            Issue.record("Expected publish to reject ambiguous manifest without --export-kind")
+        } catch let error as MelixCLIError {
+            if case .usage(let message) = error {
+                #expect(message.contains("--export-kind"))
+            } else {
+                Issue.record("Expected .usage error, got \(error)")
+            }
+        }
+        #expect(await client.lastModelOperationCall == nil)
+    }
+
+    @Test("lora publish honors explicit --export-kind when the manifest file is unreadable")
+    func loraPublishHonorsExplicitKindWhenManifestUnreadable() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/escape-hatch"))
+
+        // Path intentionally does not exist on disk — the explicit override is the escape hatch.
+        let missingPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-missing-\(UUID().uuidString).json").path
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/adapters/demo",
+                    exportKind: .adapterExport,
+                    artifactPath: missingPath,
+                    artifactManifestPath: missingPath
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "adapter_export")
     }
 
     @Test("subprocess-backed lora operations build public melix arguments and decode manifest payloads")

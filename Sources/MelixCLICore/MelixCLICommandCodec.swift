@@ -285,17 +285,23 @@ public enum MelixCLICommandCodec {
             appendOption("--model-id", value: options.modelID, into: &arguments)
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)
             switch options.exportKind {
-            case .adapterExport:
+            case .some(.adapterExport):
+                // `--adapter-path` alone is unambiguous — no `--export-kind` needed.
                 appendOption("--adapter-path", value: options.artifactPath, into: &arguments)
-            case .mergedExport:
+            case .some(.mergedExport):
                 if options.artifactManifestPath.isEmpty == false {
                     appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
-                    // Be explicit on the round trip: --manifest-path alone would otherwise
-                    // require the parser to read the manifest from disk to classify it.
+                    // Round-trip an explicit merged selection so the parser does
+                    // not have to read the manifest to re-derive it.
                     appendOption("--export-kind", value: "merged", into: &arguments)
                 } else {
+                    // `--merged-model-path` alone is unambiguous — no `--export-kind` needed.
                     appendOption("--merged-model-path", value: options.artifactPath, into: &arguments)
                 }
+            case .none:
+                // The operator (or codec caller) left classification to the
+                // runner; emit only `--manifest-path` and the runner infers.
+                appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
             }
             json = options.json
         case .benchRun(let options):

@@ -139,7 +139,13 @@ public enum LoraPublishExportKind: String, Equatable, Sendable {
 public struct LoraPublishOptions: Equatable, Sendable {
     public let modelID: String
     public let targetRepo: String
-    public let exportKind: LoraPublishExportKind
+    /// `nil` defers export-kind classification to the runner, which reads
+    /// the manifest at `artifactManifestPath` and picks adapter vs merged
+    /// based on `schema_version` / `artifact_kind` / `activation_mode`.
+    /// Non-nil values are validated against the manifest when the file is
+    /// readable, so a mismatched override surfaces as a clean CLI usage
+    /// error rather than a downstream worker error.
+    public let exportKind: LoraPublishExportKind?
     public let artifactPath: String
     public let artifactManifestPath: String
     public let json: Bool
@@ -147,7 +153,7 @@ public struct LoraPublishOptions: Equatable, Sendable {
     public init(
         modelID: String,
         targetRepo: String,
-        exportKind: LoraPublishExportKind,
+        exportKind: LoraPublishExportKind?,
         artifactPath: String,
         artifactManifestPath: String = "",
         json: Bool = false
@@ -1713,7 +1719,10 @@ public enum MelixCLIParser {
             } else {
                 explicitExportKind = nil
             }
-            let exportKind: LoraPublishExportKind
+            // Parser stays pure — we only check the flag combinations here;
+            // any manifest read + classification happens in the runner
+            // (`resolveLoraPublishExportKind`) at dispatch time.
+            let exportKind: LoraPublishExportKind?
             let artifactPath: String
             let artifactManifestPath: String
             if adapterPath.isEmpty == false {
@@ -1732,12 +1741,8 @@ public enum MelixCLIParser {
                 artifactPath = mergedModelPath
                 artifactManifestPath = ""
             } else {
-                // --manifest-path: infer from the manifest when possible; fall back to --export-kind.
-                let inferred = try inferLoraPublishExportKind(
-                    manifestPath: manifestPath,
-                    explicitOverride: explicitExportKind
-                )
-                exportKind = inferred
+                // --manifest-path: defer classification to the runner unless --export-kind overrode it.
+                exportKind = explicitExportKind
                 artifactPath = manifestPath
                 artifactManifestPath = manifestPath
             }
@@ -1835,40 +1840,6 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
-    }
-
-    private static func inferLoraPublishExportKind(
-        manifestPath: String,
-        explicitOverride: LoraPublishExportKind?
-    ) throws -> LoraPublishExportKind {
-        if let override = explicitOverride {
-            return override
-        }
-        let url = URL(fileURLWithPath: manifestPath)
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            throw MelixCLIError.missingRequired(
-                "Unable to read manifest at \(manifestPath) to infer export kind; pass --export-kind explicitly."
-            )
-        }
-        let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let schemaVersion = (payload?["schema_version"] as? String) ?? ""
-        let artifactKind = (payload?["artifact_kind"] as? String) ?? ""
-        let activationMode = (payload?["activation_mode"] as? String) ?? ""
-        if artifactKind == "adapter" || schemaVersion == "melix.lora_adapter_package.v1" {
-            return .adapterExport
-        }
-        if schemaVersion == "melix.derived_text_model.v1" || activationMode == "fused_derived_model" {
-            return .mergedExport
-        }
-        if artifactKind == "converted_model_bundle" || artifactKind == "quantized_model_bundle" {
-            return .mergedExport
-        }
-        throw MelixCLIError.usage(
-            "Unable to infer export kind from manifest at \(manifestPath); pass --export-kind (adapter|merged) explicitly."
-        )
     }
 
     private static func parseLoraDataset(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3322,10 +3293,11 @@ public actor MelixCLIRunner {
             )
             return options.json ? result.manifestJson : result.outputPath
         case .loraPublish(let options):
+            let resolvedKind = try resolveLoraPublishExportKind(options: options)
             var ext = [
                 "target_repo": options.targetRepo,
                 "artifact_path": options.artifactPath,
-                "artifact_kind": options.exportKind.rawValue,
+                "artifact_kind": resolvedKind.rawValue,
             ]
             if !options.artifactManifestPath.isEmpty {
                 ext["artifact_manifest_path"] = options.artifactManifestPath
@@ -4594,7 +4566,16 @@ public actor MelixCLIRunner {
         if knownIDs.isEmpty {
             return "Unknown publish job \(jobID); no publishes are recorded yet."
         }
-        return "Unknown publish job \(jobID). Known jobs: \(knownIDs.joined(separator: ", "))."
+        return "Unknown publish job \(jobID). Known jobs: \(truncatedKnownIDList(knownIDs))."
+    }
+
+    private func truncatedKnownIDList(_ ids: [String], limit: Int = 10) -> String {
+        if ids.count <= limit {
+            return ids.joined(separator: ", ")
+        }
+        let shown = ids.prefix(limit).joined(separator: ", ")
+        let remaining = ids.count - limit
+        return "\(shown), … (\(remaining) more)"
     }
 
     private func renderPublishesList(_ publishes: [[String: Any]]) -> String {
@@ -4824,12 +4805,73 @@ public actor MelixCLIRunner {
         return payload
     }
 
+    private func resolveLoraPublishExportKind(options: LoraPublishOptions) throws -> LoraPublishExportKind {
+        let inferred = inferLoraPublishExportKindFromManifestIfAvailable(
+            manifestPath: options.artifactManifestPath
+        )
+        if let explicit = options.exportKind {
+            // When both an explicit override and a readable manifest are available,
+            // validate the override against the manifest. An unreadable or
+            // ambiguous manifest honors the override — that's the documented
+            // escape hatch for pre-schema-version manifests.
+            if let inferredKind = inferred, inferredKind != explicit {
+                throw MelixCLIError.usage(
+                    "--export-kind \(exportKindFlagValue(explicit)) does not match the manifest at \(options.artifactManifestPath) (classified as \(exportKindFlagValue(inferredKind))). Omit --export-kind to accept the manifest-inferred value or pass a matching manifest."
+                )
+            }
+            return explicit
+        }
+        if let inferredKind = inferred {
+            return inferredKind
+        }
+        throw MelixCLIError.usage(
+            "Unable to infer export kind from manifest at \(options.artifactManifestPath); pass --export-kind (adapter|merged) explicitly."
+        )
+    }
+
+    private func inferLoraPublishExportKindFromManifestIfAvailable(
+        manifestPath: String
+    ) -> LoraPublishExportKind? {
+        guard !manifestPath.isEmpty else {
+            return nil
+        }
+        let url = URL(fileURLWithPath: manifestPath)
+        guard
+            let data = try? Data(contentsOf: url),
+            let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            return nil
+        }
+        let schemaVersion = (payload["schema_version"] as? String) ?? ""
+        let artifactKind = (payload["artifact_kind"] as? String) ?? ""
+        let activationMode = (payload["activation_mode"] as? String) ?? ""
+        if artifactKind == "adapter" || schemaVersion == "melix.lora_adapter_package.v1" {
+            return .adapterExport
+        }
+        if schemaVersion == "melix.derived_text_model.v1" || activationMode == "fused_derived_model" {
+            return .mergedExport
+        }
+        if artifactKind == "converted_model_bundle" || artifactKind == "quantized_model_bundle" {
+            return .mergedExport
+        }
+        return nil
+    }
+
+    private func exportKindFlagValue(_ kind: LoraPublishExportKind) -> String {
+        switch kind {
+        case .adapterExport:
+            return "adapter"
+        case .mergedExport:
+            return "merged"
+        }
+    }
+
     private func experimentGroupNotFoundMessage(groupID: String, groups: [[String: Any]]) -> String {
         let knownIDs = groups.compactMap { $0["group_id"] as? String }.filter { $0.isEmpty == false }
         if knownIDs.isEmpty {
             return "Unknown experiment group \(groupID); no groups are recorded yet."
         }
-        return "Unknown experiment group \(groupID). Known groups: \(knownIDs.joined(separator: ", "))."
+        return "Unknown experiment group \(groupID). Known groups: \(truncatedKnownIDList(knownIDs))."
     }
 
     private func renderExperimentsList(_ groups: [[String: Any]]) -> String {

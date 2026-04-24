@@ -1040,22 +1040,13 @@ struct MelixCLIParserTests {
         }
     }
 
-    @Test("lora publish accepts explicit --export-kind adapter flag")
-    func loraPublishAcceptsExportKindAdapter() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-publish-parse-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let manifest = tempDir.appendingPathComponent("anything.json")
-        // An empty manifest file — inference would fail, but the explicit flag wins.
-        try "{}".write(to: manifest, atomically: true, encoding: .utf8)
-
+    @Test("lora publish --manifest-path with explicit --export-kind carries the explicit value forward")
+    func loraPublishExplicitExportKindCarriesForward() throws {
         let command = try MelixCLIParser.parse([
             "lora", "publish",
             "--model-id", "melix-dev-text",
             "--target-repo", "melix/adapters/demo",
-            "--manifest-path", manifest.path,
+            "--manifest-path", "/tmp/demo/manifest.json",
             "--export-kind", "adapter",
         ])
         guard case .loraPublish(let options) = command else {
@@ -1063,78 +1054,35 @@ struct MelixCLIParserTests {
             return
         }
         #expect(options.exportKind == .adapterExport)
-        #expect(options.artifactPath == manifest.path)
-        #expect(options.artifactManifestPath == manifest.path)
+        #expect(options.artifactPath == "/tmp/demo/manifest.json")
+        #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
     }
 
-    @Test("lora publish --manifest-path infers adapter export from the manifest schema")
-    func loraPublishInfersAdapterExportFromManifest() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-publish-infer-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let manifest = tempDir.appendingPathComponent("train_lora.adapter.json")
-        let adapterManifest = """
-        {"schema_version": "melix.lora_adapter_package.v1", "artifact_kind": "adapter", "adapter_name": "demo"}
-        """
-        try adapterManifest.write(to: manifest, atomically: true, encoding: .utf8)
-
+    @Test("lora publish --manifest-path without --export-kind defers classification to the runner")
+    func loraPublishDeferredExportKind() throws {
         let command = try MelixCLIParser.parse([
             "lora", "publish",
             "--model-id", "melix-dev-text",
             "--target-repo", "melix/adapters/demo",
-            "--manifest-path", manifest.path,
+            "--manifest-path", "/tmp/demo/manifest.json",
         ])
         guard case .loraPublish(let options) = command else {
             Issue.record("Expected loraPublish command")
             return
         }
-        #expect(options.exportKind == .adapterExport)
+        #expect(options.exportKind == nil)
+        #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
     }
 
-    @Test("lora publish --manifest-path infers merged export for a fused derived model manifest")
-    func loraPublishInfersMergedExportFromManifest() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-publish-infer-merged-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let manifest = tempDir.appendingPathComponent("manifest.json")
-        let mergedManifest = """
-        {"schema_version": "melix.derived_text_model.v1", "activation_mode": "fused_derived_model"}
-        """
-        try mergedManifest.write(to: manifest, atomically: true, encoding: .utf8)
-
-        let command = try MelixCLIParser.parse([
-            "lora", "publish",
-            "--model-id", "melix-dev-text",
-            "--target-repo", "melix/models/demo",
-            "--manifest-path", manifest.path,
-        ])
-        guard case .loraPublish(let options) = command else {
-            Issue.record("Expected loraPublish command")
-            return
-        }
-        #expect(options.exportKind == .mergedExport)
-    }
-
-    @Test("lora publish rejects ambiguous manifest without --export-kind")
-    func loraPublishRejectsAmbiguousManifest() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("melix-publish-ambiguous-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let manifest = tempDir.appendingPathComponent("unknown.json")
-        try "{}".write(to: manifest, atomically: true, encoding: .utf8)
-
+    @Test("lora publish rejects unknown --export-kind values")
+    func loraPublishRejectsUnknownExportKind() throws {
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse([
                 "lora", "publish",
                 "--model-id", "melix-dev-text",
-                "--target-repo", "melix/models/demo",
-                "--manifest-path", manifest.path,
+                "--target-repo", "melix/adapters/demo",
+                "--manifest-path", "/tmp/demo/manifest.json",
+                "--export-kind", "mystery",
             ])
         }
     }
@@ -1148,6 +1096,19 @@ struct MelixCLIParserTests {
                 "--target-repo", "melix/adapters/demo",
                 "--adapter-path", "/tmp/demo.adapter.json",
                 "--export-kind", "merged",
+            ])
+        }
+    }
+
+    @Test("lora publish rejects mismatched --export-kind and --merged-model-path")
+    func loraPublishRejectsMismatchedExportKindMerged() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "lora", "publish",
+                "--model-id", "melix-dev-text",
+                "--target-repo", "melix/models/demo",
+                "--merged-model-path", "/tmp/demo-merged",
+                "--export-kind", "adapter",
             ])
         }
     }

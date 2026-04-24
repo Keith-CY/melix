@@ -2361,6 +2361,87 @@ def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_up
     assert merged_entry["parent_lineage"]["source_adapter_job_id"] == adapter_train.job_id
 
 
+def test_job_registry_snapshot_publishes_tolerates_null_manifest_fields() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-null")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": None,
+                "target_repo": "melix/adapters/adapter-null",
+                "published_url": None,
+                "published_ref": None,
+                "published_files": None,
+                "upload_backend": None,
+                "publish_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "distribution_contract": None,
+                "adapter_name": None,
+                "source_model": None,
+                "parent_lineage": None,
+                "upload_duration_ms": None,
+                "ext": {"artifact_kind": "adapter", "adapter_name": "adapter-null"},
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-null/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    entry = publishes[0]
+
+    # str(None) would have leaked "None" into these fields without the or-fallbacks.
+    for key in (
+        "published_url",
+        "published_ref",
+        "distribution_contract",
+        "adapter_name",
+        "derived_model_id",
+        "activation_mode",
+        "source_artifact_path",
+        "source_manifest_path",
+        "source_model",
+    ):
+        assert entry[key] != "None", f"{key} leaked str(None)"
+        assert entry[key] != "null"
+    assert entry["target_repo"] == "melix/adapters/adapter-null"
+    assert entry["publish_backend"] == "huggingface_hub"
+    assert entry["adapter_name"] == "adapter-null"
+    # float(None) would have raised TypeError; verify the fallback.
+    assert entry["upload_duration_ms"] == 0.0
+    assert entry["parent_lineage"] == {}
+    assert entry["published_files"] == []
+
+
+def test_job_registry_snapshot_publishes_admits_quantized_model_bundle_source_kind() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-quant")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "target_repo": "melix/models/quant-bundle",
+                "upload_backend": "huggingface_hub",
+                # Worker emitted a quantized-bundle upload without
+                # export_artifact_kind; the source-kind branch should still
+                # admit it into publishes.
+                "source_artifact_kind": "quantized_model_bundle",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-quant/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["source_artifact_kind"] == "quantized_model_bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["target_repo"] == "melix/models/quant-bundle"
+
+
 def test_job_registry_snapshot_emits_empty_publishes_when_no_completed_uploads() -> None:
     registry = ModelOpsJobRegistry()
 
