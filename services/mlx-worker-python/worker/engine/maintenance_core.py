@@ -1067,6 +1067,10 @@ class MaintenanceCore:
         loaded_model = None
         try:
             lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            runtime_evidence = self._runtime_evidence_for_loaded_model(loaded_model)
+            parameters.update(runtime_evidence)
+            if self._truthy_parameter(parameters, "require_live_model"):
+                self._validate_required_live_model(runtime_evidence, operation="benchmark")
             task_kind = self._resolved_benchmark_task_kind(
                 request=request,
                 parameters=parameters,
@@ -1160,7 +1164,7 @@ class MaintenanceCore:
             structured_output_mode = parameters.get("structured_output_mode", "").strip()
             report_path = output_dir / "bench-report.md"
             report_path.write_text(
-                self._render_bench_report(request, metrics, task_kind=task_kind),
+                self._render_bench_report(request, metrics, task_kind=task_kind, parameters=parameters),
                 encoding="utf-8",
             )
             job_record = build_serving_benchmark_job(
@@ -1932,6 +1936,78 @@ class MaintenanceCore:
             )
         loaded_model = self._registry.load_model(model_spec)
         return loaded_model.handle, loaded_model
+
+    @staticmethod
+    def _truthy_parameter(parameters: dict[str, str], key: str) -> bool:
+        raw_value = parameters.get(key, parameters.get(f"melix.{key}", ""))
+        return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _runtime_evidence_for_loaded_model(loaded_model) -> dict[str, str]:
+        if loaded_model is None:
+            return {
+                "runtime_live_model": "false",
+                "runtime_model_handle": "",
+                "runtime_kind": "",
+                "runtime_name": "",
+                "runtime_model_id": "",
+                "runtime_model_path": "",
+                "runtime_source_kind": "",
+                "runtime_source_repo": "",
+            }
+
+        spec = getattr(loaded_model, "spec", None)
+        runtime = getattr(loaded_model, "runtime", None)
+        runtime_name = str(getattr(runtime, "runtime_name", "") or "")
+        runtime_kind = str(getattr(loaded_model, "runtime_kind", "") or "")
+        model_id = str(getattr(spec, "model_id", "") or "")
+        model_path = str(getattr(spec, "model_path", "") or "")
+        ext = getattr(spec, "ext", {}) if spec is not None else {}
+        source_kind = str(ext.get("melix.source_kind", "") if hasattr(ext, "get") else "")
+        source_repo = str(
+            ext.get("melix.hf_repo_id", "")
+            or ext.get("melix.source_repo", "")
+            or ext.get("melix.model_path", "")
+            if hasattr(ext, "get")
+            else ""
+        )
+        live_model = MaintenanceCore._runtime_name_is_live(runtime_name)
+        return {
+            "runtime_live_model": "true" if live_model else "false",
+            "runtime_model_handle": str(getattr(loaded_model, "handle", "") or ""),
+            "runtime_kind": runtime_kind,
+            "runtime_name": runtime_name,
+            "runtime_model_id": model_id,
+            "runtime_model_path": model_path,
+            "runtime_source_kind": source_kind,
+            "runtime_source_repo": source_repo,
+        }
+
+    @staticmethod
+    def _runtime_name_is_live(runtime_name: str) -> bool:
+        normalized = runtime_name.strip().lower()
+        if not normalized:
+            return False
+        if normalized.startswith("deterministic"):
+            return False
+        if "unavailable" in normalized:
+            return False
+        return True
+
+    @staticmethod
+    def _validate_required_live_model(runtime_evidence: dict[str, str], *, operation: str) -> None:
+        if runtime_evidence.get("runtime_live_model") == "true" and runtime_evidence.get("runtime_model_handle"):
+            return
+        runtime_name = runtime_evidence.get("runtime_name", "") or "missing"
+        model_handle = runtime_evidence.get("runtime_model_handle", "") or "missing"
+        raise ModelOperationError(
+            code="live_model_required",
+            message=(
+                f"{operation} requires a loaded live model runtime; "
+                f"runtime_name={runtime_name}; model_handle={model_handle}"
+            ),
+            details={"runtime_name": runtime_name, "model_handle": model_handle},
+        )
 
     @staticmethod
     def _resolved_benchmark_task_kind(
@@ -2939,7 +3015,9 @@ class MaintenanceCore:
         metrics: list[BenchMetricSpec],
         *,
         task_kind: str,
+        parameters: dict[str, str] | None = None,
     ) -> str:
+        parameters = parameters or {}
         lines = [
             "# Melix Bench",
             "",
@@ -2947,6 +3025,9 @@ class MaintenanceCore:
             f"- suites: {', '.join(request.suites) if request.suites else 'smoke'}",
             f"- task_kind: {task_kind}",
             f"- source_repo: {getattr(request, 'source_repo', '').strip()}",
+            f"- runtime_name: {parameters.get('runtime_name', '')}",
+            f"- runtime_kind: {parameters.get('runtime_kind', '')}",
+            f"- runtime_live_model: {parameters.get('runtime_live_model', '')}",
             "",
         ]
         for metric in metrics:

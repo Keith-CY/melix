@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -13,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SWIFT_MLX_METALLIB_PATH_ENV = "MELIX_SWIFT_MLX_METALLIB_PATH"
+SWIFT_TEXT_WORKER_PACKAGE_DIR = "services/mlx-text-worker-swift"
 SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV = "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"
 SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV = "MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"
 SWIFT_OPTIONAL_PARENT_ENV = (
@@ -202,7 +205,50 @@ def cleanup_runtime_artifacts(layout: RuntimeLayout) -> None:
         pass
 
 
+def resolve_swift_mlx_package_version(repo_root: Path) -> str | None:
+    package_resolved_path = repo_root / SWIFT_TEXT_WORKER_PACKAGE_DIR / "Package.resolved"
+    if not package_resolved_path.is_file():
+        return None
+
+    try:
+        payload = json.loads(package_resolved_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    for pin in payload.get("pins", []):
+        if not isinstance(pin, dict) or pin.get("identity") != "mlx-swift":
+            continue
+        state = pin.get("state", {})
+        if isinstance(state, dict):
+            version = state.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+    return None
+
+
+def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
+    for ancestor in metallib_path.resolve().parents:
+        for metadata_path in ancestor.glob("mlx_metal-*.dist-info/METADATA"):
+            try:
+                metadata = metadata_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for line in metadata.splitlines():
+                if line.startswith("Version:"):
+                    version = line.removeprefix("Version:").strip()
+                    if version:
+                        return version
+
+        for dist_info_path in ancestor.glob("mlx_metal-*.dist-info"):
+            match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", dist_info_path.name)
+            if match:
+                return match.group("version")
+
+    return None
+
+
 def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
+    expected_mlx_metal_version = resolve_swift_mlx_package_version(repo_root)
     candidate_search_roots: list[Path] = []
     if uv_cache_dir is not None:
         candidate_search_roots.append(uv_cache_dir)
@@ -212,8 +258,10 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
     for root in candidate_roots:
         for prefix in candidate_prefixes:
             candidate_search_roots.append(root / prefix)
+    candidate_search_roots.append(Path.home() / ".cache" / "uv")
 
     seen: set[Path] = set()
+    rejected_versions: dict[str, list[Path]] = {}
     for search_root in candidate_search_roots:
         resolved_root = search_root.expanduser().resolve()
         if resolved_root in seen or not resolved_root.exists():
@@ -221,7 +269,27 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
         seen.add(resolved_root)
         for candidate in resolved_root.rglob("mlx.metallib"):
             if candidate.is_file():
-                return candidate.resolve()
+                resolved_candidate = candidate.resolve()
+                if expected_mlx_metal_version is None:
+                    return resolved_candidate
+
+                candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
+                if candidate_version == expected_mlx_metal_version:
+                    return resolved_candidate
+
+                rejected_versions.setdefault(candidate_version or "unknown", []).append(resolved_candidate)
+
+    if expected_mlx_metal_version is not None and rejected_versions:
+        observed = ", ".join(
+            f"{version} at {paths[0]}" for version, paths in sorted(rejected_versions.items())
+        )
+        raise RuntimeError(
+            "No compatible Swift MLX metallib was found. "
+            f"{SWIFT_TEXT_WORKER_PACKAGE_DIR}/Package.resolved pins mlx-swift {expected_mlx_metal_version}, "
+            f"so the Swift text worker needs mlx_metal {expected_mlx_metal_version} mlx.metallib. "
+            f"Observed incompatible candidates: {observed}. "
+            f"Set {SWIFT_MLX_METALLIB_PATH_ENV} to a matching mlx.metallib or install the matching mlx_metal wheel."
+        )
 
     return None
 

@@ -4490,6 +4490,8 @@ struct ControlPlaneServiceTests {
         #expect(lastLoadRequest.model.ext["vision_family_id"] == "gemma4-v1")
         #expect(lastBenchRequest.taskKind == "text-generation")
         #expect(lastBenchRequest.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(lastBenchRequest.parameters["require_live_model"] == "true")
+        #expect(lastBenchRequest.parameters["live_model_source"] == "hf_repo")
         #expect(response.ops.benchmarkJob.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(response.ops.benchmarkJob.taskKind == "text-generation")
         #expect(response.ops.benchmarkJob.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
@@ -4539,6 +4541,7 @@ struct ControlPlaneServiceTests {
         #expect(lastLoadRequest.model.ext["vision_supports_tool_calls"] == "false")
         #expect(lastBenchRequest.taskKind == "image-to-text")
         #expect(lastBenchRequest.sourceRepo == "google/paligemma2-3b-ft-docci-448")
+        #expect(lastBenchRequest.parameters["require_live_model"] == "true")
         #expect(response.ops.benchmarkJob.taskKind == "image-to-text")
     }
 
@@ -4639,6 +4642,8 @@ struct ControlPlaneServiceTests {
         #expect(loadRequest.model.ext["vision_family_id"] == "gemma4-v1")
         #expect(evalRequest.taskKind == "image-text-to-text")
         #expect(evalRequest.sourceRepo == "mlx-community/gemma-4-e2b-it-4bit")
+        #expect(evalRequest.parameters["require_live_model"] == "true")
+        #expect(evalRequest.parameters["live_model_source"] == "hf_repo")
         #expect(response.ops.evaluationJob.taskKind == "image-text-to-text")
     }
 
@@ -5634,6 +5639,8 @@ struct ControlPlaneServiceTests {
         #expect(importedImageLoadRequest.model.ext["vision_family_id"] == "paligemma-v1")
         #expect(importedImageEvalRequest.taskKind == "image-to-text")
         #expect(importedImageEvalRequest.sourceRepo == "google/paligemma2-3b-ft-docci-448")
+        #expect(importedImageEvalRequest.parameters["require_live_model"] == "true")
+        #expect(importedImageEvalRequest.parameters["live_model_source"] == "hf_repo")
         #expect(importedImageResponse.ops.evaluationJob.taskKind == "image-to-text")
 
         let unsupportedImageGenerationClient = ScriptedModelOperationsWorkerClient()

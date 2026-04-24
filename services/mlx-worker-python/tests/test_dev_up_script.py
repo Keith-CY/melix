@@ -35,6 +35,36 @@ def make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def write_swift_mlx_package_resolved(repo_root: Path, version: str) -> None:
+    package_resolved_path = repo_root / "services/mlx-text-worker-swift/Package.resolved"
+    package_resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    package_resolved_path.write_text(
+        (
+            "{\n"
+            '  "pins": [\n'
+            "    {\n"
+            '      "identity": "mlx-swift",\n'
+            '      "state": {\n'
+            f'        "version": "{version}"\n'
+            "      }\n"
+            "    }\n"
+            "  ]\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_mlx_metal_fixture(root: Path, version: str) -> Path:
+    metallib_path = root / "mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    metallib_path.write_text("mlx", encoding="utf-8")
+    metadata_path = root / f"mlx_metal-{version}.dist-info/METADATA"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(f"Name: mlx-metal\nVersion: {version}\n", encoding="utf-8")
+    return metallib_path
+
+
 def make_layout(dev_up, tmp_path: Path):
     return dev_up.RuntimeLayout(
         service_instance_name="",
@@ -298,6 +328,51 @@ def test_prepare_swift_worker_launch_cwd_uses_configured_uv_cache_dir_for_metall
     assert default_metallib.resolve() == metallib_path.resolve()
 
 
+def test_prepare_swift_worker_launch_cwd_prefers_matching_swift_mlx_metallib_from_global_uv_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.29.1")
+    layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/bad", "0.31.1")
+    home_dir = tmp_path / "home"
+    matching_metallib_path = write_mlx_metal_fixture(home_dir / ".cache/uv/archive-v0/good", "0.29.1")
+    monkeypatch.setattr(dev_up.Path, "home", lambda: home_dir)
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, repo_root)
+
+    default_metallib = launch_cwd / "default.metallib"
+    assert launch_cwd == layout.runtime_dir / "swift-text-worker-cwd"
+    assert default_metallib.is_symlink()
+    assert default_metallib.resolve() == matching_metallib_path.resolve()
+
+
+def test_prepare_swift_worker_launch_cwd_rejects_incompatible_auto_discovered_metallib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.29.1")
+    layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    incompatible_metallib_path = write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/bad", "0.31.1")
+    monkeypatch.setattr(dev_up.Path, "home", lambda: tmp_path / "empty-home")
+
+    with pytest.raises(RuntimeError) as exc:
+        dev_up.prepare_swift_worker_launch_cwd(layout, repo_root)
+
+    message = str(exc.value)
+    assert "mlx-swift 0.29.1" in message
+    assert "mlx_metal 0.29.1" in message
+    assert "0.31.1" in message
+    assert str(incompatible_metallib_path.resolve()) in message
+    assert "MELIX_SWIFT_MLX_METALLIB_PATH" in message
+
+
 def test_prepare_swift_worker_launch_cwd_prefers_configured_metallib(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -334,10 +409,14 @@ def test_prepare_swift_worker_launch_cwd_rejects_missing_configured_metallib(
         dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
 
 
-def test_prepare_swift_worker_launch_cwd_falls_back_to_repo_root_without_local_metallib(tmp_path: Path) -> None:
+def test_prepare_swift_worker_launch_cwd_falls_back_to_repo_root_without_local_metallib(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     dev_up = load_dev_up_module()
     layout = make_layout(dev_up, tmp_path)
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(dev_up.Path, "home", lambda: tmp_path / "empty-home")
 
     launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
 
