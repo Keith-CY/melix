@@ -1341,6 +1341,35 @@ struct RequestCoordinatorTests {
         #expect(cacheSnapshot.recentRestorePlans[0].restoredTokenCount == 2)
     }
 
+    @Test("progress wait helper can match the final snapshot after polling attempts")
+    func progressWaitHelperCanMatchFinalSnapshotAfterPollingAttempts() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-progress-helper",
+            laneHint: "text.prefill.background",
+            priority: 50,
+            workerID: "worker-progress-helper"
+        )
+        await schedulerReadModel.recordPrefillProgress(
+            requestID: "req-progress-helper",
+            processedTokens: 24,
+            totalTokens: 24,
+            restoreStage: "none",
+            cachePressure: 0
+        )
+
+        let progress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-progress-helper",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            attempts: 0,
+            matching: { $0.prefillProcessedTokens == 24 }
+        ))
+
+        #expect(progress.prefillProgressPct == 100)
+    }
+
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -1391,7 +1420,8 @@ struct RequestCoordinatorTests {
             requestID: "req-chunked-prefill",
             phase: .requestPrefilling,
             lane: "text.prefill.background",
-            attempts: 50
+            attempts: 50,
+            matching: { $0.prefillProcessedTokens == 24 }
         ))
         await workerClient.emitDecodeStarted(requestID: "req-chunked-prefill", decodeHandle: "decode-req-chunked-prefill")
         await workerClient.emitToken(requestID: "req-chunked-prefill", text: "chunked")
@@ -3158,17 +3188,24 @@ private func waitForProgress(
     requestID: String,
     phase: Melix_Controlplane_V1_RequestPhase,
     lane: String? = nil,
-    attempts: Int = 300
+    attempts: Int = 300,
+    matching predicate: ((Melix_Controlplane_V1_RequestProgressEvent) -> Bool)? = nil
 ) async -> Melix_Controlplane_V1_RequestProgressEvent? {
     for _ in 0..<attempts {
         let progress = await schedulerReadModel.progressSnapshot(for: requestID)
-        if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
+        if let progress,
+           progress.phase == phase,
+           lane.map({ progress.lane == $0 }) ?? true,
+           predicate?(progress) ?? true {
             return progress
         }
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     let progress = await schedulerReadModel.progressSnapshot(for: requestID)
-    if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
+    if let progress,
+       progress.phase == phase,
+       lane.map({ progress.lane == $0 }) ?? true,
+       predicate?(progress) ?? true {
         return progress
     }
     return nil
