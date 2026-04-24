@@ -3228,6 +3228,21 @@ private func makeCoordinatorTextModel(
     return model
 }
 
+/// Multiplier applied to polling-based wait helpers in this test file.
+///
+/// Local runs stay on the fast defaults; CI machines (GitHub-hosted macOS
+/// runners are slower and noisier than developer laptops) get a 4× budget so
+/// phase-transition polls can't race the scheduler under contention. The
+/// actual numerical default still passes locally in a few tens of ms — the
+/// multiplier only affects the *ceiling* before a timeout returns nil.
+private let waitAttemptsMultiplier: Int = {
+    let env = ProcessInfo.processInfo.environment
+    if env["CI"] != nil || env["GITHUB_ACTIONS"] != nil {
+        return 4
+    }
+    return 1
+}()
+
 private func waitForProgress(
     schedulerReadModel: SchedulerReadModel,
     requestID: String,
@@ -3236,7 +3251,8 @@ private func waitForProgress(
     attempts: Int = 300,
     matching predicate: ((Melix_Controlplane_V1_RequestProgressEvent) -> Bool)? = nil
 ) async -> Melix_Controlplane_V1_RequestProgressEvent? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         let progress = await schedulerReadModel.progressSnapshot(for: requestID)
         if let progress,
            progress.phase == phase,
@@ -3260,7 +3276,8 @@ private func waitForPrefillRequest(
     workerClient: PhaseAwareWorkerClient,
     attempts: Int = 100
 ) async -> Melix_Worker_V1_PrefillRequest? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         if let request = await workerClient.lastPrefillRequest() {
             return request
         }
@@ -3273,7 +3290,8 @@ private func waitForDecodeRequest(
     workerClient: PhaseAwareWorkerClient,
     attempts: Int = 100
 ) async -> Melix_Worker_V1_DecodeRequest? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         if let request = await workerClient.lastDecodeRequest() {
             return request
         }
@@ -3287,8 +3305,9 @@ private func waitForDecodeRequests(
     requestIDs: [String],
     attempts: Int = 100
 ) async -> [String] {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
     let expected = Set(requestIDs)
-    for _ in 0..<attempts {
+    for _ in 0..<effectiveAttempts {
         let observed = await workerClient.decodeRequestIDs()
         if Set(observed).isSuperset(of: expected) {
             return observed
