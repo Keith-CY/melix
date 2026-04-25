@@ -1411,6 +1411,21 @@ struct RequestCoordinatorTests {
         #expect(progress.accelerationMode == .acceleratedPrefill)
     }
 
+    @Test("CI wait multiplier ignores falsey environment values")
+    func ciWaitMultiplierIgnoresFalseyEnvironmentValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "false"]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "0"]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": ""]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "false"]) == 1)
+    }
+
+    @Test("CI wait multiplier widens budgets for truthy environment values")
+    func ciWaitMultiplierWidensBudgetsForTruthyEnvironmentValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+    }
+
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -3236,12 +3251,29 @@ private func makeCoordinatorTextModel(
 /// actual numerical default still passes locally in a few tens of ms — the
 /// multiplier only affects the *ceiling* before a timeout returns nil.
 private let waitAttemptsMultiplier: Int = {
-    let env = ProcessInfo.processInfo.environment
-    if env["CI"] != nil || env["GITHUB_ACTIONS"] != nil {
+    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
+}()
+
+private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
+    if isTruthyEnvironmentFlag(environment["CI"])
+        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"]) {
         return 4
     }
     return 1
-}()
+}
+
+private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
+    guard let value else {
+        return false
+    }
+
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "true", "yes", "on":
+        return true
+    default:
+        return false
+    }
+}
 
 private func waitForProgress(
     schedulerReadModel: SchedulerReadModel,

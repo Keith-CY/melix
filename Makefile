@@ -38,6 +38,10 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C := \
 	"HTTPGatewayTests.RequestCoordinatorTests/multimodalVisionRequestsUseBackgroundLanes()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/ocrRequestsPublishVisionMetrics()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/partialRestorePlansRecordWalkBackMetricsAndMetadata()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/progressWaitHelperCanMatchFinalSnapshotAfterPollingAttempts()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/progressWaitHelperSkipsSnapshotsUntilPredicateMetadataMatches()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierIgnoresFalseyEnvironmentValues()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierWidensBudgetsForTruthyEnvironmentValues()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/phaseAwareStreamEventsPreserveAccelerationMetadataAndTerminalAborts()"
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_D := \
 	"HTTPGatewayTests.RequestCoordinatorTests/phaseAwareTextRequestsJoinTheActiveContinuousBatchCohort()" \
