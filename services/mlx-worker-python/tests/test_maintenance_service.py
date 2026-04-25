@@ -1456,27 +1456,27 @@ def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(t
 
     def run_first_job() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-a"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    generate_manifest=True,
-                    ext={
-                        "operation": "quantize",
-                        "test_hold_ms": "150",
-                    },
-                ),
-                context=None,
-            )
-        )
-        started.set()
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-a"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "test_hold_ms": "150",
+                },
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_first_job)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     second_events = list(
         service.ConvertModel(
@@ -1520,26 +1520,28 @@ def test_quantize_job_conflict_lock_blocks_upload_on_same_linked_quantization_sc
     )
     bundle_path = Path(completed_quantize[-1].completed.output_path)
 
+    started = threading.Event()
     first_events: list[maintenance_pb2.ConvertModelEvent] = []
 
     def run_held_quantize() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-held"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    ext={"operation": "quantize", "test_hold_ms": "150"},
-                ),
-                context=None,
-            )
-        )
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-held"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize", "test_hold_ms": "150"},
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_held_quantize)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     upload_events = list(
         service.ConvertModel(
