@@ -103,6 +103,7 @@ class ModelOpsJobRegistry:
             "jobs": jobs,
             "adapters": self._adapter_registry(jobs),
             "derived_models": self._derived_model_registry(jobs),
+            "publishes": self._publish_registry(jobs),
             "downloads": self._download_registry(jobs),
             "experiment_groups": self._experiment_groups(),
             }
@@ -604,6 +605,110 @@ class ModelOpsJobRegistry:
             "adapter_manifest_paths": removed_adapter_manifest_paths,
             "activation_job_ids": removed_activation_job_ids,
         }
+
+    @staticmethod
+    def _publish_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        publishes: list[dict[str, Any]] = []
+        for job in jobs:
+            if job["operation"] != "upload" or job["status"] != "completed":
+                continue
+
+            manifest = job.get("manifest") or {}
+            ext = manifest.get("ext") if isinstance(manifest.get("ext"), dict) else {}
+            # `or ""` guards against the key being present with a JSON `null`
+            # value — `str(None)` would otherwise corrupt the field to "None"
+            # and bypass the empty-string gate below.
+            export_artifact_kind = str(manifest.get("export_artifact_kind") or "").strip()
+            source_artifact_kind = str(
+                manifest.get("source_artifact_kind") or ext.get("artifact_kind") or ""
+            ).strip()
+            target_repo = str(
+                manifest.get("published_repo")
+                or manifest.get("target_repo")
+                or ext.get("target_repo")
+                or ""
+            )
+            published_url = str(manifest.get("published_url") or "")
+            # The export-kind / source-artifact-kind branches admit Module-5+
+            # upload manifests. Pre-Module-5 worker emissions only carried
+            # `published_repo` + `upload_backend` without an explicit kind, so
+            # the third branch admits any completed upload that successfully
+            # reached a remote target (non-empty target_repo or published_url).
+            # Together this covers legacy uploads while keeping unrelated
+            # `upload` jobs (no remote target, no recognized kind) out of the
+            # publishes lineage view.
+            if (
+                export_artifact_kind == ""
+                and source_artifact_kind
+                not in {
+                    "adapter",
+                    "derived_text_model",
+                    "converted_model_bundle",
+                    "quantized_model_bundle",
+                }
+                and not target_repo
+                and not published_url
+            ):
+                continue
+
+            raw_lineage = manifest.get("parent_lineage")
+            parent_lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
+            raw_published_files = manifest.get("published_files")
+            published_files = (
+                list(raw_published_files) if isinstance(raw_published_files, list) else []
+            )
+            publishes.append(
+                {
+                    "job_id": job["job_id"],
+                    "status": "published",
+                    "target_repo": target_repo,
+                    "published_url": published_url,
+                    "published_ref": str(manifest.get("published_ref") or ""),
+                    "published_files": published_files,
+                    "publish_backend": str(
+                        manifest.get("upload_backend")
+                        or manifest.get("publish_backend")
+                        or ""
+                    ),
+                    "export_artifact_kind": export_artifact_kind,
+                    "source_artifact_kind": source_artifact_kind,
+                    "distribution_contract": str(manifest.get("distribution_contract") or ""),
+                    "source_job_id": str(parent_lineage.get("source_job_id") or ""),
+                    "source_artifact_path": str(
+                        parent_lineage.get("local_artifact_path")
+                        or manifest.get("artifact_path")
+                        or ""
+                    ),
+                    "source_manifest_path": str(
+                        parent_lineage.get("local_manifest_path")
+                        or manifest.get("source_manifest_path")
+                        or ""
+                    ),
+                    "source_model": str(
+                        manifest.get("source_model_from_artifact")
+                        or manifest.get("source_model")
+                        or job["source_model"]
+                        or ""
+                    ),
+                    "adapter_name": str(
+                        manifest.get("adapter_name") or ext.get("adapter_name") or ""
+                    ),
+                    "derived_model_id": str(
+                        parent_lineage.get("derived_model_id")
+                        or manifest.get("derived_model_id")
+                        or ""
+                    ),
+                    "activation_mode": str(
+                        parent_lineage.get("activation_mode")
+                        or manifest.get("activation_mode")
+                        or ""
+                    ),
+                    "parent_lineage": parent_lineage,
+                    "receipt_path": str(job.get("output_path") or ""),
+                    "upload_duration_ms": float(manifest.get("upload_duration_ms") or 0.0),
+                }
+            )
+        return publishes
 
     @staticmethod
     def _download_registry(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:

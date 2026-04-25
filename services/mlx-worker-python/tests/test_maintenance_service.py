@@ -2458,6 +2458,288 @@ def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models
     assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
 
 
+def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_uploads() -> None:
+    registry = ModelOpsJobRegistry()
+
+    adapter_train = registry.start("train_lora", "melix-dev-text", "/tmp/train-a")
+    registry.attach_manifest(
+        adapter_train.job_id,
+        json.dumps({"adapter_name": "adapter-a"}),
+    )
+    registry.complete(adapter_train.job_id, "/tmp/train-a/train_lora.adapter.json")
+
+    adapter_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-adapter")
+    registry.attach_manifest(
+        adapter_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/adapters/adapter-a",
+                "published_url": "https://huggingface.co/melix/adapters/adapter-a",
+                "published_ref": "main",
+                "published_files": ["train_lora.adapter.json", "adapter/adapters.safetensors"],
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "distribution_contract": "adapter_only",
+                "adapter_name": "adapter-a",
+                "source_model": "melix-dev-text",
+                "source_model_from_artifact": "melix-dev-text",
+                "parent_lineage": {
+                    "local_artifact_path": "/tmp/train-a/train_lora.adapter.json",
+                    "local_manifest_path": "/tmp/train-a/train_lora.adapter.json",
+                    "source_artifact_kind": "adapter",
+                    "source_job_id": adapter_train.job_id,
+                    "source_model": "melix-dev-text",
+                    "export_artifact_kind": "adapter_export",
+                },
+                "upload_duration_ms": 120.5,
+                "ext": {"artifact_kind": "adapter", "adapter_name": "adapter-a"},
+            }
+        ),
+    )
+    registry.complete(adapter_upload.job_id, "/tmp/upload-adapter/upload.receipt.json")
+
+    merged_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-merged")
+    registry.attach_manifest(
+        merged_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-fused",
+                "published_url": "https://huggingface.co/melix/models/melix-dev-fused",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "source_artifact_kind": "derived_text_model",
+                "distribution_contract": "merged_model",
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-fused",
+                    "local_manifest_path": "/runtime/activate/melix-dev-fused/manifest.json",
+                    "source_artifact_kind": "derived_text_model",
+                    "source_job_id": "model-ops-0099",
+                    "source_adapter_job_id": adapter_train.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-fused",
+                    "source_model": "melix-dev-text",
+                    "export_artifact_kind": "merged_export",
+                },
+                "upload_duration_ms": 321.0,
+            }
+        ),
+    )
+    registry.complete(merged_upload.job_id, "/tmp/upload-merged/upload.receipt.json")
+
+    # A completed upload that never actually hit a remote (no target_repo,
+    # no published_url, no recognized artifact kind) should stay out of the
+    # publishes lineage — it's not a publish event in any meaningful sense.
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-no-target")
+    registry.attach_manifest(
+        unrelated.job_id,
+        json.dumps({"ext": {"artifact_kind": "model"}}),
+    )
+    registry.complete(unrelated.job_id, "/tmp/upload-no-target/upload.receipt.json")
+
+    publishes = {entry["job_id"]: entry for entry in registry.snapshot()["publishes"]}
+
+    assert adapter_upload.job_id in publishes
+    assert merged_upload.job_id in publishes
+    assert unrelated.job_id not in publishes
+
+    adapter_entry = publishes[adapter_upload.job_id]
+    assert adapter_entry["status"] == "published"
+    assert adapter_entry["target_repo"] == "melix/adapters/adapter-a"
+    assert adapter_entry["export_artifact_kind"] == "adapter_export"
+    assert adapter_entry["source_artifact_kind"] == "adapter"
+    assert adapter_entry["distribution_contract"] == "adapter_only"
+    assert adapter_entry["publish_backend"] == "huggingface_hub"
+    assert adapter_entry["adapter_name"] == "adapter-a"
+    assert adapter_entry["source_job_id"] == adapter_train.job_id
+    assert adapter_entry["source_artifact_path"] == "/tmp/train-a/train_lora.adapter.json"
+    assert adapter_entry["source_manifest_path"] == "/tmp/train-a/train_lora.adapter.json"
+    assert adapter_entry["published_url"].endswith("/adapters/adapter-a")
+    assert adapter_entry["published_ref"] == "main"
+    assert "train_lora.adapter.json" in adapter_entry["published_files"]
+    assert adapter_entry["receipt_path"] == "/tmp/upload-adapter/upload.receipt.json"
+    assert adapter_entry["upload_duration_ms"] == 120.5
+
+    merged_entry = publishes[merged_upload.job_id]
+    assert merged_entry["export_artifact_kind"] == "merged_export"
+    assert merged_entry["source_artifact_kind"] == "derived_text_model"
+    assert merged_entry["distribution_contract"] == "merged_model"
+    assert merged_entry["derived_model_id"] == "melix-dev-fused"
+    assert merged_entry["activation_mode"] == "fused_derived_model"
+    assert merged_entry["source_artifact_path"] == "/runtime/activate/melix-dev-fused"
+    assert merged_entry["source_manifest_path"].endswith("/melix-dev-fused/manifest.json")
+    assert merged_entry["parent_lineage"]["source_adapter_job_id"] == adapter_train.job_id
+
+
+def test_job_registry_snapshot_publishes_tolerates_null_manifest_fields() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-null")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": None,
+                "target_repo": "melix/adapters/adapter-null",
+                "published_url": None,
+                "published_ref": None,
+                "published_files": None,
+                "upload_backend": None,
+                "publish_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "distribution_contract": None,
+                "adapter_name": None,
+                "source_model": None,
+                "parent_lineage": None,
+                "upload_duration_ms": None,
+                "ext": {"artifact_kind": "adapter", "adapter_name": "adapter-null"},
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-null/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    entry = publishes[0]
+
+    # str(None) would have leaked "None" into these fields without the or-fallbacks.
+    for key in (
+        "published_url",
+        "published_ref",
+        "distribution_contract",
+        "adapter_name",
+        "derived_model_id",
+        "activation_mode",
+        "source_artifact_path",
+        "source_manifest_path",
+        "source_model",
+    ):
+        assert entry[key] != "None", f"{key} leaked str(None)"
+        assert entry[key] != "null"
+    assert entry["target_repo"] == "melix/adapters/adapter-null"
+    assert entry["publish_backend"] == "huggingface_hub"
+    assert entry["adapter_name"] == "adapter-null"
+    # float(None) would have raised TypeError; verify the fallback.
+    assert entry["upload_duration_ms"] == 0.0
+    assert entry["parent_lineage"] == {}
+    assert entry["published_files"] == []
+
+
+def test_job_registry_snapshot_publishes_admits_quantized_model_bundle_source_kind() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-quant")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "target_repo": "melix/models/quant-bundle",
+                "upload_backend": "huggingface_hub",
+                # Worker emitted a quantized-bundle upload without
+                # export_artifact_kind; the source-kind branch should still
+                # admit it into publishes.
+                "source_artifact_kind": "quantized_model_bundle",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-quant/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["source_artifact_kind"] == "quantized_model_bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["target_repo"] == "melix/models/quant-bundle"
+
+
+def test_job_registry_snapshot_publishes_admits_legacy_uploads_with_target_repo() -> None:
+    # Pre-Module-5 worker emissions only carried `published_repo` plus an
+    # upload backend without `export_artifact_kind` / `source_artifact_kind`.
+    # Those should still appear in the publishes lineage view so the doc
+    # claim ("old-format manifests keep working") holds.
+    registry = ModelOpsJobRegistry()
+
+    legacy_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-legacy")
+    registry.attach_manifest(
+        legacy_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/legacy-bundle",
+                "upload_backend": "huggingface_hub",
+            }
+        ),
+    )
+    registry.complete(legacy_upload.job_id, "/tmp/upload-legacy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["job_id"] == legacy_upload.job_id
+    assert publishes[0]["target_repo"] == "melix/models/legacy-bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["source_artifact_kind"] == ""
+
+
+def test_job_registry_snapshot_publishes_drops_unrelated_uploads_without_remote_target() -> None:
+    # A completed `upload` job that didn't reach a remote (no published_repo,
+    # no published_url, no recognized artifact kind) is by definition not a
+    # publish — keep it out of the publishes lineage view to avoid leaking
+    # unrelated worker emissions.
+    registry = ModelOpsJobRegistry()
+
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-unrelated")
+    registry.attach_manifest(
+        unrelated.job_id,
+        json.dumps({"ext": {"artifact_kind": "model"}}),
+    )
+    registry.complete(unrelated.job_id, "/tmp/upload-unrelated/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+    assert snapshot["publishes"] == []
+
+
+def test_job_registry_snapshot_publishes_treats_non_list_published_files_as_empty() -> None:
+    # If a hand-edited manifest stored a string in `published_files`, naive
+    # `list(...)` would split it into per-character entries. Verify the
+    # `isinstance(value, list)` guard reduces that to an empty list.
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-stringy")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/adapters/stringy",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "published_files": "weights.safetensors",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-stringy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["published_files"] == []
+
+
+def test_job_registry_snapshot_emits_empty_publishes_when_no_completed_uploads() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/tmp/train-only")
+    registry.attach_manifest(train_job.job_id, json.dumps({"adapter_name": "adapter-only"}))
+    registry.complete(train_job.job_id, "/tmp/train-only/train_lora.adapter.json")
+
+    in_flight_upload = registry.start("upload", "melix-dev-text", "/tmp/in-flight")
+    registry.attach_manifest(
+        in_flight_upload.job_id,
+        json.dumps({"export_artifact_kind": "adapter_export"}),
+    )
+
+    snapshot = registry.snapshot()
+    assert snapshot["publishes"] == []
+
+
 def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_linkage() -> None:
     registry = ModelOpsJobRegistry()
 

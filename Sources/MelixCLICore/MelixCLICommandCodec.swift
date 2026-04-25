@@ -84,6 +84,10 @@ public enum MelixCLICommandCodec {
             return "lora.experiments.list"
         case .loraExperimentsShow:
             return "lora.experiments.show"
+        case .loraPublishesList:
+            return "lora.publishes.list"
+        case .loraPublishesShow:
+            return "lora.publishes.show"
         case .loraResume:
             return "lora.resume"
         case .benchRun:
@@ -284,18 +288,34 @@ public enum MelixCLICommandCodec {
             appendOption("--activation-mode", value: options.activationMode, into: &arguments)
             json = options.json
         case .loraPublish(let options):
+            // Round-trip note: a `LoraPublishOptions` originally parsed from
+            // `--manifest-path X --export-kind adapter` re-emits as
+            // `--adapter-path X` (no `--export-kind`). The two argv variants
+            // parse back to identical options because both forms produce
+            // `exportKind=.adapterExport`, `artifactPath=X`,
+            // `artifactManifestPath=X` — so this is a benign normalization,
+            // not a round-trip break. Same applies to the merged path.
             arguments = ["lora", "publish"]
             appendOption("--model-id", value: options.modelID, into: &arguments)
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)
             switch options.exportKind {
-            case .adapterExport:
+            case .some(.adapterExport):
+                // `--adapter-path` alone is unambiguous — no `--export-kind` needed.
                 appendOption("--adapter-path", value: options.artifactPath, into: &arguments)
-            case .mergedExport:
+            case .some(.mergedExport):
                 if options.artifactManifestPath.isEmpty == false {
                     appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
+                    // Round-trip an explicit merged selection so the parser does
+                    // not have to read the manifest to re-derive it.
+                    appendOption("--export-kind", value: "merged", into: &arguments)
                 } else {
+                    // `--merged-model-path` alone is unambiguous — no `--export-kind` needed.
                     appendOption("--merged-model-path", value: options.artifactPath, into: &arguments)
                 }
+            case .none:
+                // The operator (or codec caller) left classification to the
+                // runner; emit only `--manifest-path` and the runner infers.
+                appendOption("--manifest-path", value: options.artifactManifestPath, into: &arguments)
             }
             json = options.json
         case .benchRun(let options):
