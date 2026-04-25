@@ -19,6 +19,7 @@ from worker.runtime.text_family_adapters import (
     resolve_text_family_config,
 )
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.model_registry.dflash_metadata import dflash_draft_metadata
 
 _ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
 _CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
@@ -875,6 +876,7 @@ class WorkerModelCatalog:
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
         config_payload = _load_model_config_payload(manifest_path.parent)
+        normalized_ext.update(dflash_draft_metadata(config_payload))
         model_kind = (
             "vlm"
             if requested_model_kind == "text" and _is_gemma4_vlm_config(config_payload)

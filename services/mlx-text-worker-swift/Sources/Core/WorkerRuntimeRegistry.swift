@@ -643,6 +643,18 @@ actor WorkerRuntimeRegistry {
             return .unavailable(reason: "draft_model_unavailable")
         }
 
+        if DFlashDraftSupport.isDFlashDraftModelSpec(draftModel.spec) {
+            #if canImport(MLXLMCommon) && canImport(MLXLLM)
+            if draftModel.runtimeModel.storage is SwiftDFlashDraftRuntime {
+                return .ready()
+            }
+            #endif
+            return .incompatible(
+                reason: DFlashDraftSupport.unsupportedReason,
+                message: DFlashDraftSupport.unsupportedMessage
+            )
+        }
+
         if let issue = speculativeDraftCompatibilityIssue(target: targetSpec, draft: draftModel.spec) {
             return .incompatible(
                 reason: issue.reason,

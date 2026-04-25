@@ -356,6 +356,37 @@ def test_registry_snapshot_applies_text_family_adapter_metadata_from_local_confi
     assert qwen3moe.ext["melix.lora.default_target_preset"] == "attention"
 
 
+def test_registry_snapshot_marks_dflash_draft_metadata_from_local_config(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "z-lab" / "Qwen3.5-27B-DFlash" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="z-lab/Qwen3.5-27B-DFlash",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "qwen3",
+            "architectures": ["DFlashDraftModel"],
+            "auto_map": {"AutoModel": "dflash.DFlashDraftModel"},
+            "block_size": 8,
+            "dflash_config": {"target_layer_ids": [5, 12, 19]},
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["z-lab/Qwen3.5-27B-DFlash"]
+    assert model.model_kind == "text"
+    assert model.ext["melix.draft.runtime_kind"] == "dflash"
+    assert model.ext["melix.draft.architecture"] == "DFlashDraftModel"
+    assert model.ext["melix.dflash.block_size"] == "8"
+    assert model.ext["melix.dflash.target_layer_ids"] == "5,12,19"
+
+
 def test_registry_snapshot_keeps_qwen3moe_lora_blocked_without_confirmed_expert_metadata(
     tmp_path: Path,
 ) -> None:

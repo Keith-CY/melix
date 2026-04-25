@@ -71,6 +71,10 @@ struct TextDecodeEngine: Sendable {
             var speculativeFallbackCount: Int?
             var speculativeDraftProposeMillis: Int?
             var speculativeTargetVerifyMillis: Int?
+            var dflashEnabled = false
+            var dflashBlockSize: Int?
+            var dflashRollbackCount: Int?
+            var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
 
             if acceleration.mode != .baseline {
@@ -167,6 +171,10 @@ struct TextDecodeEngine: Sendable {
                     speculativeFallbackCount = summary.speculativeFallbackCount
                     speculativeDraftProposeMillis = summary.speculativeDraftProposeMillis
                     speculativeTargetVerifyMillis = summary.speculativeTargetVerifyMillis
+                    dflashEnabled = summary.dflashEnabled
+                    dflashBlockSize = summary.dflashBlockSize
+                    dflashRollbackCount = summary.dflashRollbackCount
+                    dflashTargetHiddenLayers = summary.dflashTargetHiddenLayers
                     activeKVProbe = summary.activeKVProbe
                 }
             }
@@ -262,6 +270,12 @@ struct TextDecodeEngine: Sendable {
                 draftProposeMillis: speculativeDraftProposeMillis,
                 targetVerifyMillis: speculativeTargetVerifyMillis
             )
+            recordDFlashMetrics(
+                enabled: dflashEnabled,
+                blockSize: dflashBlockSize,
+                rollbackCount: dflashRollbackCount,
+                targetHiddenLayers: dflashTargetHiddenLayers
+            )
         } catch let error as WorkerRuntimeRegistryError where error == .unknownDecodeHandle {
             metrics.increment("swift_text.rpc_error_count")
             try await response.write(makeDecodeErrorExecuteEvent(
@@ -336,6 +350,18 @@ struct TextDecodeEngine: Sendable {
         if resolution.fallbackReason != nil {
             metrics.increment("swift_text.speculative_fallback_count")
         }
+    }
+
+    private func recordDFlashMetrics(
+        enabled: Bool,
+        blockSize: Int?,
+        rollbackCount: Int?,
+        targetHiddenLayers: Int?
+    ) {
+        metrics.set("swift_text.dflash_enabled", value: enabled ? 1 : 0)
+        metrics.set("swift_text.dflash_block_size", value: max(0, blockSize ?? 0))
+        metrics.set("swift_text.dflash_rollback_count", value: max(0, rollbackCount ?? 0))
+        metrics.set("swift_text.dflash_target_hidden_layers", value: max(0, targetHiddenLayers ?? 0))
     }
 
     private func recordActiveKVProbeMetrics(_ probe: ActiveKVProbeSummary?) {

@@ -547,6 +547,8 @@ struct MelixCLIParserTests {
             "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--host", "127.0.0.1",
             "--port", "12434",
+            "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
+            "--num-draft-tokens", "4",
             "--json",
         ])
         let updateCommand = try MelixCLIParser.parse([
@@ -557,6 +559,9 @@ struct MelixCLIParserTests {
             "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--port", "12434",
             "--timeout-seconds", "90",
+            "--acceleration-mode", "speculative_decode",
+            "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
+            "--num-draft-tokens", "8",
         ])
         let removeCommand = try MelixCLIParser.parse([
             "server",
@@ -592,11 +597,17 @@ struct MelixCLIParserTests {
         #expect(createOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(createOptions.host == "127.0.0.1")
         #expect(createOptions.port == 12434)
+        #expect(createOptions.accelerationMode == "speculative_decode")
+        #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(createOptions.numDraftTokens == 4)
         #expect(createOptions.json)
         #expect(updateOptions.serverSessionID == "server-session-qwen")
         #expect(updateOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(updateOptions.port == 12434)
         #expect(updateOptions.timeoutSeconds == 90)
+        #expect(updateOptions.accelerationMode == "speculative_decode")
+        #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(updateOptions.numDraftTokens == 8)
         #expect(removeOptions.serverSessionID == "server-session-qwen")
         #expect(selectOptions.serverSessionID == "server-session-qwen")
     }

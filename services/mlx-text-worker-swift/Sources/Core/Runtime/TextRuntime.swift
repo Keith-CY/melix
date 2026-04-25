@@ -210,6 +210,10 @@ struct TextGenerationSummary: Sendable {
     let speculativeFallbackCount: Int?
     let speculativeDraftProposeMillis: Int?
     let speculativeTargetVerifyMillis: Int?
+    let dflashEnabled: Bool
+    let dflashBlockSize: Int?
+    let dflashRollbackCount: Int?
+    let dflashTargetHiddenLayers: Int?
     let activeKVProbe: ActiveKVProbeSummary?
 
     init(
@@ -221,6 +225,10 @@ struct TextGenerationSummary: Sendable {
         speculativeFallbackCount: Int? = nil,
         speculativeDraftProposeMillis: Int? = nil,
         speculativeTargetVerifyMillis: Int? = nil,
+        dflashEnabled: Bool = false,
+        dflashBlockSize: Int? = nil,
+        dflashRollbackCount: Int? = nil,
+        dflashTargetHiddenLayers: Int? = nil,
         activeKVProbe: ActiveKVProbeSummary? = nil
     ) {
         self.promptTokens = promptTokens
@@ -231,6 +239,10 @@ struct TextGenerationSummary: Sendable {
         self.speculativeFallbackCount = speculativeFallbackCount
         self.speculativeDraftProposeMillis = speculativeDraftProposeMillis
         self.speculativeTargetVerifyMillis = speculativeTargetVerifyMillis
+        self.dflashEnabled = dflashEnabled
+        self.dflashBlockSize = dflashBlockSize
+        self.dflashRollbackCount = dflashRollbackCount
+        self.dflashTargetHiddenLayers = dflashTargetHiddenLayers
         self.activeKVProbe = activeKVProbe
     }
 }

@@ -1028,6 +1028,10 @@ def measure_decode_probe(
         "speculative_num_draft_tokens": exported.get("swift_text.speculative_num_draft_tokens"),
         "speculative_draft_propose_ms": exported.get("swift_text.speculative_draft_propose_ms"),
         "speculative_target_verify_ms": exported.get("swift_text.speculative_target_verify_ms"),
+        "dflash_enabled": exported.get("swift_text.dflash_enabled"),
+        "dflash_block_size": exported.get("swift_text.dflash_block_size"),
+        "dflash_rollback_count": exported.get("swift_text.dflash_rollback_count"),
+        "dflash_target_hidden_layers": exported.get("swift_text.dflash_target_hidden_layers"),
         **active_kv_metrics,
     }
 
@@ -2155,6 +2159,10 @@ def render_report(report: dict[str, Any]) -> str:
                 "speculative_draft_model_configured",
                 "speculative_draft_propose_ms",
                 "speculative_target_verify_ms",
+                "dflash_enabled",
+                "dflash_block_size",
+                "dflash_rollback_count",
+                "dflash_target_hidden_layers",
                 "active_kv_quantization_ratio",
                 "active_kv_backend",
                 "active_kv_kernel_path",

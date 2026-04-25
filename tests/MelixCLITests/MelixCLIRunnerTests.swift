@@ -2479,7 +2479,10 @@ struct MelixCLIRunnerTests {
                     title: "Vision Session",
                     modelID: "melix-dev-vlm",
                     host: "127.0.0.1",
-                    port: 12434
+                    port: 12434,
+                    accelerationMode: "speculative_decode",
+                    draftModelID: "z-lab/Qwen3.5-27B-DFlash",
+                    numDraftTokens: 4
                 )
             )
         )
@@ -2506,6 +2509,9 @@ struct MelixCLIRunnerTests {
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
         #expect(gatewayConfigCall.servedModelID == "melix-dev-vlm")
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
+        #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
+        #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(servingDefaultsCall.numDraftTokens == 4)
 
         try await store.save(
             MelixOperatorSessionState(
@@ -2528,6 +2534,50 @@ struct MelixCLIRunnerTests {
         await #expect(throws: MelixCLIError.self) {
             _ = try await runner.run(.serverStart(.init(serverSessionID: "server-session-1")))
         }
+    }
+
+    @Test("server session update persists draft serving defaults for start")
+    func serverSessionUpdatePersistsDraftServingDefaultsForStart() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "mlx-community/Qwen3.5-27B-4bit", kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Qwen Session",
+                    modelID: "mlx-community/Qwen3.5-27B-4bit"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionUpdate(
+                .init(
+                    serverSessionID: "server-session-1",
+                    draftModelID: "z-lab/Qwen3.5-27B-DFlash"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+        #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
+        #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(servingDefaultsCall.numDraftTokens == 4)
     }
 
     @Test("server start falls back to model info when the snapshot omits an imported model")

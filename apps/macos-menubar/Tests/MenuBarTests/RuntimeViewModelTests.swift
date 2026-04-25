@@ -5563,6 +5563,75 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
+    @Test("cli server start forwards draft serving defaults through session update")
+    @MainActor
+    func cliServerStartForwardsDraftServingDefaultsThroughSessionUpdate() async throws {
+        let directClient = FakeControlPlaneXPCClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-cli-start-draft-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorStore = OperatorSessionStore(melixHome: melixHome)
+        let initialServerSession = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Qwen DFlash",
+            modelID: "mlx-community/Qwen3.5-27B-4bit",
+            host: "127.0.0.1",
+            port: 18_080
+        )
+        try operatorStore.save(
+            OperatorSessionState(
+                selectedSurface: .server,
+                selectedServerSessionID: initialServerSession.id,
+                serverSessions: [initialServerSession]
+            )
+        )
+        await directClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "mlx-community/Qwen3.5-27B-4bit", state: .modelWarm),
+                ]
+            )
+        )
+
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .serverStart(let options):
+                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+            default:
+                return .success("{}\n")
+            }
+        }
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorSessionStore: operatorStore,
+            cliWorkflowRunner: workflowRunner
+        )
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("z-lab/Qwen3.5-27B-DFlash")
+        viewModel.updateSelectedServerSessionNumDraftTokens(4)
+
+        await viewModel.startSelectedServerSession()
+
+        let recordedCommands = await workflowRunner.snapshotRecordedCommands()
+        let updateCommand = try #require(recordedCommands.compactMap { command in
+            if case .serverSessionUpdate(let options) = command {
+                return options
+            }
+            return nil
+        }.first)
+        #expect(updateCommand.serverSessionID == "server-session-1")
+        #expect(updateCommand.accelerationMode == "speculative_decode")
+        #expect(updateCommand.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(updateCommand.numDraftTokens == 4)
+    }
+
     @Test("cli workflow failures surface typed failure state into the runtime view model")
     @MainActor
     func cliWorkflowFailuresSurfaceTypedFailureStateIntoTheRuntimeViewModel() async throws {

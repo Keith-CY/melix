@@ -706,6 +706,84 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
     assert "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" in discovered_ids
 
 
+def test_download_job_marks_managed_dflash_draft_metadata(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-models"
+    source_dir = tmp_path / "hub-source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3",
+                "architectures": ["DFlashDraftModel"],
+                "auto_map": {"AutoModel": "dflash.DFlashDraftModel"},
+                "block_size": 8,
+                "dflash_config": {"target_layer_ids": [5, 12, 19]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_dir / "dflash.py").write_text("class DFlashDraftModel: pass\n", encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="z-lab/Qwen3.5-27B-DFlash",
+                output_dir=str(tmp_path / "download-dflash"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "z-lab/Qwen3.5-27B-DFlash",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "melix.managed_root": str(managed_root),
+                    "source_path": str(source_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    materialized_dir = managed_root / "huggingface" / "z-lab" / "Qwen3.5-27B-DFlash" / "main"
+    registry_manifest = json.loads((materialized_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert events[-1].completed.output_path == str(materialized_dir)
+    assert registry_manifest["model_id"] == "z-lab/Qwen3.5-27B-DFlash"
+    assert registry_manifest["model_kind"] == "text"
+    assert registry_manifest["ext"]["melix.draft.runtime_kind"] == "dflash"
+    assert registry_manifest["ext"]["melix.draft.architecture"] == "DFlashDraftModel"
+    assert registry_manifest["ext"]["melix.dflash.block_size"] == "8"
+    assert registry_manifest["ext"]["melix.dflash.target_layer_ids"] == "5,12,19"
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-after-dflash-download"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    discovered = {model["model_id"]: model for model in snapshot_payload["model_registry"]["models"]}
+
+    assert discovered["z-lab/Qwen3.5-27B-DFlash"]["ext"]["melix.draft.runtime_kind"] == "dflash"
+
+
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-models"
     source_dir = tmp_path / "local-source"

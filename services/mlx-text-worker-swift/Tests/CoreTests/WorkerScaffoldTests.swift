@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import GRPCCore
 import MelixWorkerProtocol
@@ -82,6 +83,51 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertFalse(configuration.memoryEnforcementDisabled)
         XCTAssertTrue(configuration.memoryEnforcementEnabled)
+    }
+
+    func testDFlashSpeculativeProbeLoggerWritesJsonLinesWhenEnabled() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-dflash-probe-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = directory.appendingPathComponent("probe.jsonl")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        XCTAssertFalse(DFlashSpeculativeProbeLogger.shouldEnable(environment: [:]))
+        XCTAssertEqual(
+            DFlashSpeculativeProbeLogger.resolvedProbeURL(environment: [
+                "MELIX_RUNTIME_DIR": directory.path,
+            ])?.lastPathComponent,
+            DFlashSpeculativeProbeLogger.defaultFilename
+        )
+
+        let logger = try DFlashSpeculativeProbeLogger(
+            fileURL: fileURL,
+            sessionID: "test-session",
+            startedAt: Date()
+        )
+        logger.record(
+            stage: "draft_request",
+            fields: [
+                "round": 1,
+                "uses_dflash_mlx": false,
+                "draft_block_token_ids": [7, 0],
+            ]
+        )
+
+        let lines = try String(contentsOf: fileURL, encoding: .utf8)
+            .split(separator: "\n")
+        XCTAssertEqual(lines.count, 1)
+
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(payload["schema_version"] as? Int, 1)
+        XCTAssertEqual(payload["session_id"] as? String, "test-session")
+        XCTAssertEqual(payload["stage"] as? String, "draft_request")
+        XCTAssertEqual(payload["round"] as? Int, 1)
+        XCTAssertEqual(payload["uses_dflash_mlx"] as? Bool, false)
+        XCTAssertEqual(payload["draft_block_token_ids"] as? [Int], [7, 0])
     }
 
     func testAbortRegistryTracksRequestLifecycle() {
@@ -628,6 +674,69 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual((loaded.storage as? [String: String])?["directory"], tempDirectory.path)
     }
 
+    func testAutoSwiftMLXBackendLoadsDFlashDraftDirectoryWithNativeRuntime() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let configURL = tempDirectory.appendingPathComponent("config.json")
+        try """
+        {
+          "model_type": "qwen3",
+          "architectures": ["DFlashDraftModel"],
+          "auto_map": {"AutoModel": "dflash.DFlashDraftModel"}
+        }
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let backend = AutoSwiftMLXBackend(
+            directoryLoader: { _ in
+                XCTFail("DFlash draft checkpoints must not enter the normal MLX directory loader")
+                return LoadedTextModel(storage: [:], residentBytesHint: 0)
+            },
+            identifierLoader: { _, _ in
+                XCTFail("identifier loader should not be used for an existing DFlash directory")
+                return LoadedTextModel(storage: [:], residentBytesHint: 0)
+            }
+        )
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "z-lab/Qwen3.5-27B-DFlash"
+        spec.modelPath = tempDirectory.path
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertTrue(loaded.storage is SwiftDFlashDraftRuntime)
+    }
+
+    func testAutoSwiftMLXBackendDoesNotRejectLocalNonDFlashDirectoryByNameOnly() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("not-dflash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        try #"{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"]}"#
+            .write(
+                to: tempDirectory.appendingPathComponent("config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let backend = AutoSwiftMLXBackend(
+            directoryLoader: { directoryURL in
+                LoadedTextModel(storage: ["directory": directoryURL.path], residentBytesHint: 1)
+            },
+            identifierLoader: { _, _ in
+                XCTFail("identifier loader should not be used for an existing local directory")
+                return LoadedTextModel(storage: [:], residentBytesHint: 0)
+            }
+        )
+        var spec = Melix_Worker_V1_ModelSpec()
+        spec.modelID = "local-qwen"
+        spec.modelPath = tempDirectory.path
+
+        let loaded = try await backend.loadModel(spec: spec)
+
+        XCTAssertEqual((loaded.storage as? [String: String])?["directory"], tempDirectory.path)
+    }
+
     func testAutoSwiftMLXBackendUsesIdentifierLoaderForRemoteModelSources() async throws {
         let backend = AutoSwiftMLXBackend(
             directoryLoader: { _ in
@@ -1008,6 +1117,116 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(summary.speculativeRejectedTokens)
         XCTAssertNotNil(summary.speculativeDraftProposeMillis)
         XCTAssertNotNil(summary.speculativeTargetVerifyMillis)
+    }
+
+    func testAutoSwiftMLXBackendDecodeUsesNativeDFlashSpeculativeDraftRuntime() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .speculativeDecode
+        acceleration.draftModelID = "melix-tests/dflash-draft"
+        acceleration.numDraftTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let targetModel = LoadedTextModel(
+                    storage: makeDFlashTestTargetModelContainer(promptTokens: promptTokens)
+                )
+                let draftModel = LoadedTextModel(
+                    storage: try makeTestDFlashDraftRuntime()
+                )
+                let prefill = try await backend.prefill(
+                    model: targetModel,
+                    messages: [makeSystemMessage("system"), makeUserMessage("native dflash decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-dflash-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: targetModel,
+                    draftModel: draftModel,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        XCTAssertFalse(renderedTokenChunks(from: events).joined().isEmpty)
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.promptTokens, promptTokens.count)
+        XCTAssertEqual(summary.completionTokens, 2)
+        XCTAssertEqual(summary.dflashEnabled, true)
+        XCTAssertNotNil(summary.speculativeAcceptedTokens)
+        XCTAssertNotNil(summary.speculativeRejectedTokens)
+        XCTAssertNotNil(summary.speculativeDraftProposeMillis)
+        XCTAssertNotNil(summary.speculativeTargetVerifyMillis)
+        XCTAssertEqual(summary.dflashBlockSize, 2)
+        XCTAssertEqual(summary.dflashTargetHiddenLayers, 1)
+    }
+
+    func testAutoSwiftMLXBackendDFlashSkipsAcceptedBonusAdvanceAndFinalRebuild() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3]
+        let recorder = DFlashTargetForwardRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 5
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .speculativeDecode
+        acceleration.draftModelID = "melix-tests/dflash-draft"
+        acceleration.numDraftTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let targetModel = LoadedTextModel(
+                    storage: makeDFlashTestTargetModelContainer(
+                        promptTokens: promptTokens,
+                        recorder: recorder
+                    )
+                )
+                let draftModel = LoadedTextModel(
+                    storage: try makeTestDFlashDraftRuntime()
+                )
+                let prefill = try await backend.prefill(
+                    model: targetModel,
+                    messages: [makeSystemMessage("system"), makeUserMessage("native dflash decode")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-dflash-decode",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: targetModel,
+                    draftModel: draftModel,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 5,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.completionTokens, 5)
+        XCTAssertEqual(recorder.inputLengths, [promptTokens.count, 2, 2])
     }
 
     func testAutoSwiftMLXBackendDecodeReportsTurboQuantFusedRuntimeRoute() async throws {
@@ -3873,6 +4092,89 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.count, 1)
         XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
         XCTAssertTrue(recorded[0].error.error.message.contains("tokenizer"))
+    }
+
+    func testDecodeStreamingRpcUsesLoadedDFlashDraftForLiveSpeculativeDecode() async throws {
+        let backend = FakeRuntimeBackend(decodedChunks: ["unused"])
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: backend
+        )
+        let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.model.tokenizerHash = "tok-shared"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "z-lab/Qwen3.5-27B-DFlash"
+            request.model.ext["melix.draft.runtime_kind"] = "dflash"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-dflash-prefill"
+        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("dflash draft")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-dflash-decode"
+        request.execution.modelHandle = targetLoadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.execution.acceleration.draftModelID = "z-lab/Qwen3.5-27B-DFlash"
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let decodedDraftModelID = await backend.lastDecodedDraftModelID()
+        XCTAssertFalse(recorded.contains(where: { !$0.error.error.code.isEmpty }))
+        XCTAssertEqual(decodedDraftModelID, "z-lab/Qwen3.5-27B-DFlash")
     }
 
     func testDecodeStreamingRpcRejectsSpeculativeDecodeForNonGreedySampling() async throws {
@@ -8137,7 +8439,15 @@ private actor FakeRuntimeBackendDecodeStorage {
     private var lastDraftModelID: String?
 
     func record(draftModel: LoadedTextModel?) {
-        lastDraftModelID = (draftModel?.storage as? [String: String])?["model_id"]
+        if let modelID = (draftModel?.storage as? [String: String])?["model_id"] {
+            lastDraftModelID = modelID
+            return
+        }
+        #if canImport(MLXLMCommon) && canImport(MLXLLM)
+        lastDraftModelID = (draftModel?.storage as? SwiftDFlashDraftRuntime)?.modelID
+        #else
+        lastDraftModelID = nil
+        #endif
     }
 
     func snapshotLastDraftModelID() -> String? {
@@ -8192,6 +8502,14 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         if let loadError {
             throw loadError
         }
+        #if canImport(MLXLMCommon) && canImport(MLXLLM)
+        if DFlashDraftSupport.isDFlashDraftModelSpec(spec) {
+            return LoadedTextModel(
+                storage: SwiftDFlashDraftRuntime(modelID: spec.modelID),
+                residentBytesHint: residentBytesHint
+            )
+        }
+        #endif
         return LoadedTextModel(
             storage: ["model_id": spec.modelID, "model_path": spec.modelPath],
             residentBytesHint: residentBytesHint
@@ -8747,6 +9065,126 @@ private func makeCountingPreparedLogitsModelContainer(counter: CountingLanguageM
         tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
     )
     return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private final class DFlashTargetForwardRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedInputLengths: [Int] = []
+
+    var inputLengths: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedInputLengths
+    }
+
+    func record(inputLength: Int) {
+        lock.lock()
+        recordedInputLengths.append(inputLength)
+        lock.unlock()
+    }
+}
+
+@available(macOS 15.0, *)
+private final class DFlashTestTargetLanguageModel: Module, LanguageModel, DFlashTargetModel {
+    let vocabularySize = 32
+    let hiddenSize = 4
+    let nextTokenID = 7
+    let promptTokens: [Int]
+    let recorder: DFlashTargetForwardRecorder?
+
+    init(promptTokens: [Int], recorder: DFlashTargetForwardRecorder? = nil) {
+        self.promptTokens = promptTokens
+        self.recorder = recorder
+        super.init()
+    }
+
+    var dflashHiddenSize: Int {
+        hiddenSize
+    }
+
+    var dflashLayerCount: Int {
+        1
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        .logits(LMOutput(logits: logits(batchSize: 1, length: 1)))
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        LMOutput(logits: logits(batchSize: input.tokens.dim(0), length: input.tokens.dim(1)))
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        [KVCacheSimple()]
+    }
+
+    func dflashTokenEmbeddings(_ tokenIDs: MLXArray) throws -> MLXArray {
+        MLXArray.zeros([tokenIDs.dim(0), tokenIDs.dim(1), hiddenSize])
+    }
+
+    func dflashLogits(fromHiddenStates hiddenStates: MLXArray) throws -> MLXArray {
+        logits(batchSize: hiddenStates.dim(0), length: hiddenStates.dim(1))
+    }
+
+    func dflashForward(
+        input: LMInput.Text,
+        cache: [KVCache]?,
+        targetLayerIDs: [Int]
+    ) throws -> DFlashTargetForwardResult {
+        recorder?.record(inputLength: input.tokens.dim(1))
+        let hidden = MLXArray.zeros([input.tokens.dim(0), input.tokens.dim(1), hiddenSize])
+        return DFlashTargetForwardResult(
+            logits: logits(batchSize: input.tokens.dim(0), length: input.tokens.dim(1)),
+            hidden: hidden
+        )
+    }
+
+    private func logits(batchSize: Int, length: Int) -> MLXArray {
+        let values = (0 ..< batchSize * length * vocabularySize).map { index in
+            index % vocabularySize == nextTokenID ? Float(10) : Float(-10)
+        }
+        return MLXArray(values, [batchSize, length, vocabularySize])
+    }
+}
+
+@available(macOS 15.0, *)
+private func makeDFlashTestTargetModelContainer(
+    promptTokens: [Int],
+    recorder: DFlashTargetForwardRecorder? = nil
+) -> ModelContainer {
+    let vocabularySize = 32
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/dflash-target"),
+        model: DFlashTestTargetLanguageModel(promptTokens: promptTokens, recorder: recorder),
+        processor: DeterministicUserInputProcessor(promptTokens: promptTokens),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private func makeTestDFlashDraftRuntime() throws -> SwiftDFlashDraftRuntime {
+    let configuration = DFlashDraftConfiguration(
+        hiddenSize: 4,
+        hiddenLayers: 1,
+        intermediateSize: 8,
+        attentionHeads: 1,
+        kvHeads: 1,
+        headDim: 4,
+        vocabularySize: 32,
+        blockSize: 2,
+        numTargetLayers: 1,
+        targetLayerIDs: [0],
+        maskTokenID: 0
+    )
+    let model = try DFlashDraftModel(configuration)
+    eval(model)
+    return SwiftDFlashDraftRuntime(
+        modelID: "melix-tests/dflash-draft",
+        configuration: configuration,
+        model: model
+    )
 }
 
 @available(macOS 15.0, *)

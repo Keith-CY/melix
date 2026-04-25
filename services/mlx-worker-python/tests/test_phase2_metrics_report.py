@@ -799,6 +799,53 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_candidate_eligibility_check_count"] == 7
 
 
+def test_measure_decode_probe_surfaces_dflash_metrics(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "swift-worker-metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "values": {
+                    "swift_text.decode_ttft_ms": 9,
+                    "swift_text.decode_tokens_per_second": 11,
+                    "swift_text.speculative_acceptance_rate": 83,
+                    "swift_text.speculative_rollback_rate": 17,
+                    "swift_text.speculative_accepted_tokens": 10,
+                    "swift_text.speculative_rejected_tokens": 2,
+                    "swift_text.speculative_fallback_count": 0,
+                    "swift_text.speculative_draft_model_configured": 1,
+                    "swift_text.speculative_num_draft_tokens": 4,
+                    "swift_text.speculative_draft_propose_ms": 12,
+                    "swift_text.speculative_target_verify_ms": 34,
+                    "swift_text.dflash_enabled": 1,
+                    "swift_text.dflash_block_size": 4,
+                    "swift_text.dflash_rollback_count": 2,
+                    "swift_text.dflash_target_hidden_layers": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = phase2_metrics_report.measure_decode_probe(
+        _FakeInferenceStub(),
+        metrics_path,
+        model_handle="melix-dev-text::1",
+        prompt="decode dflash",
+        label="decode_speculative",
+        policy=common_pb2.AccelerationPolicy(
+            mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+            draft_model_id="z-lab/Qwen3.5-27B-DFlash",
+            num_draft_tokens=4,
+            allow_baseline_fallback=True,
+        ),
+    )
+
+    assert result["dflash_enabled"] == 1
+    assert result["dflash_block_size"] == 4
+    assert result["dflash_rollback_count"] == 2
+    assert result["dflash_target_hidden_layers"] == 5
+
+
 def test_active_kv_helper_edges_return_stable_defaults() -> None:
     assert phase2_metrics_report.parse_active_kv_profiles("") == ["q4"]
     assert phase2_metrics_report.parse_active_kv_profiles("q4, turboquant-q4, custom.v1") == [

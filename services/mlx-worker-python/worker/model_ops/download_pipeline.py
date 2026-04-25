@@ -11,6 +11,7 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_registry.dflash_metadata import dflash_draft_metadata
 
 
 @dataclass(frozen=True)
@@ -424,6 +425,8 @@ class DownloadPipeline:
         capability_modalities = ext.get("melix.capability.supported_modalities", "").strip() or (
             "text,image" if model_kind == "vlm" else "text"
         )
+        config_payload = DownloadPipeline._load_model_config_payload(model_path)
+        draft_metadata = dflash_draft_metadata(config_payload)
         return {
             "schema_version": "melix.model_registry_manifest.v1",
             "model_id": repo_id,
@@ -447,6 +450,7 @@ class DownloadPipeline:
                 "melix.model_path": str(model_path),
                 "melix.capability.supported_tasks": capability_tasks,
                 "melix.capability.supported_modalities": capability_modalities,
+                **draft_metadata,
             },
         }
 
@@ -506,6 +510,17 @@ class DownloadPipeline:
     @staticmethod
     def _directory_size(path: Path) -> int:
         return sum(file_path.stat().st_size for file_path in path.rglob("*") if file_path.is_file())
+
+    @staticmethod
+    def _load_model_config_payload(model_dir: Path) -> dict[str, Any]:
+        config_path = model_dir / "config.json"
+        if not config_path.is_file():
+            return {}
+        try:
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _int(raw_value: str | None, *, default: int) -> int:
