@@ -2079,3 +2079,104 @@ public actor ModelCatalog {
         return !lhs.kind.isEmpty && lhs.kind == rhs.kind
     }
 }
+
+public enum ModelRuntimeAvailability {
+    public static let missingRuntimeCacheCode = "model_runtime_missing"
+    public static let missingRuntimeCacheMessage = "Hugging Face cache files are missing. Re-download this model to restore it."
+    public static let missingRuntimeCacheStatus = "missing-cache"
+    public static let readyRuntimeStatus = "ok"
+    public static let missingRuntimeCacheBadge = "Missing cache"
+
+    public static func isRuntimeCacheMissing(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+        truthy(model.settings.ext["melix.model_path_missing"])
+    }
+
+    public static func runtimeStatus(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        isRuntimeCacheMissing(model) ? missingRuntimeCacheStatus : readyRuntimeStatus
+    }
+
+    public static func runtimePath(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        trimmed(model.settings.ext["melix.model_path"])
+    }
+
+    public static func descriptorPath(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        trimmed(model.settings.ext["melix.registry_descriptor_path"])
+    }
+
+    public static func restoreRepoID(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        let ext = model.settings.ext
+        let explicitRepoID = trimmed(ext["melix.hf_repo_id"])
+        if !explicitRepoID.isEmpty {
+            return explicitRepoID
+        }
+        let sourceKind = trimmed(ext["melix.source_kind"]).lowercased()
+        let sourceLocator = trimmed(ext["melix.source_locator"])
+        if sourceKind == "hf_repo" || sourceKind == "hub_repo" {
+            return sourceLocator
+        }
+        return model.modelID.contains("/") ? model.modelID : ""
+    }
+
+    public static func restoreRevision(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        let ext = model.settings.ext
+        let revision = trimmed(ext["melix.hf_revision"])
+        if !revision.isEmpty {
+            return revision
+        }
+        let genericRevision = trimmed(ext["melix.revision"])
+        return genericRevision.isEmpty ? "main" : genericRevision
+    }
+
+    public static func restoreCommand(for model: Melix_Controlplane_V1_ModelSummary) -> String {
+        let repoID = restoreRepoID(for: model)
+        guard !repoID.isEmpty else {
+            return ""
+        }
+        return "melix model hub download --repo-id \(repoID) --revision \(restoreRevision(for: model))"
+    }
+
+    public static func missingRuntimeCacheErrorStatus(
+        modelID: String
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = missingRuntimeCacheCode
+        error.message = missingRuntimeCacheMessage
+        error.details = ["model_id": modelID]
+        return error
+    }
+
+    public static func publicMetadata(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "runtime_status": runtimeStatus(for: model),
+            "model_path_missing": isRuntimeCacheMissing(model),
+        ]
+        let modelPath = runtimePath(for: model)
+        if !modelPath.isEmpty {
+            payload["model_path"] = modelPath
+        }
+        let descriptorPath = descriptorPath(for: model)
+        if !descriptorPath.isEmpty {
+            payload["registry_descriptor_path"] = descriptorPath
+        }
+        let restoreCommand = restoreCommand(for: model)
+        if !restoreCommand.isEmpty {
+            payload["restore_command"] = restoreCommand
+        }
+        return payload
+    }
+
+    private static func truthy(_ value: String?) -> Bool {
+        switch trimmed(value).lowercased() {
+        case "true", "1", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func trimmed(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

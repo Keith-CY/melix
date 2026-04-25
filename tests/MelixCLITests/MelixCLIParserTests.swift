@@ -383,6 +383,7 @@ struct MelixCLIParserTests {
             "download",
             "--repo-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--revision", "main",
+            "--hf-token", "hf_secret_token",
             "--json",
         ])
         let listCommand = try MelixCLIParser.parse([
@@ -430,6 +431,7 @@ struct MelixCLIParserTests {
         #expect(modelDownloadOptions.json)
         #expect(downloadOptions.repoID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(downloadOptions.revision == "main")
+        #expect(downloadOptions.hfToken == "hf_secret_token")
         #expect(downloadOptions.json)
         #expect(listOptions.json)
         #expect(addOptions.path == "/tmp/models-a")

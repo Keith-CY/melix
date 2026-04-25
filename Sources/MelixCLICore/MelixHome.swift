@@ -13,6 +13,7 @@ public struct MelixHome: Equatable, Sendable {
     public let secretsDirectoryURL: URL
     public let operatorSessionFileURL: URL
     public let serverSessionAPIKeysFileURL: URL
+    public let huggingFaceTokenFileURL: URL
 
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         let homePath = Self.resolveHomePath(environment: environment)
@@ -21,6 +22,7 @@ public struct MelixHome: Equatable, Sendable {
         self.secretsDirectoryURL = rootURL.appendingPathComponent("secrets", isDirectory: true)
         self.operatorSessionFileURL = stateDirectoryURL.appendingPathComponent("operator-session.json")
         self.serverSessionAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("server-session-api-keys.json")
+        self.huggingFaceTokenFileURL = secretsDirectoryURL.appendingPathComponent("huggingface-token.json")
     }
 
     public func ensureDirectoryExists(at directoryURL: URL) throws {

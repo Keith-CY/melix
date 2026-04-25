@@ -175,6 +175,7 @@ public enum MelixCLICommandCodec {
             arguments = ["model", "hub", "download"]
             appendOption("--repo-id", value: options.repoID, into: &arguments)
             appendOption("--revision", value: options.revision, into: &arguments)
+            appendOption("--hf-token", value: options.hfToken, into: &arguments)
             json = options.json
         case .modelRootsRescan(let options):
             arguments = ["model", "roots", "rescan"]

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
     HubSearchPage,
 )
+from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.mlx_lm_runner import (
@@ -639,21 +641,13 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
 
 
-def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
-    managed_root = tmp_path / "managed-models"
+def test_download_job_reports_managed_hub_snapshot_without_creating_descriptor(tmp_path: Path) -> None:
     source_dir = tmp_path / "hub-source"
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
     (source_dir / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
     (source_dir / "model.safetensors").write_bytes(b"weights")
-    registry = WorkerRegistry(
-        model_catalog=WorkerModelCatalog(
-            environment={
-                "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
-            }
-        )
-    )
-    service = build_service(tmp_path, registry=registry)
+    service = build_service(tmp_path, registry=WorkerRegistry(model_catalog=WorkerModelCatalog(environment={})))
 
     events = list(
         service.ConvertModel(
@@ -667,7 +661,6 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
                     "melix.hf_repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                     "melix.hf_revision": "main",
                     "melix.managed_import": "true",
-                    "melix.managed_root": str(managed_root),
                     "source_path": str(source_dir),
                 },
             ),
@@ -676,34 +669,161 @@ def test_download_job_materializes_hub_repo_into_managed_root_and_registry_snaps
     )
 
     manifest = json.loads((tmp_path / "download-managed" / "download.state.json").read_text(encoding="utf-8"))
-    materialized_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main"
-    registry_manifest = json.loads((materialized_dir / "manifest.json").read_text(encoding="utf-8"))
+    expected_runtime_bytes = sum(path.stat().st_size for path in source_dir.rglob("*") if path.is_file())
 
-    assert events[-1].completed.output_path == str(materialized_dir)
+    assert events[-1].completed.output_path == str(source_dir.resolve())
+    assert manifest["managed_model_path"] == str(source_dir.resolve())
+    assert manifest["output_path"] == str(source_dir.resolve())
+    assert manifest["downloaded_bytes"] == expected_runtime_bytes
+    assert manifest["total_bytes"] == expected_runtime_bytes
     assert manifest["ext"]["melix.source_kind"] == "hub_repo"
     assert manifest["ext"]["melix.hf_repo_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
     assert manifest["ext"]["melix.hf_revision"] == "main"
     assert manifest["ext"]["melix.managed_import"] == "true"
-    assert registry_manifest["model_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
-    assert registry_manifest["provider_id"] == "huggingface"
+    assert manifest["ext"]["melix.model_path"] == str(source_dir.resolve())
+    assert "melix.registry_descriptor_path" not in manifest["ext"]
+    assert not (tmp_path / "managed-models").exists()
 
-    snapshot_events = list(
+
+def test_managed_hub_repo_download_uses_default_huggingface_cache_and_cached_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True, exist_ok=True)
+    (hf_snapshot / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (hf_snapshot / "model.safetensors").write_bytes(b"weights")
+    home = tmp_path / "home"
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return str(hf_snapshot)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "ignored-hub-cache"))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "ignored-hf-home"))
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+    service = build_service(tmp_path, registry=WorkerRegistry(model_catalog=WorkerModelCatalog(environment={})))
+
+    events = list(
         service.ConvertModel(
             maintenance_pb2.ConvertModelRequest(
-                source_model="melix-dev-text",
-                output_dir=str(tmp_path / "snapshot-after-download"),
+                source_model="mlx-community/Tiny",
+                output_dir=str(tmp_path / "download-managed-cache"),
                 generate_manifest=True,
-                ext={"operation": "registry_snapshot"},
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "mlx-community/Tiny",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "melix.hf_token": "hf_secret_token",
+                },
             ),
             context=None,
         )
     )
-    snapshot_payload = json.loads(
-        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
-    )
-    discovered_ids = [model["model_id"] for model in snapshot_payload["model_registry"]["models"]]
 
-    assert "mlx-community/Qwen3.5-0.8B-OptiQ-4bit" in discovered_ids
+    state_payload = json.loads((tmp_path / "download-managed-cache" / "download.state.json").read_text(encoding="utf-8"))
+
+    assert calls[0]["repo_id"] == "mlx-community/Tiny"
+    assert calls[0]["revision"] == "main"
+    assert calls[0]["cache_dir"] == str(home / ".cache" / "huggingface" / "hub")
+    assert calls[0]["token"] == "hf_secret_token"
+    assert "local_dir" not in calls[0]
+    assert "local_dir_use_symlinks" not in calls[0]
+    assert events[-1].completed.output_path == str(hf_snapshot.resolve())
+    assert state_payload["managed_model_path"] == str(hf_snapshot.resolve())
+    assert state_payload["output_path"] == str(hf_snapshot.resolve())
+    assert state_payload["ext"]["melix.model_path"] == str(hf_snapshot.resolve())
+    assert "melix.registry_descriptor_path" not in state_payload["ext"]
+    assert "hf_secret_token" not in json.dumps(state_payload, sort_keys=True)
+
+
+def test_managed_hub_source_download_omits_blank_revision_and_normalizes_hub_and_auth_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True, exist_ok=True)
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return str(hf_snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+
+    resolved = DownloadPipeline()._resolve_managed_hub_source_path(
+        output_dir=tmp_path / "download",
+        ext={},
+        repo_id="mlx-community/Tiny",
+        revision="",
+    )
+
+    assert resolved == hf_snapshot.resolve()
+    assert calls[0]["revision"] is None
+    assert calls[0]["cache_dir"] == str(Path.home() / ".cache" / "huggingface" / "hub")
+    assert "token" not in calls[0]
+
+    class FakeHubHTTPError(RuntimeError):
+        pass
+
+    FakeHubHTTPError.__module__ = "huggingface_hub.errors"
+
+    def failing_snapshot_download(**kwargs: object) -> str:
+        raise FakeHubHTTPError("network unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=failing_snapshot_download),
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        DownloadPipeline()._resolve_managed_hub_source_path(
+            output_dir=tmp_path / "download-failed",
+            ext={},
+            repo_id="mlx-community/Tiny",
+            revision="main",
+        )
+
+    assert exc_info.value.code == "unavailable"
+    assert "managed hub import failed" in exc_info.value.message
+
+    class FakeHubAuthHTTPError(RuntimeError):
+        response = SimpleNamespace(status_code=401)
+
+    FakeHubAuthHTTPError.__module__ = "huggingface_hub.errors"
+
+    def auth_failing_snapshot_download(**kwargs: object) -> str:
+        raise FakeHubAuthHTTPError("401 unauthorized")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=auth_failing_snapshot_download),
+    )
+
+    with pytest.raises(ModelOperationError) as auth_exc_info:
+        DownloadPipeline()._resolve_managed_hub_source_path(
+            output_dir=tmp_path / "download-auth-failed",
+            ext={"melix.hf_token": "hf_secret_token"},
+            repo_id="mlx-community/Tiny",
+            revision="main",
+        )
+
+    assert auth_exc_info.value.code == "hf_auth_failed"
+    assert auth_exc_info.value.message == "Hugging Face authentication failed. Check your token and try again."
 
 
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:

@@ -329,7 +329,8 @@ struct ModelCatalogTests {
         secondDiscovered.settings.ext["melix.registry_root_id"] = "root-2"
         secondDiscovered.settings.ext["melix.registry_root_path"] = "/tmp/root-2"
         secondDiscovered.settings.ext["melix.registry_relative_path"] = "mlx-community/Qwen2.5-14B-Instruct/8bit"
-        secondDiscovered.settings.ext["melix.model_path"] = "/tmp/root-2/mlx-community/Qwen2.5-14B-Instruct/8bit"
+        secondDiscovered.settings.ext["melix.registry_descriptor_path"] = "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-14B-Instruct/8bit"
+        secondDiscovered.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen2.5-14B-Instruct/snapshots/abc123"
 
         await catalog.syncRegistryModels([firstDiscovered], reason: "worker_registry_sync")
         await catalog.syncRegistryModels([secondDiscovered], reason: "worker_registry_sync")
@@ -341,7 +342,8 @@ struct ModelCatalogTests {
         #expect(!models.contains(where: { $0.modelID == firstDiscovered.modelID }))
         #expect(synced.maxContext == 32768)
         #expect(synced.settings.ext["melix.registry_root_id"] == "root-2")
-        #expect(synced.settings.ext["melix.model_path"] == "/tmp/root-2/mlx-community/Qwen2.5-14B-Instruct/8bit")
+        #expect(synced.settings.ext["melix.registry_descriptor_path"] == "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-14B-Instruct/8bit")
+        #expect(synced.settings.ext["melix.model_path"] == "/tmp/hf-cache/models--mlx-community--Qwen2.5-14B-Instruct/snapshots/abc123")
     }
 
     @Test("syncRegistryModels merges refreshed registry metadata into existing discovered entries")

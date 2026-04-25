@@ -203,6 +203,8 @@ public enum MelixCLIJSONEnvelope {
             return "missing_required"
         case .runtime:
             return "runtime"
+        case .requestFailed(let code, _):
+            return code.isEmpty ? "runtime" : code
         }
     }
 }

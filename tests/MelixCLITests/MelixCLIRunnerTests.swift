@@ -540,6 +540,59 @@ struct MelixCLIRunnerTests {
         #expect(trainArguments.contains("--response-only"))
     }
 
+    @Test("pipeline dry run redacts Hugging Face download token arguments")
+    func pipelineDryRunRedactsHuggingFaceDownloadTokenArguments() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("hf-token-redaction.pipeline.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = """
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "hf-token-redaction",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "download_private_model",
+              "command": "model.hub.download",
+              "args": {
+                "repo_id": "mlx-community/Private-4bit",
+                "revision": "main",
+                "hf_token": "hf_secret_token"
+              }
+            }
+          ]
+        }
+        """
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    traceID: "trace-hf-token-redaction",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let step = try #require(steps.first)
+        let receiptPath = try #require(step["receipt_path"] as? String)
+        let receipt = try #require(try parseJSONFile(receiptPath))
+        let result = try #require(receipt["result"] as? [String: Any])
+        let arguments = try #require(result["arguments"] as? [String])
+
+        #expect(arguments.contains("--hf-token"))
+        #expect(arguments.contains("<redacted>"))
+        #expect(arguments.contains("hf_secret_token") == false)
+        #expect(String(data: try JSONSerialization.data(withJSONObject: receipt), encoding: .utf8)?.contains("hf_secret_token") == false)
+    }
+
     @Test("successful fake phase 8 pipeline writes receipts summary and artifact paths")
     func successfulFakePhase8PipelineWritesReceiptsSummaryAndArtifactPaths() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1821,13 +1874,15 @@ struct MelixCLIRunnerTests {
         let client = StubControlPlaneXPCClient()
         await client.setModelOperationResult(
             makeModelOperationResult(
-                outputPath: "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                outputPath: "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123",
                 manifestJSON: #"""
                 {
                   "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                  "managed_model_path": "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123",
                   "ext": {
                     "melix.source_kind": "hub_repo",
-                    "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+                    "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "melix.model_path": "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123"
                   }
                 }
                 """#
@@ -1842,10 +1897,62 @@ struct MelixCLIRunnerTests {
         #expect(payload["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(
             payload["managed_model_path"] as? String ==
-                "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+                "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123"
         )
         #expect(payload["source_kind"] as? String == "hub_repo")
         #expect(payload["source_locator"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("model hub download caches Hugging Face token and reuses it without leaking output")
+    func modelHubDownloadCachesHuggingFaceTokenAndReusesItWithoutLeakingOutput() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-hf-token-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let manifestJSON = #"""
+        {
+          "model_id": "mlx-community/Private-4bit",
+          "managed_model_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+          "output_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+          "ext": {
+            "melix.source_kind": "hub_repo",
+            "melix.source_locator": "mlx-community/Private-4bit",
+            "melix.model_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123"
+          }
+        }
+        """#
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+            manifestJSON: manifestJSON
+        ))
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        let firstOutput = try await runner.run(
+            .modelHubDownload(.init(repoID: "mlx-community/Private-4bit", revision: "main", hfToken: "hf_secret_token", json: true))
+        )
+        let firstCall = try #require(await client.lastModelOperationCall)
+        let tokenFile = temporaryRoot
+            .appendingPathComponent("secrets", isDirectory: true)
+            .appendingPathComponent("huggingface-token.json")
+        let tokenData = try Data(contentsOf: tokenFile)
+        let tokenPayload = try #require(try JSONSerialization.jsonObject(with: tokenData) as? [String: Any])
+
+        #expect(firstCall.ext["melix.hf_token"] == "hf_secret_token")
+        #expect(tokenPayload["token"] as? String == "hf_secret_token")
+        #expect((tokenPayload["masked_hint"] as? String)?.contains("hf_secret_token") == false)
+        #expect(firstOutput.contains("hf_secret_token") == false)
+        #expect(try posixPermissions(at: temporaryRoot.appendingPathComponent("secrets", isDirectory: true)) == 0o700)
+        #expect(try posixPermissions(at: tokenFile) == 0o600)
+
+        _ = try await runner.run(
+            .modelHubDownload(.init(repoID: "mlx-community/Private-4bit", revision: "main", json: true))
+        )
+        let secondCall = try #require(await client.lastModelOperationCall)
+        #expect(secondCall.ext["melix.hf_token"] == "hf_secret_token")
     }
 
     @Test("model import forwards a local import operation and renders a managed model receipt")
@@ -2263,6 +2370,7 @@ struct MelixCLIRunnerTests {
         #expect(header.contains("MODEL_ID"))
         #expect(header.contains("KIND"))
         #expect(header.contains("STATE"))
+        #expect(header.contains("STATUS"))
         #expect(header.contains("RUNTIME"))
         // Each short-form runtime tag appears exactly once on a data row.
         // Use ``hasPrefix`` on the model_id + trailing space to unambiguously
@@ -2289,6 +2397,33 @@ struct MelixCLIRunnerTests {
             let kindPrefix = row[indexAtKindStart...].prefix(4)
             #expect(kindPrefix == "text", "row not padded at column offset: \(row)")
         }
+    }
+
+    @Test("model list surfaces missing managed Hugging Face cache status")
+    func modelListSurfacesMissingManagedHuggingFaceCacheStatus() async throws {
+        var missingModel = makeModelSummary(id: "mlx-community/Qwen3-0.6B-4bit", kind: "text")
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing"
+        missingModel.settings.ext["melix.registry_descriptor_path"] = "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main"
+        missingModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3-0.6B-4bit"
+        missingModel.settings.ext["melix.hf_revision"] = "main"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [missingModel]))
+        let runner = MelixCLIRunner(client: client)
+
+        let textOutput = try await runner.run(.modelList(.init(json: false)))
+        let jsonOutput = try await runner.run(.modelList(.init(json: true)))
+        let jsonData = try #require(jsonOutput.data(using: .utf8))
+        let entries = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]])
+        let entry = try #require(entries.first)
+
+        #expect(textOutput.contains("STATUS"))
+        #expect(textOutput.contains("missing-cache"))
+        #expect(entry["runtime_status"] as? String == "missing-cache")
+        #expect(entry["model_path_missing"] as? Bool == true)
+        #expect(entry["model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing")
+        #expect(entry["registry_descriptor_path"] as? String == "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main")
+        #expect(entry["restore_command"] as? String == "melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main")
     }
 
     @Test("model list primes configured registry roots before fetching the server snapshot")
@@ -2373,6 +2508,90 @@ struct MelixCLIRunnerTests {
         #expect(call.operation == "registry_snapshot")
         #expect(call.ext["melix.registry_rescan"] == "true")
         #expect(call.ext["melix.registry_roots_json"] == nil)
+    }
+
+    @Test("model inspect reports missing managed Hugging Face cache recovery fields")
+    func modelInspectReportsMissingManagedHuggingFaceCacheRecoveryFields() async throws {
+        var missingModel = makeModelSummary(id: "mlx-community/Qwen3-0.6B-4bit", kind: "text")
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing"
+        missingModel.settings.ext["melix.registry_descriptor_path"] = "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main"
+        missingModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3-0.6B-4bit"
+        missingModel.settings.ext["melix.hf_revision"] = "main"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [missingModel]))
+        await client.setModelInfo(
+            modelID: "mlx-community/Qwen3-0.6B-4bit",
+            info: {
+                var info = Melix_Controlplane_V1_ModelInfo()
+                info.ok = true
+                info.modelKind = "text"
+                info.supportedTasks = ["generate"]
+                return info
+            }()
+        )
+        let runner = MelixCLIRunner(client: client)
+
+        let textOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Qwen3-0.6B-4bit", json: false))
+        )
+        let jsonOutput = try await runner.run(
+            .modelInspect(.init(modelID: "mlx-community/Qwen3-0.6B-4bit", json: true))
+        )
+        let jsonData = try #require(jsonOutput.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+
+        #expect(textOutput.contains("runtime_status=missing cache"))
+        #expect(textOutput.contains("runtime_path=/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing"))
+        #expect(textOutput.contains("descriptor_path=/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main"))
+        #expect(textOutput.contains("restore_command=melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main"))
+        #expect(payload["model_path_missing"] as? Bool == true)
+        #expect(payload["runtime_status"] as? String == "missing-cache")
+        #expect(payload["model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen3-0.6B-4bit/snapshots/missing")
+        #expect(payload["registry_descriptor_path"] as? String == "/tmp/melix-managed/huggingface/mlx-community/Qwen3-0.6B-4bit/main")
+        #expect(payload["restore_command"] as? String == "melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main")
+    }
+
+    @Test("model load and chat run map missing cache errors to the stable CLI code")
+    func modelLoadAndChatRunMapMissingCacheErrorsToStableCLICode() async throws {
+        let loadClient = StubControlPlaneXPCClient()
+        await loadClient.setLoadError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "model_runtime_missing",
+                message: "Hugging Face cache files are missing. Re-download this model to restore it."
+            )
+        )
+
+        do {
+            _ = try await MelixCLIRunner(client: loadClient).run(
+                .modelLoad(.init(modelID: "melix-dev-text"))
+            )
+            Issue.record("Expected model load to fail with missing cache")
+        } catch let error as MelixCLIError {
+            #expect(error.errorDescription == "Hugging Face cache files are missing. Re-download this model to restore it.")
+            #expect(MelixCLIJSONEnvelope.code(for: error) == "model_runtime_missing")
+        } catch {
+            Issue.record("Unexpected model load error: \(error)")
+        }
+
+        let chatClient = StubControlPlaneXPCClient()
+        await chatClient.setChatError(
+            ControlPlaneChatExecutionError.requestFailed(
+                code: "model_runtime_missing",
+                message: "Hugging Face cache files are missing. Re-download this model to restore it."
+            )
+        )
+        do {
+            _ = try await MelixCLIRunner(client: chatClient).run(
+                .chatRun(.init(modelID: "mlx-community/Qwen3-0.6B-4bit", message: "hello"))
+            )
+            Issue.record("Expected chat run to fail with missing cache")
+        } catch let error as MelixCLIError {
+            #expect(error.errorDescription == "Hugging Face cache files are missing. Re-download this model to restore it.")
+            #expect(MelixCLIJSONEnvelope.code(for: error) == "model_runtime_missing")
+        } catch {
+            Issue.record("Unexpected chat run error: \(error)")
+        }
     }
 
     @Test("server lifecycle commands forward session ids and render updated snapshots")
@@ -5426,6 +5645,11 @@ private func captureSmokeRunnerError(
     return ""
 }
 
+private func posixPermissions(at url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+}
+
 private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     enum ServerAction: Sendable, Equatable {
         case start(String)
@@ -5502,7 +5726,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
+    private var loadError: Error?
     private var modelOperationError: Error?
+    private var chatError: Error?
     private var chatRequestID = "stub-chat"
     private var chatModelID = "melix-dev-text"
     private var chatEvents: [ControlPlaneChatStreamEvent] = []
@@ -5524,6 +5750,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setModelOperationError(_ error: Error?) {
         self.modelOperationError = error
+    }
+
+    func setChatError(_ error: Error?) {
+        self.chatError = error
     }
 
     func setBenchResult(_ result: ControlPlaneBenchResult) {
@@ -5558,6 +5788,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         modelInfoByID[modelID] = info
     }
 
+    func setLoadError(_ error: Error?) {
+        loadError = error
+    }
+
     func setChatExecution(
         requestID: String,
         modelID: String,
@@ -5581,6 +5815,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
         lastChatRequest = request
+        if let chatError {
+            throw chatError
+        }
         let events = chatEvents
         return ControlPlaneChatExecution(
             requestID: chatRequestID,
@@ -5672,6 +5909,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
+        if let loadError {
+            throw loadError
+        }
         loadedModelIDs.append(modelID)
         return makeModelSummary(id: modelID, kind: "text")
     }

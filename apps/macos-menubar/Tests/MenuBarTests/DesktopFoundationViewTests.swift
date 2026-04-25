@@ -949,6 +949,46 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.modelSettingsAliasDraft == viewModel.primaryModel?.alias)
     }
 
+    @Test("models tab restore action re-downloads a missing managed Hugging Face cache")
+    @MainActor
+    func modelsTabRestoreActionRedownloadsMissingManagedHuggingFaceCache() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var snapshotModel = Melix_Controlplane_V1_ModelSummary()
+        snapshotModel.modelID = "mlx-community/Qwen3"
+        snapshotModel.kind = "text"
+        snapshotModel.state = .modelDiscovered
+        snapshotModel.features = ["chat"]
+        snapshotModel.maxContext = 8192
+        snapshotModel.settings.ext["melix.model_path_missing"] = "true"
+        snapshotModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        snapshotModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3"
+        snapshotModel.settings.ext["melix.hf_revision"] = "refs/pr/7"
+        snapshot.models = [snapshotModel]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let model = try #require(viewModel.primaryModel)
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+
+        #expect(model.actionTitle == "Restore Download")
+        tab.toggleModelLoadAction(for: model)()
+
+        try await Task.sleep(for: .milliseconds(50))
+        let calls = await client.recordedModelOperationRequests
+        let downloadCall = try #require(calls.first { $0.operation == "download" })
+        let actions = await client.recordedActions
+        #expect(actions.contains("load:mlx-community/Qwen3") == false)
+        #expect(downloadCall.modelID == "mlx-community/Qwen3")
+        #expect(downloadCall.ext["melix.hf_repo_id"] == "mlx-community/Qwen3")
+        #expect(downloadCall.ext["melix.hf_revision"] == "refs/pr/7")
+        #expect(downloadCall.ext["melix.managed_import"] == "true")
+    }
+
     @Test("models tab renders OCR sampling controls when the primary model is OCR")
     @MainActor
     func modelsTabRendersOCRSamplingControlsForOCRModels() async throws {

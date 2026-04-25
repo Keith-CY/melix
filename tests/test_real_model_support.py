@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from scripts.real_model_support import (
     REAL_SMALL_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
+    _descriptor_runtime_model_path,
     build_runtime_model_preflight,
     resolve_real_small_text_model_path,
     resolve_real_small_text_model_source,
@@ -37,6 +39,44 @@ def test_real_small_model_source_can_use_managed_model_root(tmp_path: Path) -> N
         / "main"
     )
     managed_model_dir.mkdir(parents=True)
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True)
+    (hf_snapshot / "model.safetensors").write_bytes(b"weights")
+    (managed_model_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.model_registry_manifest.v1",
+                "model_id": REAL_SMALL_TEXT_MODEL_ID,
+                "ext": {
+                    "melix.model_path": str(hf_snapshot),
+                    "melix.registry_descriptor_path": str(managed_model_dir),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = resolve_real_small_text_model_source(
+        environment={"MELIX_MANAGED_MODEL_ROOT": str(tmp_path / "managed")},
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(hf_snapshot.resolve())
+    assert source.source_resolution_mode == "managed_model_path"
+
+
+def test_real_small_model_source_preserves_old_copied_managed_layout_fallback(tmp_path: Path) -> None:
+    managed_model_dir = (
+        tmp_path
+        / "managed"
+        / "huggingface"
+        / "mlx-community"
+        / "Qwen3.5-0.8B-OptiQ-4bit"
+        / "main"
+    )
+    managed_model_dir.mkdir(parents=True)
+    (managed_model_dir / "model.safetensors").write_bytes(b"weights")
 
     source = resolve_real_small_text_model_source(
         environment={"MELIX_MANAGED_MODEL_ROOT": str(tmp_path / "managed")},
@@ -47,10 +87,56 @@ def test_real_small_model_source_can_use_managed_model_root(tmp_path: Path) -> N
     assert source.source_resolution_mode == "managed_model_path"
 
 
+def test_descriptor_runtime_model_path_ignores_invalid_descriptor_manifests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    missing_runtime = tmp_path / "missing-runtime"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "None").mkdir()
+    manifest_payloads = [
+        "{",
+        "[]",
+        json.dumps({"ext": "invalid"}),
+        json.dumps({"ext": {}}),
+        json.dumps({"ext": {"melix.model_path": None}}),
+        json.dumps({"ext": {"melix.model_path": str(missing_runtime)}}),
+    ]
+
+    for index, payload in enumerate(manifest_payloads):
+        descriptor_dir = tmp_path / f"descriptor-{index}"
+        descriptor_dir.mkdir()
+        (descriptor_dir / "manifest.json").write_text(payload + "\n", encoding="utf-8")
+
+        assert _descriptor_runtime_model_path(descriptor_dir) is None
+
+
+def test_descriptor_runtime_model_path_logs_manifest_runtime_file(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    descriptor_dir = tmp_path / "descriptor"
+    runtime_file = tmp_path / "hf-cache" / "snapshot" / "config.json"
+    descriptor_dir.mkdir()
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_text("{}", encoding="utf-8")
+    (descriptor_dir / "manifest.json").write_text(
+        json.dumps({"ext": {"melix.model_path": str(runtime_file)}}) + "\n",
+        encoding="utf-8",
+    )
+
+    caplog.set_level("DEBUG", logger="scripts.real_model_support")
+
+    assert _descriptor_runtime_model_path(descriptor_dir) is None
+    assert "is not a directory" in caplog.text
+
+
 def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -62,7 +148,7 @@ def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path
     (refs / "main").write_text("abc123\n", encoding="utf-8")
 
     source = resolve_real_small_text_model_source(
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
         allow_hf_cache=True,
     )
 
@@ -72,9 +158,11 @@ def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path
 
 
 def test_real_small_model_source_defaults_to_hub_without_local_sources(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -85,7 +173,7 @@ def test_real_small_model_source_defaults_to_hub_without_local_sources(tmp_path:
     refs.mkdir()
     (refs / "main").write_text("abc123\n", encoding="utf-8")
 
-    source = resolve_real_small_text_model_source(environment={"HF_HOME": str(hf_home)})
+    source = resolve_real_small_text_model_source(environment={"HOME": str(home)})
 
     assert source.live is True
     assert source.local_model_path == ""
@@ -107,7 +195,7 @@ def test_resolve_real_small_model_path_uses_the_shared_source_resolution(tmp_pat
 def test_resolve_real_small_model_path_returns_none_without_local_source(tmp_path: Path) -> None:
     assert (
         resolve_real_small_text_model_path(
-            environment={"HF_HOME": str(tmp_path / "hf")},
+            environment={"HOME": str(tmp_path / "home")},
             allow_managed_root=False,
             allow_hf_cache=False,
         )
@@ -127,7 +215,8 @@ def test_real_small_model_source_ignores_missing_managed_candidate(tmp_path: Pat
 
 
 def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path: Path) -> None:
-    cache_root = tmp_path / "hub-cache"
+    home = tmp_path / "home"
+    cache_root = home / ".cache" / "huggingface" / "hub"
     snapshots_root = cache_root / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit" / "snapshots"
     old_snapshot = snapshots_root / "aaa"
     latest_snapshot = snapshots_root / "zzz"
@@ -135,7 +224,7 @@ def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path
     latest_snapshot.mkdir()
 
     source = resolve_real_small_text_model_source(
-        environment={"HUGGINGFACE_HUB_CACHE": str(cache_root)},
+        environment={"HOME": str(home)},
         allow_managed_root=False,
         allow_hf_cache=True,
     )

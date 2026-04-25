@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Foundation
+import MelixCLICore
 import Testing
 
 @testable import AppMain
@@ -827,6 +828,7 @@ struct AppMainBootstrapTests {
             let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
             let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
             let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+            let hfTokenStore = HuggingFaceTokenStore(melixHome: melixHome)
             let serverSession = DesktopServerSessionState(
                 id: "server-session-1",
                 title: "Primary Server",
@@ -844,12 +846,14 @@ struct AppMainBootstrapTests {
                 serverSessionID: serverSession.id,
                 primaryKey: "melix_sk_test_primary"
             )
+            try hfTokenStore.saveToken("hf_secret_token")
 
             #expect(try posixPermissions(at: melixHome.rootURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.stateDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.secretsDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.operatorSessionFileURL) == 0o600)
             #expect(try posixPermissions(at: melixHome.serverSessionAPIKeysFileURL) == 0o600)
+            #expect(try posixPermissions(at: melixHome.huggingFaceTokenFileURL) == 0o600)
         }
     }
 

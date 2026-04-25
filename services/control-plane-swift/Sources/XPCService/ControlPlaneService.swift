@@ -364,6 +364,11 @@ public actor ControlPlaneService {
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore
             )
+        } catch OnDemandModelLoadError.runtimeCacheMissing {
+            throw ControlPlaneChatExecutionError.requestFailed(
+                code: ModelRuntimeAvailability.missingRuntimeCacheCode,
+                message: ModelRuntimeAvailability.missingRuntimeCacheMessage
+            )
         } catch {
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: lazy text load failed for \(normalized.model): \(error)")
         }
@@ -3799,6 +3804,17 @@ public actor ControlPlaneService {
             requestedMemoryBudgetBytes: requestedMemoryBudgetBytes,
             model: hydratedCatalogModel ?? catalogModel
         )
+        if let model = hydratedCatalogModel ?? catalogModel,
+           ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
+            let failedModel = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(reason)_model_runtime_missing"
+            ) ?? model
+            return ModelLoadOutcome(
+                model: hydrate(failedModel),
+                error: ModelRuntimeAvailability.missingRuntimeCacheErrorStatus(modelID: modelID)
+            )
+        }
         let requestedDiskStreamingMode = fallbackPreparedModelSpec.map {
             controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
         } ?? .diskStreamingDisabled

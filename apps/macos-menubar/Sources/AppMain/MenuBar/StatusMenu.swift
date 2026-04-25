@@ -171,7 +171,7 @@ public final class StatusMenu: NSObject {
             items.append(
                 .action(
                     model.actionTitle,
-                    model.isLoaded ? .unloadPrimaryModel : .loadPrimaryModel
+                    model.runtimeCacheMissing || !model.isLoaded ? .loadPrimaryModel : .unloadPrimaryModel
                 )
             )
         }
