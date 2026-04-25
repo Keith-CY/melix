@@ -4,6 +4,7 @@ import MelixWorkerProtocol
 public enum ControlPlaneChatExecutionError: Error, Equatable {
     case unavailable
     case unavailableReason(String)
+    case requestFailed(code: String, message: String)
 }
 
 extension ControlPlaneChatExecutionError: CustomStringConvertible {
@@ -13,6 +14,9 @@ extension ControlPlaneChatExecutionError: CustomStringConvertible {
             return "unavailable"
         case .unavailableReason(let reason):
             let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "unavailable" : trimmed
+        case .requestFailed(_, let message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? "unavailable" : trimmed
         }
     }

@@ -1206,6 +1206,33 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
     }
 
+    @Test("chat submit reports missing managed Hugging Face cache without dispatching")
+    @MainActor
+    func chatSubmitReportsMissingManagedHuggingFaceCacheWithoutDispatching() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var missingModel = makeModelSummary(state: .modelDiscovered)
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        await client.configureSnapshot(makeSnapshot(
+            serverState: .serverReady,
+            models: [missingModel],
+            runtimeSessions: [makeRuntimeSession()]
+        ))
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "hello"
+        await viewModel.submitChatPrompt()
+
+        let errorEntry = try #require(viewModel.chatTranscript.last)
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
+        #expect(errorEntry.kind == .error)
+        #expect(errorEntry.body == "Hugging Face cache files are missing. Re-download this model to restore it.")
+        #expect(viewModel.chatStatusText == "Failed • model_runtime_missing")
+        #expect(viewModel.lastError == "Hugging Face cache files are missing. Re-download this model to restore it.")
+    }
+
     @Test("surface selection command center and server session controls update shell state")
     @MainActor
     func shellStateSelectionAndServerSessionControlsUpdateState() async throws {
@@ -3267,6 +3294,26 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(evicting).stateText == "Evicting • Ttl expired")
         #expect(makeRuntimeModelRow(unloaded).stateText == "Unloaded • Lru same capability")
         #expect(makeRuntimeModelRow(failed).stateText == "Failed • Operator unload failed")
+    }
+
+    @Test("runtime model row surfaces missing managed Hugging Face cache recovery state")
+    func runtimeModelRowSurfacesMissingManagedHuggingFaceCacheRecoveryState() {
+        var model = makeModelSummary(state: .modelDiscovered)
+        model.settings.ext["melix.model_path_missing"] = "true"
+        model.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        model.settings.ext["melix.registry_descriptor_path"] = "/tmp/melix-managed/huggingface/mlx-community/Qwen3/main"
+        model.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3"
+        model.settings.ext["melix.hf_revision"] = "main"
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.runtimeCacheMissing)
+        #expect(row.runtimeCacheStatusText == "Missing cache")
+        #expect(row.runtimeCacheDetailText == "Hugging Face cache files are missing. Re-download this model to restore it.")
+        #expect(row.actionTitle == "Restore Download")
+        #expect(row.runtimePathText == "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing")
+        #expect(row.registryDescriptorPathText == "/tmp/melix-managed/huggingface/mlx-community/Qwen3/main")
+        #expect(row.restoreCommandText == "melix model hub download --repo-id mlx-community/Qwen3 --revision main")
     }
 
     @Test("runtime model row surfaces residency memory and guard descriptors")

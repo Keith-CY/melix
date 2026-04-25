@@ -144,10 +144,24 @@ struct DesktopModelsTabView: View {
                                     .background(.quaternary, in: Capsule())
                                     .accessibilityLabel(model.runtimeModeAccessibilityLabel)
                             }
+                            if model.runtimeCacheMissing {
+                                Text(model.runtimeCacheStatusText)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.orange.opacity(0.16), in: Capsule())
+                                    .foregroundStyle(.orange)
+                                    .accessibilityLabel(model.runtimeCacheStatusText)
+                            }
                         }
                         Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        if model.runtimeCacheMissing {
+                            Text(model.runtimeCacheDetailText)
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                         if !model.typeOverrideText.isEmpty {
                             Text("type override: \(model.typeOverrideText)")
                                 .font(.caption2)
@@ -512,7 +526,9 @@ struct DesktopModelsTabView: View {
     }
 
     func toggleModelLoad(for model: RuntimeModelRow) async {
-        if model.isLoaded {
+        if model.runtimeCacheMissing {
+            await viewModel.restoreMissingRuntimeCache(modelID: model.modelID)
+        } else if model.isLoaded {
             await viewModel.unloadModel(modelID: model.modelID)
         } else {
             await viewModel.loadModel(modelID: model.modelID)
@@ -1184,6 +1200,18 @@ func desktopModelInfoSummaryContent(
     detailLines.append("modalities: \(info.supportedModalities.joined(separator: ", "))")
     if !info.supportedTasks.isEmpty {
         detailLines.append("tasks: \(info.supportedTasks.joined(separator: ", "))")
+    }
+    if !info.runtimeStatusText.isEmpty {
+        detailLines.append("runtime status: \(info.runtimeStatusText)")
+    }
+    if !info.runtimePathText.isEmpty {
+        detailLines.append("runtime path: \(info.runtimePathText)")
+    }
+    if !info.registryDescriptorPathText.isEmpty {
+        detailLines.append("descriptor path: \(info.registryDescriptorPathText)")
+    }
+    if !info.restoreCommandText.isEmpty {
+        detailLines.append("restore command: \(info.restoreCommandText)")
     }
     if !info.modelRevision.isEmpty {
         detailLines.append("revision: \(info.modelRevision)")

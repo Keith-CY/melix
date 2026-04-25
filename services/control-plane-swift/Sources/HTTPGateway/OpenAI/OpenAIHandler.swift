@@ -828,6 +828,8 @@ public struct OpenAIHandler: Sendable {
                 loadReason: "lazy_audio_transcription_load",
                 metricsPrefix: "audio_transcription"
             )
+        } catch OnDemandModelLoadError.runtimeCacheMissing {
+            return httpErrorResponse(for: .modelRuntimeMissing)
         } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
         } catch OnDemandModelLoadError.workerUnavailable {
@@ -945,6 +947,8 @@ public struct OpenAIHandler: Sendable {
                 loadReason: "lazy_audio_speech_load",
                 metricsPrefix: "audio_speech"
             )
+        } catch OnDemandModelLoadError.runtimeCacheMissing {
+            return httpErrorResponse(for: .modelRuntimeMissing)
         } catch OnDemandModelLoadError.modelNotReady {
             return httpErrorResponse(for: .modelNotReady)
         } catch OnDemandModelLoadError.workerUnavailable {
@@ -1440,6 +1444,8 @@ public struct OpenAIHandler: Sendable {
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore
             )
+        } catch OnDemandModelLoadError.runtimeCacheMissing {
+            throw HTTPRequestHandlingError.modelRuntimeMissing
         } catch OnDemandModelLoadError.modelNotReady {
             throw HTTPRequestHandlingError.modelNotReady
         } catch OnDemandModelLoadError.workerUnavailable {
@@ -1636,6 +1642,16 @@ public struct OpenAIHandler: Sendable {
             return jsonResponse(
                 statusCode: 409,
                 payload: ["error": ["code": "model_not_ready", "message": "Requested model is not loaded."]]
+            )
+        case .modelRuntimeMissing:
+            return jsonResponse(
+                statusCode: 409,
+                payload: [
+                    "error": [
+                        "code": ModelRuntimeAvailability.missingRuntimeCacheCode,
+                        "message": ModelRuntimeAvailability.missingRuntimeCacheMessage,
+                    ],
+                ]
             )
         case .workerUnavailable:
             return workerUnavailableResponse()
@@ -2539,6 +2555,7 @@ private struct SanitizedOutputMetrics {
 private enum HTTPRequestHandlingError: Error {
     case streamRequired
     case modelNotReady
+    case modelRuntimeMissing
     case workerUnavailable
 }
 

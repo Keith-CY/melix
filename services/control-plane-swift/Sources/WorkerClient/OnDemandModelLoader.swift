@@ -4,6 +4,7 @@ import MelixWorkerProtocol
 
 enum OnDemandModelLoadError: Error {
     case modelNotReady
+    case runtimeCacheMissing
     case workerUnavailable
 }
 
@@ -38,6 +39,17 @@ enum OnDemandModelLoader {
         requiresTextCapability: Bool = false,
         summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil
     ) async throws -> String {
+        let resolvedModel = if let summaryOverride {
+            summaryOverride
+        } else {
+            await modelCatalog.model(id: modelID)
+        }
+        guard let model = resolvedModel else {
+            throw OnDemandModelLoadError.modelNotReady
+        }
+        if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
+            throw OnDemandModelLoadError.runtimeCacheMissing
+        }
         _ = await evictModelsIfNeededForLoad(
             targetModelID: modelID,
             modelCatalog: modelCatalog,
@@ -47,15 +59,6 @@ enum OnDemandModelLoader {
         if let handle = await modelCatalog.dispatchHandle(for: modelID) {
             _ = await modelCatalog.markModelUsed(id: modelID)
             return handle
-        }
-
-        let resolvedModel = if let summaryOverride {
-            summaryOverride
-        } else {
-            await modelCatalog.model(id: modelID)
-        }
-        guard let model = resolvedModel else {
-            throw OnDemandModelLoadError.modelNotReady
         }
         if requiresTextCapability,
            !(model.kind == "text" || model.capabilityClass == .modelCapabilityText) {

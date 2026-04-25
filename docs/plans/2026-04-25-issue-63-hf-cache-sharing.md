@@ -17,17 +17,23 @@
 - [x] Update evidence helpers so managed-root lookup reads descriptor manifests and resolves their external runtime path, while preserving compatibility with old copied managed layouts that contain real weights.
 - [x] Update official docs to describe the descriptor/cache split for managed Hugging Face imports.
 - [x] Add focused tests for Python worker import, registry scanning, real-model source resolution, Swift/CLI receipts, and `/v1/models` metadata exposure.
+- [x] Promote missing Hugging Face cache metadata into a shared runtime availability helper, user-facing `model_runtime_missing` error, CLI `missing-cache` status, Desktop App badge/banner/chat recovery state, and OpenAI-compatible HTTP 409 responses.
 
 ## Public Interfaces
 
 - No protobuf schema changes.
 - CLI `ManagedModelReceipt.managed_model_path` remains the Melix descriptor path under `MELIX_MANAGED_MODEL_ROOT`.
 - Registry and `/v1/models` metadata expose the runtime model path through `melix.model_path` and expose descriptor identity through `melix.registry_descriptor_path` plus existing `melix.registry_*` fields. If the runtime path is missing, metadata includes `melix.model_path_missing=true`.
+- Missing managed Hugging Face cache snapshots use the stable code `model_runtime_missing` and user-facing message `Hugging Face cache files are missing. Re-download this model to restore it.` Melix does not automatically re-download; Desktop users must choose `Restore Download`, and CLI users must run `melix model hub download --repo-id <repo> --revision <revision>`.
+- CLI `melix model list` shows `missing-cache` in the `STATUS` column. JSON list/inspect payloads include `model_path_missing`, `model_path`, `registry_descriptor_path`, `runtime_status`, and `restore_command` when the metadata is available.
+- Desktop model rows show a `Missing cache` badge and replace `Load` with `Restore Download`. Chat submission against a missing-cache model appends an Error bubble with the shared message and status `Failed • model_runtime_missing`; the status menu shows `Missing model cache: <model-id>`.
+- OpenAI-compatible text requests for a missing-cache model return HTTP 409 with `error.code=model_runtime_missing` and the shared recovery message.
 
 ## Verification And Metrics
 
 - Run targeted Python tests for `test_maintenance_service.py`, `test_model_registry_catalog.py`, and `tests/test_real_model_support.py`.
 - Run targeted Swift tests for `MelixCLIRunnerTests`, `ModelCatalogTests`, `ControlPlaneServiceTests`, and `OpenAIHandlerTests`.
+- Run targeted Desktop App tests for `RuntimeViewModelTests`, `DesktopFoundationViewTests`, and `StatusMenuTests` covering missing-cache badge, restore action, chat error, and menu banner.
 - Run `make py-test`, `make swift-test`, and a relevant integration smoke when feasible.
 - Measure changed-line coverage for the touched Python scope and keep it at or above 95 percent.
 - Capture a metrics report for the changed scope using existing probes: `phase8.cli.managed_materialize_ms`, `registry.reload_latency_ms`, and `registry.discovered_model_count`. For non-live verification, record `N/A` with reason.

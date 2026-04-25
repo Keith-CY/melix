@@ -2694,6 +2694,7 @@ struct OpenAIHandlerTests {
                         "melix.registry_variant_id": "q4f16",
                         "melix.registry_descriptor_path": "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit",
                         "melix.model_path": "/tmp/hf-cache/models--mlx-community--Qwen2.5-7B-Instruct/snapshots/abc123",
+                        "melix.model_path_missing": "true",
                     ],
                 ],
             ]
@@ -2749,6 +2750,7 @@ struct OpenAIHandlerTests {
         #expect(metadata["melix.registry_descriptor_path"] as? String == "/tmp/managed-root/huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
         #expect(metadata["melix.registry_relative_path"] as? String == "huggingface/mlx-community/Qwen2.5-7B-Instruct/4bit")
         #expect(metadata["melix.model_path"] as? String == "/tmp/hf-cache/models--mlx-community--Qwen2.5-7B-Instruct/snapshots/abc123")
+        #expect(metadata["melix.model_path_missing"] as? String == "true")
     }
 
     @Test("registry model-ops stub covers unavailable control paths")
@@ -6120,6 +6122,44 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 409)
         #expect(payload.contains("\"code\":\"model_not_ready\""))
+    }
+
+    @Test("chat requests return 409 when the managed Hugging Face cache is missing")
+    func missingManagedHuggingFaceCacheReturns409() async throws {
+        var model = warmModel()
+        model.settings.ext["melix.model_path_missing"] = "true"
+        model.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        model.settings.ext["melix.registry_descriptor_path"] = "/tmp/melix-managed/huggingface/mlx-community/Qwen3/main"
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 409)
+        #expect(payload.contains("\"code\":\"model_runtime_missing\""))
+        #expect(payload.contains("Hugging Face cache files are missing. Re-download this model to restore it."))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("chat requests return 503 when the worker is unavailable")
