@@ -691,6 +691,11 @@ def test_start_stack_wraps_http_timeout_with_log_paths(
     monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
     monkeypatch.setattr(
         dev_up,
+        "prepare_swift_worker_launch_cwd",
+        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
+    )
+    monkeypatch.setattr(
+        dev_up,
         "build_swift_launch_command",
         lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
     )
@@ -732,6 +737,11 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
 
     monkeypatch.setenv("MELIX_GATEWAY_CONFIG_STORE_PATH", "/tmp/global-gateway-config.json")
     monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setattr(
+        dev_up,
+        "prepare_swift_worker_launch_cwd",
+        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
+    )
     monkeypatch.setattr(
         dev_up,
         "build_swift_launch_command",
