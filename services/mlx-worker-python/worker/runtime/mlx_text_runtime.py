@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
 
@@ -274,15 +275,18 @@ class AutoMLXBackend:
 
 
 class MLXTextRuntime:
-    def __init__(self, backend: Any | None = None) -> None:
+    def __init__(self, backend: Any | None = None, executor: MLXRuntimeExecutor | None = None) -> None:
         self._backend = backend or AutoMLXBackend()
+        self._executor = executor
 
     @property
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "unknown-runtime")
 
     def load_model(self, model_spec):
-        return self._backend.load_model(model_spec)
+        if self._executor is None:
+            return self._backend.load_model(model_spec)
+        return self._executor.run(lambda: self._backend.load_model(model_spec))
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
@@ -333,7 +337,13 @@ class MLXTextRuntime:
         execution_ext: dict[str, str] | None = None,
     ):
         _ = execution_ext
-        for item in self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event):
+        if self._executor is None:
+            item_iterable = self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+        else:
+            item_iterable = self._executor.iterate(
+                lambda: self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+            )
+        for item in item_iterable:
             if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
                 yield item
             else:

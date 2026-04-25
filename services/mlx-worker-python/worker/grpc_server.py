@@ -160,6 +160,19 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                     message=str(exc),
                 ),
             )
+        if request.warmup_after_load:
+            try:
+                self._registry.warmup_model(loaded.handle)
+            except NotImplementedError as exc:
+                return runtime_pb2.LoadModelResponse(
+                    ok=False,
+                    error=common_pb2.ErrorStatus(code="unimplemented", message=str(exc)),
+                )
+            except Exception as exc:
+                return runtime_pb2.LoadModelResponse(
+                    ok=False,
+                    error=common_pb2.ErrorStatus(code="warmup_failed", message=str(exc)),
+                )
         response = runtime_pb2.LoadModelResponse(
             ok=True,
             model_handle=loaded.handle,
@@ -177,10 +190,24 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
         )
 
     def WarmupModel(self, request, context):
-        return runtime_pb2.WarmupModelResponse(
-            ok=False,
-            error=common_pb2.ErrorStatus(code="unimplemented", message="Warmup is deferred in phase 0."),
-        )
+        try:
+            warmup_ms = self._registry.warmup_model(request.model_handle, request.synthetic_messages)
+        except NotImplementedError as exc:
+            return runtime_pb2.WarmupModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="unimplemented", message=str(exc)),
+            )
+        except Exception as exc:
+            return runtime_pb2.WarmupModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="warmup_failed", message=str(exc)),
+            )
+        if warmup_ms is None:
+            return runtime_pb2.WarmupModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle."),
+            )
+        return runtime_pb2.WarmupModelResponse(ok=True, warmup_ms=warmup_ms)
 
     def GetRuntimeStats(self, request, context):
         return runtime_pb2.GetRuntimeStatsResponse(stats=self._registry.runtime_stats())

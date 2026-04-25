@@ -758,6 +758,9 @@ struct RequestCoordinatorTests {
             response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 2048
             response.stats.l1HitRate = 0.5
+            response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
+            response.stats.workerThreadInitLatencyMs = 4
+            response.stats.streamSyncFallbackCount = 2
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -807,6 +810,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
+        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
+        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
     }
 
     @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")

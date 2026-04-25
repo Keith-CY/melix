@@ -2095,6 +2095,7 @@ public actor RequestCoordinator {
         }
 
         let stats = runtimeStats.stats
+        await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
         switch routeKind {
         case .pythonOCR:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")

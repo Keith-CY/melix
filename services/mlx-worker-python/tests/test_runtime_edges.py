@@ -230,7 +230,7 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     assert missing.ok is False
     assert missing.error.code == "not_found"
     assert warmup.ok is False
-    assert warmup.error.code == "unimplemented"
+    assert warmup.error.code == "not_found"
     assert shutdown.ok is True
     assert registry.list_loaded_models() == []
 

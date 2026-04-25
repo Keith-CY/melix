@@ -9,6 +9,7 @@ from threading import Event
 from typing import Any, Callable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.temp_media_lifecycle import TempMediaSession
@@ -263,10 +264,12 @@ class MLXVLMRuntime:
         backend: AutoMLXVLMBackend | None = None,
         temp_root: Path | str | None = None,
         temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+        executor: MLXRuntimeExecutor | None = None,
     ) -> None:
         self._backend = backend or AutoMLXVLMBackend()
         self._temp_root = Path(temp_root) if temp_root is not None else None
         self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
+        self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
 
     @property
@@ -274,7 +277,9 @@ class MLXVLMRuntime:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
     def load_model(self, model_spec):
-        return self._backend.load_model(model_spec)
+        if self._executor is None:
+            return self._backend.load_model(model_spec)
+        return self._executor.run(lambda: self._backend.load_model(model_spec))
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
@@ -357,7 +362,6 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
-        self._backend._ensure_runtime()
         if cancel_event.is_set():
             return
 
@@ -368,61 +372,71 @@ class MLXVLMRuntime:
         )
         try:
             image_paths = self._materialize_media(prepared_request, temp_media_session)
-            formatted_prompt = self._backend.apply_chat_template_fn(
-                loaded_model["processor"],
-                loaded_model["model"].config,
-                prepared_request.prompt_text,
-                num_images=len(image_paths),
-            )
-            image_argument = image_paths if image_paths else None
 
-            started_at = time.perf_counter()
-            first_token_at: float | None = None
-            completion_tokens = 0
-            for response in self._backend.stream_generate_fn(
-                loaded_model["model"],
-                loaded_model["processor"],
-                formatted_prompt,
-                image=image_argument,
-                max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-                temperature=float(getattr(sampling, "temperature", 0.0)),
-                top_p=float(getattr(sampling, "top_p", 1.0)),
-                top_k=int(getattr(sampling, "top_k", 0)),
-                verbose=False,
-            ):
+            def backend_events():
+                self._backend._ensure_runtime()
                 if cancel_event.is_set():
                     return
-                text = str(getattr(response, "text", "") or "")
-                if not text:
-                    continue
-                now = time.perf_counter()
-                if first_token_at is None:
-                    first_token_at = now
-                    self._last_probe = VisionProbeSnapshot(
-                        preprocess_latency_ms=prepared_request.preprocess_latency_ms,
-                        preprocess_input_bytes=prepared_request.preprocess_input_bytes,
-                        preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
-                        first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
-                        video_effective_frame_count=prepared_request.effective_video_frame_count,
-                        video_requested_frame_budget=prepared_request.requested_video_frame_budget,
-                        video_window_ms=prepared_request.effective_video_window_ms,
-                        cache_identity="",
-                        cache_scope_id="",
-                        cache_hit=False,
+
+                formatted_prompt = self._backend.apply_chat_template_fn(
+                    loaded_model["processor"],
+                    loaded_model["model"].config,
+                    prepared_request.prompt_text,
+                    num_images=len(image_paths),
+                )
+                image_argument = image_paths if image_paths else None
+
+                started_at = time.perf_counter()
+                first_token_at: float | None = None
+                completion_tokens = 0
+                for response in self._backend.stream_generate_fn(
+                    loaded_model["model"],
+                    loaded_model["processor"],
+                    formatted_prompt,
+                    image=image_argument,
+                    max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
+                    temperature=float(getattr(sampling, "temperature", 0.0)),
+                    top_p=float(getattr(sampling, "top_p", 1.0)),
+                    top_k=int(getattr(sampling, "top_k", 0)),
+                    verbose=False,
+                ):
+                    if cancel_event.is_set():
+                        return
+                    text = str(getattr(response, "text", "") or "")
+                    if not text:
+                        continue
+                    now = time.perf_counter()
+                    if first_token_at is None:
+                        first_token_at = now
+                        self._last_probe = VisionProbeSnapshot(
+                            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                            first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                            video_effective_frame_count=prepared_request.effective_video_frame_count,
+                            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                            video_window_ms=prepared_request.effective_video_window_ms,
+                            cache_identity="",
+                            cache_scope_id="",
+                            cache_hit=False,
+                        )
+                    completion_tokens = max(
+                        completion_tokens,
+                        int(getattr(response, "generation_tokens", 0) or (completion_tokens + 1)),
                     )
-                completion_tokens = max(
-                    completion_tokens,
-                    int(getattr(response, "generation_tokens", 0) or (completion_tokens + 1)),
-                )
-                yield RuntimeTokenEvent(
-                    text=text,
-                    prompt_tokens=int(getattr(response, "prompt_tokens", 0) or prompt_tokens),
-                    completion_tokens=completion_tokens,
-                    prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
-                    generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
-                    peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
-                    finish_reason="stop",
-                )
+                    yield RuntimeTokenEvent(
+                        text=text,
+                        prompt_tokens=int(getattr(response, "prompt_tokens", 0) or prompt_tokens),
+                        completion_tokens=completion_tokens,
+                        prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
+                        generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
+                        peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
+                        finish_reason="stop",
+                    )
+
+            event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
+            for event in event_iterable:
+                yield event
         finally:
             cleanup_report = temp_media_session.cleanup()
             self._last_probe = replace(

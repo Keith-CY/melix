@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Event
 from threading import Lock
+import time
 from typing import Any
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
@@ -15,6 +17,7 @@ from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.deterministic_image_generation_runtime import DeterministicImageGenerationRuntime
 from worker.runtime.audio_runtime_protocols import SpeechRuntimeProtocol, TranscriptionRuntimeProtocol
 from worker.runtime.mlx_audio_runtime import MLXAudioSpeechRuntime, MLXAudioTranscriptionRuntime
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
@@ -90,13 +93,15 @@ class WorkerRegistry:
         worker_id: str = "worker-text-001",
         process_memory_budget_bytes: int = 0,
         memory_headroom_bytes: int = 0,
+        mlx_executor: MLXRuntimeExecutor | None = None,
     ) -> None:
-        self.runtime = runtime or MLXTextRuntime()
+        self._mlx_executor = mlx_executor or MLXRuntimeExecutor()
+        self.runtime = runtime or MLXTextRuntime(executor=self._mlx_executor)
         self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
-        self.mlx_vlm_runtime = mlx_vlm_runtime or MLXVLMRuntime()
+        self.mlx_vlm_runtime = mlx_vlm_runtime or MLXVLMRuntime(executor=self._mlx_executor)
         audio_execution_gate = Lock()
         self.transcription_runtime = transcription_runtime or DeterministicTranscriptionRuntime()
         self.speech_runtime = speech_runtime or DeterministicSpeechRuntime()
@@ -255,6 +260,47 @@ class WorkerRegistry:
         with self._lock:
             return self._loaded_models.pop(handle, None) is not None
 
+    def warmup_model(self, handle: str, synthetic_messages=None) -> int | None:
+        loaded = self.get_loaded_model(handle)
+        if loaded is None:
+            return None
+        runtime = self.runtime_for_loaded_model(loaded)
+        if not hasattr(runtime, "render_prompt") or not hasattr(runtime, "generate_tokens"):
+            raise NotImplementedError("Warmup is only available for generation runtimes.")
+
+        messages = list(synthetic_messages or [])
+        if not messages:
+            messages = [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Warm up the local runtime.")],
+                )
+            ]
+
+        started_at = time.perf_counter()
+        prompt = runtime.render_prompt(
+            messages,
+            loaded_model=loaded.runtime_model,
+            template_kwargs=None,
+            execution_ext={},
+        )
+        sampling = common_pb2.SamplingConfig(
+            temperature=0.0,
+            top_p=1.0,
+            top_k=1,
+            max_output_tokens=1,
+        )
+        cancel_event = Event()
+        for _ in runtime.generate_tokens(
+            loaded.runtime_model,
+            prompt,
+            sampling,
+            cancel_event,
+            execution_ext={},
+        ):
+            break
+        return int(round(max(0.0, (time.perf_counter() - started_at) * 1000.0)))
+
     def get_loaded_model(self, handle: str) -> LoadedModel | None:
         with self._lock:
             return self._loaded_models.get(handle)
@@ -336,6 +382,7 @@ class WorkerRegistry:
             last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
             last_image_output_bytes = self._last_image_output_bytes
             last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+        mlx_executor_snapshot = self._mlx_executor.snapshot()
         stats = runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
             resident_bytes=resident_bytes,
@@ -372,6 +419,9 @@ class WorkerRegistry:
             last_image_artifact_publish_ms=last_image_artifact_publish_ms,
             last_image_output_bytes=last_image_output_bytes,
             last_image_peak_memory_bytes=last_image_peak_memory_bytes,
+            generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
+            worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
+            stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
         )
         stats.model_resident_bytes = model_resident_bytes
         stats.cache_resident_bytes = cache_resident_bytes

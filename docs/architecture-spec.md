@@ -137,6 +137,16 @@ Python workers remain the broader execution layer. They should continue to own:
 - convert, quantize, upload, download, train, doctor, info, and bench flows
 - any text-compatible compatibility path retained during migration
 
+MLX-backed Python text compatibility and VLM runtimes must execute model load,
+warmup, prompt/template preparation, and token streaming on an executor-owned
+runtime thread. The executor is responsible for initializing the MLX stream
+context on that thread when MLX is available and for publishing runtime evidence
+through `RuntimeStats.generation_stream_owner_mode`,
+`RuntimeStats.worker_thread_init_latency_ms`, and
+`RuntimeStats.stream_sync_fallback_count`. Control-plane observability should
+project those fields into `python_worker.*` metrics whenever worker runtime
+stats are refreshed.
+
 Python workers also own ordered multi-root on-disk registry scanning. Registry sources are user-configured model roots first, followed by the default Hugging Face cache at `~/.cache/huggingface/hub` when it exists. Root order is significant, the first root wins on duplicate `model_id`, and invalid roots must not poison discovery from valid roots. Scanning recognizes Hugging Face cache snapshots at `models--<org>--<repo>/snapshots/<snapshot-id>` and plain local MLX model directories that contain `config.json` plus model weights. The scanner must skip Hugging Face `blobs` payloads and must not load the MLX runtime during discovery.
 
 Melix-managed Hugging Face downloads write model bytes directly into `~/.cache/huggingface/hub` by passing that path as `snapshot_download(cache_dir=...)`; `HUGGINGFACE_HUB_CACHE` and `HF_HOME` do not change the Melix-managed download location. New Hub downloads no longer create registry descriptors under `MELIX_MANAGED_MODEL_ROOT`, and download receipts report the real runtime snapshot path. Registry metadata for cache/root-discovered models exposes `melix.model_path`, `melix.source_kind=hf_cache_snapshot` or `local_mlx_directory`, `melix.registry_root_path`, and `melix.registry_relative_path`; Hugging Face cache snapshots also expose `melix.hf_repo_id` and `melix.hf_revision`. Cache/root-discovered models do not expose `melix.registry_descriptor_path`. If a Hugging Face snapshot is deleted and the registry is rescanned, the model disappears instead of entering a descriptor-driven missing-cache state. Legacy descriptor scanning remains only as a compatibility path for older managed roots that are still configured.
