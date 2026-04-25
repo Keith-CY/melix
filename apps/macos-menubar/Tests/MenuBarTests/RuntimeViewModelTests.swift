@@ -6156,6 +6156,88 @@ struct RuntimeViewModelTests {
         #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
     }
 
+    @Test("lora activation surfaces a running workflow state before completion and a success summary afterward")
+    @MainActor
+    func loraActivationSurfacesRunningThenSuccessWorkflowState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperationDelay(.milliseconds(120))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: #"{"operation":"activate_adapter","derived_model_path":"/tmp/melix-activate/activate_adapter.derived_model.json"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        let task = Task { await viewModel.activateLatestAdapter() }
+        try await Task.sleep(for: .milliseconds(20))
+
+        let runningStatus = try #require(viewModel.loraWorkflowStatus)
+        #expect(runningStatus.phase == .running)
+        #expect(runningStatus.operation == "activate_adapter")
+        #expect(runningStatus.title == "Activating Adapter")
+
+        await task.value
+
+        let completedStatus = try #require(viewModel.loraWorkflowStatus)
+        #expect(completedStatus.phase == .succeeded)
+        #expect(completedStatus.operation == "activate_adapter")
+        #expect(completedStatus.title == "Adapter Activated")
+        #expect(completedStatus.detail.contains("activate_adapter.derived_model.json"))
+    }
+
+    @Test("lora activation failure surfaces workflow failure details inline")
+    @MainActor
+    func loraActivationFailureSurfacesWorkflowFailureDetails() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/melix-dev-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperationError(
+            NSError(
+                domain: "RuntimeViewModelTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "activation unavailable"]
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        await viewModel.activateLatestAdapter()
+
+        let failedStatus = try #require(viewModel.loraWorkflowStatus)
+        #expect(failedStatus.phase == .failed)
+        #expect(failedStatus.operation == "activate_adapter")
+        #expect(failedStatus.title == "Activation Failed")
+        #expect(failedStatus.detail.contains("activation unavailable"))
+    }
+
     @Test("lora removal and compare workflows dispatch configured modes through the shared runner seam")
     @MainActor
     func loraRemovalAndCompareDispatchConfiguredModesThroughSharedRunnerSeam() async throws {
@@ -6934,11 +7016,14 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         await viewModel.refreshModelOpsProductState()
+        #expect(viewModel.lastError?.contains("registry snapshot") == true)
         await viewModel.publishLatestAdapter()
 
-        #expect(viewModel.lastError?.contains("registry snapshot") == true)
+        #expect(viewModel.lastError == "Select an adapter package before publishing it.")
         #expect(viewModel.adapterPackages.isEmpty)
         #expect(viewModel.trainingHistory.isEmpty)
+        #expect(viewModel.loraWorkflowStatus?.phase == .failed)
+        #expect(viewModel.loraWorkflowStatus?.title == "Publish Failed")
     }
 
     @Test("model tooling snapshot normalizes pending adapter payloads and fallback publish flows")

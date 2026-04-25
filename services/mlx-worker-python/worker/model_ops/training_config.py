@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -56,6 +57,20 @@ _DENSE_FULL_TARGETS = [*_DENSE_ATTENTION_TARGETS, *_DENSE_MLP_TARGETS]
 _MIXTRAL_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
 _MIXTRAL_EXPERT_TARGETS = ["gate_proj", "up_proj", "down_proj"]
 _MIXTRAL_FULL_TARGETS = [*_MIXTRAL_ATTENTION_TARGETS, *_MIXTRAL_EXPERT_TARGETS]
+
+_QWEN3MOE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
+_QWEN3MOE_QKV_TARGETS = ["q_proj", "k_proj", "v_proj"]
+_QWEN3MOE_EXPERT_TARGETS = ["gate_proj", "up_proj", "down_proj"]
+_QWEN3MOE_FULL_TARGETS = [*_QWEN3MOE_ATTENTION_TARGETS, *_QWEN3MOE_EXPERT_TARGETS]
+
+_UNSAFE_QUANTIZED_LORA_TARGETS = {
+    "embed_tokens",
+    "lm_head",
+    "output_head",
+    "output_projection",
+}
+_CONFIRMED_EXPERT_COUNT_SOURCES = {"config"}
+_QUANTIZED_MODEL_PATTERN = re.compile(r"(?<![a-z0-9])(?:4bit|8bit|q4|q8|optiq)(?![a-z0-9])")
 
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
@@ -175,6 +190,32 @@ _FAMILY_PROFILES: dict[str, dict[str, object]] = {
             "down_proj": "model.layers.{layer}.block_sparse_moe.experts.*.w2",
         },
     },
+    "qwen3moe": {
+        "family_kind": "moe",
+        "support_tier": "experimental",
+        "default_total_layers": 2,
+        "default_expert_count": 128,
+        "default_target_preset": "attention",
+        "default_target_modules": list(_QWEN3MOE_ATTENTION_TARGETS),
+        "target_module_presets": {
+            "default": list(_QWEN3MOE_ATTENTION_TARGETS),
+            "attention": list(_QWEN3MOE_ATTENTION_TARGETS),
+            "qkv": list(_QWEN3MOE_QKV_TARGETS),
+            "experts": list(_QWEN3MOE_EXPERT_TARGETS),
+            # `full` is an operator-facing alias for the explicit attention+experts preset.
+            "attention_experts": list(_QWEN3MOE_FULL_TARGETS),
+            "full": list(_QWEN3MOE_FULL_TARGETS),
+        },
+        "module_templates": {
+            "q_proj": "model.layers.{layer}.self_attn.q_proj",
+            "k_proj": "model.layers.{layer}.self_attn.k_proj",
+            "v_proj": "model.layers.{layer}.self_attn.v_proj",
+            "o_proj": "model.layers.{layer}.self_attn.o_proj",
+            "gate_proj": "model.layers.{layer}.mlp.experts.{expert}.gate_proj",
+            "up_proj": "model.layers.{layer}.mlp.experts.{expert}.up_proj",
+            "down_proj": "model.layers.{layer}.mlp.experts.{expert}.down_proj",
+        },
+    },
 }
 
 _ADVANCED_FAMILY_HOOKS: dict[str, dict[str, str]] = {
@@ -269,7 +310,8 @@ def normalize_training_config(
             code="unsupported_training_mode",
             message=f"Unsupported training_mode: {training_mode}",
         )
-    if training_mode == "qlora" and _is_quantized_base_model(source_model) is False:
+    quantized_base_model = _is_quantized_base_model(source_model)
+    if training_mode == "qlora" and quantized_base_model is False:
         raise ModelOperationError(
             code="unsupported_training_mode",
             message="training_mode=qlora requires a quantized base model.",
@@ -315,8 +357,16 @@ def normalize_training_config(
     selected_layer_indices = list(range(total_layer_count - num_layers, total_layer_count))
 
     configured_targets = _resolve_target_modules(ext.get("target_modules", ""), profile=profile)
+    if training_mode == "qlora" or quantized_base_model:
+        _reject_unsafe_quantized_lora_targets(
+            configured_targets,
+            family_id=family_id,
+            training_mode=training_mode,
+            quantization_mode=quantization_mode,
+        )
 
     templates = profile["module_templates"]
+    expert_count: int | None = None
     expanded_target_modules: list[str] = []
     for target_module in configured_targets:
         if target_module not in templates:
@@ -326,10 +376,19 @@ def normalize_training_config(
                 details={"family_id": family_id, "target_module": target_module},
             )
         template = str(templates[target_module])
-        expanded_target_modules.extend(
-            template.format(layer=layer_index)
-            for layer_index in selected_layer_indices
-        )
+        if "{expert}" in template:
+            if expert_count is None:
+                expert_count = _resolve_expert_count(source_model, profile=profile)
+            expanded_target_modules.extend(
+                template.format(layer=layer_index, expert=expert_index)
+                for layer_index in selected_layer_indices
+                for expert_index in range(expert_count)
+            )
+        else:
+            expanded_target_modules.extend(
+                template.format(layer=layer_index)
+                for layer_index in selected_layer_indices
+            )
 
     backend_target_modules = _backend_target_modules(expanded_target_modules)
 
@@ -576,6 +635,61 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
     return resolved_targets
 
 
+def _reject_unsafe_quantized_lora_targets(
+    target_modules: Iterable[str],
+    *,
+    family_id: str,
+    training_mode: str,
+    quantization_mode: str,
+) -> None:
+    for target_module in target_modules:
+        normalized = target_module.strip().lower()
+        leaf = normalized.replace("/", ".").rsplit(".", maxsplit=1)[-1]
+        if normalized in _UNSAFE_QUANTIZED_LORA_TARGETS or leaf in _UNSAFE_QUANTIZED_LORA_TARGETS:
+            raise ModelOperationError(
+                code="unsupported_lora_target_module",
+                message=(
+                    "Quantized LoRA training does not support embedding, "
+                    f"LM head, or output projection target module {target_module}."
+                ),
+                details={
+                    "family_id": family_id,
+                    "target_module": target_module,
+                    "training_mode": training_mode,
+                    "quantization_mode": quantization_mode,
+                    "unsupported_target_class": "embedding_or_head",
+                },
+            )
+
+
+def _resolve_expert_count(
+    source_model: common_pb2.ModelSpec,
+    *,
+    profile: dict[str, object],
+) -> int:
+    raw_expert_count = source_model.ext.get("melix.text.moe.expert_count", "").strip()
+    expert_count_source = source_model.ext.get("melix.text.moe.expert_count_source", "").strip().lower()
+    if not raw_expert_count or expert_count_source not in _CONFIRMED_EXPERT_COUNT_SOURCES:
+        raise ModelOperationError(
+            code="unsupported_lora_target_module",
+            message="Expert LoRA target presets require config-confirmed MoE expert count metadata.",
+            details={
+                "family_id": _resolve_family_id(source_model),
+                "target_module_class": "expert",
+                "metadata_key": "melix.text.moe.expert_count",
+                "metadata_source_key": "melix.text.moe.expert_count_source",
+                "metadata_source": expert_count_source or "missing",
+                "confirmed_sources": ",".join(sorted(_CONFIRMED_EXPERT_COUNT_SOURCES)),
+            },
+        )
+    return _int_value(
+        raw_expert_count,
+        default=0,
+        minimum=1,
+        field_name="melix.text.moe.expert_count",
+    )
+
+
 def _backend_target_modules(expanded_target_modules: Iterable[str]) -> list[str]:
     backend_modules: list[str] = []
     seen: set[str] = set()
@@ -607,10 +721,7 @@ def _is_quantized_base_model(source_model: common_pb2.ModelSpec) -> bool:
             source_model.revision.lower(),
         ]
     )
-    return any(
-        token in searchable
-        for token in ("4bit", "8bit", "q4", "q8", "optiq")
-    )
+    return _QUANTIZED_MODEL_PATTERN.search(searchable) is not None
 
 
 def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -> int:

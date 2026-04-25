@@ -443,6 +443,41 @@ public struct RuntimeModelOperationState: Equatable, Sendable {
     public let linkedQuantizationProfileID: String
 }
 
+public enum RuntimeLoraWorkflowPhase: String, Equatable, Sendable {
+    case running
+    case succeeded
+    case failed
+
+    public var badgeTitle: String {
+        switch self {
+        case .running:
+            return "Running"
+        case .succeeded:
+            return "Completed"
+        case .failed:
+            return "Needs Attention"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .running:
+            return "clock"
+        case .succeeded:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+public struct RuntimeLoraWorkflowStatusState: Equatable, Sendable {
+    public let operation: String
+    public let phase: RuntimeLoraWorkflowPhase
+    public let title: String
+    public let detail: String
+}
+
 public struct RuntimeDownloadQueueEntryState: Codable, Identifiable, Equatable, Sendable {
     public let jobID: String
     public let sourceModel: String
@@ -704,6 +739,12 @@ public enum RuntimeBenchmarkPresentationMode: String, CaseIterable, Identifiable
             return "Matrix"
         }
     }
+}
+
+public enum RuntimeDiagnosticsStagePreference: String, Sendable {
+    case benchmark
+    case matrix
+    case evaluation
 }
 
 public enum RuntimeBenchmarkMatrixLoadBudgetMode: String, CaseIterable, Identifiable, Sendable {
@@ -1374,6 +1415,52 @@ private struct ChatPresentationFragment: Sendable {
     let firstQueuedAt: Date
 }
 
+private enum RuntimeLoraWorkflowOperation: String, Sendable {
+    case trainLoRA = "train_lora"
+    case activateAdapter = "activate_adapter"
+    case publishAdapter = "upload"
+    case removeDerivedModel = "remove_derived_model"
+
+    var runningTitle: String {
+        switch self {
+        case .trainLoRA:
+            return "Training LoRA"
+        case .activateAdapter:
+            return "Activating Adapter"
+        case .publishAdapter:
+            return "Publishing Adapter"
+        case .removeDerivedModel:
+            return "Removing Derived Model"
+        }
+    }
+
+    var successTitle: String {
+        switch self {
+        case .trainLoRA:
+            return "LoRA Training Finished"
+        case .activateAdapter:
+            return "Adapter Activated"
+        case .publishAdapter:
+            return "Adapter Published"
+        case .removeDerivedModel:
+            return "Derived Model Removed"
+        }
+    }
+
+    var failureTitle: String {
+        switch self {
+        case .trainLoRA:
+            return "LoRA Training Failed"
+        case .activateAdapter:
+            return "Activation Failed"
+        case .publishAdapter:
+            return "Publish Failed"
+        case .removeDerivedModel:
+            return "Remove Failed"
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1403,6 +1490,7 @@ public final class RuntimeViewModel {
     public private(set) var modelHubNextCursor = ""
     public private(set) var modelHubTokenHint = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
+    public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
@@ -1440,6 +1528,10 @@ public final class RuntimeViewModel {
     public private(set) var imageStatusText = "Idle"
     public private(set) var selectedImageJobID = ""
     public private(set) var imageRequestTimeoutSeconds: UInt32 = 1_800
+
+    public var isLoraWorkflowActionInProgress: Bool {
+        loraWorkflowStatus?.phase == .running
+    }
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
@@ -1472,6 +1564,7 @@ public final class RuntimeViewModel {
     public var modelSettingsOCRMaxTokensDraft = ""
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
+    public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
     public var selectedBenchmarkTargetMode: RuntimeBenchmarkTargetMode = .catalogModel
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
     public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
@@ -1979,6 +2072,7 @@ public final class RuntimeViewModel {
     }
 
     public func selectBenchmarkHistory(jobID: String) {
+        preferredDiagnosticsStage = .benchmark
         selectedBenchmarkHistoryJobID = jobID
         rebuildBenchmarkDerivedState()
         notifyStateChanged()
@@ -1991,6 +2085,7 @@ public final class RuntimeViewModel {
     }
 
     public func selectBenchmarkMatrixHistory(jobID: String) {
+        preferredDiagnosticsStage = .matrix
         selectedBenchmarkMatrixHistoryJobID = jobID
         rebuildBenchmarkMatrixDerivedState()
         notifyStateChanged()
@@ -2007,6 +2102,7 @@ public final class RuntimeViewModel {
     }
 
     public func selectEvaluationHistory(jobID: String) {
+        preferredDiagnosticsStage = .evaluation
         selectedEvaluationHistoryJobID = jobID
         rebuildEvaluationDerivedState()
         notifyStateChanged()
@@ -4309,7 +4405,8 @@ public final class RuntimeViewModel {
                 modelID: normalizedRepoID,
                 startedAt: startedAt,
                 metricName: "menu.model_hub_download_ms",
-                refreshProductToolingState: false
+                refreshProductToolingState: false,
+                loraWorkflowOperation: nil
             )
             await refreshDownloadQueueState(notify: false, surfaceErrors: false)
             await refreshDesktopFoundation()
@@ -4338,37 +4435,95 @@ public final class RuntimeViewModel {
     ) async {
         let startedAt = Date()
         do {
-            let result: Melix_Controlplane_V1_ModelOperationResult
-            if let operatorCommandRunner {
-                result = try await operatorCommandRunner.performModelOperation(
-                    modelID: modelID,
-                    operation: operation,
-                    outputDir: outputDir,
-                    quantProfileID: quantProfileID,
-                    weightQuant: weightQuant,
-                    kvQuant: kvQuant,
-                    ext: ext
-                )
-            } else {
-                result = try await client.runModelOperation(
-                    modelID: modelID,
-                    operation: operation,
-                    outputDir: outputDir,
-                    quantProfileID: quantProfileID,
-                    weightQuant: weightQuant,
-                    kvQuant: kvQuant,
-                    ext: ext
-                )
-            }
+            let result = try await performModelOperationRequest(
+                modelID: modelID,
+                operation: operation,
+                outputDir: outputDir,
+                quantProfileID: quantProfileID,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
             await applyModelOperationResult(
                 result,
                 modelID: modelID,
                 startedAt: startedAt,
                 metricName: "menu.model_operation_ms",
-                refreshProductToolingState: refreshProductToolingState
+                refreshProductToolingState: refreshProductToolingState,
+                loraWorkflowOperation: nil
             )
         } catch {
             recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    private func performModelOperationRequest(
+        modelID: String,
+        operation: String,
+        outputDir: String,
+        quantProfileID: String,
+        weightQuant: String,
+        kvQuant: String,
+        ext: [String: String]
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        if let operatorCommandRunner {
+            return try await operatorCommandRunner.performModelOperation(
+                modelID: modelID,
+                operation: operation,
+                outputDir: outputDir,
+                quantProfileID: quantProfileID,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
+        }
+        return try await client.runModelOperation(
+            modelID: modelID,
+            operation: operation,
+            outputDir: outputDir,
+            quantProfileID: quantProfileID,
+            weightQuant: weightQuant,
+            kvQuant: kvQuant,
+            ext: ext
+        )
+    }
+
+    private func runLoraModelOperation(
+        modelID: String,
+        workflowOperation: RuntimeLoraWorkflowOperation,
+        outputDir: String,
+        quantProfileID: String = "",
+        weightQuant: String = "",
+        kvQuant: String = "",
+        ext: [String: String] = [:],
+        refreshProductToolingState: Bool = false,
+        runningDetail: String
+    ) async {
+        let startedAt = Date()
+        beginLoraWorkflow(workflowOperation, detail: runningDetail)
+        do {
+            let result = try await performModelOperationRequest(
+                modelID: modelID,
+                operation: workflowOperation.rawValue,
+                outputDir: outputDir,
+                quantProfileID: quantProfileID,
+                weightQuant: weightQuant,
+                kvQuant: kvQuant,
+                ext: ext
+            )
+            await applyModelOperationResult(
+                result,
+                modelID: modelID,
+                startedAt: startedAt,
+                metricName: "menu.model_operation_ms",
+                refreshProductToolingState: refreshProductToolingState,
+                loraWorkflowOperation: workflowOperation
+            )
+        } catch {
+            let errorMessage = workflowErrorMessage(error)
+            recordLocalError(errorMessage)
+            failLoraWorkflow(workflowOperation, detail: errorMessage)
             notifyStateChanged()
         }
     }
@@ -4378,7 +4533,8 @@ public final class RuntimeViewModel {
         modelID: String,
         startedAt: Date,
         metricName: String,
-        refreshProductToolingState: Bool
+        refreshProductToolingState: Bool,
+        loraWorkflowOperation: RuntimeLoraWorkflowOperation?
     ) async {
         await metrics.record(
             name: metricName,
@@ -4419,6 +4575,13 @@ public final class RuntimeViewModel {
                 from: Self.dictionaryValue("linked_quantization", from: manifestPayload)
             )
         )
+        if let loraWorkflowOperation {
+            completeLoraWorkflow(
+                loraWorkflowOperation,
+                outputPath: result.outputPath,
+                fallbackDetail: result.jobID
+            )
+        }
         if refreshProductToolingState {
             await refreshModelOpsProductState(modelID: modelID, notify: false)
         }
@@ -4472,7 +4635,8 @@ public final class RuntimeViewModel {
         rawManifestJSON: String,
         startedAt: Date,
         metricName: String,
-        refreshProductToolingState: Bool
+        refreshProductToolingState: Bool,
+        loraWorkflowOperation: RuntimeLoraWorkflowOperation?
     ) async {
         await metrics.record(
             name: metricName,
@@ -4500,6 +4664,13 @@ public final class RuntimeViewModel {
             conversionTargetFormat: "",
             linkedQuantizationProfileID: ""
         )
+        if let loraWorkflowOperation {
+            completeLoraWorkflow(
+                loraWorkflowOperation,
+                outputPath: manifest.outputPath ?? manifest.derivedModelPath ?? "",
+                fallbackDetail: manifest.jobID ?? ""
+            )
+        }
         if refreshProductToolingState {
             await refreshModelOpsProductState(modelID: modelID, notify: false)
         }
@@ -4634,10 +4805,15 @@ public final class RuntimeViewModel {
     public func trainPrimaryModel() async {
         let modelID = resolvedLoraModelID()
         guard !modelID.isEmpty else {
+            surfaceLoraWorkflowGuardFailure(
+                .trainLoRA,
+                message: "Select a base model before starting LoRA training."
+            )
             return
         }
         if let cliWorkflowRunner {
             let startedAt = Date()
+            beginLoraWorkflow(.trainLoRA, detail: loraTrainingWorkflowDetail())
             do {
                 let output = try await cliWorkflowRunner.run(
                     .loraTrain(
@@ -4667,23 +4843,27 @@ public final class RuntimeViewModel {
                     rawManifestJSON: output,
                     startedAt: startedAt,
                     metricName: "menu.model_operation_ms",
-                    refreshProductToolingState: true
+                    refreshProductToolingState: true,
+                    loraWorkflowOperation: .trainLoRA
                 )
                 loraResumeFromManifestPath = ""
                 return
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
-                recordLocalError(String(describing: error))
+                let errorMessage = workflowErrorMessage(error)
+                recordLocalError(errorMessage)
+                failLoraWorkflow(.trainLoRA, detail: errorMessage)
                 notifyStateChanged()
                 return
             }
         }
-        await runModelOperation(
+        await runLoraModelOperation(
             modelID: modelID,
-            operation: "train_lora",
+            workflowOperation: .trainLoRA,
             outputDir: "",
             ext: loraTrainingExt(),
-            refreshProductToolingState: true
+            refreshProductToolingState: true,
+            runningDetail: loraTrainingWorkflowDetail()
         )
         loraResumeFromManifestPath = ""
     }
@@ -4693,12 +4873,24 @@ public final class RuntimeViewModel {
         let adapterPath = selectedAdapterPackage?.outputPath.isEmpty == false
             ? selectedAdapterPackage?.outputPath ?? ""
             : latestCLITrainedAdapterPath()
-        guard !modelID.isEmpty, adapterPath.isEmpty == false else {
+        guard !modelID.isEmpty else {
+            surfaceLoraWorkflowGuardFailure(
+                .activateAdapter,
+                message: "Select a base model before activating an adapter."
+            )
+            return
+        }
+        guard adapterPath.isEmpty == false else {
+            surfaceLoraWorkflowGuardFailure(
+                .activateAdapter,
+                message: "Train or select an adapter before activating it."
+            )
             return
         }
 
         if let cliWorkflowRunner {
             let startedAt = Date()
+            beginLoraWorkflow(.activateAdapter, detail: loraActivationWorkflowDetail(adapterPath: adapterPath))
             do {
                 let output = try await cliWorkflowRunner.run(
                     .loraActivate(
@@ -4724,12 +4916,15 @@ public final class RuntimeViewModel {
                     rawManifestJSON: output,
                     startedAt: startedAt,
                     metricName: "menu.model_operation_ms",
-                    refreshProductToolingState: true
+                    refreshProductToolingState: true,
+                    loraWorkflowOperation: .activateAdapter
                 )
                 return
             } catch {
                 recordCLIWorkflowErrorIfNeeded(error)
-                recordLocalError(String(describing: error))
+                let errorMessage = workflowErrorMessage(error)
+                recordLocalError(errorMessage)
+                failLoraWorkflow(.activateAdapter, detail: errorMessage)
                 notifyStateChanged()
                 return
             }
@@ -4742,12 +4937,13 @@ public final class RuntimeViewModel {
             ext["derived_model_alias"] = alias
         }
         ext["activation_mode"] = loraActivationMode.rawValue
-        await runModelOperation(
+        await runLoraModelOperation(
             modelID: modelID,
-            operation: "activate_adapter",
+            workflowOperation: .activateAdapter,
             outputDir: "",
             ext: ext,
-            refreshProductToolingState: true
+            refreshProductToolingState: true,
+            runningDetail: loraActivationWorkflowDetail(adapterPath: adapterPath)
         )
         await refreshDesktopFoundation()
     }
@@ -4755,8 +4951,10 @@ public final class RuntimeViewModel {
     public func removeSelectedDerivedModel() async {
         let modelID = resolvedLoraModelID()
         guard !modelID.isEmpty, let adapter = selectedAdapterPackage else {
-            recordLocalError("Select an activated adapter before removing its derived model.")
-            notifyStateChanged()
+            surfaceLoraWorkflowGuardFailure(
+                .removeDerivedModel,
+                message: "Select an activated adapter before removing its derived model."
+            )
             return
         }
 
@@ -4766,17 +4964,20 @@ public final class RuntimeViewModel {
         } else if let manifestPath = Self.normalizedOptionalString(adapter.outputPath) {
             ext["manifest_path"] = manifestPath
         } else {
-            recordLocalError("Select an activated adapter before removing its derived model.")
-            notifyStateChanged()
+            surfaceLoraWorkflowGuardFailure(
+                .removeDerivedModel,
+                message: "Select an activated adapter before removing its derived model."
+            )
             return
         }
 
-        await runModelOperation(
+        await runLoraModelOperation(
             modelID: modelID,
-            operation: "remove_derived_model",
+            workflowOperation: .removeDerivedModel,
             outputDir: "",
             ext: ext,
-            refreshProductToolingState: true
+            refreshProductToolingState: true,
+            runningDetail: loraRemoveWorkflowDetail(adapter: adapter)
         )
         await refreshDesktopFoundation()
     }
@@ -4891,12 +5092,16 @@ public final class RuntimeViewModel {
     public func publishLatestAdapter() async {
         let modelID = resolvedLoraModelID()
         guard !modelID.isEmpty, let adapter = selectedAdapterPackage else {
+            surfaceLoraWorkflowGuardFailure(
+                .publishAdapter,
+                message: "Select an adapter package before publishing it."
+            )
             return
         }
 
-        await runModelOperation(
+        await runLoraModelOperation(
             modelID: modelID,
-            operation: "upload",
+            workflowOperation: .publishAdapter,
             outputDir: "/tmp/melix-upload-adapter",
             ext: [
                 "target_repo": adapter.targetRepo.isEmpty ? "melix/adapters/\(adapter.adapterName)" : adapter.targetRepo,
@@ -4904,7 +5109,8 @@ public final class RuntimeViewModel {
                 "artifact_path": adapter.outputPath,
                 "adapter_name": adapter.adapterName,
             ],
-            refreshProductToolingState: true
+            refreshProductToolingState: true,
+            runningDetail: loraPublishWorkflowDetail(adapter: adapter)
         )
     }
 
@@ -5007,6 +5213,7 @@ public final class RuntimeViewModel {
     }
 
     public func runBench() async {
+        preferredDiagnosticsStage = .benchmark
         let modelID = resolvedBenchmarkModelID()
         let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
         switch selectedBenchmarkTargetMode {
@@ -5130,6 +5337,7 @@ public final class RuntimeViewModel {
     }
 
     public func refreshBenchmarkHistory() async {
+        preferredDiagnosticsStage = selectedBenchmarkPresentationMode == .matrix ? .matrix : .benchmark
         await refreshBenchmarkHistory(notify: true)
     }
 
@@ -5197,6 +5405,7 @@ public final class RuntimeViewModel {
     }
 
     public func runBenchMatrix() async {
+        preferredDiagnosticsStage = .matrix
         let modelID = resolvedBenchmarkModelID()
         let repoID = benchmarkHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
         switch selectedBenchmarkTargetMode {
@@ -5365,6 +5574,7 @@ public final class RuntimeViewModel {
     }
 
     public func runEvaluation() async {
+        preferredDiagnosticsStage = .evaluation
         let modelID = resolvedEvaluationModelID()
         let repoID = evaluationHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
         let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
@@ -5484,6 +5694,7 @@ public final class RuntimeViewModel {
     }
 
     public func refreshEvaluationHistory() async {
+        preferredDiagnosticsStage = .evaluation
         await refreshEvaluationHistory(notify: true)
     }
 
@@ -5751,6 +5962,96 @@ public final class RuntimeViewModel {
             return ""
         }
         return Self.normalizedOptionalString(lastModelOperation?.outputPath ?? "") ?? ""
+    }
+
+    private func beginLoraWorkflow(
+        _ operation: RuntimeLoraWorkflowOperation,
+        detail: String
+    ) {
+        loraWorkflowStatus = RuntimeLoraWorkflowStatusState(
+            operation: operation.rawValue,
+            phase: .running,
+            title: operation.runningTitle,
+            detail: sanitizedRichText(detail)
+        )
+        notifyStateChanged()
+    }
+
+    private func completeLoraWorkflow(
+        _ operation: RuntimeLoraWorkflowOperation,
+        outputPath: String,
+        fallbackDetail: String = ""
+    ) {
+        let normalizedOutputPath = Self.normalizedOptionalString(outputPath) ?? ""
+        let normalizedFallback = Self.normalizedOptionalString(fallbackDetail) ?? ""
+        loraWorkflowStatus = RuntimeLoraWorkflowStatusState(
+            operation: operation.rawValue,
+            phase: .succeeded,
+            title: operation.successTitle,
+            detail: sanitizedRichText(normalizedOutputPath.isEmpty ? normalizedFallback : normalizedOutputPath)
+        )
+    }
+
+    private func failLoraWorkflow(
+        _ operation: RuntimeLoraWorkflowOperation,
+        detail: String
+    ) {
+        loraWorkflowStatus = RuntimeLoraWorkflowStatusState(
+            operation: operation.rawValue,
+            phase: .failed,
+            title: operation.failureTitle,
+            detail: sanitizedRichText(detail)
+        )
+    }
+
+    private func surfaceLoraWorkflowGuardFailure(
+        _ operation: RuntimeLoraWorkflowOperation,
+        message: String
+    ) {
+        recordLocalError(message)
+        failLoraWorkflow(operation, detail: message)
+        notifyStateChanged()
+    }
+
+    private func workflowErrorMessage(_ error: Error) -> String {
+        let localizedDescription = (error as NSError).localizedDescription
+        if localizedDescription.isEmpty == false,
+           localizedDescription != "The operation couldn’t be completed." {
+            return localizedDescription
+        }
+        return String(describing: error)
+    }
+
+    private func loraTrainingWorkflowDetail() -> String {
+        let datasetLabel: String
+        switch loraDatasetSourceKind {
+        case .localPackage:
+            datasetLabel = Self.normalizedOptionalString(loraDatasetURI) ?? "Local package"
+        case .huggingFaceDataset:
+            datasetLabel = Self.normalizedOptionalString(loraHFDatasetPath) ?? "Hugging Face dataset"
+        }
+        let adapterName = Self.normalizedOptionalString(loraAdapterName) ?? "Unnamed adapter"
+        return "\(adapterName) • \(datasetLabel)"
+    }
+
+    private func loraActivationWorkflowDetail(adapterPath: String) -> String {
+        if let adapter = selectedAdapterPackage {
+            return "\(adapter.adapterName) • \(loraActivationMode.title)"
+        }
+        let path = URL(fileURLWithPath: adapterPath)
+        let adapterName = path.deletingPathExtension().lastPathComponent
+        let title = adapterName.isEmpty ? "Selected adapter" : adapterName
+        return "\(title) • \(loraActivationMode.title)"
+    }
+
+    private func loraPublishWorkflowDetail(adapter: RuntimeAdapterPackageState) -> String {
+        let targetRepo = adapter.targetRepo.isEmpty ? "melix/adapters/\(adapter.adapterName)" : adapter.targetRepo
+        return "\(adapter.adapterName) • \(targetRepo)"
+    }
+
+    private func loraRemoveWorkflowDetail(adapter: RuntimeAdapterPackageState) -> String {
+        let derivedModelID = Self.normalizedOptionalString(adapter.derivedModelID) ?? "Derived model"
+        return "\(adapter.adapterName) • \(derivedModelID)"
     }
 
     private func updateSelectedServerSession(

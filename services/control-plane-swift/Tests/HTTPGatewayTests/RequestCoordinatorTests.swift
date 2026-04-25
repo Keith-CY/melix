@@ -1341,6 +1341,91 @@ struct RequestCoordinatorTests {
         #expect(cacheSnapshot.recentRestorePlans[0].restoredTokenCount == 2)
     }
 
+    @Test("progress wait helper can match the final snapshot after polling attempts")
+    func progressWaitHelperCanMatchFinalSnapshotAfterPollingAttempts() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-progress-helper",
+            laneHint: "text.prefill.background",
+            priority: 50,
+            workerID: "worker-progress-helper"
+        )
+        await schedulerReadModel.recordPrefillProgress(
+            requestID: "req-progress-helper",
+            processedTokens: 24,
+            totalTokens: 24,
+            restoreStage: "none",
+            cachePressure: 0
+        )
+
+        let progress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-progress-helper",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            attempts: 0,
+            matching: { $0.prefillProcessedTokens == 24 }
+        ))
+
+        #expect(progress.prefillProgressPct == 100)
+    }
+
+    @Test("progress wait helper skips snapshots until predicate metadata matches")
+    func progressWaitHelperSkipsSnapshotsUntilPredicateMetadataMatches() async throws {
+        let schedulerReadModel = SchedulerReadModel()
+        _ = await schedulerReadModel.recordAdmitted(
+            requestID: "req-progress-predicate-helper",
+            laneHint: "text.prefill.background",
+            priority: 50,
+            workerID: "worker-progress-helper"
+        )
+        await schedulerReadModel.recordPrefillProgress(
+            requestID: "req-progress-predicate-helper",
+            processedTokens: 4,
+            totalTokens: 8,
+            restoreStage: "none",
+            cachePressure: 0
+        )
+
+        let updater = Task {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            await schedulerReadModel.recordPhaseTransition(
+                requestID: "req-progress-predicate-helper",
+                phase: .requestPrefilling,
+                laneHint: "text.prefill.background",
+                accelerationMode: .acceleratedPrefill
+            )
+        }
+        defer { updater.cancel() }
+
+        let progress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-progress-predicate-helper",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            matching: { $0.accelerationMode == .acceleratedPrefill }
+        ))
+
+        #expect(progress.prefillProcessedTokens == 4)
+        #expect(progress.prefillTotalTokens == 8)
+        #expect(progress.accelerationMode == .acceleratedPrefill)
+    }
+
+    @Test("CI wait multiplier ignores falsey environment values")
+    func ciWaitMultiplierIgnoresFalseyEnvironmentValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "false"]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "0"]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": ""]) == 1)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "false"]) == 1)
+    }
+
+    @Test("CI wait multiplier widens budgets for truthy environment values")
+    func ciWaitMultiplierWidensBudgetsForTruthyEnvironmentValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+    }
+
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -1391,7 +1476,8 @@ struct RequestCoordinatorTests {
             requestID: "req-chunked-prefill",
             phase: .requestPrefilling,
             lane: "text.prefill.background",
-            attempts: 50
+            attempts: 50,
+            matching: { $0.prefillProcessedTokens == 24 }
         ))
         await workerClient.emitDecodeStarted(requestID: "req-chunked-prefill", decodeHandle: "decode-req-chunked-prefill")
         await workerClient.emitToken(requestID: "req-chunked-prefill", text: "chunked")
@@ -2131,7 +2217,11 @@ struct RequestCoordinatorTests {
         let prefillProgress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
             requestID: "req-phase-metadata",
-            phase: .requestPrefilling
+            phase: .requestPrefilling,
+            matching: { progress in
+                progress.accelerationMode == .baseline
+                    || progress.accelerationMode == .acceleratedPrefill
+            }
         )
         #expect(
             prefillProgress?.accelerationMode == .baseline
@@ -3153,22 +3243,62 @@ private func makeCoordinatorTextModel(
     return model
 }
 
+/// Multiplier applied to polling-based wait helpers in this test file.
+///
+/// Local runs stay on the fast defaults; CI machines (GitHub-hosted macOS
+/// runners are slower and noisier than developer laptops) get a 4× budget so
+/// phase-transition polls can't race the scheduler under contention. The
+/// actual numerical default still passes locally in a few tens of ms — the
+/// multiplier only affects the *ceiling* before a timeout returns nil.
+private let waitAttemptsMultiplier: Int = {
+    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
+}()
+
+private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
+    if isTruthyEnvironmentFlag(environment["CI"])
+        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"]) {
+        return 4
+    }
+    return 1
+}
+
+private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
+    guard let value else {
+        return false
+    }
+
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "true", "yes", "on":
+        return true
+    default:
+        return false
+    }
+}
+
 private func waitForProgress(
     schedulerReadModel: SchedulerReadModel,
     requestID: String,
     phase: Melix_Controlplane_V1_RequestPhase,
     lane: String? = nil,
-    attempts: Int = 300
+    attempts: Int = 300,
+    matching predicate: ((Melix_Controlplane_V1_RequestProgressEvent) -> Bool)? = nil
 ) async -> Melix_Controlplane_V1_RequestProgressEvent? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         let progress = await schedulerReadModel.progressSnapshot(for: requestID)
-        if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
+        if let progress,
+           progress.phase == phase,
+           lane.map({ progress.lane == $0 }) ?? true,
+           predicate?(progress) ?? true {
             return progress
         }
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     let progress = await schedulerReadModel.progressSnapshot(for: requestID)
-    if progress?.phase == phase, lane.map({ progress?.lane == $0 }) ?? true {
+    if let progress,
+       progress.phase == phase,
+       lane.map({ progress.lane == $0 }) ?? true,
+       predicate?(progress) ?? true {
         return progress
     }
     return nil
@@ -3178,7 +3308,8 @@ private func waitForPrefillRequest(
     workerClient: PhaseAwareWorkerClient,
     attempts: Int = 100
 ) async -> Melix_Worker_V1_PrefillRequest? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         if let request = await workerClient.lastPrefillRequest() {
             return request
         }
@@ -3191,7 +3322,8 @@ private func waitForDecodeRequest(
     workerClient: PhaseAwareWorkerClient,
     attempts: Int = 100
 ) async -> Melix_Worker_V1_DecodeRequest? {
-    for _ in 0..<attempts {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
         if let request = await workerClient.lastDecodeRequest() {
             return request
         }
@@ -3205,8 +3337,9 @@ private func waitForDecodeRequests(
     requestIDs: [String],
     attempts: Int = 100
 ) async -> [String] {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
     let expected = Set(requestIDs)
-    for _ in 0..<attempts {
+    for _ in 0..<effectiveAttempts {
         let observed = await workerClient.decodeRequestIDs()
         if Set(observed).isSuperset(of: expected) {
             return observed

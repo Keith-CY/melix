@@ -308,7 +308,11 @@ def _text_capability_metadata(
     )
     return {
         **resolved.capability_metadata(),
-        **_text_lora_support_metadata(resolved.family_id, moe_enabled=resolved.moe_enabled),
+        **_text_lora_support_metadata(
+            resolved.family_id,
+            moe_enabled=resolved.moe_enabled,
+            expert_count_source=resolved.expert_count_source,
+        ),
         "detected_architecture": detected.architecture,
         "detected_family_id": detected.family_id,
         "detected_identity_source": detected.source,
@@ -316,7 +320,12 @@ def _text_capability_metadata(
     }
 
 
-def _text_lora_support_metadata(family_id: str, *, moe_enabled: bool) -> dict[str, str]:
+def _text_lora_support_metadata(
+    family_id: str,
+    *,
+    moe_enabled: bool,
+    expert_count_source: str = "",
+) -> dict[str, str]:
     stable_dense_families = {"llama", "qwen", "gemma", "kimi"}
     if family_id in stable_dense_families:
         return {
@@ -332,6 +341,15 @@ def _text_lora_support_metadata(family_id: str, *, moe_enabled: bool) -> dict[st
             "melix.lora.family_kind": "moe",
             "melix.lora.support_tier": "experimental",
             "melix.lora.training_ready": "true",
+            "melix.lora.default_target_preset": "attention",
+        }
+    if family_id == "qwen3moe":
+        expert_count_confirmed = moe_enabled and expert_count_source == "config"
+        return {
+            "melix.lora.family_id": family_id,
+            "melix.lora.family_kind": "moe",
+            "melix.lora.support_tier": "experimental",
+            "melix.lora.training_ready": "true" if expert_count_confirmed else "false",
             "melix.lora.default_target_preset": "attention",
         }
     return {
