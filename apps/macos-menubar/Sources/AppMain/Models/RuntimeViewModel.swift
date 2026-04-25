@@ -74,6 +74,14 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     /// short tag can't silently cause the a11y label to fall through to a
     /// generic default — both fields travel together through the view.
     public let runtimeModeAccessibilityLabel: String
+    public let runtimeCacheMissing: Bool
+    public let runtimeCacheStatusText: String
+    public let runtimeCacheDetailText: String
+    public let runtimePathText: String
+    public let registryDescriptorPathText: String
+    public let restoreCommandText: String
+    public let restoreRepoID: String
+    public let restoreRevision: String
 
     public init(
         modelID: String,
@@ -102,7 +110,15 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         imageSupportsGeneration: Bool = false,
         imageSupportsEdit: Bool = false,
         runtimeModeText: String = "",
-        runtimeModeAccessibilityLabel: String = ""
+        runtimeModeAccessibilityLabel: String = "",
+        runtimeCacheMissing: Bool = false,
+        runtimeCacheStatusText: String = "",
+        runtimeCacheDetailText: String = "",
+        runtimePathText: String = "",
+        registryDescriptorPathText: String = "",
+        restoreCommandText: String = "",
+        restoreRepoID: String = "",
+        restoreRevision: String = "main"
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -131,6 +147,14 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.imageSupportsEdit = imageSupportsEdit
         self.runtimeModeText = runtimeModeText
         self.runtimeModeAccessibilityLabel = runtimeModeAccessibilityLabel
+        self.runtimeCacheMissing = runtimeCacheMissing
+        self.runtimeCacheStatusText = runtimeCacheStatusText
+        self.runtimeCacheDetailText = runtimeCacheDetailText
+        self.runtimePathText = runtimePathText
+        self.registryDescriptorPathText = registryDescriptorPathText
+        self.restoreCommandText = restoreCommandText
+        self.restoreRepoID = restoreRepoID
+        self.restoreRevision = restoreRevision
     }
 
     public var id: String {
@@ -173,6 +197,10 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let audioRuntimePackStateText: String
     public let audioRuntimePackIDText: String
     public let audioModelStateText: String
+    public let runtimeStatusText: String
+    public let runtimePathText: String
+    public let registryDescriptorPathText: String
+    public let restoreCommandText: String
     public let modelPath: String
     public let modelRevision: String
     public let defaultWorkflowRole: String
@@ -230,6 +258,10 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         audioRuntimePackStateText: String = "",
         audioRuntimePackIDText: String = "",
         audioModelStateText: String = "",
+        runtimeStatusText: String = "",
+        runtimePathText: String = "",
+        registryDescriptorPathText: String = "",
+        restoreCommandText: String = "",
         modelPath: String = "",
         modelRevision: String = "",
         defaultWorkflowRole: String = "",
@@ -286,6 +318,10 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.audioRuntimePackStateText = audioRuntimePackStateText
         self.audioRuntimePackIDText = audioRuntimePackIDText
         self.audioModelStateText = audioModelStateText
+        self.runtimeStatusText = runtimeStatusText
+        self.runtimePathText = runtimePathText
+        self.registryDescriptorPathText = registryDescriptorPathText
+        self.restoreCommandText = restoreCommandText
         self.modelPath = modelPath
         self.modelRevision = modelRevision
         self.defaultWorkflowRole = defaultWorkflowRole
@@ -1452,6 +1488,7 @@ public final class RuntimeViewModel {
     public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = []
     public private(set) var selectedHubModelCard: RuntimeHubModelCardState?
     public private(set) var modelHubNextCursor = ""
+    public private(set) var modelHubTokenHint = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
@@ -1502,6 +1539,7 @@ public final class RuntimeViewModel {
     public var modelHubSearchQuery = ""
     public var modelHubSearchMLXOnly = true
     public var modelHubSelectedRevision = "main"
+    public var modelHubTokenDraft = ""
     public var modelSettingsAliasDraft = ""
     public var modelSettingsTypeOverrideDraft = ""
     public var modelSettingsTTLDraft = ""
@@ -1654,6 +1692,7 @@ public final class RuntimeViewModel {
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let huggingFaceTokenStore: any HuggingFaceTokenStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
     private var lastSeenSeq: UInt64 = 0
@@ -1866,6 +1905,7 @@ public final class RuntimeViewModel {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        huggingFaceTokenStore: any HuggingFaceTokenStoring = NullHuggingFaceTokenStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
         self.client = client
@@ -1874,7 +1914,9 @@ public final class RuntimeViewModel {
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.huggingFaceTokenStore = huggingFaceTokenStore
         self.productInstallStateProvider = productInstallStateProvider
+        reloadHuggingFaceTokenHint()
     }
 
     var cliWorkflowRunnerSurface: MelixCLIWorkflowSurface? {
@@ -1883,6 +1925,11 @@ public final class RuntimeViewModel {
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
         cliWorkflowRunner ?? operatorCommandRunner
+    }
+
+    private func reloadHuggingFaceTokenHint() {
+        modelHubTokenHint = ((try? huggingFaceTokenStore.loadToken()?.maskedHint) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     deinit {
@@ -2751,6 +2798,17 @@ public final class RuntimeViewModel {
 
     private func resolvedDesktopSignals() -> [DesktopBannerState] {
         var signals: [DesktopBannerState] = []
+        if let missingModel = models.first(where: \.runtimeCacheMissing) {
+            signals.append(
+                DesktopBannerState(
+                    id: "model-runtime-cache-missing-\(missingModel.modelID)",
+                    title: "Missing model cache: \(missingModel.modelID)",
+                    detail: missingModel.runtimeCacheDetailText,
+                    severity: .warning,
+                    isRecoverable: true
+                )
+            )
+        }
         if serverStateText == "Failed" || connectionStateText == "Degraded" {
             signals.append(
                 DesktopBannerState(
@@ -3190,6 +3248,12 @@ public final class RuntimeViewModel {
     }
 
     public func loadModel(modelID: String) async {
+        if let model = runtimeCacheMissingModel(for: modelID) {
+            markServerSessions(for: modelID, lifecycle: .error, error: model.runtimeCacheDetailText)
+            recordLocalError(model.runtimeCacheDetailText)
+            notifyStateChanged()
+            return
+        }
         let startedAt = Date()
         do {
             let requestedMemoryBudgetBytes = resolvedModelLoadMemoryBudgetBytes(for: modelID)
@@ -3215,6 +3279,17 @@ public final class RuntimeViewModel {
             recordLocalError(String(describing: error))
         }
         notifyStateChanged()
+    }
+
+    private func runtimeCacheMissingModel(for modelID: String) -> RuntimeModelRow? {
+        if let model = models.first(where: { $0.modelID == modelID && $0.runtimeCacheMissing }) {
+            return model
+        }
+        if let model = latestSnapshot.models.first(where: { $0.modelID == modelID }),
+           ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
+            return makeRuntimeModelRow(model)
+        }
+        return nil
     }
 
     public func submitChatPrompt() async {
@@ -3255,6 +3330,33 @@ public final class RuntimeViewModel {
         }
 
         let modelID = resolvedChatModelID()
+        if models.contains(where: { $0.modelID == modelID }) == false {
+            await refreshDesktopFoundation()
+        }
+        if let missingModel = runtimeCacheMissingModel(for: modelID) {
+            chatComposerText = ""
+            let userMessage = ControlPlaneChatRequest.Message(role: "user", content: prompt)
+            chatConversationMessages.append(userMessage)
+            resetChatPresentationState()
+            appendChatEntry(
+                id: "user-\(UUID().uuidString)",
+                kind: .user,
+                title: "User",
+                body: prompt,
+                detail: ""
+            )
+            chatStatusText = "Failed • \(ModelRuntimeAvailability.missingRuntimeCacheCode)"
+            setLastError(missingModel.runtimeCacheDetailText)
+            appendChatEntry(
+                id: "error-\(UUID().uuidString)",
+                kind: .error,
+                title: "Error",
+                body: missingModel.runtimeCacheDetailText,
+                detail: ""
+            )
+            notifyStateChanged()
+            return
+        }
         chatComposerText = ""
         let startedAt = Date()
         let userMessage = ControlPlaneChatRequest.Message(role: "user", content: prompt)
@@ -3281,9 +3383,6 @@ public final class RuntimeViewModel {
         isChatStreaming = true
         notifyStateChanged()
 
-        if models.contains(where: { $0.modelID == modelID }) == false {
-            await refreshDesktopFoundation()
-        }
         if shouldPreloadChatModel(modelID: modelID) {
             await loadModel(modelID: modelID)
         }
@@ -3385,15 +3484,16 @@ public final class RuntimeViewModel {
             commitAssistantMessageIfNeeded()
         } catch {
             flushPendingChatPresentation()
-            setLastError(String(describing: error))
-            chatStatusText = "Failed"
+            let failure = chatFailureDisplay(for: error)
+            setLastError(failure.message)
+            chatStatusText = failure.code.isEmpty ? "Failed" : "Failed • \(failure.code)"
             removeEmptyPendingAssistantEntryIfNeeded()
             appendChatEntry(
                 id: "error-\(UUID().uuidString)",
                 kind: .error,
                 title: "Error",
-                body: String(describing: error),
-                detail: ""
+                body: failure.message,
+                detail: failure.code
             )
         }
 
@@ -3403,6 +3503,24 @@ public final class RuntimeViewModel {
         activeReasoningEntryID = nil
         activeToolEntryIDs.removeAll()
         notifyStateChanged()
+    }
+
+    private func chatFailureDisplay(for error: Error) -> (code: String, message: String) {
+        if let error = error as? ControlPlaneChatExecutionError {
+            switch error {
+            case .requestFailed(let code, let message):
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (
+                    code,
+                    trimmed.isEmpty && code == ModelRuntimeAvailability.missingRuntimeCacheCode
+                        ? ModelRuntimeAvailability.missingRuntimeCacheMessage
+                        : (trimmed.isEmpty ? code : trimmed)
+                )
+            case .unavailable, .unavailableReason:
+                break
+            }
+        }
+        return ("", String(describing: error))
     }
 
     public func clearChatTranscript() {
@@ -3703,10 +3821,14 @@ public final class RuntimeViewModel {
     }
 
     public func loadPrimaryModel() async {
-        guard let modelID = primaryModel?.modelID else {
+        guard let primaryModel else {
             return
         }
-        await loadModel(modelID: modelID)
+        if primaryModel.runtimeCacheMissing {
+            await restoreMissingRuntimeCache(modelID: primaryModel.modelID)
+        } else {
+            await loadModel(modelID: primaryModel.modelID)
+        }
     }
 
     public func unloadModel(modelID: String) async {
@@ -4032,6 +4154,18 @@ public final class RuntimeViewModel {
                 audioRuntimePackStateText: audioRuntimePackStateText,
                 audioRuntimePackIDText: audioRuntimePackIDText,
                 audioModelStateText: audioModelStateText,
+                runtimeStatusText: snapshotModel.map {
+                    ModelRuntimeAvailability.isRuntimeCacheMissing($0) ? "missing cache" : "ok"
+                } ?? "",
+                runtimePathText: snapshotModel.map {
+                    ModelRuntimeAvailability.runtimePath(for: $0)
+                } ?? "",
+                registryDescriptorPathText: snapshotModel.map {
+                    ModelRuntimeAvailability.descriptorPath(for: $0)
+                } ?? "",
+                restoreCommandText: snapshotModel.map {
+                    ModelRuntimeAvailability.restoreCommand(for: $0)
+                } ?? "",
                 modelPath: info.modelPath,
                 modelRevision: info.modelRevision,
                 defaultWorkflowRole: info.defaultWorkflowRole,
@@ -4172,17 +4306,53 @@ public final class RuntimeViewModel {
     }
 
     public func downloadHubModel(repoID: String) async {
+        let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
+        await downloadHubModel(repoID: repoID, revision: revision)
+    }
+
+    public func restoreMissingRuntimeCache(modelID: String) async {
+        guard let model = runtimeCacheMissingModel(for: modelID) else {
+            return
+        }
+        guard !model.restoreRepoID.isEmpty else {
+            recordLocalError(ModelRuntimeAvailability.missingRuntimeCacheMessage)
+            notifyStateChanged()
+            return
+        }
+        await downloadHubModel(repoID: model.restoreRepoID, revision: model.restoreRevision)
+    }
+
+    private func downloadHubModel(repoID: String, revision requestedRevision: String) async {
         let normalizedRepoID = repoID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedRepoID.isEmpty == false else {
             return
         }
+        let revision = Self.normalizedOptionalString(requestedRevision) ?? "main"
+        let providedToken = Self.normalizedOptionalString(modelHubTokenDraft) ?? ""
+        let effectiveToken: String
+        if providedToken.isEmpty == false {
+            do {
+                let record = try huggingFaceTokenStore.saveToken(providedToken)
+                modelHubTokenHint = record.maskedHint
+                modelHubTokenDraft = ""
+                effectiveToken = providedToken
+            } catch {
+                recordLocalError("Hugging Face token could not be saved: \(error)")
+                notifyStateChanged()
+                return
+            }
+        } else {
+            effectiveToken = ((try? huggingFaceTokenStore.loadToken()?.token) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            reloadHuggingFaceTokenHint()
+        }
         let startedAt = Date()
         if let cliWorkflowRunner {
             do {
-                let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
                 let receipt = try await cliWorkflowRunner.downloadHubModel(
                     repoID: normalizedRepoID,
-                    revision: revision
+                    revision: revision,
+                    hfToken: effectiveToken
                 )
                 _ = try await cliWorkflowRunner.run(.modelRootsRescan(.init(json: true)))
                 clearCLIWorkflowFailure()
@@ -4203,14 +4373,23 @@ public final class RuntimeViewModel {
             return
         }
         do {
-            let revision = Self.normalizedOptionalString(modelHubSelectedRevision) ?? "main"
             let result: Melix_Controlplane_V1_ModelOperationResult
             if let operatorCommandRunner {
                 result = try await operatorCommandRunner.downloadHubModel(
                     repoID: normalizedRepoID,
-                    revision: revision
+                    revision: revision,
+                    hfToken: effectiveToken
                 )
             } else {
+                var ext = [
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": normalizedRepoID,
+                    "melix.hf_revision": revision,
+                    "melix.managed_import": "true",
+                ]
+                if effectiveToken.isEmpty == false {
+                    ext["melix.hf_token"] = effectiveToken
+                }
                 result = try await client.runModelOperation(
                     modelID: normalizedRepoID,
                     operation: "download",
@@ -4218,12 +4397,7 @@ public final class RuntimeViewModel {
                     quantProfileID: "",
                     weightQuant: "",
                     kvQuant: "",
-                    ext: [
-                        "melix.source_kind": "hub_repo",
-                        "melix.hf_repo_id": normalizedRepoID,
-                        "melix.hf_revision": revision,
-                        "melix.managed_import": "true",
-                    ]
+                    ext: ext
                 )
             }
             await applyModelOperationResult(
@@ -10008,6 +10182,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
     let imageSupportsGeneration = runtimeImageSupportsGeneration(model)
     let imageSupportsEdit = runtimeImageSupportsEdit(model)
     let runtimeModeBadge = runtimeModeBadgeFields(model)
+    let runtimeCacheMissing = ModelRuntimeAvailability.isRuntimeCacheMissing(model)
     return RuntimeModelRow(
         modelID: model.modelID,
         kind: model.kind,
@@ -10018,7 +10193,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
             model.state,
             transitionReason: model.residency.transitionReason
         ),
-        actionTitle: runtimeActionTitle(for: model.state),
+        actionTitle: runtimeCacheMissing ? "Restore Download" : runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
         typeOverrideText: model.settings.typeOverride,
@@ -10038,7 +10213,15 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         imageSupportsGeneration: imageSupportsGeneration,
         imageSupportsEdit: imageSupportsEdit,
         runtimeModeText: runtimeModeBadge.text,
-        runtimeModeAccessibilityLabel: runtimeModeBadge.accessibilityLabel
+        runtimeModeAccessibilityLabel: runtimeModeBadge.accessibilityLabel,
+        runtimeCacheMissing: runtimeCacheMissing,
+        runtimeCacheStatusText: runtimeCacheMissing ? ModelRuntimeAvailability.missingRuntimeCacheBadge : "",
+        runtimeCacheDetailText: runtimeCacheMissing ? ModelRuntimeAvailability.missingRuntimeCacheMessage : "",
+        runtimePathText: ModelRuntimeAvailability.runtimePath(for: model),
+        registryDescriptorPathText: ModelRuntimeAvailability.descriptorPath(for: model),
+        restoreCommandText: ModelRuntimeAvailability.restoreCommand(for: model),
+        restoreRepoID: ModelRuntimeAvailability.restoreRepoID(for: model),
+        restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model)
     )
 }
 

@@ -209,7 +209,7 @@ extension MelixCLIRunner {
 
                 var envelope: [String: Any]
                 if options.dryRun {
-                    let plannedArguments = try MelixCLICommandCodec.arguments(for: command)
+                    let plannedArguments = Self.redactedPublicArguments(try MelixCLICommandCodec.arguments(for: command))
                     envelope = try MelixPipelineReceipt.outputEnvelope(
                         commandID: commandID,
                         traceID: traceID,
@@ -323,6 +323,30 @@ extension MelixCLIRunner {
             return .runtime(description)
         }
         return .runtime(String(describing: error))
+    }
+
+    private static func redactedPublicArguments(_ arguments: [String]) -> [String] {
+        var redacted: [String] = []
+        redacted.reserveCapacity(arguments.count)
+        var shouldRedactNext = false
+        for argument in arguments {
+            if shouldRedactNext {
+                redacted.append("<redacted>")
+                shouldRedactNext = false
+                continue
+            }
+            if argument == "--hf-token" {
+                redacted.append(argument)
+                shouldRedactNext = true
+                continue
+            }
+            if argument.hasPrefix("--hf-token=") {
+                redacted.append("--hf-token=<redacted>")
+                continue
+            }
+            redacted.append(argument)
+        }
+        return redacted
     }
 
     private func receiptRootURL(
@@ -841,7 +865,8 @@ private enum MelixPipelineCommandBuilder {
             return .modelHubDownload(
                 ModelHubDownloadOptions(
                     repoID: try requiredString("repo_id", args),
-                    revision: string("revision", args) ?? "main"
+                    revision: string("revision", args) ?? "main",
+                    hfToken: string("hf_token", args) ?? ""
                 )
             )
         case "model.roots.rescan":

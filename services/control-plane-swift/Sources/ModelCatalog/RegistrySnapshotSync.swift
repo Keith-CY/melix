@@ -86,7 +86,9 @@ enum RegistrySnapshotSync {
             guard !value.isEmpty else {
                 return
             }
-            guard key.hasPrefix("melix.registry_") || key == "melix.model_path" else {
+            guard key.hasPrefix("melix.registry_")
+                || key == "melix.model_path"
+                || key == "melix.model_path_missing" else {
                 return
             }
             partial[key] = value

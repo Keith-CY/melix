@@ -120,7 +120,8 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
 
         let receipt = try await runner.downloadHubModel(
             repoID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
-            revision: "main"
+            revision: "main",
+            hfToken: "hf_secret_token"
         )
         let invocation = try #require(await processExecutor.recordedInvocations.first)
 
@@ -134,6 +135,8 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
                 "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                 "--revision",
                 "main",
+                "--hf-token",
+                "hf_secret_token",
                 "--json",
             ]
         )

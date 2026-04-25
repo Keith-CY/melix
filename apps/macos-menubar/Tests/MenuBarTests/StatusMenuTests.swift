@@ -108,6 +108,26 @@ struct StatusMenuTests {
         #expect(content.items.contains(.info("Runtime Needs Monitoring")))
     }
 
+    @Test("install surfaces missing model cache in the status menu")
+    @MainActor
+    func installSurfacesMissingModelCache() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var missingModel = makeStatusMenuModelSummary(modelID: "mlx-community/Qwen3", state: .modelWarm)
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        await client.configureSnapshot(makeStatusMenuSnapshot(models: [missingModel]))
+        let viewModel = RuntimeViewModel(client: client)
+        let renderer = RecordingStatusMenuRenderer()
+        let menu = StatusMenu(viewModel: viewModel, renderer: renderer)
+
+        await viewModel.start()
+        menu.install()
+
+        let content = try #require(renderer.lastContent)
+        #expect(content.items.contains(.info("Missing model cache: mlx-community/Qwen3")))
+        #expect(content.items.contains(.action("Open Command Center", .openCommandCenter)))
+    }
+
     @Test("install surfaces download recovery titles before model actions")
     @MainActor
     func installSurfacesDownloadRecoveryTitles() async throws {
@@ -563,6 +583,33 @@ private func makeStatusMenuNamedModelOperationResult(
     result.outputPath = outputPath
     result.manifestJson = manifestJSON
     return result
+}
+
+private func makeStatusMenuModelSummary(
+    modelID: String,
+    state: Melix_Controlplane_V1_ModelState
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = modelID
+    model.kind = "text"
+    model.features = ["chat"]
+    model.maxContext = 8192
+    model.state = state
+    return model
+}
+
+private func makeStatusMenuSnapshot(
+    models: [Melix_Controlplane_V1_ModelSummary]
+) -> Melix_Controlplane_V1_ServerSnapshot {
+    var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+    snapshot.serverState = .serverReady
+    snapshot.models = models
+    var session = Melix_Controlplane_V1_ServerSessionRuntimeState()
+    session.serverSessionID = "server-session-1"
+    session.lifecycleState = .ready
+    session.powerState = .active
+    snapshot.runtimeSessions = [session]
+    return snapshot
 }
 
 @MainActor

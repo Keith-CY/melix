@@ -2056,6 +2056,30 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
+    @Test("execute model.load reports a missing managed Hugging Face cache before worker load")
+    func executeModelLoadReportsMissingManagedHuggingFaceCacheBeforeWorkerLoad() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.model_path_missing"] = "true"
+        model.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        model.settings.ext["melix.registry_descriptor_path"] = "/tmp/melix-managed/huggingface/mlx-community/Qwen3/main"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ModelLifecycleWorkerClient()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        )
+
+        let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        let failedModel = try #require(await catalog.model(id: "melix-dev-text"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "model_runtime_missing")
+        #expect(response.error.message == "Hugging Face cache files are missing. Re-download this model to restore it.")
+        #expect(failedModel.state == .modelFailed)
+        #expect(failedModel.residency.transitionReason == "operator_load_model_runtime_missing")
+        #expect(await workerClient.loadRequests.isEmpty)
+    }
+
     @Test("execute syncs registry models before worker-backed model.load resolves a discovered model")
     func executeSyncsRegistryModelsBeforeWorkerBackedModelLoad() async throws {
         let registryModelID = "Brooooooklyn/Qwen3.5-9B-unsloth-mlx/snapshot"
@@ -2763,6 +2787,39 @@ struct ControlPlaneServiceTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @Test("startChat reports a friendly missing cache error before lazy load")
+    func startChatReportsFriendlyMissingCacheErrorBeforeLazyLoad() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.model_path_missing"] = "true"
+        model.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        let catalog = ModelCatalog(seedModels: [model])
+        let textClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: catalog)
+        )
+
+        do {
+            _ = try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+            Issue.record("Expected missing Hugging Face cache to block chat dispatch")
+        } catch let error as ControlPlaneChatExecutionError {
+            #expect(error == .requestFailed(
+                code: "model_runtime_missing",
+                message: "Hugging Face cache files are missing. Re-download this model to restore it."
+            ))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await textClient.lastLoadModelRequest == nil)
+        #expect(await textClient.lastGenerateRequest == nil)
     }
 
     @Test("execute handles model.set_policy and updates typed model settings")

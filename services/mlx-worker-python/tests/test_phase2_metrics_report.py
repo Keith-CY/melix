@@ -909,9 +909,11 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
 
 
 def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -927,7 +929,7 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
         model_id="",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
     )
 
     assert model.model_id == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -940,9 +942,11 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
 def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot_fallback(
     tmp_path: Path,
 ) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -955,7 +959,7 @@ def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot
         model_id="",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
     )
 
     assert model.model_path == str(snapshot.resolve())
@@ -1007,7 +1011,7 @@ def test_resolve_model_configuration_live_pair_defaults_draft_to_hub_when_cache_
         model_id="served/live",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(tmp_path / "empty-hf-cache")},
+        environment={"HOME": str(tmp_path / "empty-home")},
     )
 
     assert model.model_id == "served/live"
@@ -1021,9 +1025,11 @@ def test_resolve_model_configuration_live_pair_defaults_draft_to_hub_when_cache_
 def test_resolve_model_configuration_live_pair_uses_default_draft_hf_cache_snapshot(
     tmp_path: Path,
 ) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     draft_snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3-0.6B-4bit"
         / "snapshots"
@@ -1042,7 +1048,7 @@ def test_resolve_model_configuration_live_pair_uses_default_draft_hf_cache_snaps
         model_id="served/live",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
     )
 
     assert model.draft_model_id == "mlx-community/Qwen3-0.6B-4bit"

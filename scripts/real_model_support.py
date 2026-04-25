@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,7 @@ PHASE2_LIVE_MODEL_PATH_ENV = "MELIX_PHASE2_LIVE_MODEL_PATH"
 PHASE2_DRAFT_MODEL_ID_ENV = "MELIX_PHASE2_DRAFT_MODEL_ID"
 PHASE2_DRAFT_MODEL_PATH_ENV = "MELIX_PHASE2_DRAFT_MODEL_PATH"
 _MANAGED_MODEL_ROOT_ENV = "MELIX_MANAGED_MODEL_ROOT"
+_LOGGER = logging.getLogger(__name__)
 _REAL_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".mlx")
 _REAL_MODEL_WEIGHT_FILENAMES = {
     "model.safetensors.index.json",
@@ -232,8 +235,42 @@ def _managed_huggingface_model_path(model_id: str, environment: Mapping[str, str
     if not managed_root:
         return None
     candidate = Path(managed_root).expanduser().resolve() / "huggingface" / Path(model_id) / "main"
-    if candidate.is_dir():
+    if not candidate.is_dir():
+        return None
+
+    descriptor_model_path = _descriptor_runtime_model_path(candidate)
+    if descriptor_model_path is not None:
+        return descriptor_model_path
+
+    if _has_recognized_model_weight_files(candidate):
         return candidate
+    return None
+
+
+def _descriptor_runtime_model_path(descriptor_dir: Path) -> Path | None:
+    manifest_path = descriptor_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    ext = payload.get("ext", {})
+    if not isinstance(ext, dict):
+        return None
+    raw_model_path = ext.get("melix.model_path")
+    if not isinstance(raw_model_path, str):
+        return None
+    raw_model_path = raw_model_path.strip()
+    if not raw_model_path:
+        return None
+    runtime_path = Path(raw_model_path).expanduser().resolve()
+    if runtime_path.is_dir():
+        return runtime_path
+    if runtime_path.exists():
+        _LOGGER.debug("Managed descriptor runtime model path is not a directory: %s", runtime_path)
     return None
 
 
@@ -267,13 +304,8 @@ def _huggingface_cache_model_path(
 
 
 def _huggingface_cache_root(environment: Mapping[str, str]) -> Path:
-    explicit_cache = environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
-    if explicit_cache:
-        return Path(explicit_cache).expanduser().resolve()
-    hf_home = environment.get("HF_HOME", "").strip()
-    if hf_home:
-        return (Path(hf_home).expanduser().resolve() / "hub")
-    return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+    home = environment.get("HOME", "").strip()
+    return ((Path(home).expanduser() if home else Path.home()) / ".cache" / "huggingface" / "hub").resolve()
 
 
 def _resolved_optional_path(path: str) -> Path | None:

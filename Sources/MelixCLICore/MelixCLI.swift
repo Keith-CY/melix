@@ -560,11 +560,13 @@ public struct ModelHubShowOptions: Equatable, Sendable {
 public struct ModelHubDownloadOptions: Equatable, Sendable {
     public let repoID: String
     public let revision: String
+    public let hfToken: String
     public let json: Bool
 
-    public init(repoID: String, revision: String = "main", json: Bool = false) {
+    public init(repoID: String, revision: String = "main", hfToken: String = "", json: Bool = false) {
         self.repoID = repoID
         self.revision = revision.isEmpty ? "main" : revision
+        self.hfToken = hfToken
         self.json = json
     }
 }
@@ -1010,6 +1012,7 @@ public enum MelixCLIError: Error, LocalizedError, Equatable, Sendable {
     case missingValue(String)
     case missingRequired(String)
     case runtime(String)
+    case requestFailed(code: String, message: String)
 
     public var errorDescription: String? {
         switch self {
@@ -1020,6 +1023,8 @@ public enum MelixCLIError: Error, LocalizedError, Equatable, Sendable {
         case .missingRequired(let message):
             return message
         case .runtime(let message):
+            return message
+        case .requestFailed(_, let message):
             return message
         }
     }
@@ -1099,7 +1104,7 @@ public enum MelixCLIParser {
       melix model import --path PATH --model-id MODEL_ID [--model-kind KIND] [--revision REV] [--json]
       melix model hub search --query QUERY [--page-size N] [--cursor TOKEN] [--mlx-only (true|false)] [--json]
       melix model hub show --repo-id HF_REPO [--json]
-      melix model hub download --repo-id HF_REPO [--revision REV] [--json]
+      melix model hub download --repo-id HF_REPO [--revision REV] [--hf-token TOKEN] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -1338,6 +1343,7 @@ public enum MelixCLIParser {
                 .init(
                     repoID: repoID,
                     revision: values.single["--revision"] ?? "main",
+                    hfToken: values.single["--hf-token"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -2671,8 +2677,19 @@ public actor MelixCLIRunner {
 
     public func downloadHubModel(
         repoID: String,
-        revision: String = "main"
+        revision: String = "main",
+        hfToken: String = ""
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        let tokenStore = HuggingFaceTokenStore(melixHome: MelixHome(environment: environment))
+        let providedToken = hfToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveToken: String
+        if providedToken.isEmpty == false {
+            _ = try tokenStore.saveToken(providedToken)
+            effectiveToken = providedToken
+        } else {
+            effectiveToken = (try tokenStore.loadToken()?.token ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         var ext: [String: String] = [
             "melix.source_kind": "hub_repo",
             "melix.source_locator": repoID,
@@ -2680,6 +2697,9 @@ public actor MelixCLIRunner {
             "melix.hf_revision": revision.isEmpty ? "main" : revision,
             "melix.managed_import": "true",
         ]
+        if effectiveToken.isEmpty == false {
+            ext["melix.hf_token"] = effectiveToken
+        }
         if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
             ext["melix.managed_root"] = managedRoot
         }
@@ -2919,13 +2939,27 @@ public actor MelixCLIRunner {
             }
             return renderModelList(snapshot.models)
         case .modelInspect(let options):
+            let snapshot = try? await client.serverSnapshot()
+            let snapshotModel = snapshot?.models.first { $0.modelID == options.modelID }
             let info = try await client.modelInfo(modelID: options.modelID)
             if options.json {
-                return try prettyJSON(makeModelInfoPayload(info, modelID: options.modelID))
+                return try prettyJSON(makeModelInfoPayload(
+                    info,
+                    modelID: options.modelID,
+                    snapshotModel: snapshotModel
+                ))
             }
-            return renderModelInfo(info, modelID: options.modelID)
+            return renderModelInfo(info, modelID: options.modelID, snapshotModel: snapshotModel)
         case .modelLoad(let options):
-            let model = try await client.loadModel(modelID: options.modelID, memoryBudgetBytes: options.memoryBudgetBytes)
+            let model: Melix_Controlplane_V1_ModelSummary
+            do {
+                model = try await client.loadModel(
+                    modelID: options.modelID,
+                    memoryBudgetBytes: options.memoryBudgetBytes
+                )
+            } catch {
+                throw userFacingRequestError(from: error)
+            }
             if options.json {
                 return try prettyJSON(makeModelSummaryPayload(model))
             }
@@ -2966,7 +3000,7 @@ public actor MelixCLIRunner {
             }
             return renderHubModelCard(card)
         case .modelHubDownload(let options):
-            let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision)
+            let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision, hfToken: options.hfToken)
             let receipt = try makeManagedModelReceipt(from: result)
             return options.json ? try prettyJSON(receipt) : receipt.managedModelPath + "\n"
         case .modelRootsList(let options):
@@ -3215,12 +3249,17 @@ public actor MelixCLIRunner {
             )
             return try renderServerSnapshot(snapshot, json: options.json)
         case .chatRun(let options):
-            let execution = try await client.startChat(
-                ControlPlaneChatRequest(
-                    modelID: options.modelID,
-                    messages: buildChatMessages(options: options)
+            let execution: ControlPlaneChatExecution
+            do {
+                execution = try await client.startChat(
+                    ControlPlaneChatRequest(
+                        modelID: options.modelID,
+                        messages: buildChatMessages(options: options)
+                    )
                 )
-            )
+            } catch {
+                throw userFacingRequestError(from: error)
+            }
             let result = try await collectChatResult(from: execution)
             let receipt = ChatRunReceipt(
                 modelID: execution.modelID,
@@ -3620,6 +3659,13 @@ public actor MelixCLIRunner {
         case "registry_snapshot":
             return ["lora", "list", "--model-id", modelID, "--json"]
         case "download":
+            if ext["melix.source_kind"] == "hub_repo" {
+                var arguments = ["model", "hub", "download", "--repo-id", modelID]
+                appendOption("--revision", value: ext["melix.hf_revision"], into: &arguments)
+                appendOption("--hf-token", value: ext["melix.hf_token"], into: &arguments)
+                arguments.append("--json")
+                return arguments
+            }
             var arguments = ["model", "download", "--model-id", modelID]
             if outputDir.isEmpty == false {
                 arguments.append(contentsOf: ["--output-dir", outputDir])
@@ -3994,6 +4040,12 @@ public actor MelixCLIRunner {
                 }
                 return (resolvedAssistant, finishReason.isEmpty ? "unknown" : finishReason)
             case .failed(let code, let message):
+                if code == ModelRuntimeAvailability.missingRuntimeCacheCode {
+                    throw MelixCLIError.requestFailed(
+                        code: code,
+                        message: message.isEmpty ? ModelRuntimeAvailability.missingRuntimeCacheMessage : message
+                    )
+                }
                 throw MelixCLIError.runtime("melix chat run failed [\(code)]: \(message)")
             default:
                 continue
@@ -4004,6 +4056,38 @@ public actor MelixCLIRunner {
             throw MelixCLIError.runtime("melix chat run did not complete.")
         }
         return (fallbackAssistant, "unknown")
+    }
+
+    private func userFacingRequestError(from error: Error) -> Error {
+        if let error = error as? ControlPlaneXPCClientError {
+            switch error {
+            case .requestFailed(let code, let message):
+                return MelixCLIError.requestFailed(
+                    code: code,
+                    message: normalizedRequestFailureMessage(code: code, message: message)
+                )
+            }
+        }
+        if let error = error as? ControlPlaneChatExecutionError {
+            switch error {
+            case .requestFailed(let code, let message):
+                return MelixCLIError.requestFailed(
+                    code: code,
+                    message: normalizedRequestFailureMessage(code: code, message: message)
+                )
+            case .unavailable, .unavailableReason:
+                break
+            }
+        }
+        return error
+    }
+
+    private func normalizedRequestFailureMessage(code: String, message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if code == ModelRuntimeAvailability.missingRuntimeCacheCode {
+            return trimmed.isEmpty ? ModelRuntimeAvailability.missingRuntimeCacheMessage : trimmed
+        }
+        return trimmed.isEmpty ? code : trimmed
     }
 
     private func configuredServerSessionIfAvailable(
@@ -4247,7 +4331,7 @@ public actor MelixCLIRunner {
         // terminals. Columns separated by two spaces. Consumers that need
         // the column-boundary-stable JSON shape should pass ``--json``;
         // this renderer is for human reading.
-        let header = ["MODEL_ID", "KIND", "STATE", "RUNTIME"]
+        let header = ["MODEL_ID", "KIND", "STATE", "STATUS", "RUNTIME"]
         let dataRows = models
             .sorted { $0.modelID < $1.modelID }
             .map { model in
@@ -4255,6 +4339,7 @@ public actor MelixCLIRunner {
                     model.modelID,
                     model.kind,
                     modelStateLabel(model.state),
+                    ModelRuntimeAvailability.runtimeStatus(for: model),
                     runtimeModeLabel(model),
                 ]
             }
@@ -4292,15 +4377,35 @@ public actor MelixCLIRunner {
         "\(model.modelID)\t\(model.kind)\t\(modelStateLabel(model.state))\t\(runtimeModeLabel(model))\n"
     }
 
-    private func renderModelInfo(_ info: Melix_Controlplane_V1_ModelInfo, modelID: String) -> String {
-        [
+    private func renderModelInfo(
+        _ info: Melix_Controlplane_V1_ModelInfo,
+        modelID: String,
+        snapshotModel: Melix_Controlplane_V1_ModelSummary?
+    ) -> String {
+        var lines = [
             "model_id=\(modelID)",
             "model_kind=\(info.modelKind)",
             "backend_id=\(info.backendID)",
             "family_id=\(info.familyID)",
             "max_context=\(info.maxContext)",
             "supported_tasks=\(info.supportedTasks.joined(separator: ","))",
-        ].joined(separator: "\n") + "\n"
+        ]
+        if let snapshotModel {
+            lines.append("runtime_status=\(ModelRuntimeAvailability.isRuntimeCacheMissing(snapshotModel) ? "missing cache" : "ok")")
+            let runtimePath = ModelRuntimeAvailability.runtimePath(for: snapshotModel)
+            if !runtimePath.isEmpty {
+                lines.append("runtime_path=\(runtimePath)")
+            }
+            let descriptorPath = ModelRuntimeAvailability.descriptorPath(for: snapshotModel)
+            if !descriptorPath.isEmpty {
+                lines.append("descriptor_path=\(descriptorPath)")
+            }
+            let restoreCommand = ModelRuntimeAvailability.restoreCommand(for: snapshotModel)
+            if !restoreCommand.isEmpty {
+                lines.append("restore_command=\(restoreCommand)")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private func renderHubSearch(_ result: Melix_Controlplane_V1_HubSearchResult) -> String {
@@ -4368,6 +4473,9 @@ public actor MelixCLIRunner {
         if !adapterWeightsPath.isEmpty {
             payload["adapter_weights_path"] = adapterWeightsPath
         }
+        for (key, value) in ModelRuntimeAvailability.publicMetadata(for: model) {
+            payload[key] = value
+        }
         return payload
     }
 
@@ -4377,9 +4485,10 @@ public actor MelixCLIRunner {
 
     private func makeModelInfoPayload(
         _ info: Melix_Controlplane_V1_ModelInfo,
-        modelID: String
+        modelID: String,
+        snapshotModel: Melix_Controlplane_V1_ModelSummary?
     ) -> [String: Any] {
-        [
+        var payload: [String: Any] = [
             "model_id": modelID,
             "model_kind": info.modelKind,
             "backend_id": info.backendID,
@@ -4389,6 +4498,12 @@ public actor MelixCLIRunner {
             "supported_modalities": info.supportedModalities,
             "supported_parsers": info.supportedParsers,
         ]
+        if let snapshotModel {
+            for (key, value) in ModelRuntimeAvailability.publicMetadata(for: snapshotModel) {
+                payload[key] = value
+            }
+        }
+        return payload
     }
 
     private func makeHubSearchPayload(_ result: Melix_Controlplane_V1_HubSearchResult) -> [String: Any] {

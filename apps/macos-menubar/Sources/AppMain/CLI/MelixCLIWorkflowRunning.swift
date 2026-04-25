@@ -201,8 +201,8 @@ extension MelixCLIWorkflowRunning {
         return try decodeMelixCLIJSON(type, output: output, command: command, surface: surface)
     }
 
-    func downloadHubModel(repoID: String, revision: String) async throws -> ManagedModelReceipt {
-        let command = MelixCLICommand.modelHubDownload(.init(repoID: repoID, revision: revision, json: true))
+    func downloadHubModel(repoID: String, revision: String, hfToken: String = "") async throws -> ManagedModelReceipt {
+        let command = MelixCLICommand.modelHubDownload(.init(repoID: repoID, revision: revision, hfToken: hfToken, json: true))
         let output = try await run(command)
         return try decodeManagedModelReceipt(output: output, command: command, surface: surface)
     }

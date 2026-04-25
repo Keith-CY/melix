@@ -376,6 +376,7 @@ public final class MelixMenuBarBootstrap {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
+        huggingFaceTokenStore: (any HuggingFaceTokenStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
             MenuBarMetricsStore
@@ -411,13 +412,15 @@ public final class MelixMenuBarBootstrap {
                 : nil
         )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
+        let resolvedHuggingFaceTokenStore = huggingFaceTokenStore ?? HuggingFaceTokenStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
             metrics: metrics,
             operatorSessionStore: resolvedOperatorSessionStore,
             cliWorkflowRunner: cliWorkflowRunner,
             operatorCommandRunner: resolvedOperatorCommandRunner,
-            serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore
+            serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore,
+            huggingFaceTokenStore: resolvedHuggingFaceTokenStore
         )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
         let commandCenterPresenter = commandCenterPresenterFactory(viewModel, metrics)
