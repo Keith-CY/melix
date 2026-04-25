@@ -10,6 +10,7 @@ from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
+from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
@@ -31,6 +32,14 @@ class VisionProbeSnapshot:
     cache_identity: str = ""
     cache_scope_id: str = ""
     cache_hit: bool = False
+    image_feature_cache_hits: int = 0
+    image_feature_cache_misses: int = 0
+    multimodal_decode_mode: str = "baseline"
+    multimodal_fallback_reason: str = "not_reported"
+    multimodal_decode_sync_mode: str = "baseline"
+    multi_image_scatter_mode: str = "none"
+    quantized_load_mode: str = "fallback"
+    quantized_load_fallback_reason: str = "not_reported"
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,7 @@ class DeterministicVLMRuntime:
         self._decode_sessions: dict[str, VisionPrefillSession] = {}
         self._cache_lookups = 0
         self._cache_hits = 0
+        self._fast_path_controller = MultimodalFastPathController()
 
     def load_model(self, model_spec):
         family_config = resolve_vision_family_config(dict(model_spec.ext))
@@ -111,6 +121,7 @@ class DeterministicVLMRuntime:
             loaded_model,
             execution_ext=execution_ext,
         )
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared)
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
@@ -122,6 +133,14 @@ class DeterministicVLMRuntime:
             cache_identity=cache_identity,
             cache_scope_id=scope_id,
             cache_hit=cache_identity in self._cache_entries,
+            image_feature_cache_hits=fast_path.image_feature_cache_hits,
+            image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            multimodal_decode_mode=fast_path.multimodal_decode_mode,
+            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
+            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
+            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            quantized_load_mode=fast_path.quantized_load_mode,
+            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
         )
         return prepared
 
@@ -190,7 +209,8 @@ class DeterministicVLMRuntime:
             block_table=block_table,
         )
         self._decode_sessions[decode_handle] = session
-        self._last_probe = VisionProbeSnapshot(
+        self._last_probe = replace(
+            self._last_probe,
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
@@ -217,7 +237,8 @@ class DeterministicVLMRuntime:
         session = self._decode_sessions.pop(decode_handle, None)
         if session is None:
             raise KeyError(f"Unknown decode handle: {decode_handle}")
-        self._last_probe = VisionProbeSnapshot(
+        self._last_probe = replace(
+            self._last_probe,
             preprocess_latency_ms=session.prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=session.prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=session.prepared_request.preprocess_peak_memory_bytes,
@@ -274,7 +295,8 @@ class DeterministicVLMRuntime:
                 execution_ext=execution_ext,
             )
             self._cache_entries[cache_identity] = entry
-        self._last_probe = VisionProbeSnapshot(
+        self._last_probe = replace(
+            self._last_probe,
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
             preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,

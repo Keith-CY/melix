@@ -3067,6 +3067,7 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+    assert MaintenanceCore._vlm_fast_path_bench_metrics(suite_id="smoke", samples=[]) == []
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
@@ -4660,6 +4661,14 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
     ]
     assert "bench.smoke.image_ttft_ms" in metric_names
     assert "bench.smoke.vlm_tokens_per_second" in metric_names
+    assert "bench.smoke.image_feature_cache_hits" in metric_names
+    assert "bench.smoke.image_feature_cache_misses" in metric_names
+    assert "bench.smoke.multimodal_decode_mode" in metric_names
+    assert "bench.smoke.multimodal_fallback_reason" in metric_names
+    assert "bench.smoke.multimodal_decode_sync_mode" in metric_names
+    assert "bench.smoke.multi_image_scatter_mode" in metric_names
+    assert "bench.smoke.quantized_load_mode" in metric_names
+    assert "bench.smoke.quantized_load_fallback_reason" in metric_names
     assert "bench.smoke.ttft_ms" not in metric_names
 
     report_event = next(event for event in events if event.HasField("completed"))

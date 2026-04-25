@@ -8,6 +8,7 @@ Use this runbook when you need to:
 - capture the reproducible Phase 6 latency and preprocessing report
 - inspect the repository-owned machine-readable vision evidence report
 - verify that multimodal work stays observable while text remains responsive
+- confirm VLM fast-path admission, fallback, and image-feature cache evidence
 
 ## Preconditions
 
@@ -55,7 +56,19 @@ uv run --project services/mlx-worker-python \
 pytest tests/integration/test_phase6_operator_workflows.py -k machine_readable -q
 ```
 
-6. Inspect the runtime directory and logs if any multimodal path fails.
+6. Run a VLM benchmark when you need batch-1 decode, repeated-image, scatter, and quantized-load fast-path metric evidence.
+
+```bash
+PYTHONPATH=.:services/mlx-worker-python \
+uv run --project services/mlx-worker-python \
+python -m pytest services/mlx-worker-python/tests/test_maintenance_service.py -k vlm_mode -q
+```
+
+For live throughput claims, run the same benchmark command against the selected
+real VLM model before and after the change and archive both benchmark artifacts.
+Deterministic runs prove evidence shape and fallback behavior only.
+
+7. Inspect the runtime directory and logs if any multimodal path fails.
 
 ```bash
 ls -la .runtime/phase6-ops
@@ -71,6 +84,7 @@ tail -n 50 .runtime/phase6-ops/swift-text-worker.log
 - `transcription` line reports request latency, preprocessing memory, duration, and chunk count
 - `speech` line reports request latency and output bytes
 - `text_under_multimodal` line reports a non-`N/A` text TTFT measurement recorded while transcription load is active
+- VLM benchmark output includes image-feature cache hits/misses, decode-mode code, fallback-reason code, decode-sync-mode code, scatter-mode code, quantized-load-mode code, and quantized-load fallback-reason code
 
 ## Machine-Readable Evidence
 
@@ -95,6 +109,21 @@ The matching `metrics` payload includes:
 - `vision.preprocess_peak_memory_bytes`
 - `vision.cache_memory_bytes`
 - `vision.cache_hit_rate`
+- `vision.image_feature_cache_hits`
+- `vision.image_feature_cache_misses`
+- `vision.multimodal_decode_mode`
+- `vision.multimodal_fallback_reason`
+- `vision.multimodal_decode_sync_mode`
+- `vision.multi_image_scatter_mode`
+- `vision.quantized_load_mode`
+- `vision.quantized_load_fallback_reason`
+
+The fast-path categorical values are preserved as strings in the phase-6 evidence
+JSON. VLM benchmark output uses numeric code metrics with the same metric names
+because benchmark metric rows are numeric. The live control-plane metrics export
+continues to use the existing numeric `RuntimeStats` bridge; adding string
+runtime-stat fields would require a separate protobuf change and is intentionally
+out of scope for the Issue 42 first stage.
 
 ## Recovery
 

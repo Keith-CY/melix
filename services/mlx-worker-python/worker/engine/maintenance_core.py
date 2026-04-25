@@ -59,6 +59,14 @@ class BenchSample:
     prefill_tokens_per_second: float = 0.0
     decode_tokens_per_second: float = 0.0
     peak_memory_bytes: float = 0.0
+    image_feature_cache_hits: int = 0
+    image_feature_cache_misses: int = 0
+    multimodal_decode_mode: str = "baseline"
+    multimodal_fallback_reason: str = "not_reported"
+    multimodal_decode_sync_mode: str = "baseline"
+    multi_image_scatter_mode: str = "none"
+    quantized_load_mode: str = "fallback"
+    quantized_load_fallback_reason: str = "not_reported"
 
 
 @dataclass(frozen=True)
@@ -2404,6 +2412,10 @@ class MaintenanceCore:
             )
             for case in suite.cases
         ]
+        fast_path_metrics = self._vlm_fast_path_bench_metrics(
+            suite_id=suite.suite_id,
+            samples=samples,
+        )
         if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
             return [
@@ -2419,7 +2431,7 @@ class MaintenanceCore:
                     value=self._percentile(total_latencies, 95.0),
                     unit="ms",
                 ),
-            ]
+            ] + fast_path_metrics
 
         ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
         throughput_values = [
@@ -2441,7 +2453,7 @@ class MaintenanceCore:
                 value=tokens_per_second,
                 unit="tok/s",
             ),
-        ]
+        ] + fast_path_metrics
 
     def _measure_vlm_bench_sample(
         self,
@@ -2508,11 +2520,137 @@ class MaintenanceCore:
 
         first_token_time = first_token_at or finished_at
         completed_at = last_token_at or finished_at
+        probe = runtime.last_probe_snapshot() if hasattr(runtime, "last_probe_snapshot") else None
         return BenchSample(
             ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
             total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
             completion_tokens=completion_tokens,
+            image_feature_cache_hits=int(getattr(probe, "image_feature_cache_hits", 0) or 0),
+            image_feature_cache_misses=int(getattr(probe, "image_feature_cache_misses", 0) or 0),
+            multimodal_decode_mode=str(getattr(probe, "multimodal_decode_mode", "baseline") or "baseline"),
+            multimodal_fallback_reason=str(
+                getattr(probe, "multimodal_fallback_reason", "not_reported") or "not_reported"
+            ),
+            multimodal_decode_sync_mode=str(
+                getattr(probe, "multimodal_decode_sync_mode", "baseline") or "baseline"
+            ),
+            multi_image_scatter_mode=str(getattr(probe, "multi_image_scatter_mode", "none") or "none"),
+            quantized_load_mode=str(getattr(probe, "quantized_load_mode", "fallback") or "fallback"),
+            quantized_load_fallback_reason=str(
+                getattr(probe, "quantized_load_fallback_reason", "not_reported") or "not_reported"
+            ),
         )
+
+    @staticmethod
+    def _vlm_fast_path_bench_metrics(
+        *,
+        suite_id: str,
+        samples: list[BenchSample],
+    ) -> list[BenchMetricSpec]:
+        if not samples:
+            return []
+        last_sample = samples[-1]
+        return [
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_feature_cache_hits",
+                value=float(sum(sample.image_feature_cache_hits for sample in samples)),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_feature_cache_misses",
+                value=float(sum(sample.image_feature_cache_misses for sample in samples)),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.multimodal_decode_mode",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.multimodal_decode_mode,
+                    {
+                        "baseline": 0.0,
+                        "single_stream": 1.0,
+                        "image_cache_reuse": 2.0,
+                        "native_quantized": 3.0,
+                        "fallback": 4.0,
+                    },
+                ),
+                unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.multimodal_fallback_reason",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.multimodal_fallback_reason,
+                    {
+                        "": 0.0,
+                        "not_reported": 0.0,
+                        "no_media": 1.0,
+                        "text_backed_no_vision_weights": 2.0,
+                        "unsupported_family": 3.0,
+                        "video_fast_path_unimplemented": 4.0,
+                    },
+                ),
+                unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.multimodal_decode_sync_mode",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.multimodal_decode_sync_mode,
+                    {
+                        "baseline": 0.0,
+                        "executor_stream": 1.0,
+                    },
+                ),
+                unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.multi_image_scatter_mode",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.multi_image_scatter_mode,
+                    {
+                        "none": 0.0,
+                        "per_sample": 1.0,
+                    },
+                ),
+                unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.quantized_load_mode",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.quantized_load_mode,
+                    {
+                        "fallback": 0.0,
+                        "native_quantized": 1.0,
+                    },
+                ),
+                unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.quantized_load_fallback_reason",
+                value=MaintenanceCore._categorical_metric_code(
+                    last_sample.quantized_load_fallback_reason,
+                    {
+                        "": 0.0,
+                        "not_reported": 0.0,
+                        "not_quantized": 1.0,
+                        "unsupported_quant_profile": 2.0,
+                        "text_backed_no_vision_weights": 3.0,
+                        "unsupported_family": 4.0,
+                    },
+                ),
+                unit="code",
+            ),
+        ]
+
+    @staticmethod
+    def _categorical_metric_code(value: str, mapping: dict[str, float]) -> float:
+        return mapping.get(value, -1.0)
 
     def _measure_image_generation_bench_metrics(
         self,

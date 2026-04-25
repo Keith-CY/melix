@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
+from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
@@ -263,10 +264,12 @@ class MLXVLMRuntime:
         backend: AutoMLXVLMBackend | None = None,
         temp_root: Path | str | None = None,
         temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+        fast_path_controller: MultimodalFastPathController | None = None,
     ) -> None:
         self._backend = backend or AutoMLXVLMBackend()
         self._temp_root = Path(temp_root) if temp_root is not None else None
         self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
+        self._fast_path_controller = fast_path_controller or MultimodalFastPathController()
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
 
     @property
@@ -321,6 +324,7 @@ class MLXVLMRuntime:
                     family_config=family_config,
                     started_at=started_at,
                 )
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared)
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared.preprocess_latency_ms,
             preprocess_input_bytes=prepared.preprocess_input_bytes,
@@ -332,6 +336,14 @@ class MLXVLMRuntime:
             cache_identity="",
             cache_scope_id="",
             cache_hit=False,
+            image_feature_cache_hits=fast_path.image_feature_cache_hits,
+            image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            multimodal_decode_mode=fast_path.multimodal_decode_mode,
+            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
+            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
+            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            quantized_load_mode=fast_path.quantized_load_mode,
+            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
         )
         return prepared
 
@@ -398,7 +410,8 @@ class MLXVLMRuntime:
                 now = time.perf_counter()
                 if first_token_at is None:
                     first_token_at = now
-                    self._last_probe = VisionProbeSnapshot(
+                    self._last_probe = replace(
+                        self._last_probe,
                         preprocess_latency_ms=prepared_request.preprocess_latency_ms,
                         preprocess_input_bytes=prepared_request.preprocess_input_bytes,
                         preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,

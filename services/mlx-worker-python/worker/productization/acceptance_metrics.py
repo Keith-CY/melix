@@ -97,6 +97,42 @@ def build_phase6_vision_metrics_report(
             metrics_snapshot, "vision.cache_memory_bytes"
         ),
         "vision.cache_hit_rate": _metric_value(metrics_snapshot, "vision.cache_hit_rate"),
+        "vision.image_feature_cache_hits": _metric_value(
+            metrics_snapshot, "vision.image_feature_cache_hits"
+        ),
+        "vision.image_feature_cache_misses": _metric_value(
+            metrics_snapshot, "vision.image_feature_cache_misses"
+        ),
+        "vision.multimodal_decode_mode": _metric_text(
+            metrics_snapshot,
+            "vision.multimodal_decode_mode",
+            "baseline",
+        ),
+        "vision.multimodal_fallback_reason": _metric_text(
+            metrics_snapshot,
+            "vision.multimodal_fallback_reason",
+            "not_reported",
+        ),
+        "vision.multimodal_decode_sync_mode": _metric_text(
+            metrics_snapshot,
+            "vision.multimodal_decode_sync_mode",
+            "baseline",
+        ),
+        "vision.multi_image_scatter_mode": _metric_text(
+            metrics_snapshot,
+            "vision.multi_image_scatter_mode",
+            "none",
+        ),
+        "vision.quantized_load_mode": _metric_text(
+            metrics_snapshot,
+            "vision.quantized_load_mode",
+            "fallback",
+        ),
+        "vision.quantized_load_fallback_reason": _metric_text(
+            metrics_snapshot,
+            "vision.quantized_load_fallback_reason",
+            "not_reported",
+        ),
     }
 
     return {
@@ -584,6 +620,16 @@ def _metric_value(snapshot: dict[str, Any], key: str) -> float:
     if not isinstance(values, dict):
         return 0.0
     return _rounded_float(values.get(key))
+
+
+def _metric_text(snapshot: dict[str, Any], key: str, default: str) -> str:
+    values = snapshot.get("values", {})
+    if not isinstance(values, dict):
+        return default
+    value = values.get(key)
+    if not isinstance(value, str):
+        return default
+    return value.strip()
 
 
 def _rounded_float(value: Any) -> float:
