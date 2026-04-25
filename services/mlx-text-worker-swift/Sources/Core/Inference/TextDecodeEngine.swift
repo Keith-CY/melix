@@ -28,25 +28,27 @@ struct TextDecodeEngine: Sendable {
                 Task { await registry.finishDecode() }
             }
 
+            var sampling = request.sampling
+            if request.maxOutputTokens > 0 {
+                sampling.maxOutputTokens = request.maxOutputTokens
+            }
+
             let accelerationResolution = try await resolveDecodeAcceleration(
                 requested: request.execution.acceleration,
                 stored: session.prefill.acceleration,
+                sampling: sampling,
                 supportsSpeculative: await registry.supportsSpeculativeDecoding(),
                 requiresLoadedDraftModel: await registry.requiresLoadedDraftModelForSpeculativeDecoding(),
-                hasLoadedDraftModel: { draftModelID in
-                    await registry.hasLoadedDraftModel(
+                draftModelReadiness: { draftModelID in
+                    await registry.speculativeDraftModelReadiness(
                         id: draftModelID,
-                        excludingModelHandle: session.loadedModel.handle
+                        excludingModelHandle: session.loadedModel.handle,
+                        targetSpec: session.loadedModel.spec
                     )
                 }
             )
             let acceleration = accelerationResolution.policy
             recordSpeculativeRequestMetrics(accelerationResolution)
-
-            var sampling = request.sampling
-            if request.maxOutputTokens > 0 {
-                sampling.maxOutputTokens = request.maxOutputTokens
-            }
 
             let runtimeStream = try await registry.decodeEvents(
                 session: session,
@@ -450,9 +452,10 @@ private struct DecodeAccelerationResolution {
 private func resolveDecodeAcceleration(
     requested: Melix_Worker_V1_AccelerationPolicy,
     stored: Melix_Worker_V1_AccelerationPolicy,
+    sampling: Melix_Worker_V1_SamplingConfig,
     supportsSpeculative: Bool,
     requiresLoadedDraftModel: Bool,
-    hasLoadedDraftModel: @escaping @Sendable (String) async -> Bool
+    draftModelReadiness: @escaping @Sendable (String) async -> SpeculativeDraftModelReadiness
 ) async throws -> DecodeAccelerationResolution {
     var resolved = requested
     if resolved.mode == .unspecified {
@@ -478,20 +481,37 @@ private func resolveDecodeAcceleration(
         }
     }
 
+    if resolved.mode == .speculativeDecode && !isGreedySpeculativeSampling(sampling) {
+        if resolved.allowBaselineFallback {
+            resolved.mode = .baseline
+            return DecodeAccelerationResolution(
+                policy: resolved,
+                requestedPolicy: requestedPolicy,
+                fallbackReason: "non_greedy_sampling"
+            )
+        } else {
+            throw DecodeAccelerationError(
+                message: "Speculative decode currently requires greedy sampling: temperature=0, top_p=1, top_k=0."
+            )
+        }
+    }
+
     if resolved.mode == .speculativeDecode && requiresLoadedDraftModel {
         let draftModelID = resolved.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let draftAvailable = draftModelID.isEmpty ? false : await hasLoadedDraftModel(draftModelID)
-        if !draftAvailable {
+        let draftReadiness = draftModelID.isEmpty
+            ? .unavailable(reason: "draft_model_unavailable")
+            : await draftModelReadiness(draftModelID)
+        if !draftReadiness.available || !draftReadiness.compatible {
             if resolved.allowBaselineFallback {
                 resolved.mode = .baseline
                 return DecodeAccelerationResolution(
                     policy: resolved,
                     requestedPolicy: requestedPolicy,
-                    fallbackReason: "draft_model_unavailable"
+                    fallbackReason: draftReadiness.fallbackReason
                 )
             } else {
                 throw DecodeAccelerationError(
-                    message: "Speculative decode requires a loaded draft model for the active Swift text backend."
+                    message: draftReadiness.errorMessage
                 )
             }
         }
@@ -502,6 +522,13 @@ private func resolveDecodeAcceleration(
         requestedPolicy: requestedPolicy,
         fallbackReason: nil
     )
+}
+
+private func isGreedySpeculativeSampling(_ sampling: Melix_Worker_V1_SamplingConfig) -> Bool {
+    let effectiveTopP = sampling.topP > 0 ? sampling.topP : 1
+    return sampling.temperature <= 0
+        && effectiveTopP >= 1
+        && sampling.topK == 0
 }
 
 private func effectiveRequestID(

@@ -1162,10 +1162,12 @@ def test_collect_direct_phase_two_metrics_loads_configured_draft_model(
     )
 
     assert [request.model.model_id for request in runtime_stub.load_requests] == ["served/live", "draft/live"]
+    assert runtime_stub.load_requests[0].model.tokenizer_hash == runtime_stub.load_requests[1].model.tokenizer_hash
     speculative_policy = observed_policies[-1]
     assert speculative_policy.draft_model_id == "draft/live"
     assert speculative_policy.num_draft_tokens == 6
     assert result["swift_worker_direct"]["draft_load_model_ms"] is not None
+    assert result["swift_worker_direct"]["resident_bytes"] == 8192
 
 
 def test_collect_direct_phase_two_metrics_can_skip_abort_probe(

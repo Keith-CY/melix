@@ -620,7 +620,7 @@ def collect_direct_phase_two_metrics(
         if not load_response.ok:
             raise RuntimeError(f"LoadModel failed for phase 2 metrics: {load_response.error}")
 
-        stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=10)
+        estimated_loaded_resident_bytes = int(max(0, load_response.estimated_resident_bytes))
         model_handle = load_response.model_handle
         loaded_handles = [model_handle]
         draft_model_handle = ""
@@ -639,8 +639,11 @@ def collect_direct_phase_two_metrics(
             draft_load_model_ms = elapsed_ms(draft_load_started_at)
             if not draft_load_response.ok:
                 raise RuntimeError(f"Draft LoadModel failed for phase 2 metrics: {draft_load_response.error}")
+            estimated_loaded_resident_bytes += int(max(0, draft_load_response.estimated_resident_bytes))
             draft_model_handle = draft_load_response.model_handle
             loaded_handles.append(draft_model_handle)
+
+        stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=10)
 
         prefill_baseline = measure_prefill_probe(
             inference_stub,
@@ -756,7 +759,7 @@ def collect_direct_phase_two_metrics(
             "draft_load_model_ms": draft_load_model_ms,
             "draft_model_handle": draft_model_handle,
             "model_evidence": model.model_evidence(),
-            "resident_bytes": int(max(load_response.estimated_resident_bytes, stats.stats.resident_bytes)),
+            "resident_bytes": int(max(estimated_loaded_resident_bytes, stats.stats.resident_bytes)),
             "prefill": [prefill_baseline, prefill_accelerated, prefill_sparse],
             "decode": decode_rows,
             "comparisons": comparisons,
@@ -1166,6 +1169,20 @@ def read_metrics_export(path: Path) -> dict[str, Any]:
     return {"values": {}}
 
 
+def phase2_text_tokenizer_hash(model_id: str, *, fallback: str) -> str:
+    normalized = model_id.lower()
+    family_markers = (
+        ("qwen", "tok-qwen"),
+        ("gemma", "tok-gemma"),
+        ("llama", "tok-llama"),
+        ("mistral", "tok-mistral"),
+    )
+    for marker, tokenizer_hash in family_markers:
+        if marker in normalized:
+            return tokenizer_hash
+    return fallback
+
+
 def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common_pb2.ModelSpec:
     model = model or resolve_model_configuration(
         real_small_model=False,
@@ -1178,7 +1195,7 @@ def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common
         model_path=model.model_path,
         model_kind="text",
         revision=model.revision,
-        tokenizer_hash="tok-dev",
+        tokenizer_hash=phase2_text_tokenizer_hash(model.model_id, fallback="tok-dev"),
         quant_profile_id="q4",
         parser_mode="text",
         reasoning_mode="off",
@@ -1187,12 +1204,13 @@ def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common
 
 
 def draft_text_model_spec(model: Phase2ModelConfiguration) -> common_pb2.ModelSpec:
+    target_tokenizer_hash = phase2_text_tokenizer_hash(model.model_id, fallback="tok-dev")
     return common_pb2.ModelSpec(
         model_id=model.draft_model_id,
         model_path=model.draft_model_path,
         model_kind="text",
         revision=model.draft_revision or "main",
-        tokenizer_hash="tok-draft",
+        tokenizer_hash=phase2_text_tokenizer_hash(model.draft_model_id, fallback=target_tokenizer_hash),
         quant_profile_id="q4",
         parser_mode="text",
         reasoning_mode="off",

@@ -25,6 +25,15 @@ on Hub downloads or local MLX model weights.
   path when a loaded draft model is available. The runtime may adaptively switch the
   remainder of a decode to target-only baseline when early speculative probes show
   low acceptance or an insufficient draft/target cost ratio.
+- Swift MLX live speculative decode must only start when the loaded target and draft
+  model specs prove tokenizer compatibility through non-empty matching tokenizer
+  hashes, and through matching explicit model kind or family metadata when those
+  fields are present. Incompatible or incomplete pairs either fall back to baseline
+  when the request allows fallback or return a structured `unimplemented` error.
+- Until Melix implements probability-correct speculative sampling, Swift MLX live
+  speculative decode is limited to greedy sampling (`temperature=0`, `top_p=1`,
+  `top_k=0`). Non-greedy requests must use baseline fallback or receive a structured
+  `unimplemented` error when fallback is disabled.
 - Product benchmark and evaluation jobs must persist runtime evidence in job parameters,
   including model handle, runtime kind, runtime name, model id, model path, source kind,
   and source repo.
@@ -44,6 +53,9 @@ on Hub downloads or local MLX model weights.
   `speculative_draft_propose_ms`, and `speculative_target_verify_ms`.
 - Phase 2 reports record served/draft model source resolution and runtime preflight
   class for both models.
+- Phase 2 direct Swift worker reports must read runtime stats after both target and
+  draft model loads complete, and `resident_bytes` must be at least the sum of the
+  target and draft `LoadModel.estimated_resident_bytes` values when a draft is loaded.
 - Benchmark summaries record live runtime evidence in `parameters` and include runtime
   lines in the Markdown report.
 - Evaluation jobs record the same live runtime evidence in `parameters`.
@@ -83,3 +95,7 @@ on Hub downloads or local MLX model weights.
 - Swift MLX tests cover the live speculative draft bridge and registry draft-model
   handoff so the backend cannot silently regress to deterministic-only speculative
   behavior.
+- Swift MLX tests cover tokenizer incompatibility and non-greedy sampling rejection
+  paths for live speculative decode.
+- Phase 2 metrics tests cover configured draft model loading, tokenizer-hash continuity
+  between served and draft specs, and double-model resident-memory accounting.

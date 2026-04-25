@@ -3732,6 +3732,7 @@ final class WorkerScaffoldTests: XCTestCase {
         _ = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text-draft"
+            request.model.tokenizerHash = "tok-dev"
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -3790,6 +3791,172 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_fallback_count"], 0)
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_draft_model_configured"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.speculative_num_draft_tokens"], 4)
+    }
+
+    func testDecodeStreamingRpcRejectsSpeculativeDecodeWhenDraftTokenizerHashDiffers() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["unused"])
+        )
+        let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.model.tokenizerHash = "tok-target"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text-draft"
+            request.model.tokenizerHash = "tok-draft"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-tokenizer-prefill"
+        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("tokenizer mismatch")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-tokenizer-decode"
+        request.execution.modelHandle = targetLoadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.execution.acceleration.draftModelID = "melix-dev-text-draft"
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.count, 1)
+        XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
+        XCTAssertTrue(recorded[0].error.error.message.contains("tokenizer"))
+    }
+
+    func testDecodeStreamingRpcRejectsSpeculativeDecodeForNonGreedySampling() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "auto",
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["unused"])
+        )
+        let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.model.tokenizerHash = "tok-shared"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text-draft"
+            request.model.tokenizerHash = "tok-shared"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-sampling-prefill"
+        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("non greedy speculative decode")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-sampling-decode"
+        request.execution.modelHandle = targetLoadResponse.modelHandle
+        request.execution.acceleration.mode = .speculativeDecode
+        request.execution.acceleration.allowBaselineFallback = false
+        request.execution.acceleration.draftModelID = "melix-dev-text-draft"
+        request.sampling.temperature = 0.7
+        request.sampling.topP = 1
+        request.decodeHandle = prefillResponse.decodeHandle
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.count, 1)
+        XCTAssertEqual(recorded[0].error.error.code, "unimplemented")
+        XCTAssertTrue(recorded[0].error.error.message.contains("greedy"))
     }
 
     func testDecodeStreamingRpcCanBeAbortedWithoutUsageTrailer() async throws {

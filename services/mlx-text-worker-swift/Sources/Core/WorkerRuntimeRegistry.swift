@@ -45,6 +45,40 @@ struct WorkerDecodeSession: @unchecked Sendable {
     let prefill: StoredPrefillContext
 }
 
+struct SpeculativeDraftModelReadiness: Sendable {
+    let available: Bool
+    let compatible: Bool
+    let fallbackReason: String
+    let errorMessage: String
+
+    static func ready() -> SpeculativeDraftModelReadiness {
+        SpeculativeDraftModelReadiness(
+            available: true,
+            compatible: true,
+            fallbackReason: "",
+            errorMessage: ""
+        )
+    }
+
+    static func unavailable(reason: String) -> SpeculativeDraftModelReadiness {
+        SpeculativeDraftModelReadiness(
+            available: false,
+            compatible: false,
+            fallbackReason: reason,
+            errorMessage: "Speculative decode requires a loaded draft model for the active Swift text backend."
+        )
+    }
+
+    static func incompatible(reason: String, message: String) -> SpeculativeDraftModelReadiness {
+        SpeculativeDraftModelReadiness(
+            available: true,
+            compatible: false,
+            fallbackReason: reason,
+            errorMessage: message
+        )
+    }
+}
+
 actor WorkerRuntimeRegistry {
     private static let estimatedPrefillResidentBytesPerToken: UInt64 = 2_048
     private static let estimatedMediaPartTokens = 256
@@ -598,6 +632,24 @@ actor WorkerRuntimeRegistry {
 
     func hasLoadedDraftModel(id: String, excludingModelHandle: String) -> Bool {
         loadedDraftModel(id: id, excludingModelHandle: excludingModelHandle) != nil
+    }
+
+    func speculativeDraftModelReadiness(
+        id: String,
+        excludingModelHandle: String,
+        targetSpec: Melix_Worker_V1_ModelSpec
+    ) -> SpeculativeDraftModelReadiness {
+        guard let draftModel = loadedDraftModel(id: id, excludingModelHandle: excludingModelHandle) else {
+            return .unavailable(reason: "draft_model_unavailable")
+        }
+
+        if let issue = speculativeDraftCompatibilityIssue(target: targetSpec, draft: draftModel.spec) {
+            return .incompatible(
+                reason: issue.reason,
+                message: issue.message
+            )
+        }
+        return .ready()
     }
 
     private func loadedDraftModel(
@@ -1207,6 +1259,57 @@ private func mergeModelSpec(
         resolved.ext[key] = value
     }
     return resolved
+}
+
+private func speculativeDraftCompatibilityIssue(
+    target: Melix_Worker_V1_ModelSpec,
+    draft: Melix_Worker_V1_ModelSpec
+) -> (reason: String, message: String)? {
+    let targetTokenizer = target.tokenizerHash.trimmingCharacters(in: .whitespacesAndNewlines)
+    let draftTokenizer = draft.tokenizerHash.trimmingCharacters(in: .whitespacesAndNewlines)
+    if targetTokenizer.isEmpty || draftTokenizer.isEmpty {
+        return (
+            "draft_tokenizer_missing",
+            "Speculative decode requires non-empty target and draft tokenizer hashes."
+        )
+    }
+    if targetTokenizer != draftTokenizer {
+        return (
+            "draft_tokenizer_mismatch",
+            "Speculative decode requires target and draft tokenizer hashes to match."
+        )
+    }
+
+    let targetKind = target.modelKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let draftKind = draft.modelKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if !targetKind.isEmpty, !draftKind.isEmpty, targetKind != draftKind {
+        return (
+            "draft_model_kind_mismatch",
+            "Speculative decode requires target and draft model kinds to match."
+        )
+    }
+
+    let targetFamily = speculativeFamilyID(target)
+    let draftFamily = speculativeFamilyID(draft)
+    if !targetFamily.isEmpty, !draftFamily.isEmpty, targetFamily != draftFamily {
+        return (
+            "draft_family_mismatch",
+            "Speculative decode requires target and draft text families to match."
+        )
+    }
+
+    return nil
+}
+
+private func speculativeFamilyID(_ spec: Melix_Worker_V1_ModelSpec) -> String {
+    (
+        spec.ext["text_family_id"]
+            ?? spec.ext["melix.text.family_id"]
+            ?? spec.ext["detected_family_id"]
+            ?? ""
+    )
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+    .lowercased()
 }
 
 private func makeModelHandle(
