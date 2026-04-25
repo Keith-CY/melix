@@ -87,13 +87,19 @@ def test_real_small_model_source_preserves_old_copied_managed_layout_fallback(tm
     assert source.source_resolution_mode == "managed_model_path"
 
 
-def test_descriptor_runtime_model_path_ignores_invalid_descriptor_manifests(tmp_path: Path) -> None:
+def test_descriptor_runtime_model_path_ignores_invalid_descriptor_manifests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     missing_runtime = tmp_path / "missing-runtime"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "None").mkdir()
     manifest_payloads = [
         "{",
         "[]",
         json.dumps({"ext": "invalid"}),
         json.dumps({"ext": {}}),
+        json.dumps({"ext": {"melix.model_path": None}}),
         json.dumps({"ext": {"melix.model_path": str(missing_runtime)}}),
     ]
 
@@ -103,6 +109,26 @@ def test_descriptor_runtime_model_path_ignores_invalid_descriptor_manifests(tmp_
         (descriptor_dir / "manifest.json").write_text(payload + "\n", encoding="utf-8")
 
         assert _descriptor_runtime_model_path(descriptor_dir) is None
+
+
+def test_descriptor_runtime_model_path_logs_manifest_runtime_file(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    descriptor_dir = tmp_path / "descriptor"
+    runtime_file = tmp_path / "hf-cache" / "snapshot" / "config.json"
+    descriptor_dir.mkdir()
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_text("{}", encoding="utf-8")
+    (descriptor_dir / "manifest.json").write_text(
+        json.dumps({"ext": {"melix.model_path": str(runtime_file)}}) + "\n",
+        encoding="utf-8",
+    )
+
+    caplog.set_level("DEBUG", logger="scripts.real_model_support")
+
+    assert _descriptor_runtime_model_path(descriptor_dir) is None
+    assert "is not a directory" in caplog.text
 
 
 def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path: Path) -> None:

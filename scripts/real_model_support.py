@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ REAL_SMALL_TEXT_MODEL_ID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
 REAL_SMALL_TEXT_MODEL_PATH_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_PATH"
 REAL_SMALL_TEXT_MODEL_E2E_ENV = "MELIX_PHASE8_REAL_SMALL_MODEL_E2E"
 _MANAGED_MODEL_ROOT_ENV = "MELIX_MANAGED_MODEL_ROOT"
+_LOGGER = logging.getLogger(__name__)
 _REAL_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".mlx")
 _REAL_MODEL_WEIGHT_FILENAMES = {
     "model.safetensors.index.json",
@@ -253,12 +255,17 @@ def _descriptor_runtime_model_path(descriptor_dir: Path) -> Path | None:
     ext = payload.get("ext", {})
     if not isinstance(ext, dict):
         return None
-    raw_model_path = str(ext.get("melix.model_path", "")).strip()
+    raw_model_path = ext.get("melix.model_path")
+    if not isinstance(raw_model_path, str):
+        return None
+    raw_model_path = raw_model_path.strip()
     if not raw_model_path:
         return None
     runtime_path = Path(raw_model_path).expanduser().resolve()
     if runtime_path.is_dir():
         return runtime_path
+    if runtime_path.exists():
+        _LOGGER.debug("Managed descriptor runtime model path is not a directory: %s", runtime_path)
     return None
 
 

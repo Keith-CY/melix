@@ -224,7 +224,7 @@ def test_registry_snapshot_preserves_external_runtime_model_path_from_manifest(t
         descriptor_dir,
         model_id="mlx-community/Qwen3-0.6B-4bit",
         ext={
-            "melix.model_path": str(runtime_snapshot),
+            "melix.model_path": str(runtime_snapshot / ".." / "abc123"),
             "melix.registry_descriptor_path": str(descriptor_dir),
         },
     )
@@ -239,11 +239,72 @@ def test_registry_snapshot_preserves_external_runtime_model_path_from_manifest(t
     discovered = {model.model_id: model for model in snapshot.models}
     model = discovered["mlx-community/Qwen3-0.6B-4bit"]
 
-    assert model.model_path == str(runtime_snapshot)
-    assert model.ext["melix.model_path"] == str(runtime_snapshot)
+    assert model.model_path == str(runtime_snapshot.resolve())
+    assert model.ext["melix.model_path"] == str(runtime_snapshot.resolve())
     assert model.ext["melix.registry_descriptor_path"] == str(descriptor_dir)
     assert model.ext["melix.registry_relative_path"] == "huggingface/mlx-community/Qwen3-0.6B-4bit/main"
+    assert "melix.model_path_missing" not in model.ext
     assert model.ext["detected_architecture"] == "qwen3"
+
+
+def test_registry_snapshot_marks_missing_external_runtime_model_path(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed-root"
+    missing_runtime = tmp_path / "hf-cache" / "models--mlx-community--Tiny" / "snapshots" / "missing"
+    descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Tiny" / "main"
+    _write_registry_manifest(
+        descriptor_dir,
+        model_id="mlx-community/Tiny",
+        ext={
+            "melix.model_path": str(missing_runtime),
+            "melix.registry_descriptor_path": str(descriptor_dir),
+        },
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Tiny"]
+
+    assert model.model_path == str(missing_runtime.resolve())
+    assert model.ext["melix.model_path"] == str(missing_runtime.resolve())
+    assert model.ext["melix.model_path_missing"] == "true"
+
+
+def test_registry_snapshot_ignores_non_string_external_runtime_model_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    managed_root = tmp_path / "managed-root"
+    descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Tiny" / "main"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "None").mkdir()
+    _write_registry_manifest(
+        descriptor_dir,
+        model_id="mlx-community/Tiny",
+        ext={
+            "melix.model_path": None,  # type: ignore[dict-item]
+            "melix.registry_descriptor_path": str(descriptor_dir),
+        },
+    )
+
+    catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+        }
+    )
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Tiny"]
+
+    assert model.model_path == str(descriptor_dir)
+    assert model.ext["melix.model_path"] == str(descriptor_dir)
+    assert "melix.model_path_missing" not in model.ext
 
 
 def test_registry_snapshot_explicit_root_override_reorders_precedence_without_changing_root_identity(

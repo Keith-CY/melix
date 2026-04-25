@@ -764,8 +764,6 @@ class WorkerModelCatalog:
                 model.ext["melix.registry_root_order"] = str(index)
                 model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
                 model.ext["melix.registry_descriptor_path"] = str(manifest_path.parent)
-                if not _normalized(model.ext.get("melix.model_path")):
-                    model.ext["melix.model_path"] = str(manifest_path.parent)
                 discovered_models[model_id] = model
                 accepted_model_ids.append(model_id)
 
@@ -841,6 +839,9 @@ class WorkerModelCatalog:
             for key, value in ext.items()
             if str(key).strip()
         }
+        raw_manifest_runtime_path = ext.get("melix.model_path")
+        if not isinstance(raw_manifest_runtime_path, str):
+            normalized_ext.pop("melix.model_path", None)
         for payload_key, ext_key in (
             ("provider_id", _REGISTRY_PROVIDER_ID_KEY),
             ("organization_id", _REGISTRY_ORGANIZATION_ID_KEY),
@@ -858,10 +859,17 @@ class WorkerModelCatalog:
         parser_mode = _normalized(str(payload.get("parser_mode", "text"))) or "text"
         reasoning_mode = _normalized(str(payload.get("reasoning_mode", "off"))) or "off"
         max_context = int(payload.get("max_context", 8192) or 8192)
-        runtime_model_path = _normalized(normalized_ext.get("melix.model_path")) or str(manifest_path.parent)
-        runtime_model_dir = Path(runtime_model_path).expanduser()
-        if _normalized(normalized_ext.get("melix.model_path")):
-            normalized_ext["melix.model_path"] = runtime_model_path
+        manifest_runtime_path = _normalized(raw_manifest_runtime_path) if isinstance(raw_manifest_runtime_path, str) else ""
+        if manifest_runtime_path:
+            runtime_model_dir = Path(manifest_runtime_path).expanduser().resolve()
+        else:
+            runtime_model_dir = manifest_path.parent
+        runtime_model_path = str(runtime_model_dir)
+        normalized_ext["melix.model_path"] = runtime_model_path
+        if manifest_runtime_path and not runtime_model_dir.is_dir():
+            normalized_ext["melix.model_path_missing"] = "true"
+        else:
+            normalized_ext.pop("melix.model_path_missing", None)
         config_payload = _load_model_config_payload(runtime_model_dir)
         model_kind = (
             "vlm"

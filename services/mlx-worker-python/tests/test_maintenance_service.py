@@ -23,6 +23,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
     HubSearchPage,
 )
+from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.mlx_lm_runner import (
@@ -679,8 +680,11 @@ def test_download_job_writes_managed_hub_descriptor_without_copying_snapshot_wei
     manifest = json.loads((tmp_path / "download-managed" / "download.state.json").read_text(encoding="utf-8"))
     descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Qwen3.5-0.8B-OptiQ-4bit" / "main"
     registry_manifest = json.loads((descriptor_dir / "manifest.json").read_text(encoding="utf-8"))
+    expected_runtime_bytes = sum(path.stat().st_size for path in source_dir.rglob("*") if path.is_file())
 
     assert events[-1].completed.output_path == str(descriptor_dir)
+    assert manifest["downloaded_bytes"] == expected_runtime_bytes
+    assert manifest["total_bytes"] == expected_runtime_bytes
     assert manifest["ext"]["melix.source_kind"] == "hub_repo"
     assert manifest["ext"]["melix.hf_repo_id"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
     assert manifest["ext"]["melix.hf_revision"] == "main"
@@ -770,11 +774,69 @@ def test_managed_hub_repo_download_uses_standard_huggingface_cache(
     descriptor_dir = managed_root / "huggingface" / "mlx-community" / "Tiny" / "main"
     registry_manifest = json.loads((descriptor_dir / "manifest.json").read_text(encoding="utf-8"))
 
-    assert calls == [{"repo_id": "mlx-community/Tiny", "revision": "main"}]
+    assert calls[0]["repo_id"] == "mlx-community/Tiny"
+    assert calls[0]["revision"] == "main"
+    assert "cache_dir" not in calls[0]
+    assert "local_dir" not in calls[0]
+    assert "local_dir_use_symlinks" not in calls[0]
     assert not (tmp_path / "download-managed-cache" / "hf-cache").exists()
     assert events[-1].completed.output_path == str(descriptor_dir)
     assert registry_manifest["ext"]["melix.model_path"] == str(hf_snapshot.resolve())
     assert not (descriptor_dir / "model.safetensors").exists()
+
+
+def test_managed_hub_source_download_omits_blank_revision_and_normalizes_hub_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hf_snapshot = tmp_path / "hf-cache" / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    hf_snapshot.mkdir(parents=True, exist_ok=True)
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return str(hf_snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+
+    resolved = DownloadPipeline()._resolve_managed_hub_source_path(
+        output_dir=tmp_path / "download",
+        ext={},
+        repo_id="mlx-community/Tiny",
+        revision="",
+    )
+
+    assert resolved == hf_snapshot.resolve()
+    assert calls[0]["revision"] is None
+
+    class FakeHubHTTPError(RuntimeError):
+        pass
+
+    FakeHubHTTPError.__module__ = "huggingface_hub.errors"
+
+    def failing_snapshot_download(**kwargs: object) -> str:
+        raise FakeHubHTTPError("network unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=failing_snapshot_download),
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        DownloadPipeline()._resolve_managed_hub_source_path(
+            output_dir=tmp_path / "download-failed",
+            ext={},
+            repo_id="mlx-community/Tiny",
+            revision="main",
+        )
+
+    assert exc_info.value.code == "unavailable"
+    assert "managed hub import failed" in exc_info.value.message
 
 
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:

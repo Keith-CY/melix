@@ -270,7 +270,7 @@ class DownloadPipeline:
             revision=revision,
             ext=ext,
         )
-        total_bytes = self._directory_size(materialized_dir)
+        total_bytes = self._directory_size(source_dir)
         state_path = output_dir / "download.state.json"
         manifest_json = self._build_managed_import_manifest_json(
             request=request,
@@ -369,10 +369,18 @@ class DownloadPipeline:
                 message="huggingface_hub is required for managed hub imports.",
             ) from exc
 
-        downloaded = snapshot_download(
-            repo_id=repo_id,
-            revision=revision,
-        )
+        try:
+            downloaded = snapshot_download(
+                repo_id=repo_id,
+                revision=revision.strip() or None,
+            )
+        except Exception as exc:
+            if self._is_huggingface_hub_failure(exc):
+                raise ModelOperationError(
+                    code="unavailable",
+                    message=f"managed hub import failed for {repo_id}: {exc}",
+                ) from exc
+            raise
         return Path(downloaded).resolve()
 
     def _materialize_managed_hub_repo(
@@ -508,6 +516,11 @@ class DownloadPipeline:
     @staticmethod
     def _directory_size(path: Path) -> int:
         return sum(file_path.stat().st_size for file_path in path.rglob("*") if file_path.is_file())
+
+    @staticmethod
+    def _is_huggingface_hub_failure(exc: Exception) -> bool:
+        module = type(exc).__module__
+        return module.startswith("huggingface_hub") or module.startswith("requests")
 
     @staticmethod
     def _int(raw_value: str | None, *, default: int) -> int:

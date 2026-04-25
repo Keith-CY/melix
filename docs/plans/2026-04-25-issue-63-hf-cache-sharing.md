@@ -12,8 +12,8 @@
 
 ## Implementation Tasks
 
-- [x] Update `DownloadPipeline` managed Hub import behavior so `snapshot_download` uses the default Hugging Face cache, explicit `source_path` snapshots remain supported, and descriptor manifests are written without copying weight files into the managed root.
-- [x] Update `WorkerModelCatalog` registry scanning so a non-empty manifest-provided `melix.model_path` is preserved as the runtime path, descriptor-relative registry identity remains stable, and capability detection reads runtime files from the external snapshot path.
+- [x] Update `DownloadPipeline` managed Hub import behavior so `snapshot_download` uses the default Hugging Face cache, explicit `source_path` snapshots remain supported, byte counters report runtime snapshot size, and descriptor manifests are written without copying weight files into the managed root.
+- [x] Update `WorkerModelCatalog` registry scanning so a non-empty manifest-provided `melix.model_path` is preserved as the resolved runtime path, descriptor-relative registry identity remains stable, stale descriptor links are marked with `melix.model_path_missing=true`, and capability detection reads runtime files from the external snapshot path when available.
 - [x] Update evidence helpers so managed-root lookup reads descriptor manifests and resolves their external runtime path, while preserving compatibility with old copied managed layouts that contain real weights.
 - [x] Update official docs to describe the descriptor/cache split for managed Hugging Face imports.
 - [x] Add focused tests for Python worker import, registry scanning, real-model source resolution, Swift/CLI receipts, and `/v1/models` metadata exposure.
@@ -22,7 +22,7 @@
 
 - No protobuf schema changes.
 - CLI `ManagedModelReceipt.managed_model_path` remains the Melix descriptor path under `MELIX_MANAGED_MODEL_ROOT`.
-- Registry and `/v1/models` metadata expose the runtime model path through `melix.model_path` and expose descriptor identity through `melix.registry_descriptor_path` plus existing `melix.registry_*` fields.
+- Registry and `/v1/models` metadata expose the runtime model path through `melix.model_path` and expose descriptor identity through `melix.registry_descriptor_path` plus existing `melix.registry_*` fields. If the runtime path is missing, metadata includes `melix.model_path_missing=true`.
 
 ## Verification And Metrics
 
@@ -34,11 +34,11 @@
 
 ## Verification Record
 
-- Targeted Python tests: `143 passed` for `test_maintenance_service.py`, `test_model_registry_catalog.py`, and `tests/test_real_model_support.py`.
+- Targeted Python tests: `147 passed` for `test_maintenance_service.py`, `test_model_registry_catalog.py`, and `tests/test_real_model_support.py`.
 - Python integration smoke: `test_models_endpoint_exposes_structured_registry_identity_metadata` passed with descriptor/cache metadata in `/v1/models`.
-- Python changed-line coverage: `100.00% (63/63)` across the touched worker, helper, focused test, and integration files.
+- Python changed-line coverage after review follow-up: `97.73% (43/44)` across the touched worker, helper, focused test, and integration files.
 - Targeted Swift tests passed for `MelixCLIRunnerTests`, `ModelCatalogTests`, `ControlPlaneServiceTests`, and `OpenAIHandlerTests`.
-- Full Python suite: `908 passed, 5 skipped`.
+- Full Python suite: `911 passed, 5 skipped`.
 - Full Swift suite: `make swift-test` passed for protocol, text worker, control plane, and macOS menu bar packages.
 - Live Hugging Face import disk usage and generation metrics: `N/A` in this implementation pass because no network-backed real model download or long-lived Melix stack was started. Deterministic tests cover descriptor/cache separation, registry metadata, CLI receipt semantics, and `/v1/models` exposure.
 
