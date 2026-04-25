@@ -174,6 +174,34 @@ public class Qwen3ModelInner: Module {
 
         return norm(h)
     }
+
+    func dflashForwardHidden(
+        _ inputs: MLXArray,
+        cache: [KVCache]? = nil,
+        targetLayerIDs: [Int]
+    ) throws -> (normalizedHidden: MLXArray, targetHidden: MLXArray) {
+        var h = embedTokens(inputs)
+        let mask = createAttentionMask(h: h, cache: cache?.first)
+        let selectedLayers = Set(targetLayerIDs)
+        var selectedHiddenByLayer = [Int: MLXArray]()
+
+        for (i, layer) in layers.enumerated() {
+            h = layer(h, mask: mask, cache: cache?[i])
+            if selectedLayers.contains(i) {
+                selectedHiddenByLayer[i] = h
+            }
+        }
+
+        let selectedHidden = targetLayerIDs.compactMap { selectedHiddenByLayer[$0] }
+        guard selectedHidden.count == targetLayerIDs.count else {
+            throw DFlashModelError.missingRequiredConfiguration("dflash_config.target_layer_ids")
+        }
+
+        return (
+            normalizedHidden: norm(h),
+            targetHidden: concatenated(selectedHidden, axis: -1)
+        )
+    }
 }
 
 public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
@@ -214,6 +242,43 @@ public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
         }
 
         return weights
+    }
+}
+
+extension Qwen3Model: DFlashTargetModel {
+    public var dflashHiddenSize: Int {
+        configuration.hiddenSize
+    }
+
+    public var dflashLayerCount: Int {
+        configuration.hiddenLayers
+    }
+
+    public func dflashTokenEmbeddings(_ tokenIDs: MLXArray) throws -> MLXArray {
+        model.embedTokens(tokenIDs)
+    }
+
+    public func dflashLogits(fromHiddenStates hiddenStates: MLXArray) throws -> MLXArray {
+        if let lmHead {
+            return lmHead(hiddenStates)
+        }
+        return model.embedTokens.asLinear(hiddenStates)
+    }
+
+    public func dflashForward(
+        input: LMInput.Text,
+        cache: [KVCache]?,
+        targetLayerIDs: [Int]
+    ) throws -> DFlashTargetForwardResult {
+        let result = try model.dflashForwardHidden(
+            input.tokens,
+            cache: cache,
+            targetLayerIDs: targetLayerIDs
+        )
+        return DFlashTargetForwardResult(
+            logits: try dflashLogits(fromHiddenStates: result.normalizedHidden),
+            hidden: result.targetHidden
+        )
     }
 }
 

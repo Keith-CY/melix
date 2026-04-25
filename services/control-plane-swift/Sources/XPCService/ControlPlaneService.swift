@@ -925,6 +925,10 @@ public actor ControlPlaneService {
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
+        if requiresLiveModelEvidence(for: benchmarkModel, explicitHFRepoID: requestedHFRepoID) {
+            workerRequest.parameters["require_live_model"] = "true"
+            workerRequest.parameters["live_model_source"] = requestedHFRepoID.isEmpty ? "model_catalog" : "hf_repo"
+        }
         workerRequest.contextLengths = normalizedContextLengths
         workerRequest.generationLength = command.generationLength
         workerRequest.batchSizes = normalizedBatchSizes
@@ -950,7 +954,7 @@ public actor ControlPlaneService {
                         jobID: started.jobID,
                         modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
-                        parameters: command.parameters,
+                        parameters: workerRequest.parameters,
                         status: "running",
                         outputDir: "",
                         taskKind: workerRequest.taskKind,
@@ -972,7 +976,7 @@ public actor ControlPlaneService {
                         jobID: resolvedJobID,
                         modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
-                        parameters: command.parameters,
+                        parameters: workerRequest.parameters,
                         status: "completed",
                         outputDir: URL(fileURLWithPath: completed.reportPath).deletingLastPathComponent().path,
                         taskKind: workerRequest.taskKind,
@@ -992,7 +996,7 @@ public actor ControlPlaneService {
                         jobID: resolvedJobID,
                         modelID: benchmarkModel.modelID,
                         suites: requestedSuites,
-                        parameters: command.parameters,
+                        parameters: workerRequest.parameters,
                         status: "failed",
                         outputDir: "",
                         taskKind: workerRequest.taskKind,
@@ -1237,6 +1241,10 @@ public actor ControlPlaneService {
         workerRequest.scoringMode = command.scoringMode
         workerRequest.codeExecPolicy = command.codeExecPolicy
         workerRequest.parameters = command.parameters
+        if requiresLiveModelEvidence(for: evaluationModel, explicitHFRepoID: requestedHFRepoID) {
+            workerRequest.parameters["require_live_model"] = "true"
+            workerRequest.parameters["live_model_source"] = requestedHFRepoID.isEmpty ? "model_catalog" : "hf_repo"
+        }
         workerRequest.taskKind = taskKind
         workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)
         switch command.source.kind {
@@ -2817,6 +2825,22 @@ public actor ControlPlaneService {
             }
         }
         return ""
+    }
+
+    private func requiresLiveModelEvidence(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        explicitHFRepoID: String
+    ) -> Bool {
+        if !explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let sourceKind = model.settings.ext["melix.source_kind"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if sourceKind == "hf_repo" {
+            return true
+        }
+        return benchmarkSourceRepo(for: model).contains("/")
     }
 
     private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {

@@ -826,6 +826,91 @@ def test_managed_hub_source_download_omits_blank_revision_and_normalizes_hub_and
     assert auth_exc_info.value.message == "Hugging Face authentication failed. Check your token and try again."
 
 
+def test_download_job_marks_managed_dflash_draft_metadata(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    source_dir = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--z-lab--Qwen3.5-27B-DFlash"
+        / "snapshots"
+        / "abc123"
+    )
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3",
+                "architectures": ["DFlashDraftModel"],
+                "auto_map": {"AutoModel": "dflash.DFlashDraftModel"},
+                "block_size": 8,
+                "dflash_config": {"target_layer_ids": [5, 12, 19]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    (source_dir / "dflash.py").write_text("class DFlashDraftModel: pass\n", encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "HOME": str(home),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="z-lab/Qwen3.5-27B-DFlash",
+                output_dir=str(tmp_path / "download-dflash"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "z-lab/Qwen3.5-27B-DFlash",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "source_path": str(source_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    download_manifest = json.loads((tmp_path / "download-dflash" / "download.state.json").read_text(encoding="utf-8"))
+
+    assert events[-1].completed.output_path == str(source_dir.resolve())
+    assert download_manifest["managed_model_path"] == str(source_dir.resolve())
+    assert download_manifest["ext"]["melix.model_path"] == str(source_dir.resolve())
+    assert download_manifest["ext"]["melix.draft.runtime_kind"] == "dflash"
+    assert download_manifest["ext"]["melix.draft.architecture"] == "DFlashDraftModel"
+    assert download_manifest["ext"]["melix.dflash.block_size"] == "8"
+    assert download_manifest["ext"]["melix.dflash.target_layer_ids"] == "5,12,19"
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-after-dflash-download"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    discovered = {model["model_id"]: model for model in snapshot_payload["model_registry"]["models"]}
+
+    assert discovered["z-lab/Qwen3.5-27B-DFlash"]["ext"]["melix.draft.runtime_kind"] == "dflash"
+
+
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-models"
     source_dir = tmp_path / "local-source"
@@ -1371,27 +1456,27 @@ def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(t
 
     def run_first_job() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-a"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    generate_manifest=True,
-                    ext={
-                        "operation": "quantize",
-                        "test_hold_ms": "150",
-                    },
-                ),
-                context=None,
-            )
-        )
-        started.set()
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-a"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "test_hold_ms": "150",
+                },
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_first_job)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     second_events = list(
         service.ConvertModel(
@@ -1435,26 +1520,28 @@ def test_quantize_job_conflict_lock_blocks_upload_on_same_linked_quantization_sc
     )
     bundle_path = Path(completed_quantize[-1].completed.output_path)
 
+    started = threading.Event()
     first_events: list[maintenance_pb2.ConvertModelEvent] = []
 
     def run_held_quantize() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-held"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    ext={"operation": "quantize", "test_hold_ms": "150"},
-                ),
-                context=None,
-            )
-        )
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-held"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize", "test_hold_ms": "150"},
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_held_quantize)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     upload_events = list(
         service.ConvertModel(
@@ -2913,7 +3000,53 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
         model_catalog=WorkerModelCatalog(),
     )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    run_dir = report_path.parent
+    summary = json.loads((run_dir / "bench-summary.json").read_text(encoding="utf-8"))
+    report = report_path.read_text(encoding="utf-8")
+
+    assert summary["parameters"]["runtime_live_model"] == "true"
+    assert summary["parameters"]["runtime_name"] == "fast-benchmark"
+    assert summary["parameters"]["runtime_model_handle"] == loaded.handle
+    assert "runtime_name: fast-benchmark" in report
+
+
+def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+
+    with pytest.raises(ModelOperationError, match="requires a loaded live model runtime"):
+        list(
+            service.RunBench(
+                maintenance_pb2.RunBenchRequest(
+                    model_handle=loaded.handle,
+                    suites=["smoke"],
+                    parameters={"require_live_model": "true"},
+                ),
+                context=None,
+            )
+        )
 
 
 def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
@@ -4125,6 +4258,17 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         "reasoning_mode": "step-by-step",
         "structured_output_mode": "json",
     }
+    expected_job_parameters = {
+        **bench_parameters,
+        "runtime_live_model": "false",
+        "runtime_model_handle": "melix-dev-text::1",
+        "runtime_kind": "text",
+        "runtime_name": "deterministic-text",
+        "runtime_model_id": "melix-dev-text",
+        "runtime_model_path": "models/melix-dev-text",
+        "runtime_source_kind": "",
+        "runtime_source_repo": "",
+    }
     job_manifest = run_dir / "bench-job.json"
     summary_manifest = run_dir / "bench-summary.json"
     context_rows_path = run_dir / "bench-context-rows.jsonl"
@@ -4179,9 +4323,9 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         cache_profile=job_payload["cache_profile"],
         reasoning_mode=job_payload["reasoning_mode"],
         structured_output_mode=job_payload["structured_output_mode"],
-        request_p50_ms=job_payload["request_p50_ms"],
-        request_p95_ms=job_payload["request_p95_ms"],
-        parameters=bench_parameters,
+            request_p50_ms=job_payload["request_p50_ms"],
+            request_p95_ms=job_payload["request_p95_ms"],
+            parameters=expected_job_parameters,
         status="completed",
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],

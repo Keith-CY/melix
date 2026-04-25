@@ -44,6 +44,12 @@ text worker with a metallib matching the pinned Swift MLX runtime:
 - expected version for this baseline: `mlx_metal` `0.29.1` `mlx.metallib`
   matching `mlx-swift` `0.29.1`
 
+`scripts/dev_up.py` auto-discovers a matching `mlx_metal` `mlx.metallib` from
+the configured repo uv cache, nearby local environments, or the user's global uv
+cache. It rejects incompatible auto-discovered candidates before startup. Use
+`MELIX_SWIFT_MLX_METALLIB_PATH` only when the matching metallib lives outside
+those caches.
+
 Swift custom Metal smoke tests use the same runtime requirement. The
 `WorkerScaffoldTests/testTurboQuantMetalCapabilityRuns...` tests create a
 temporary `default.metallib` symlink from a discoverable local MLX
@@ -251,6 +257,9 @@ The sparse-prefill row proves structured prompts can trigger sparse skipping whi
 - the report contains an `affine_q4_vs_baseline` comparison with non-`N/A` throughput overhead and memory-savings fields
 - the report contains a `prefill_sparse` row with non-`N/A` sparse-prefill counters
 - baseline, accelerated-prefill, sparse-prefill, speculative-decode, and active-KV rows are emitted from one repository-owned command
+- the speculative-decode row records draft acceptance, rejection, fallback,
+  `speculative_draft_propose_ms`, and `speculative_target_verify_ms` so live
+  draft execution can be distinguished from baseline fallback
 - TurboQuant optimization must not proceed until this pre-optimization report has been captured and attached to the implementation handoff
 - fused TurboQuant optimization must not be released while
   `--require-fused-turboquant` fails

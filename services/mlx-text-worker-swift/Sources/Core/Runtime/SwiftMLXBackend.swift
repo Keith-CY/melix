@@ -140,16 +140,47 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
         let modelSource = spec.modelPath.isEmpty ? spec.modelID : spec.modelPath
+        let isDFlashSpec = DFlashDraftSupport.isDFlashDraftModelSpec(spec)
+
+        if let directLoader, !isDFlashSpec {
+            return try await directLoader(modelSource)
+        }
+
+        if FileManager.default.fileExists(atPath: modelSource) {
+            let directoryURL = URL(fileURLWithPath: modelSource, isDirectory: true)
+            if DFlashDraftSupport.isDFlashDraftDirectory(directoryURL) {
+                #if canImport(MLXLMCommon) && canImport(MLXLLM)
+                return LoadedTextModel(
+                    storage: try SwiftDFlashDraftRuntime.load(
+                        directoryURL: directoryURL,
+                        modelID: spec.modelID
+                    )
+                )
+                #else
+                throw RuntimeUnavailableError(message: DFlashDraftSupport.unsupportedMessage)
+                #endif
+            }
+            return try await directoryLoader(directoryURL)
+        }
+
+        let revision = spec.revision.isEmpty ? "main" : spec.revision
+        if isDFlashSpec || DFlashDraftSupport.looksLikeDFlashIdentifier(modelSource) {
+            #if canImport(MLXLMCommon) && canImport(MLXLLM)
+            return LoadedTextModel(
+                storage: try await SwiftDFlashDraftRuntime.downloadAndLoad(
+                    modelSource: modelSource,
+                    revision: revision
+                )
+            )
+            #else
+            throw RuntimeUnavailableError(message: DFlashDraftSupport.unsupportedMessage)
+            #endif
+        }
 
         if let directLoader {
             return try await directLoader(modelSource)
         }
 
-        if FileManager.default.fileExists(atPath: modelSource) {
-            return try await directoryLoader(URL(fileURLWithPath: modelSource, isDirectory: true))
-        }
-
-        let revision = spec.revision.isEmpty ? "main" : spec.revision
         return try await identifierLoader(modelSource, revision)
     }
 
@@ -245,6 +276,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -253,9 +285,13 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        let effectiveAcceleration = try resolveSwiftDecodeAcceleration(acceleration)
+        let effectiveAcceleration = try resolveSwiftDecodeAcceleration(
+            acceleration,
+            draftModel: draftModel
+        )
         let prepared = try await makePreparedDecodeGeneration(
             model: model,
+            draftModel: draftModel,
             context: context,
             sampling: sampling,
             maxOutputTokens: maxOutputTokens,
@@ -537,9 +573,14 @@ private func estimatedPrefillGainPercent(
 }
 
 private func resolveSwiftDecodeAcceleration(
-    _ acceleration: Melix_Worker_V1_AccelerationPolicy
+    _ acceleration: Melix_Worker_V1_AccelerationPolicy,
+    draftModel: LoadedTextModel?
 ) throws -> Melix_Worker_V1_AccelerationPolicy {
     guard acceleration.mode == .speculativeDecode else {
+        return acceleration
+    }
+
+    if draftModel != nil {
         return acceleration
     }
 
@@ -550,7 +591,7 @@ private func resolveSwiftDecodeAcceleration(
     }
 
     throw RuntimeUnavailableError(
-        message: "Speculative decode is not yet available for the Swift MLX backend."
+        message: "Speculative decode requires a loaded draft model for the Swift MLX backend."
     )
 }
 
@@ -667,10 +708,1053 @@ private func activeKVRuntimeQuantizationRatioPercent(
     }
     return activeKVQuantizationRatioPercent(for: normalized)
 }
+
+private struct SpeculativeTokenMetadata: Sendable {
+    let unknownTokenID: Int?
+    let eosTokenID: Int?
+    let additionalEOSTokenIDs: Set<Int>
+}
+
+private struct SpeculativeDecodeRuntimeState: @unchecked Sendable {
+    var cache: [KVCache]
+    var output: LMOutput
+    let promptTokenCount: Int
+    let prefillQuantizeMicros: Int
+}
+
+private struct DFlashTargetDecodeState: @unchecked Sendable {
+    let state: SpeculativeDecodeRuntimeState
+    let logits: MLXArray
+    let hidden: MLXArray
+}
+
+private struct KVCacheLayerSnapshot: @unchecked Sendable {
+    let state: [MLXArray]
+    let metaState: [String]
+}
+
+private struct SpeculativeModelStepInput: @unchecked Sendable {
+    var state: SpeculativeDecodeRuntimeState
+    let tokenIDs: [Int]
+}
+
+private func makePreparedSpeculativeDecodeEvents(
+    targetContainer: ModelContainer,
+    draftContainer: ModelContainer,
+    decodeState: PreparedDecodeState,
+    targetContext: ModelContext,
+    parameters: GenerateParameters,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) async throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
+    let promptTokenIDs = decodeState.input.text.tokens.asArray(Int.self)
+    let targetCache = decodeState.cache
+    let targetOutput = try makeInitialDecodeOutput(
+        decodeState: decodeState,
+        context: targetContext,
+        cache: targetCache
+    )
+    eval(targetOutput.logits)
+
+    let initialTargetState = SpeculativeDecodeRuntimeState(
+        cache: targetCache,
+        output: targetOutput,
+        promptTokenCount: promptTokenIDs.count,
+        prefillQuantizeMicros: decodeState.prefillQuantizeMicros
+    )
+    let initialDraftState = try await makeRebuiltSpeculativeDecodeState(
+        container: draftContainer,
+        tokenIDs: promptTokenIDs,
+        promptTokenCount: promptTokenIDs.count,
+        prefillQuantizeMicros: 0,
+        parameters: parameters
+    )
+    let additionalEOSTokenIDs = Set(
+        targetContext.configuration.extraEOSTokens.compactMap {
+            targetContext.tokenizer.convertTokenToId($0)
+        }
+    )
+    let tokenMetadata = SpeculativeTokenMetadata(
+        unknownTokenID: targetContext.tokenizer.unknownTokenId,
+        eosTokenID: targetContext.tokenizer.eosTokenId,
+        additionalEOSTokenIDs: additionalEOSTokenIDs
+    )
+    let maxDraftTokens = max(1, Int(acceleration.numDraftTokens == 0 ? 4 : acceleration.numDraftTokens))
+    let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
+
+    let task = Task {
+        do {
+            var targetState = initialTargetState
+            var draftState = initialDraftState
+            var generatedTokenIDs: [Int] = []
+            var generatedTokenCount = 0
+            var acceptedTokenCount = 0
+            var rejectedTokenCount = 0
+            var proposedTokenCount = 0
+            var runtimeFallbackCount = 0
+            var draftProposeMicros = 0
+            var targetVerifyMicros = 0
+            var forceBaselineDecode = false
+            var targetProcessor = parameters.processor()
+            var draftProcessor = parameters.processor()
+            let targetSampler = parameters.sampler()
+            let draftSampler = parameters.sampler()
+            var detokenizer = NaiveStreamingDetokenizer(tokenizer: targetContext.tokenizer)
+
+            func resetProcessors(prefixTokenIDs: [Int]) {
+                let prefix = MLXArray(prefixTokenIDs)
+                targetProcessor = parameters.processor()
+                draftProcessor = parameters.processor()
+                targetProcessor?.prompt(prefix)
+                draftProcessor?.prompt(prefix)
+            }
+
+            resetProcessors(prefixTokenIDs: promptTokenIDs)
+            let startedAt = Date.timeIntervalSinceReferenceDate
+
+            var finished = false
+            while !finished && (parameters.maxTokens.map { generatedTokenCount < $0 } ?? true) {
+                if Task.isCancelled {
+                    break
+                }
+
+                if forceBaselineDecode {
+                    let targetToken = sampleNextToken(
+                        logits: targetState.output.logits,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        break
+                    }
+
+                    generatedTokenIDs.append(targetTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: targetTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    targetState = advanceSpeculativeDecodeState(
+                        context: targetContext,
+                        state: targetState,
+                        tokenIDs: [targetTokenID]
+                    )
+                    continue
+                }
+
+                let remainingTokens = parameters.maxTokens.map { max(0, $0 - generatedTokenCount) } ?? maxDraftTokens
+                guard remainingTokens > 0 else {
+                    break
+                }
+
+                let verifiedDecisionCount = acceptedTokenCount + rejectedTokenCount
+                let proposalWindow = verifiedDecisionCount < 4 ? 1 : maxDraftTokens
+                let proposalCount = min(proposalWindow, remainingTokens)
+                var proposedTokenIDs: [Int] = []
+                let proposalStartedAt = Date.timeIntervalSinceReferenceDate
+                for _ in 0 ..< proposalCount {
+                    if Task.isCancelled {
+                        finished = true
+                        break
+                    }
+
+                    let draftToken = sampleNextToken(
+                        logits: draftState.output.logits,
+                        processor: &draftProcessor,
+                        sampler: draftSampler
+                    )
+                    let draftTokenID = draftToken.item(Int.self)
+                    proposedTokenIDs.append(draftTokenID)
+
+                    draftState = try await advanceSpeculativeDecodeState(
+                        container: draftContainer,
+                        state: draftState,
+                        tokenIDs: [draftTokenID]
+                    )
+                }
+                draftProposeMicros += elapsedMicros(since: proposalStartedAt)
+                proposedTokenCount += proposedTokenIDs.count
+
+                if finished || proposedTokenIDs.isEmpty {
+                    break
+                }
+
+                if proposedTokenIDs.count == 1 {
+                    let verifyStartedAt = Date.timeIntervalSinceReferenceDate
+                    let proposedTokenID = proposedTokenIDs[0]
+                    let targetToken = sampleNextToken(
+                        logits: targetState.output.logits,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    targetVerifyMicros += elapsedMicros(since: verifyStartedAt)
+
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        break
+                    }
+
+                    let emittedTokenID: Int
+                    let acceptedProposal = targetTokenID == proposedTokenID
+                    if acceptedProposal {
+                        acceptedTokenCount += 1
+                        emittedTokenID = proposedTokenID
+                    } else {
+                        rejectedTokenCount += 1
+                        emittedTokenID = targetTokenID
+                    }
+
+                    generatedTokenIDs.append(emittedTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: emittedTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    targetState = advanceSpeculativeDecodeState(
+                        context: targetContext,
+                        state: targetState,
+                        tokenIDs: [emittedTokenID]
+                    )
+
+                    if shouldFallbackSpeculativeDecodeRuntime(
+                        acceptedTokenCount: acceptedTokenCount,
+                        rejectedTokenCount: rejectedTokenCount,
+                        proposedTokenCount: proposedTokenCount,
+                        draftProposeMicros: draftProposeMicros,
+                        targetVerifyMicros: targetVerifyMicros
+                    ) {
+                        forceBaselineDecode = true
+                        runtimeFallbackCount = 1
+                        continue
+                    }
+
+                    if !acceptedProposal {
+                        let rebuiltPrefix = promptTokenIDs + generatedTokenIDs
+                        draftState = try await makeRebuiltSpeculativeDecodeState(
+                            container: draftContainer,
+                            tokenIDs: rebuiltPrefix,
+                            promptTokenCount: promptTokenIDs.count,
+                            prefillQuantizeMicros: 0,
+                            parameters: parameters
+                        )
+                        resetProcessors(prefixTokenIDs: rebuiltPrefix)
+                    }
+                    continue
+                }
+
+                let verifyStartedAt = Date.timeIntervalSinceReferenceDate
+                let verifiedTargetState = advanceSpeculativeDecodeState(
+                    context: targetContext,
+                    state: targetState,
+                    tokenIDs: proposedTokenIDs
+                )
+
+                var rejectionTokenID: Int?
+                var acceptedThisRound = 0
+                for (index, proposedTokenID) in proposedTokenIDs.enumerated() {
+                    if Task.isCancelled {
+                        finished = true
+                        break
+                    }
+
+                    let targetLogits: MLXArray
+                    if index == 0 {
+                        targetLogits = targetState.output.logits
+                    } else {
+                        targetLogits = verifiedTargetState.output.logits
+                    }
+                    let targetToken = sampleNextToken(
+                        logits: targetLogits,
+                        position: index == 0 ? nil : index - 1,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        finished = true
+                        break
+                    }
+
+                    if targetTokenID == proposedTokenID {
+                        acceptedTokenCount += 1
+                        acceptedThisRound += 1
+                        generatedTokenIDs.append(proposedTokenID)
+                        generatedTokenCount += 1
+                        detokenizer.append(token: proposedTokenID)
+                        if let chunk = detokenizer.next() {
+                            continuation.yield(.chunk(chunk))
+                        }
+
+                        if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                            finished = true
+                            break
+                        }
+                    } else {
+                        rejectedTokenCount += 1
+                        rejectionTokenID = targetTokenID
+                        break
+                    }
+                }
+                targetVerifyMicros += elapsedMicros(since: verifyStartedAt)
+
+                if finished {
+                    break
+                }
+
+                if let rejectionTokenID {
+                    generatedTokenIDs.append(rejectionTokenID)
+                    generatedTokenCount += 1
+                    detokenizer.append(token: rejectionTokenID)
+                    if let chunk = detokenizer.next() {
+                        continuation.yield(.chunk(chunk))
+                    }
+
+                    if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                        break
+                    }
+
+                    let rebuiltPrefix = promptTokenIDs + generatedTokenIDs
+                    targetState = try makeRebuiltSpeculativeDecodeState(
+                        context: targetContext,
+                        tokenIDs: rebuiltPrefix,
+                        promptTokenCount: promptTokenIDs.count,
+                        prefillQuantizeMicros: decodeState.prefillQuantizeMicros,
+                        parameters: parameters
+                    )
+                    draftState = try await makeRebuiltSpeculativeDecodeState(
+                        container: draftContainer,
+                        tokenIDs: rebuiltPrefix,
+                        promptTokenCount: promptTokenIDs.count,
+                        prefillQuantizeMicros: 0,
+                        parameters: parameters
+                    )
+                    resetProcessors(prefixTokenIDs: rebuiltPrefix)
+                } else if acceptedThisRound == proposedTokenIDs.count {
+                    targetState = verifiedTargetState
+                }
+
+                if shouldFallbackSpeculativeDecodeRuntime(
+                    acceptedTokenCount: acceptedTokenCount,
+                    rejectedTokenCount: rejectedTokenCount,
+                    proposedTokenCount: proposedTokenCount,
+                    draftProposeMicros: draftProposeMicros,
+                    targetVerifyMicros: targetVerifyMicros
+                ) {
+                    forceBaselineDecode = true
+                    runtimeFallbackCount = 1
+                }
+            }
+
+            let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            continuation.yield(.summary(
+                TextGenerationSummary(
+                    promptTokens: promptTokenIDs.count,
+                    completionTokens: generatedTokenCount,
+                    tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    speculativeAcceptedTokens: acceptedTokenCount,
+                    speculativeRejectedTokens: rejectedTokenCount,
+                    speculativeFallbackCount: runtimeFallbackCount,
+                    speculativeDraftProposeMillis: milliseconds(fromMicros: draftProposeMicros),
+                    speculativeTargetVerifyMillis: milliseconds(fromMicros: targetVerifyMicros)
+                )
+            ))
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+
+#if canImport(MLXLLM)
+private func makePreparedDFlashSpeculativeDecodeEvents(
+    draftRuntime: SwiftDFlashDraftRuntime,
+    decodeState: PreparedDecodeState,
+    targetContext: ModelContext,
+    parameters: GenerateParameters,
+    acceleration: Melix_Worker_V1_AccelerationPolicy
+) throws -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
+    guard let draftModel = draftRuntime.model else {
+        throw RuntimeUnavailableError(
+            message: "DFlash speculative decode requires loaded DFlash draft weights."
+        )
+    }
+    guard let targetModel = targetContext.model as? DFlashTargetModel else {
+        throw RuntimeUnavailableError(
+            message: "DFlash speculative decode requires a Swift MLX target model with DFlash hidden-state hooks."
+        )
+    }
+    guard targetModel.dflashHiddenSize == draftRuntime.configuration.hiddenSize else {
+        throw RuntimeUnavailableError(
+            message: "DFlash draft hidden size does not match the target model hidden size."
+        )
+    }
+
+    let promptTokenIDs = decodeState.input.text.tokens.asArray(Int.self)
+    guard !promptTokenIDs.isEmpty else {
+        throw RuntimeUnavailableError(message: "DFlash speculative decode requires a non-empty prompt.")
+    }
+
+    let targetLayerIDs = draftRuntime.configuration.targetLayerIDs
+    let configuredBlockSize = max(1, draftRuntime.configuration.blockSize)
+    let requestedDraftTokens = acceleration.numDraftTokens == 0
+        ? configuredBlockSize
+        : Int(acceleration.numDraftTokens)
+    let maxDraftTokens = max(1, min(configuredBlockSize, requestedDraftTokens))
+    let maskTokenID = draftRuntime.configuration.maskTokenID
+    let maxTokens = parameters.maxTokens ?? 256
+    let additionalEOSTokenIDs = Set(
+        targetContext.configuration.extraEOSTokens.compactMap {
+            targetContext.tokenizer.convertTokenToId($0)
+        }
+    )
+    let tokenMetadata = SpeculativeTokenMetadata(
+        unknownTokenID: targetContext.tokenizer.unknownTokenId,
+        eosTokenID: targetContext.tokenizer.eosTokenId,
+        additionalEOSTokenIDs: additionalEOSTokenIDs
+    )
+    let dflashProbe = DFlashSpeculativeProbeLogger.fromEnvironment()
+    dflashProbe?.record(
+        stage: "preflight",
+        fields: [
+            "runtime": "swift-mlx-native-dflash",
+            "reference_runtime": "dflash-mlx",
+            "uses_dflash_mlx": false,
+            "draft_model_id": draftRuntime.modelID,
+            "draft_directory": draftRuntime.directoryURL?.path ?? "",
+            "target_hidden_size": targetModel.dflashHiddenSize,
+            "target_layer_count": targetModel.dflashLayerCount,
+            "draft_hidden_size": draftRuntime.configuration.hiddenSize,
+            "draft_hidden_layers": draftRuntime.configuration.hiddenLayers,
+            "draft_block_size": configuredBlockSize,
+            "requested_draft_tokens": requestedDraftTokens,
+            "effective_draft_tokens": maxDraftTokens,
+            "mask_token_id": maskTokenID,
+            "target_layer_ids": targetLayerIDs,
+            "prompt_tokens": dflashTokenIDPreview(promptTokenIDs),
+        ]
+    )
+    let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
+
+    func makeTargetState(tokenIDs: [Int]) throws -> DFlashTargetDecodeState {
+        let cache = targetContext.model.newCache(parameters: nil)
+        let input = LMInput.Text(tokens: MLXArray(tokenIDs))[text: .newAxis]
+        let result = try targetModel.dflashForward(
+            input: input,
+            cache: cache,
+            targetLayerIDs: targetLayerIDs
+        )
+        eval(result.logits)
+        eval(result.hidden)
+        return DFlashTargetDecodeState(
+            state: SpeculativeDecodeRuntimeState(
+                cache: cache,
+                output: LMOutput(logits: result.logits),
+                promptTokenCount: promptTokenIDs.count,
+                prefillQuantizeMicros: decodeState.prefillQuantizeMicros
+            ),
+            logits: result.logits,
+            hidden: result.hidden
+        )
+    }
+
+    func advanceTargetState(
+        _ state: SpeculativeDecodeRuntimeState,
+        tokenIDs: [Int]
+    ) throws -> DFlashTargetDecodeState {
+        var advancedState = state
+        let input = LMInput.Text(tokens: MLXArray(tokenIDs))[text: .newAxis]
+        let result = try targetModel.dflashForward(
+            input: input,
+            cache: advancedState.cache.isEmpty ? nil : advancedState.cache,
+            targetLayerIDs: targetLayerIDs
+        )
+        eval(result.logits)
+        eval(result.hidden)
+        advancedState.output = LMOutput(logits: result.logits, state: advancedState.output.state)
+        return DFlashTargetDecodeState(
+            state: advancedState,
+            logits: result.logits,
+            hidden: result.hidden
+        )
+    }
+
+    func snapshotCache(_ cache: [KVCache]) -> [KVCacheLayerSnapshot] {
+        cache.map { layer in
+            KVCacheLayerSnapshot(state: layer.state, metaState: layer.metaState)
+        }
+    }
+
+    func makeState(
+        byRestoring state: SpeculativeDecodeRuntimeState,
+        from snapshot: [KVCacheLayerSnapshot]
+    ) -> SpeculativeDecodeRuntimeState {
+        var restoredState = state
+        var restoredCache = targetContext.model.newCache(parameters: nil)
+        for index in 0 ..< min(restoredCache.count, snapshot.count) {
+            if !snapshot[index].state.isEmpty {
+                restoredCache[index].state = snapshot[index].state
+            }
+            if !snapshot[index].metaState.isEmpty {
+                restoredCache[index].metaState = snapshot[index].metaState
+            }
+        }
+        restoredState.cache = restoredCache
+        return restoredState
+    }
+
+    let task = Task {
+        do {
+            var committedTokenIDs = promptTokenIDs
+            var currentTargetState = try makeTargetState(tokenIDs: committedTokenIDs)
+            var currentTargetHidden = currentTargetState.hidden
+            var generatedTokenCount = 0
+            var acceptedTokenCount = 0
+            var rejectedTokenCount = 0
+            var proposedTokenCount = 0
+            var draftProposeMicros = 0
+            var targetVerifyMicros = 0
+            var targetRepairMicros = 0
+            var targetFinalRebuildSkippedCount = 0
+            var targetBonusAdvanceSkippedCount = 0
+            var rollbackCount = 0
+            var detokenizer = NaiveStreamingDetokenizer(tokenizer: targetContext.tokenizer)
+            let targetSampler = parameters.sampler()
+            let draftSampler = parameters.sampler()
+            let startedAt = Date.timeIntervalSinceReferenceDate
+            var finished = false
+            var roundIndex = 0
+
+            dflashProbe?.record(
+                stage: "prefill",
+                fields: [
+                    "prompt_token_count": promptTokenIDs.count,
+                    "target_logits": dflashArrayDescriptor(currentTargetState.logits),
+                    "target_hidden": dflashArrayDescriptor(currentTargetHidden),
+                    "target_cache_layers": currentTargetState.state.cache.count,
+                ]
+            )
+
+            @discardableResult
+            func emitToken(_ tokenID: Int) -> Bool {
+                if isSpeculativeTerminalToken(tokenID, metadata: tokenMetadata) {
+                    return false
+                }
+                committedTokenIDs.append(tokenID)
+                generatedTokenCount += 1
+                detokenizer.append(token: tokenID)
+                if let chunk = detokenizer.next() {
+                    continuation.yield(.chunk(chunk))
+                }
+                return true
+            }
+
+            while !finished && generatedTokenCount < maxTokens {
+                if Task.isCancelled {
+                    break
+                }
+
+                let remainingTokens = max(0, maxTokens - generatedTokenCount)
+                let proposalCount = min(maxDraftTokens, remainingTokens)
+                guard proposalCount > 0 else {
+                    break
+                }
+
+                let currentRoundIndex = roundIndex
+                roundIndex += 1
+                var stagedFirstProcessor = parameters.processor()
+                stagedFirstProcessor?.prompt(MLXArray(committedTokenIDs))
+                let stagedFirstCandidate = sampleNextToken(
+                    logits: currentTargetState.state.output.logits,
+                    processor: &stagedFirstProcessor,
+                    sampler: targetSampler
+                )
+                let stagedFirstCandidateID = stagedFirstCandidate.item(Int.self)
+                if isSpeculativeTerminalToken(stagedFirstCandidateID, metadata: tokenMetadata) {
+                    finished = true
+                    break
+                }
+
+                let draftBlockTokenIDs = [stagedFirstCandidateID]
+                    + Array(repeating: maskTokenID, count: max(0, proposalCount - 1))
+                let draftTailCount = max(0, proposalCount - 1)
+                dflashProbe?.record(
+                    stage: "draft_request",
+                    fields: [
+                        "round": currentRoundIndex,
+                        "generated_token_count": generatedTokenCount,
+                        "committed_token_count": committedTokenIDs.count,
+                        "proposal_count": proposalCount,
+                        "target_staged_first_candidate_id": stagedFirstCandidateID,
+                        "draft_block_token_ids": draftBlockTokenIDs,
+                        "draft_block_token_text": draftBlockTokenIDs.map {
+                            targetContext.tokenizer.decode(tokens: [$0])
+                        },
+                        "draft_block_starts_with_target_staged_first": draftBlockTokenIDs.first
+                            == stagedFirstCandidateID,
+                        "omlx_expected_block_prefix": [stagedFirstCandidateID],
+                        "mask_token_id": maskTokenID,
+                        "target_hidden": dflashArrayDescriptor(currentTargetHidden),
+                        "draft_cache_used": false,
+                    ]
+                )
+
+                if draftTailCount == 0 {
+                    let generatedBeforeCommit = generatedTokenCount
+                    let committedBeforeCommit = committedTokenIDs.count
+                    guard emitToken(stagedFirstCandidateID) else {
+                        break
+                    }
+                    if generatedTokenCount < maxTokens {
+                        currentTargetState = try advanceTargetState(
+                            currentTargetState.state,
+                            tokenIDs: [stagedFirstCandidateID]
+                        )
+                        currentTargetHidden = concatenated(
+                            [currentTargetHidden, currentTargetState.hidden],
+                            axis: 1
+                        )
+                    } else {
+                        finished = true
+                    }
+                    dflashProbe?.record(
+                        stage: "commit",
+                        fields: [
+                            "round": currentRoundIndex,
+                            "action": "staged_first_only",
+                            "accepted_this_round": 0,
+                            "staged_first_token_id": stagedFirstCandidateID,
+                            "generated_before": generatedBeforeCommit,
+                            "generated_after": generatedTokenCount,
+                            "committed_before": committedBeforeCommit,
+                            "committed_after": committedTokenIDs.count,
+                            "committed_tokens": dflashTokenIDPreview(committedTokenIDs),
+                            "target_hidden": dflashArrayDescriptor(currentTargetHidden),
+                            "rollback_count": rollbackCount,
+                        ]
+                    )
+                    continue
+                }
+
+                let proposalStartedAt = Date.timeIntervalSinceReferenceDate
+                let draftInput = LMInput.Text(tokens: MLXArray(draftBlockTokenIDs))[text: .newAxis]
+                let inputEmbeddings = try targetModel.dflashTokenEmbeddings(draftInput.tokens)
+                let draftHidden = draftModel.callAsFunction(
+                    inputEmbeddings: inputEmbeddings,
+                    targetHidden: currentTargetHidden,
+                    cache: nil
+                )
+                let draftLogits = try targetModel.dflashLogits(fromHiddenStates: draftHidden)
+                eval(draftLogits)
+
+                var draftProcessor = parameters.processor()
+                draftProcessor?.prompt(MLXArray(committedTokenIDs + [stagedFirstCandidateID]))
+                var proposedTailTokenIDs = [Int]()
+                for position in 0 ..< draftTailCount {
+                    let token = sampleNextToken(
+                        logits: draftLogits,
+                        position: position + 1,
+                        processor: &draftProcessor,
+                        sampler: draftSampler
+                    )
+                    proposedTailTokenIDs.append(token.item(Int.self))
+                }
+                let proposalElapsedMicros = elapsedMicros(since: proposalStartedAt)
+                draftProposeMicros += proposalElapsedMicros
+                proposedTokenCount += proposedTailTokenIDs.count
+                dflashProbe?.record(
+                    stage: "draft_result",
+                    fields: [
+                        "round": currentRoundIndex,
+                        "staged_first_token_id": stagedFirstCandidateID,
+                        "proposed_token_ids": proposedTailTokenIDs,
+                        "proposed_token_text": proposedTailTokenIDs.map {
+                            targetContext.tokenizer.decode(tokens: [$0])
+                        },
+                        "input_embeddings": dflashArrayDescriptor(inputEmbeddings),
+                        "draft_hidden": dflashArrayDescriptor(draftHidden),
+                        "draft_logits": dflashArrayDescriptor(draftLogits),
+                        "draft_logits_tail_offset": 1,
+                        "draft_propose_us": proposalElapsedMicros,
+                        "draft_cache_used": false,
+                    ]
+                )
+
+                let verifyInputTokenIDs = [stagedFirstCandidateID] + proposedTailTokenIDs
+                let targetStateBeforeVerify = currentTargetState.state
+                let targetCacheBeforeVerify = snapshotCache(targetStateBeforeVerify.cache)
+                let verifyStartedAt = Date.timeIntervalSinceReferenceDate
+                let verifiedTargetState = try advanceTargetState(
+                    targetStateBeforeVerify,
+                    tokenIDs: verifyInputTokenIDs
+                )
+                let verifyElapsedMicros = elapsedMicros(since: verifyStartedAt)
+                targetVerifyMicros += verifyElapsedMicros
+
+                var targetProcessor = parameters.processor()
+                targetProcessor?.prompt(MLXArray(committedTokenIDs + [stagedFirstCandidateID]))
+                var acceptedThisRound = 0
+                var rejectionTokenID: Int?
+                var targetTokenIDs = [Int]()
+                var firstMismatchIndex: Int?
+
+                for (index, proposedTokenID) in proposedTailTokenIDs.enumerated() {
+                    let targetToken = sampleNextToken(
+                        logits: verifiedTargetState.logits,
+                        position: index,
+                        processor: &targetProcessor,
+                        sampler: targetSampler
+                    )
+                    let targetTokenID = targetToken.item(Int.self)
+                    targetTokenIDs.append(targetTokenID)
+                    if isSpeculativeTerminalToken(targetTokenID, metadata: tokenMetadata) {
+                        finished = true
+                        break
+                    }
+
+                    if targetTokenID == proposedTokenID {
+                        acceptedTokenCount += 1
+                        acceptedThisRound += 1
+                    } else {
+                        rejectedTokenCount += 1
+                        rollbackCount += 1
+                        rejectionTokenID = targetTokenID
+                        firstMismatchIndex = index
+                        break
+                    }
+                }
+                dflashProbe?.record(
+                    stage: "target_verify",
+                    fields: [
+                        "round": currentRoundIndex,
+                        "staged_first_token_id": stagedFirstCandidateID,
+                        "proposed_token_ids": proposedTailTokenIDs,
+                        "target_token_ids": targetTokenIDs,
+                        "target_token_text": targetTokenIDs.map {
+                            targetContext.tokenizer.decode(tokens: [$0])
+                        },
+                        "accepted_this_round": acceptedThisRound,
+                        "first_mismatch_index": firstMismatchIndex ?? -1,
+                        "rejection_token_id": rejectionTokenID ?? -1,
+                        "verify_input_token_ids": verifyInputTokenIDs,
+                        "target_verify_us": verifyElapsedMicros,
+                        "verified_logits": dflashArrayDescriptor(verifiedTargetState.logits),
+                        "verified_hidden": dflashArrayDescriptor(verifiedTargetState.hidden),
+                    ]
+                )
+
+                let generatedBeforeCommit = generatedTokenCount
+                let committedBeforeCommit = committedTokenIDs.count
+                var commitTargetRepairMicros = 0
+                var commitAction = "none"
+                guard emitToken(stagedFirstCandidateID) else {
+                    break
+                }
+                for proposedTokenID in proposedTailTokenIDs.prefix(acceptedThisRound) {
+                    guard generatedTokenCount < maxTokens else {
+                        finished = true
+                        break
+                    }
+                    guard emitToken(proposedTokenID) else {
+                        finished = true
+                        break
+                    }
+                }
+                if finished || generatedTokenCount >= maxTokens {
+                    targetFinalRebuildSkippedCount += 1
+                    dflashProbe?.record(
+                        stage: "commit",
+                        fields: [
+                            "round": currentRoundIndex,
+                            "action": "max_tokens_after_accept",
+                            "accepted_this_round": acceptedThisRound,
+                            "staged_first_token_id": stagedFirstCandidateID,
+                            "generated_before": generatedBeforeCommit,
+                            "generated_after": generatedTokenCount,
+                            "committed_before": committedBeforeCommit,
+                            "committed_after": committedTokenIDs.count,
+                            "committed_tokens": dflashTokenIDPreview(committedTokenIDs),
+                            "target_hidden": dflashArrayDescriptor(currentTargetHidden),
+                            "target_final_rebuild_skipped": true,
+                            "rollback_count": rollbackCount,
+                        ]
+                    )
+                    break
+                }
+
+                if let rejectionTokenID {
+                    commitAction = "rejected_emit_target_repair"
+                    guard emitToken(rejectionTokenID) else {
+                        break
+                    }
+                    if generatedTokenCount < maxTokens {
+                        let repairStartedAt = Date.timeIntervalSinceReferenceDate
+                        let acceptedPrefix = Array(proposedTailTokenIDs.prefix(acceptedThisRound))
+                        let restoredBaseState = makeState(
+                            byRestoring: targetStateBeforeVerify,
+                            from: targetCacheBeforeVerify
+                        )
+                        let repairedTargetState = try advanceTargetState(
+                            restoredBaseState,
+                            tokenIDs: [stagedFirstCandidateID] + acceptedPrefix + [rejectionTokenID]
+                        )
+                        commitTargetRepairMicros = elapsedMicros(since: repairStartedAt)
+                        targetRepairMicros += commitTargetRepairMicros
+                        currentTargetState = repairedTargetState
+                        currentTargetHidden = concatenated(
+                            [currentTargetHidden, repairedTargetState.hidden],
+                            axis: 1
+                        )
+                    }
+                } else if acceptedThisRound == proposedTailTokenIDs.count,
+                          generatedTokenCount < maxTokens {
+                    commitAction = "all_accepted_no_bonus"
+                    targetBonusAdvanceSkippedCount += 1
+                    currentTargetState = verifiedTargetState
+                    currentTargetHidden = concatenated([currentTargetHidden, verifiedTargetState.hidden], axis: 1)
+                } else if acceptedThisRound == proposedTailTokenIDs.count {
+                    commitAction = "all_accepted_no_bonus"
+                    currentTargetState = verifiedTargetState
+                    currentTargetHidden = concatenated([currentTargetHidden, verifiedTargetState.hidden], axis: 1)
+                }
+                dflashProbe?.record(
+                    stage: "commit",
+                    fields: [
+                        "round": currentRoundIndex,
+                        "action": commitAction,
+                        "accepted_this_round": acceptedThisRound,
+                        "staged_first_token_id": stagedFirstCandidateID,
+                        "generated_before": generatedBeforeCommit,
+                        "generated_after": generatedTokenCount,
+                        "committed_before": committedBeforeCommit,
+                        "committed_after": committedTokenIDs.count,
+                        "committed_tokens": dflashTokenIDPreview(committedTokenIDs),
+                        "target_hidden": dflashArrayDescriptor(currentTargetHidden),
+                        "target_cache_restore_used": rejectionTokenID != nil,
+                        "target_repair_us": commitTargetRepairMicros,
+                        "target_bonus_advance_skipped": rejectionTokenID == nil
+                            && acceptedThisRound == proposedTailTokenIDs.count,
+                        "rollback_count": rollbackCount,
+                    ]
+                )
+            }
+
+            let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            dflashProbe?.record(
+                stage: "summary",
+                fields: [
+                    "generated_token_count": generatedTokenCount,
+                    "accepted_token_count": acceptedTokenCount,
+                    "rejected_token_count": rejectedTokenCount,
+                    "proposed_token_count": proposedTokenCount,
+                    "rollback_count": rollbackCount,
+                    "draft_propose_us": draftProposeMicros,
+                    "target_verify_us": targetVerifyMicros,
+                    "target_repair_us": targetRepairMicros,
+                    "target_final_rebuild_skipped_count": targetFinalRebuildSkippedCount,
+                    "target_bonus_advance_skipped_count": targetBonusAdvanceSkippedCount,
+                    "decode_loop_total_us": decodeLoopTotalMicros,
+                    "acceptance_rate": proposedTokenCount == 0
+                        ? 0
+                        : Double(acceptedTokenCount) / Double(proposedTokenCount),
+                ]
+            )
+            continuation.yield(.summary(
+                TextGenerationSummary(
+                    promptTokens: promptTokenIDs.count,
+                    completionTokens: generatedTokenCount,
+                    tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    speculativeAcceptedTokens: acceptedTokenCount,
+                    speculativeRejectedTokens: rejectedTokenCount,
+                    speculativeFallbackCount: 0,
+                    speculativeDraftProposeMillis: milliseconds(fromMicros: draftProposeMicros),
+                    speculativeTargetVerifyMillis: milliseconds(fromMicros: targetVerifyMicros),
+                    dflashEnabled: true,
+                    dflashBlockSize: maxDraftTokens,
+                    dflashRollbackCount: rollbackCount,
+                    dflashTargetHiddenLayers: targetLayerIDs.count
+                )
+            ))
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+#endif
+
+private func makeRebuiltSpeculativeDecodeState(
+    container: ModelContainer,
+    tokenIDs: [Int],
+    promptTokenCount: Int,
+    prefillQuantizeMicros: Int,
+    parameters: GenerateParameters
+) async throws -> SpeculativeDecodeRuntimeState {
+    try await container.perform { context in
+        let input = LMInput(tokens: MLXArray(tokenIDs))
+        let cache = context.model.newCache(parameters: nil)
+        let prepared = try context.model.prepare(
+            input,
+            cache: cache,
+            windowSize: parameters.prefillStepSize
+        )
+        let output = try makeInitialDecodeOutput(
+            input: input,
+            prepared: prepared,
+            context: context,
+            cache: cache
+        )
+        eval(output.logits)
+        return SpeculativeDecodeRuntimeState(
+            cache: cache,
+            output: output,
+            promptTokenCount: promptTokenCount,
+            prefillQuantizeMicros: prefillQuantizeMicros
+        )
+    }
+}
+
+private func makeRebuiltSpeculativeDecodeState(
+    context: ModelContext,
+    tokenIDs: [Int],
+    promptTokenCount: Int,
+    prefillQuantizeMicros: Int,
+    parameters: GenerateParameters
+) throws -> SpeculativeDecodeRuntimeState {
+    let input = LMInput(tokens: MLXArray(tokenIDs))
+    let cache = context.model.newCache(parameters: nil)
+    let prepared = try context.model.prepare(
+        input,
+        cache: cache,
+        windowSize: parameters.prefillStepSize
+    )
+    let output = try makeInitialDecodeOutput(
+        input: input,
+        prepared: prepared,
+        context: context,
+        cache: cache
+    )
+    eval(output.logits)
+    return SpeculativeDecodeRuntimeState(
+        cache: cache,
+        output: output,
+        promptTokenCount: promptTokenCount,
+        prefillQuantizeMicros: prefillQuantizeMicros
+    )
+}
+
+private func advanceSpeculativeDecodeState(
+    container: ModelContainer,
+    state: SpeculativeDecodeRuntimeState,
+    tokenIDs: [Int]
+) async throws -> SpeculativeDecodeRuntimeState {
+    guard !tokenIDs.isEmpty else {
+        return state
+    }
+
+    let input = SpeculativeModelStepInput(state: state, tokenIDs: tokenIDs)
+    return await container.perform(values: input) { context, input in
+        var state = input.state
+        let nextInput = LMInput.Text(tokens: MLXArray(input.tokenIDs))
+        state.output = context.model(
+            nextInput[text: .newAxis],
+            cache: state.cache.isEmpty ? nil : state.cache,
+            state: state.output.state
+        )
+        eval(state.output.logits)
+        return state
+    }
+}
+
+private func advanceSpeculativeDecodeState(
+    context: ModelContext,
+    state: SpeculativeDecodeRuntimeState,
+    tokenIDs: [Int]
+) -> SpeculativeDecodeRuntimeState {
+    guard !tokenIDs.isEmpty else {
+        return state
+    }
+
+    var state = state
+    let nextInput = LMInput.Text(tokens: MLXArray(tokenIDs))
+    state.output = context.model(
+        nextInput[text: .newAxis],
+        cache: state.cache.isEmpty ? nil : state.cache,
+        state: state.output.state
+    )
+    eval(state.output.logits)
+    return state
+}
+
+private func isSpeculativeTerminalToken(
+    _ tokenID: Int,
+    metadata: SpeculativeTokenMetadata
+) -> Bool {
+    if let unknownTokenID = metadata.unknownTokenID, tokenID == unknownTokenID {
+        return true
+    }
+    if let eosTokenID = metadata.eosTokenID, tokenID == eosTokenID {
+        return true
+    }
+    return metadata.additionalEOSTokenIDs.contains(tokenID)
+}
+
+private func shouldFallbackSpeculativeDecodeRuntime(
+    acceptedTokenCount: Int,
+    rejectedTokenCount: Int,
+    proposedTokenCount: Int,
+    draftProposeMicros: Int,
+    targetVerifyMicros: Int
+) -> Bool {
+    let verifiedTokenCount = acceptedTokenCount + rejectedTokenCount
+    if verifiedTokenCount == 1, acceptedTokenCount == 0, rejectedTokenCount == 1 {
+        return true
+    }
+    guard verifiedTokenCount >= 4, proposedTokenCount >= 4 else {
+        return false
+    }
+
+    let acceptanceRatePercent = (acceptedTokenCount * 100) / max(verifiedTokenCount, 1)
+    if acceptanceRatePercent < 75 {
+        return true
+    }
+
+    let draftMicrosPerProposal = Double(draftProposeMicros) / Double(max(proposedTokenCount, 1))
+    let targetMicrosPerVerifiedToken = Double(targetVerifyMicros) / Double(max(verifiedTokenCount, 1))
+    return draftMicrosPerProposal >= targetMicrosPerVerifiedToken * 0.75
+}
+
+private func milliseconds(fromMicros micros: Int) -> Int {
+    max(0, Int((Double(micros) / 1_000.0).rounded()))
+}
 #endif
 
 private func makePreparedDecodeGeneration(
     model: LoadedTextModel,
+    draftModel: LoadedTextModel?,
     context: TextPrefillContext,
     sampling: Melix_Worker_V1_SamplingConfig,
     maxOutputTokens: UInt32,
@@ -699,6 +1783,52 @@ private func makePreparedDecodeGeneration(
         decodeStepSize: decodeStepSize,
         acceleration: acceleration
     )
+
+    if acceleration.mode == .speculativeDecode {
+        guard let draftModel else {
+            throw RuntimeUnavailableError(
+                message: "Speculative decode requires a loaded Swift MLX draft model."
+            )
+        }
+
+        #if canImport(MLXLLM)
+        if let dflashRuntime = draftModel.storage as? SwiftDFlashDraftRuntime {
+            let runtimeEvents = try await container.perform(values: decodeState) { targetContext, decodeState in
+                try makePreparedDFlashSpeculativeDecodeEvents(
+                    draftRuntime: dflashRuntime,
+                    decodeState: decodeState,
+                    targetContext: targetContext,
+                    parameters: parameters,
+                    acceleration: acceleration
+                )
+            }
+            return PreparedTextGeneration(
+                promptTokens: decodeState.input.text.tokens.size,
+                runtimeEvents: runtimeEvents
+            )
+        }
+        #endif
+
+        guard let draftContainer = draftModel.storage as? ModelContainer else {
+            throw RuntimeUnavailableError(
+                message: "Speculative decode requires a loaded Swift MLX draft model container."
+            )
+        }
+        let runtimeEvents = try await container.perform(values: decodeState) { targetContext, decodeState in
+            try await makePreparedSpeculativeDecodeEvents(
+                targetContainer: container,
+                draftContainer: draftContainer,
+                decodeState: decodeState,
+                targetContext: targetContext,
+                parameters: parameters,
+                acceleration: acceleration
+            )
+        }
+        return PreparedTextGeneration(
+            promptTokens: decodeState.input.text.tokens.size,
+            runtimeEvents: runtimeEvents
+        )
+    }
 
     let runtimeEvents = try await container.perform(values: decodeState) { modelContext, decodeState in
         try makePreparedDecodeEvents(
@@ -904,7 +2034,21 @@ private func makeInitialDecodeOutput(
     context: ModelContext,
     cache: [KVCache]
 ) throws -> LMOutput {
-    switch decodeState.prepared {
+    try makeInitialDecodeOutput(
+        input: decodeState.input,
+        prepared: decodeState.prepared,
+        context: context,
+        cache: cache
+    )
+}
+
+private func makeInitialDecodeOutput(
+    input: LMInput,
+    prepared: PrepareResult,
+    context: ModelContext,
+    cache: [KVCache]
+) throws -> LMOutput {
+    switch prepared {
     case .tokens(let tokens):
         return context.model(
             tokens[text: .newAxis],
@@ -918,12 +2062,18 @@ private func makeInitialDecodeOutput(
 
 private func sampleNextToken(
     logits: MLXArray,
+    position: Int? = nil,
     processor: inout (any LogitProcessor)?,
     sampler: any LogitSampler
 ) -> MLXArray {
-    var logits = logits[0..., -1, 0...]
-    logits = processor?.process(logits: logits) ?? logits
-    let token = sampler.sample(logits: logits)
+    var selectedLogits: MLXArray
+    if let position {
+        selectedLogits = logits[0..., position, 0...]
+    } else {
+        selectedLogits = logits[0..., -1, 0...]
+    }
+    selectedLogits = processor?.process(logits: selectedLogits) ?? selectedLogits
+    let token = sampler.sample(logits: selectedLogits)
     processor?.didSample(token: token)
     return token
 }

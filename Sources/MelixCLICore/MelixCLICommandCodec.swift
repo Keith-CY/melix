@@ -205,6 +205,9 @@ public enum MelixCLICommandCodec {
             appendPositiveInt("--port", value: options.port, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendOption("--acceleration-mode", value: options.accelerationMode, into: &arguments)
+            appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
+            appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
             json = options.json
         case .serverSessionCreate(let options):
             arguments = ["server", "session", "create"]
@@ -214,6 +217,9 @@ public enum MelixCLICommandCodec {
             appendPositiveInt("--port", value: options.port, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+            appendOption("--acceleration-mode", value: options.accelerationMode, into: &arguments)
+            appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
+            appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
             json = options.json
         case .serverSessionRemove(let options):
             arguments = ["server", "session", "remove"]

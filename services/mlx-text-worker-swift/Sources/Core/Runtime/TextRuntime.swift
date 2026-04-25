@@ -207,6 +207,13 @@ struct TextGenerationSummary: Sendable {
     let tokensPerSecond: Double?
     let speculativeAcceptedTokens: Int?
     let speculativeRejectedTokens: Int?
+    let speculativeFallbackCount: Int?
+    let speculativeDraftProposeMillis: Int?
+    let speculativeTargetVerifyMillis: Int?
+    let dflashEnabled: Bool
+    let dflashBlockSize: Int?
+    let dflashRollbackCount: Int?
+    let dflashTargetHiddenLayers: Int?
     let activeKVProbe: ActiveKVProbeSummary?
 
     init(
@@ -215,6 +222,13 @@ struct TextGenerationSummary: Sendable {
         tokensPerSecond: Double?,
         speculativeAcceptedTokens: Int? = nil,
         speculativeRejectedTokens: Int? = nil,
+        speculativeFallbackCount: Int? = nil,
+        speculativeDraftProposeMillis: Int? = nil,
+        speculativeTargetVerifyMillis: Int? = nil,
+        dflashEnabled: Bool = false,
+        dflashBlockSize: Int? = nil,
+        dflashRollbackCount: Int? = nil,
+        dflashTargetHiddenLayers: Int? = nil,
         activeKVProbe: ActiveKVProbeSummary? = nil
     ) {
         self.promptTokens = promptTokens
@@ -222,6 +236,13 @@ struct TextGenerationSummary: Sendable {
         self.tokensPerSecond = tokensPerSecond
         self.speculativeAcceptedTokens = speculativeAcceptedTokens
         self.speculativeRejectedTokens = speculativeRejectedTokens
+        self.speculativeFallbackCount = speculativeFallbackCount
+        self.speculativeDraftProposeMillis = speculativeDraftProposeMillis
+        self.speculativeTargetVerifyMillis = speculativeTargetVerifyMillis
+        self.dflashEnabled = dflashEnabled
+        self.dflashBlockSize = dflashBlockSize
+        self.dflashRollbackCount = dflashRollbackCount
+        self.dflashTargetHiddenLayers = dflashTargetHiddenLayers
         self.activeKVProbe = activeKVProbe
     }
 }
@@ -252,6 +273,7 @@ protocol TextRuntimeBackend: Sendable {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel?,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -291,6 +313,7 @@ extension TextRuntimeBackend {
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -370,6 +393,7 @@ struct TextRuntime: Sendable {
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,
@@ -380,6 +404,7 @@ struct TextRuntime: Sendable {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         try await backend.decodeEvents(
             model: model,
+            draftModel: draftModel,
             context: context,
             sampling: sampling,
             maxOutputTokens: maxOutputTokens,
