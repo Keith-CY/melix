@@ -161,16 +161,23 @@ message DecodeStarted {
 
 message TokenDelta {
   string text = 1;
+  string raw_text = 2;
+  string parser_observation = 3;
 }
 
 message ReasoningDelta {
   string text = 1;
+  string raw_text = 2;
+  string mode_source = 3;
 }
 
 message ToolCallDelta {
   string call_id = 1;
   string tool_name = 2;
   string arguments_json_fragment = 3;
+  uint32 fragment_index = 4;
+  string parser_mode = 5;
+  bool complete = 6;
 }
 
 message UsageDelta {
@@ -197,6 +204,11 @@ message Completed {
   string finish_reason = 1;
   string assistant_text = 2;
   string reasoning_text = 3;
+  string raw_assistant_text = 4;
+  string reasoning_mode_source = 5;
+  string reasoning_effort = 6;
+  bool reasoning_continuity_preserved = 7;
+  map<string, string> parser_metrics = 8;
 }
 
 message ErrorEvent {

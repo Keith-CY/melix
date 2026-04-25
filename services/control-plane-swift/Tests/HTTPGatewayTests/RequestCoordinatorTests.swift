@@ -1003,6 +1003,161 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.tool_delta_count", default: 0] == 1)
     }
 
+    @Test("session reasoning continuity uses metadata markers without raw hidden leakage")
+    func sessionReasoningContinuityUsesMetadataMarkersWithoutRawHiddenLeakage() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_500 })
+        let reasoningContinuityStore = ReasoningContinuityStore()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            reasoningContinuityStore: reasoningContinuityStore
+        )
+
+        let parentExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-parent",
+                sessionID: "session-continuity",
+                branchID: "branch-main"
+            )
+        )
+        let parentCollector = Task {
+            for try await _ in parentExecution.stream {
+            }
+        }
+        await workerClient.emitToken(requestID: "req-continuity-parent", text: "visible answer")
+        await workerClient.finishDecode(
+            requestID: "req-continuity-parent",
+            assistantText: "visible answer",
+            reasoningText: "hidden chain should stay internal"
+        )
+        _ = try await parentCollector.value
+
+        let stored = await reasoningContinuityStore.latest(
+            sessionID: "session-continuity",
+            branchID: "branch-main"
+        )
+        #expect(stored?.reasoningText == "hidden chain should stay internal")
+
+        let followupExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-followup",
+                sessionID: "session-continuity",
+                branchID: "branch-main",
+                parentRequestID: "req-continuity-parent",
+                executionExt: [
+                    "melix.chat_template_kwargs.effective_json": "{\"existing\":true}"
+                ]
+            )
+        )
+        let followupCollector = Task {
+            for try await _ in followupExecution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 2 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequests = await workerClient.generatedRequests
+        let followupRequest = try #require(generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-followup",
+            assistantText: "next answer"
+        )
+        _ = try await followupCollector.value
+
+        let effectiveTemplate = followupRequest.execution.ext["melix.chat_template_kwargs.effective_json"] ?? ""
+        let extText = followupRequest.execution.ext.values.joined(separator: "\n")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(followupRequest.execution.reasoning.continuityRehydrated)
+        #expect(followupRequest.execution.scope.reasoningContinuityPresent)
+        #expect(followupRequest.execution.ext["melix.reasoning.continuity_rehydrated"] == "true")
+        #expect(followupRequest.execution.ext["melix.reasoning.continuity_request_id"] == "req-continuity-parent")
+        #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
+        #expect(effectiveTemplate.contains("\"existing\":true"))
+        #expect(!effectiveTemplate.contains("hidden chain should stay internal"))
+        #expect(!extText.contains("hidden chain should stay internal"))
+        #expect(metrics.values["http.reasoning_continuity_preserved_count", default: 0] == 1)
+        #expect(metrics.values["http.reasoning_continuity_rehydrated_count", default: 0] == 1)
+    }
+
+    @Test("session requests skip reasoning continuity when no hidden store is configured")
+    func sessionRequestsSkipReasoningContinuityWhenNoHiddenStoreIsConfigured() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_700 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: MetricsStore(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-no-store",
+                sessionID: "session-continuity-no-store",
+                branchID: "branch-main"
+            )
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-no-store",
+            assistantText: "visible"
+        )
+        _ = try await collector.value
+
+        #expect(generatedRequest.execution.reasoning.continuityRehydrated == false)
+        #expect(generatedRequest.execution.scope.reasoningContinuityPresent == false)
+    }
+
+    @Test("completed parser metrics are recorded as numeric HTTP parser metrics")
+    func completedParserMetricsAreRecordedAsNumericHTTPParserMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-parser-metrics")
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        await workerClient.finishDecode(
+            requestID: "req-parser-metrics",
+            assistantText: "visible",
+            parserMetrics: [
+                "malformed_tool_fragment_count": "2",
+                "duplicate_tool_delta_count": "not-a-number"
+            ]
+        )
+        _ = try await collector.value
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["http.parser.malformed_tool_fragment_count", default: 0] == 2)
+        #expect(metrics.values["http.parser.duplicate_tool_delta_count", default: -1] == -1)
+    }
+
     @Test("session follow-up requests restore the latest branch snapshot through phase-aware prefill")
     func sessionFollowUpRequestsRestoreLatestBranchSnapshot() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2698,6 +2853,7 @@ private actor PhaseAwareWorkerClient:
     private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
     private(set) var generatedRequestIDs: [String] = []
+    private(set) var generatedRequests: [Melix_Worker_V1_GenerateRequest] = []
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var cacheStatsResponse = Melix_Worker_V1_GetCacheStatsResponse()
 
@@ -2717,6 +2873,7 @@ private actor PhaseAwareWorkerClient:
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         generatedRequestIDs.append(request.execution.id.requestID)
+        generatedRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
             continuations[requestID] = continuation
@@ -3000,7 +3157,8 @@ private actor PhaseAwareWorkerClient:
     func finishDecode(
         requestID: String,
         assistantText: String = "done",
-        reasoningText: String = ""
+        reasoningText: String = "",
+        parserMetrics: [String: String] = [:]
     ) {
         guard let continuation = continuations.removeValue(forKey: requestID) else {
             return
@@ -3015,6 +3173,7 @@ private actor PhaseAwareWorkerClient:
         completed.finishReason = "stop"
         completed.assistantText = assistantText
         completed.reasoningText = reasoningText
+        completed.parserMetrics = parserMetrics
         event.completed = completed
         continuation.yield(event)
         continuation.finish()

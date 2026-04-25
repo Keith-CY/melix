@@ -460,6 +460,11 @@ message CacheScopeKey {
   string prompt_template_hash = 5;
   string parser_mode = 6;
   string reasoning_mode = 7;
+  string reasoning_effort = 8;
+  string tool_parser_mode = 9;
+  string structured_output_mode = 10;
+  string chat_template_kwargs_hash = 11;
+  bool reasoning_continuity_present = 12;
 }
 
 message CacheKey {
@@ -480,6 +485,42 @@ message SnapshotRef {
 ```
 
 The control plane should expose logical cache identity and reference chains for inspection and scheduling. Payload data stays worker-side.
+
+Reasoning mode, effort, parser mode, structured-output mode, effective template kwargs, and reasoning-continuity presence are cache compatibility inputs. A prefix generated under one of those settings must not be treated as equivalent to a prefix generated under a different setting unless an explicit downgrade policy says so.
+
+## Structured Text Streaming
+
+The shipped text HTTP surfaces are stream-first: Chat Completions, Completions, Responses, and Messages normalize into one worker `GenerateRequest` shape. Native Ollama `/api/*` routes and new non-stream behavior are outside this contract.
+
+Reasoning policy is resolved once in the Swift request layer. Precedence is:
+
+1. Top-level request flags: `enable_thinking` and `reasoning_effort`
+2. Effective `chat_template_kwargs`
+3. Messages `thinking`
+4. Preset, model, or operator defaults
+5. Model-family auto-detect
+6. Tool or structured-output suppressions
+
+The resolved execution metadata includes:
+
+- `melix.reasoning.mode`
+- `melix.reasoning.mode_source`
+- `melix.reasoning.effort`
+- `melix.reasoning.auto_detect_model_family`
+- `melix.reasoning.continuity_rehydrated`
+- typed `ReasoningConfig.mode`, `mode_source`, `effort`, `auto_detect_model_family`, and `continuity_rehydrated`
+
+Workers preserve raw generation text separately from public content. Stream assembly is request-local and reads `raw_text` when available, otherwise `text`. It emits only unseen tails and separates three channels:
+
+- `TokenDelta` for public assistant content
+- `ReasoningDelta` for hidden reasoning stream material
+- `ToolCallDelta` for parsed tool-call fragments
+
+Malformed or truncated tool fragments are recoverable parser observations. They should increment parser metrics and be skipped rather than fail the request. Display cleanup is not structural parsing; cleanup must not collapse meaningful leading or trailing content whitespace and must not re-emit generation-prefix control tokens.
+
+JSON-only structured-output requests without explicit tools suppress generic model-default tool parsing. The worker must not validate or output reasoning preambles as JSON content; any reasoning prefix is stripped before structured-output validation.
+
+Session reasoning continuity is stored inside control-plane runtime state keyed by session, branch, and request. Follow-up turns receive continuity markers through execution metadata and effective template kwargs, not raw hidden text. Public session state, SSE content output, and operator-visible metadata must not contain raw hidden reasoning.
 
 ## Resource Read Models
 

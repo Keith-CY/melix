@@ -19,6 +19,8 @@ def test_protocol_compatibility_matrix_covers_stream_families() -> None:
             "body": {
                 "model": "melix-dev-text",
                 "stream": True,
+                "enable_thinking": False,
+                "reasoning_effort": "low",
                 "messages": [{"role": "user", "content": "hello compatibility matrix"}],
             },
             "markers": [
@@ -35,6 +37,8 @@ def test_protocol_compatibility_matrix_covers_stream_families() -> None:
             "body": {
                 "model": "melix-dev-text",
                 "stream": True,
+                "enable_thinking": False,
+                "reasoning_effort": "low",
                 "prompt": "hello compatibility matrix",
             },
             "markers": [
@@ -51,6 +55,8 @@ def test_protocol_compatibility_matrix_covers_stream_families() -> None:
             "body": {
                 "model": "melix-dev-text",
                 "stream": True,
+                "enable_thinking": False,
+                "reasoning_effort": "low",
                 "instructions": "Be terse.",
                 "input": "hello compatibility matrix",
             },
@@ -72,6 +78,8 @@ def test_protocol_compatibility_matrix_covers_stream_families() -> None:
             "body": {
                 "model": "melix-dev-text",
                 "stream": True,
+                "enable_thinking": False,
+                "reasoning_effort": "low",
                 "system": [{"type": "text", "text": "Be terse."}],
                 "messages": [
                     {

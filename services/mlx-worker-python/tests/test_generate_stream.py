@@ -47,6 +47,29 @@ class TemplateAwareStreamingBackend:
         yield RuntimeTokenEvent(text="templated", prompt_tokens=7, completion_tokens=1, finish_reason="stop")
 
 
+class StructuredStreamingBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text=(
+                '<think>trace</think>'
+                '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
+                "visible"
+            ),
+            prompt_tokens=3,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -90,6 +113,62 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2
+
+
+def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-structured-stream"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.reasoning.mode": "enabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            reasoning=common_pb2.ReasoningConfig(
+                enabled=True,
+                mode_source="request_enable_thinking",
+                effort="low",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Use a tool")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    reasoning = next(event.reasoning_delta for event in events if event.HasField("reasoning_delta"))
+    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    token = next(event.token_delta for event in events if event.HasField("token_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert reasoning.text == "trace"
+    assert reasoning.mode_source == "request_enable_thinking"
+    assert tool_call.tool_name == "search"
+    assert tool_call.arguments_json_fragment == '{"q":"one"}'
+    assert tool_call.fragment_index == 1
+    assert tool_call.parser_mode == "qwen"
+    assert tool_call.complete is True
+    assert token.text == "visible"
+    assert completed.assistant_text == "visible"
+    assert completed.reasoning_text == "trace"
+    assert completed.reasoning_mode_source == "request_enable_thinking"
+    assert completed.reasoning_effort == "low"
+    assert completed.parser_metrics["duplicate_tool_delta_count"] == "0"
 
 
 def test_text_prefill_returns_structured_unimplemented_error() -> None:
