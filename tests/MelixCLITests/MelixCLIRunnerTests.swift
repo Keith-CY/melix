@@ -540,6 +540,59 @@ struct MelixCLIRunnerTests {
         #expect(trainArguments.contains("--response-only"))
     }
 
+    @Test("pipeline dry run redacts Hugging Face download token arguments")
+    func pipelineDryRunRedactsHuggingFaceDownloadTokenArguments() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("hf-token-redaction.pipeline.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = """
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "hf-token-redaction",
+          "inputs": {},
+          "steps": [
+            {
+              "id": "download_private_model",
+              "command": "model.hub.download",
+              "args": {
+                "repo_id": "mlx-community/Private-4bit",
+                "revision": "main",
+                "hf_token": "hf_secret_token"
+              }
+            }
+          ]
+        }
+        """
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    traceID: "trace-hf-token-redaction",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let step = try #require(steps.first)
+        let receiptPath = try #require(step["receipt_path"] as? String)
+        let receipt = try #require(try parseJSONFile(receiptPath))
+        let result = try #require(receipt["result"] as? [String: Any])
+        let arguments = try #require(result["arguments"] as? [String])
+
+        #expect(arguments.contains("--hf-token"))
+        #expect(arguments.contains("<redacted>"))
+        #expect(arguments.contains("hf_secret_token") == false)
+        #expect(String(data: try JSONSerialization.data(withJSONObject: receipt), encoding: .utf8)?.contains("hf_secret_token") == false)
+    }
+
     @Test("successful fake phase 8 pipeline writes receipts summary and artifact paths")
     func successfulFakePhase8PipelineWritesReceiptsSummaryAndArtifactPaths() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1821,10 +1874,11 @@ struct MelixCLIRunnerTests {
         let client = StubControlPlaneXPCClient()
         await client.setModelOperationResult(
             makeModelOperationResult(
-                outputPath: "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main",
+                outputPath: "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123",
                 manifestJSON: #"""
                 {
                   "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                  "managed_model_path": "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123",
                   "ext": {
                     "melix.source_kind": "hub_repo",
                     "melix.source_locator": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -1843,10 +1897,62 @@ struct MelixCLIRunnerTests {
         #expect(payload["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(
             payload["managed_model_path"] as? String ==
-                "/tmp/melix-managed/huggingface/mlx-community/Qwen3.5-0.8B-OptiQ-4bit/main"
+                "/tmp/hf-cache/models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit/snapshots/abc123"
         )
         #expect(payload["source_kind"] as? String == "hub_repo")
         #expect(payload["source_locator"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("model hub download caches Hugging Face token and reuses it without leaking output")
+    func modelHubDownloadCachesHuggingFaceTokenAndReusesItWithoutLeakingOutput() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-hf-token-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let manifestJSON = #"""
+        {
+          "model_id": "mlx-community/Private-4bit",
+          "managed_model_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+          "output_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+          "ext": {
+            "melix.source_kind": "hub_repo",
+            "melix.source_locator": "mlx-community/Private-4bit",
+            "melix.model_path": "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123"
+          }
+        }
+        """#
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/hf-cache/models--mlx-community--Private-4bit/snapshots/abc123",
+            manifestJSON: manifestJSON
+        ))
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        let firstOutput = try await runner.run(
+            .modelHubDownload(.init(repoID: "mlx-community/Private-4bit", revision: "main", hfToken: "hf_secret_token", json: true))
+        )
+        let firstCall = try #require(await client.lastModelOperationCall)
+        let tokenFile = temporaryRoot
+            .appendingPathComponent("secrets", isDirectory: true)
+            .appendingPathComponent("huggingface-token.json")
+        let tokenData = try Data(contentsOf: tokenFile)
+        let tokenPayload = try #require(try JSONSerialization.jsonObject(with: tokenData) as? [String: Any])
+
+        #expect(firstCall.ext["melix.hf_token"] == "hf_secret_token")
+        #expect(tokenPayload["token"] as? String == "hf_secret_token")
+        #expect((tokenPayload["masked_hint"] as? String)?.contains("hf_secret_token") == false)
+        #expect(firstOutput.contains("hf_secret_token") == false)
+        #expect(try posixPermissions(at: temporaryRoot.appendingPathComponent("secrets", isDirectory: true)) == 0o700)
+        #expect(try posixPermissions(at: tokenFile) == 0o600)
+
+        _ = try await runner.run(
+            .modelHubDownload(.init(repoID: "mlx-community/Private-4bit", revision: "main", json: true))
+        )
+        let secondCall = try #require(await client.lastModelOperationCall)
+        #expect(secondCall.ext["melix.hf_token"] == "hf_secret_token")
     }
 
     @Test("model import forwards a local import operation and renders a managed model receipt")
@@ -5537,6 +5643,11 @@ private func captureSmokeRunnerError(
         return error.localizedDescription
     }
     return ""
+}
+
+private func posixPermissions(at url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
 }
 
 private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {

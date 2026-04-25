@@ -299,13 +299,8 @@ def _huggingface_cache_model_path(
 
 
 def _huggingface_cache_root(environment: Mapping[str, str]) -> Path:
-    explicit_cache = environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
-    if explicit_cache:
-        return Path(explicit_cache).expanduser().resolve()
-    hf_home = environment.get("HF_HOME", "").strip()
-    if hf_home:
-        return (Path(hf_home).expanduser().resolve() / "hub")
-    return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+    home = environment.get("HOME", "").strip()
+    return ((Path(home).expanduser() if home else Path.home()) / ".cache" / "huggingface" / "hub").resolve()
 
 
 def _resolved_optional_path(path: str) -> Path | None:

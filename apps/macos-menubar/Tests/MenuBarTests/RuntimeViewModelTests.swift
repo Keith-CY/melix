@@ -2826,6 +2826,7 @@ struct RuntimeViewModelTests {
         viewModel.modelHubSearchQuery = "qwen3.5"
         viewModel.modelHubSearchMLXOnly = true
         viewModel.modelHubSelectedRevision = "main"
+        viewModel.modelHubTokenDraft = "hf_secret_token"
 
         await viewModel.searchModelHub()
         await viewModel.inspectHubModel(repoID: searchModel.repoID)
@@ -2844,7 +2845,9 @@ struct RuntimeViewModelTests {
         #expect(await runnerClient.recordedHubSearchRequests.count == 1)
         #expect(await runnerClient.recordedHubModelCardRequests == [.init(repoID: searchModel.repoID)])
         #expect(await runnerClient.recordedModelOperationRequests.contains {
-            $0.operation == "download" && $0.modelID == searchModel.repoID
+            $0.operation == "download"
+                && $0.modelID == searchModel.repoID
+                && $0.ext["melix.hf_token"] == "hf_secret_token"
         })
 
         #expect(viewModel.selectedModelInfo?.modelID == "melix-dev-text")
@@ -2854,6 +2857,8 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedHubModelCard?.repoID == searchModel.repoID)
         #expect(viewModel.lastModelOperation?.modelID == searchModel.repoID)
         #expect(viewModel.downloadQueue.first?.sourceModel == searchModel.repoID)
+        #expect(viewModel.modelHubTokenDraft.isEmpty)
+        #expect(viewModel.modelHubTokenHint.contains("hf_secret_token") == false)
     }
 
     @Test("server config and serving defaults use the shared operator command runner when available")

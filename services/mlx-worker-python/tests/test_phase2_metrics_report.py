@@ -856,9 +856,11 @@ def test_active_kv_helper_edges_return_stable_defaults() -> None:
 
 
 def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -874,7 +876,7 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
         model_id="",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
     )
 
     assert model.model_id == "melix-dev-text"
@@ -887,9 +889,11 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
 def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot_fallback(
     tmp_path: Path,
 ) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -902,7 +906,7 @@ def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot
         model_id="",
         model_path="",
         model_revision="",
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
     )
 
     assert model.model_path == str(snapshot.resolve())

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,14 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.model_ops.errors import ModelOperationError
+
+_HF_AUTH_FAILED_MESSAGE = "Hugging Face authentication failed. Check your token and try again."
+_HF_TOKEN_EXT_KEYS = {
+    "melix.hf_token",
+    "hf_token",
+    "HUGGINGFACE_HUB_TOKEN",
+    "HF_TOKEN",
+}
 
 
 @dataclass(frozen=True)
@@ -255,28 +262,15 @@ class DownloadPipeline:
                 message="managed hub import requires melix.hf_repo_id in org/repo format.",
             )
         revision = ext.get("melix.hf_revision", "").strip() or "main"
-        managed_root = ext.get("melix.managed_root", "").strip() or os.environ.get("MELIX_MANAGED_MODEL_ROOT", "").strip()
-        if not managed_root:
-            raise ModelOperationError(
-                code="invalid_argument",
-                message="managed hub import requires MELIX_MANAGED_MODEL_ROOT.",
-            )
 
         source_dir = self._resolve_managed_hub_source_path(output_dir=output_dir, ext=ext, repo_id=repo_id, revision=revision)
-        materialized_dir = self._materialize_managed_hub_repo(
-            source_dir=source_dir,
-            managed_root=Path(managed_root),
-            repo_id=repo_id,
-            revision=revision,
-            ext=ext,
-        )
         total_bytes = self._directory_size(source_dir)
         state_path = output_dir / "download.state.json"
         manifest_json = self._build_managed_import_manifest_json(
             request=request,
             job_id=job_id,
             output_dir=output_dir,
-            output_path=materialized_dir,
+            output_path=source_dir,
             runtime_model_path=source_dir,
             state_path=state_path,
             repo_id=repo_id,
@@ -284,7 +278,7 @@ class DownloadPipeline:
             total_bytes=total_bytes,
         )
         return DownloadPipelineResult(
-            output_path=materialized_dir,
+            output_path=source_dir,
             snapshots=[
                 DownloadSnapshot(stage="prepare", pct=0.0, manifest_json=manifest_json),
                 DownloadSnapshot(stage="materialize", pct=1.0, manifest_json=manifest_json),
@@ -329,7 +323,7 @@ class DownloadPipeline:
             {
                 "source_model": request.source_model,
                 "operation": "download",
-                "ext": ext,
+                "ext": DownloadPipeline._public_ext(ext),
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -369,12 +363,23 @@ class DownloadPipeline:
                 message="huggingface_hub is required for managed hub imports.",
             ) from exc
 
+        kwargs: dict[str, object] = {
+            "repo_id": repo_id,
+            "revision": revision.strip() or None,
+            "cache_dir": os.fspath(self._default_huggingface_cache_root()),
+        }
+        token = self._huggingface_token(ext)
+        if token:
+            kwargs["token"] = token
+
         try:
-            downloaded = snapshot_download(
-                repo_id=repo_id,
-                revision=revision.strip() or None,
-            )
+            downloaded = snapshot_download(**kwargs)
         except Exception as exc:
+            if self._is_huggingface_auth_failure(exc):
+                raise ModelOperationError(
+                    code="hf_auth_failed",
+                    message=_HF_AUTH_FAILED_MESSAGE,
+                ) from exc
             if self._is_huggingface_hub_failure(exc):
                 raise ModelOperationError(
                     code="unavailable",
@@ -382,80 +387,6 @@ class DownloadPipeline:
                 ) from exc
             raise
         return Path(downloaded).resolve()
-
-    def _materialize_managed_hub_repo(
-        self,
-        *,
-        source_dir: Path,
-        managed_root: Path,
-        repo_id: str,
-        revision: str,
-        ext: dict[str, str],
-    ) -> Path:
-        organization_id, model_name = repo_id.split("/", maxsplit=1)
-        materialized_dir = managed_root / "huggingface" / organization_id / model_name / revision
-        if materialized_dir.exists():
-            shutil.rmtree(materialized_dir)
-        materialized_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = materialized_dir / "manifest.json"
-        manifest_payload = self._managed_registry_manifest_payload(
-            repo_id=repo_id,
-            revision=revision,
-            runtime_model_path=source_dir.resolve(),
-            descriptor_path=materialized_dir,
-            ext=ext,
-        )
-        manifest_path.write_text(json.dumps(manifest_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-        return materialized_dir
-
-    @staticmethod
-    def _managed_registry_manifest_payload(
-        *,
-        repo_id: str,
-        revision: str,
-        runtime_model_path: Path,
-        descriptor_path: Path,
-        ext: dict[str, str],
-    ) -> dict[str, Any]:
-        organization_id, model_name = repo_id.split("/", maxsplit=1)
-        model_kind = ext.get("melix.model_kind", "").strip() or "text"
-        max_context = DownloadPipeline._int(ext.get("melix.max_context"), default=0)
-        parser_mode = ext.get("melix.parser_mode", "").strip() or "text"
-        reasoning_mode = ext.get("melix.reasoning_mode", "").strip() or "off"
-        tokenizer_hash = ext.get("melix.tokenizer_hash", "").strip() or f"hf.{repo_id.replace('/', '.')}"
-        quant_profile_id = ext.get("melix.quant_profile_id", "").strip()
-        capability_tasks = ext.get("melix.capability.supported_tasks", "").strip() or (
-            "vlm,generate" if model_kind == "vlm" else "generate"
-        )
-        capability_modalities = ext.get("melix.capability.supported_modalities", "").strip() or (
-            "text,image" if model_kind == "vlm" else "text"
-        )
-        return {
-            "schema_version": "melix.model_registry_manifest.v1",
-            "model_id": repo_id,
-            "model_kind": model_kind,
-            "revision": revision,
-            "tokenizer_hash": tokenizer_hash,
-            "quant_profile_id": quant_profile_id,
-            "parser_mode": parser_mode,
-            "reasoning_mode": reasoning_mode,
-            "max_context": max_context,
-            "provider_id": "huggingface",
-            "organization_id": organization_id,
-            "model_name": model_name,
-            "variant_id": revision,
-            "ext": {
-                "melix.source_kind": "hub_repo",
-                "melix.source_locator": repo_id,
-                "melix.hf_repo_id": repo_id,
-                "melix.hf_revision": revision,
-                "melix.managed_import": "true",
-                "melix.model_path": str(runtime_model_path),
-                "melix.registry_descriptor_path": str(descriptor_path),
-                "melix.capability.supported_tasks": capability_tasks,
-                "melix.capability.supported_modalities": capability_modalities,
-            },
-        }
 
     def _build_managed_import_manifest_json(
         self,
@@ -470,6 +401,7 @@ class DownloadPipeline:
         revision: str,
         total_bytes: int,
     ) -> str:
+        public_ext = self._public_ext(request.ext)
         payload = {
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
@@ -495,14 +427,13 @@ class DownloadPipeline:
             "stall_detection_count": 0,
             "stall_reason": "",
             "ext": {
-                **dict(request.ext),
+                **public_ext,
                 "melix.hf_repo_id": repo_id,
                 "melix.hf_revision": revision,
                 "melix.source_kind": "hub_repo",
                 "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
                 "melix.model_path": str(runtime_model_path),
-                "melix.registry_descriptor_path": str(output_path),
             },
             "metrics": {
                 "download.resume_success_rate": 0.0,
@@ -619,7 +550,7 @@ class DownloadPipeline:
             "retry_count": retry_count,
             "stall_detection_count": stall_detection_count,
             "stall_reason": stall_reason,
-            "ext": dict(request.ext),
+            "ext": self._public_ext(request.ext),
             "metrics": {
                 "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
                 "download.retry_count": retry_count,
@@ -658,3 +589,31 @@ class DownloadPipeline:
             os.replace(os.fspath(temp_path), os.fspath(path))
         finally:
             temp_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _default_huggingface_cache_root() -> Path:
+        return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+
+    @staticmethod
+    def _huggingface_token(ext: dict[str, str]) -> str:
+        for key in ("melix.hf_token", "hf_token", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"):
+            token = ext.get(key, "").strip()
+            if token:
+                return token
+        return ""
+
+    @staticmethod
+    def _public_ext(ext: dict[str, str] | Any) -> dict[str, str]:
+        return {
+            str(key): str(value)
+            for key, value in dict(ext).items()
+            if str(key) not in _HF_TOKEN_EXT_KEYS and "token" not in str(key).lower()
+        }
+
+    @staticmethod
+    def _is_huggingface_auth_failure(exc: Exception) -> bool:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code in {401, 403}:
+            return True
+        message = str(exc).lower()
+        return "401" in message or "403" in message or "unauthorized" in message or "forbidden" in message

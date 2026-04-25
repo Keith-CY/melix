@@ -132,9 +132,11 @@ def test_descriptor_runtime_model_path_logs_manifest_runtime_file(
 
 
 def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -146,7 +148,7 @@ def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path
     (refs / "main").write_text("abc123\n", encoding="utf-8")
 
     source = resolve_real_small_text_model_source(
-        environment={"HF_HOME": str(hf_home)},
+        environment={"HOME": str(home)},
         allow_hf_cache=True,
     )
 
@@ -156,9 +158,11 @@ def test_real_small_model_source_can_use_huggingface_cache_when_allowed(tmp_path
 
 
 def test_real_small_model_source_defaults_to_hub_without_local_sources(tmp_path: Path) -> None:
-    hf_home = tmp_path / "hf"
+    home = tmp_path / "home"
     snapshot = (
-        hf_home
+        home
+        / ".cache"
+        / "huggingface"
         / "hub"
         / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
         / "snapshots"
@@ -169,7 +173,7 @@ def test_real_small_model_source_defaults_to_hub_without_local_sources(tmp_path:
     refs.mkdir()
     (refs / "main").write_text("abc123\n", encoding="utf-8")
 
-    source = resolve_real_small_text_model_source(environment={"HF_HOME": str(hf_home)})
+    source = resolve_real_small_text_model_source(environment={"HOME": str(home)})
 
     assert source.live is True
     assert source.local_model_path == ""
@@ -191,7 +195,7 @@ def test_resolve_real_small_model_path_uses_the_shared_source_resolution(tmp_pat
 def test_resolve_real_small_model_path_returns_none_without_local_source(tmp_path: Path) -> None:
     assert (
         resolve_real_small_text_model_path(
-            environment={"HF_HOME": str(tmp_path / "hf")},
+            environment={"HOME": str(tmp_path / "home")},
             allow_managed_root=False,
             allow_hf_cache=False,
         )
@@ -211,7 +215,8 @@ def test_real_small_model_source_ignores_missing_managed_candidate(tmp_path: Pat
 
 
 def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path: Path) -> None:
-    cache_root = tmp_path / "hub-cache"
+    home = tmp_path / "home"
+    cache_root = home / ".cache" / "huggingface" / "hub"
     snapshots_root = cache_root / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit" / "snapshots"
     old_snapshot = snapshots_root / "aaa"
     latest_snapshot = snapshots_root / "zzz"
@@ -219,7 +224,7 @@ def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path
     latest_snapshot.mkdir()
 
     source = resolve_real_small_text_model_source(
-        environment={"HUGGINGFACE_HUB_CACHE": str(cache_root)},
+        environment={"HOME": str(home)},
         allow_managed_root=False,
         allow_hf_cache=True,
     )

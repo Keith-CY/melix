@@ -560,11 +560,13 @@ public struct ModelHubShowOptions: Equatable, Sendable {
 public struct ModelHubDownloadOptions: Equatable, Sendable {
     public let repoID: String
     public let revision: String
+    public let hfToken: String
     public let json: Bool
 
-    public init(repoID: String, revision: String = "main", json: Bool = false) {
+    public init(repoID: String, revision: String = "main", hfToken: String = "", json: Bool = false) {
         self.repoID = repoID
         self.revision = revision.isEmpty ? "main" : revision
+        self.hfToken = hfToken
         self.json = json
     }
 }
@@ -1082,7 +1084,7 @@ public enum MelixCLIParser {
       melix model import --path PATH --model-id MODEL_ID [--model-kind KIND] [--revision REV] [--json]
       melix model hub search --query QUERY [--page-size N] [--cursor TOKEN] [--mlx-only (true|false)] [--json]
       melix model hub show --repo-id HF_REPO [--json]
-      melix model hub download --repo-id HF_REPO [--revision REV] [--json]
+      melix model hub download --repo-id HF_REPO [--revision REV] [--hf-token TOKEN] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -1321,6 +1323,7 @@ public enum MelixCLIParser {
                 .init(
                     repoID: repoID,
                     revision: values.single["--revision"] ?? "main",
+                    hfToken: values.single["--hf-token"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -2553,8 +2556,19 @@ public actor MelixCLIRunner {
 
     public func downloadHubModel(
         repoID: String,
-        revision: String = "main"
+        revision: String = "main",
+        hfToken: String = ""
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        let tokenStore = HuggingFaceTokenStore(melixHome: MelixHome(environment: environment))
+        let providedToken = hfToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveToken: String
+        if providedToken.isEmpty == false {
+            _ = try tokenStore.saveToken(providedToken)
+            effectiveToken = providedToken
+        } else {
+            effectiveToken = (try tokenStore.loadToken()?.token ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         var ext: [String: String] = [
             "melix.source_kind": "hub_repo",
             "melix.source_locator": repoID,
@@ -2562,6 +2576,9 @@ public actor MelixCLIRunner {
             "melix.hf_revision": revision.isEmpty ? "main" : revision,
             "melix.managed_import": "true",
         ]
+        if effectiveToken.isEmpty == false {
+            ext["melix.hf_token"] = effectiveToken
+        }
         if let managedRoot = environment["MELIX_MANAGED_MODEL_ROOT"], managedRoot.isEmpty == false {
             ext["melix.managed_root"] = managedRoot
         }
@@ -2862,7 +2879,7 @@ public actor MelixCLIRunner {
             }
             return renderHubModelCard(card)
         case .modelHubDownload(let options):
-            let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision)
+            let result = try await downloadHubModel(repoID: options.repoID, revision: options.revision, hfToken: options.hfToken)
             let receipt = try makeManagedModelReceipt(from: result)
             return options.json ? try prettyJSON(receipt) : receipt.managedModelPath + "\n"
         case .modelRootsList(let options):
@@ -3519,6 +3536,13 @@ public actor MelixCLIRunner {
         case "registry_snapshot":
             return ["lora", "list", "--model-id", modelID, "--json"]
         case "download":
+            if ext["melix.source_kind"] == "hub_repo" {
+                var arguments = ["model", "hub", "download", "--repo-id", modelID]
+                appendOption("--revision", value: ext["melix.hf_revision"], into: &arguments)
+                appendOption("--hf-token", value: ext["melix.hf_token"], into: &arguments)
+                arguments.append("--json")
+                return arguments
+            }
             var arguments = ["model", "download", "--model-id", modelID]
             if outputDir.isEmpty == false {
                 arguments.append(contentsOf: ["--output-dir", outputDir])

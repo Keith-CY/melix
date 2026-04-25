@@ -238,9 +238,23 @@ struct DesktopModelsTabView: View {
                         Button("Search", action: searchHubModelsAction())
                             .buttonStyle(.borderedProminent)
                     }
+                    HStack(alignment: .center, spacing: 12) {
+                        SecureField(
+                            "Hugging Face Token",
+                            text: Binding(
+                                get: { viewModel.modelHubTokenDraft },
+                                set: { viewModel.modelHubTokenDraft = $0 }
+                            )
+                        )
+                        if !viewModel.modelHubTokenHint.isEmpty {
+                            Text("Token saved: \(viewModel.modelHubTokenHint)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
 
                     if viewModel.modelHubSearchResults.isEmpty {
-                        Text("Search Hugging Face repos and download directly into the managed model root.")
+                        Text("No MLX Hub results.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {

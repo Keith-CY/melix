@@ -1401,6 +1401,7 @@ public final class RuntimeViewModel {
     public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = []
     public private(set) var selectedHubModelCard: RuntimeHubModelCardState?
     public private(set) var modelHubNextCursor = ""
+    public private(set) var modelHubTokenHint = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
@@ -1446,6 +1447,7 @@ public final class RuntimeViewModel {
     public var modelHubSearchQuery = ""
     public var modelHubSearchMLXOnly = true
     public var modelHubSelectedRevision = "main"
+    public var modelHubTokenDraft = ""
     public var modelSettingsAliasDraft = ""
     public var modelSettingsTypeOverrideDraft = ""
     public var modelSettingsTTLDraft = ""
@@ -1597,6 +1599,7 @@ public final class RuntimeViewModel {
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let huggingFaceTokenStore: any HuggingFaceTokenStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
     private var lastSeenSeq: UInt64 = 0
@@ -1809,6 +1812,7 @@ public final class RuntimeViewModel {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        huggingFaceTokenStore: any HuggingFaceTokenStoring = NullHuggingFaceTokenStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
         self.client = client
@@ -1817,7 +1821,9 @@ public final class RuntimeViewModel {
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.huggingFaceTokenStore = huggingFaceTokenStore
         self.productInstallStateProvider = productInstallStateProvider
+        reloadHuggingFaceTokenHint()
     }
 
     var cliWorkflowRunnerSurface: MelixCLIWorkflowSurface? {
@@ -1826,6 +1832,11 @@ public final class RuntimeViewModel {
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
         cliWorkflowRunner ?? operatorCommandRunner
+    }
+
+    private func reloadHuggingFaceTokenHint() {
+        modelHubTokenHint = ((try? huggingFaceTokenStore.loadToken()?.maskedHint) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     deinit {
@@ -4221,12 +4232,31 @@ public final class RuntimeViewModel {
             return
         }
         let revision = Self.normalizedOptionalString(requestedRevision) ?? "main"
+        let providedToken = Self.normalizedOptionalString(modelHubTokenDraft) ?? ""
+        let effectiveToken: String
+        if providedToken.isEmpty == false {
+            do {
+                let record = try huggingFaceTokenStore.saveToken(providedToken)
+                modelHubTokenHint = record.maskedHint
+                modelHubTokenDraft = ""
+                effectiveToken = providedToken
+            } catch {
+                recordLocalError("Hugging Face token could not be saved: \(error)")
+                notifyStateChanged()
+                return
+            }
+        } else {
+            effectiveToken = ((try? huggingFaceTokenStore.loadToken()?.token) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            reloadHuggingFaceTokenHint()
+        }
         let startedAt = Date()
         if let cliWorkflowRunner {
             do {
                 let receipt = try await cliWorkflowRunner.downloadHubModel(
                     repoID: normalizedRepoID,
-                    revision: revision
+                    revision: revision,
+                    hfToken: effectiveToken
                 )
                 _ = try await cliWorkflowRunner.run(.modelRootsRescan(.init(json: true)))
                 clearCLIWorkflowFailure()
@@ -4251,9 +4281,19 @@ public final class RuntimeViewModel {
             if let operatorCommandRunner {
                 result = try await operatorCommandRunner.downloadHubModel(
                     repoID: normalizedRepoID,
-                    revision: revision
+                    revision: revision,
+                    hfToken: effectiveToken
                 )
             } else {
+                var ext = [
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": normalizedRepoID,
+                    "melix.hf_revision": revision,
+                    "melix.managed_import": "true",
+                ]
+                if effectiveToken.isEmpty == false {
+                    ext["melix.hf_token"] = effectiveToken
+                }
                 result = try await client.runModelOperation(
                     modelID: normalizedRepoID,
                     operation: "download",
@@ -4261,12 +4301,7 @@ public final class RuntimeViewModel {
                     quantProfileID: "",
                     weightQuant: "",
                     kvQuant: "",
-                    ext: [
-                        "melix.source_kind": "hub_repo",
-                        "melix.hf_repo_id": normalizedRepoID,
-                        "melix.hf_revision": revision,
-                        "melix.managed_import": "true",
-                    ]
+                    ext: ext
                 )
             }
             await applyModelOperationResult(

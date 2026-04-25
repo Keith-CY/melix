@@ -128,7 +128,20 @@ curl -sS http://127.0.0.1:11434/v1/models
 
 Registry-discovered models are synchronized on demand before `/v1/models` is rendered. The response metadata includes the structured `melix.registry_*` identity fields plus `melix.model_path` for each discovered registry model.
 
-Managed Hugging Face imports use a descriptor/cache split. The managed root contains the Melix descriptor path, for example `huggingface/mlx-community/Qwen3-0.6B-4bit/main/manifest.json`, while `melix.model_path` points to the actual Hugging Face snapshot under the standard cache (`HUGGINGFACE_HUB_CACHE`, `HF_HOME/hub`, or `~/.cache/huggingface/hub`). Use `melix.registry_descriptor_path` when debugging Melix registry metadata and `melix.model_path` when debugging runtime loading. If the cache snapshot has been removed, registry metadata includes `melix.model_path_missing=true`; Melix surfaces this as `missing-cache` / `model_runtime_missing` with the message `Hugging Face cache files are missing. Re-download this model to restore it.` The Desktop App keeps the model visible, shows a `Missing cache` badge, and changes the model action to `Restore Download`. CLI operators can confirm the state with `melix model list` or `melix model inspect --model-id <model> --json`, then restore with the reported `restore_command`, for example `melix model hub download --repo-id mlx-community/Qwen3-0.6B-4bit --revision main`, followed by `melix model roots rescan` if the app or daemon has not refreshed yet. Melix does not auto-download missing Hugging Face snapshots. Managed import `downloaded_bytes` and `total_bytes` report the runtime snapshot size, not the lightweight descriptor size. Local imports are unchanged and still copy model files into `local/<model-id>/<revision>` under the managed root.
+Melix-managed Hugging Face downloads write model bytes directly to the default Hugging Face cache at `~/.cache/huggingface/hub`. Melix passes that directory as `snapshot_download(cache_dir=...)`, so `HUGGINGFACE_HUB_CACHE` and `HF_HOME` do not change the managed download destination. A Hub download receipt reports the real snapshot directory, for example `~/.cache/huggingface/hub/models--mlx-community--Qwen3-0.6B-4bit/snapshots/<snapshot-id>`, and new downloads do not create descriptor directories under `MELIX_MANAGED_MODEL_ROOT`.
+
+Registry scanning reads user-configured model roots first and then appends `~/.cache/huggingface/hub` as the implicit default cache root when it exists. It discovers Hugging Face cache snapshots under `models--<org>--<repo>/snapshots/<snapshot-id>` and plain local MLX directories that contain `config.json` plus weights. Only models with explicit MLX compatibility signals are shown. Non-MLX Transformers repositories, ambiguous local folders, unreadable metadata, and Hugging Face `blobs` payloads are ignored. If a cache snapshot is removed and the registry is rescanned, that model disappears from `melix model list` and `/v1/models`; it does not remain as a missing-cache descriptor entry.
+
+Private Hugging Face repositories can be downloaded with a token:
+
+```bash
+melix model hub download \
+  --repo-id mlx-community/Qwen3-0.6B-4bit \
+  --revision main \
+  --hf-token "$HF_TOKEN"
+```
+
+The token is cached at `$MELIX_HOME/secrets/huggingface-token.json` with private permissions and reused by later `melix model hub download` commands when `--hf-token` is omitted. The Desktop App Hugging Face download form has the same behavior: a filled token field saves and uses the token, while an empty field uses the cached token if present. CLI and App surfaces only show a masked saved-token hint. Raw tokens must not appear in operation state, model metadata, `/v1/models`, logs, or evidence artifacts. Hugging Face 401/403 failures are reported as `hf_auth_failed` with `Hugging Face authentication failed. Check your token and try again.`
 
 For deterministic install smoke without `launchctl`, validate asset generation only:
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 from worker.model_registry.catalog import WorkerModelCatalog, _gemma4_index_has_vision_weights
@@ -45,6 +46,120 @@ def _write_model_config(variant_dir: Path, payload: dict[str, object]) -> None:
 def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "model.safetensors.index.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def _write_weights(variant_dir: Path) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "model.safetensors").write_bytes(b"weights")
+
+
+def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hf_cache = home / ".cache" / "huggingface" / "hub"
+    snapshot_dir = hf_cache / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / "abc123"
+    refs_dir = hf_cache / "models--mlx-community--Qwen3-0.6B-4bit" / "refs"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+
+    non_mlx_snapshot = hf_cache / "models--google--bert-base" / "snapshots" / "def456"
+    _write_model_config(non_mlx_snapshot, {"model_type": "bert"})
+    _write_weights(non_mlx_snapshot)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(home)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert [root.root_path for root in snapshot.roots] == [str(hf_cache.resolve())]
+    assert "mlx-community/Qwen3-0.6B-4bit" in discovered
+    assert "google/bert-base" not in discovered
+    model = discovered["mlx-community/Qwen3-0.6B-4bit"]
+    assert model.model_path == str(snapshot_dir.resolve())
+    assert model.revision == "main"
+    assert model.ext["melix.source_kind"] == "hf_cache_snapshot"
+    assert model.ext["melix.hf_repo_id"] == "mlx-community/Qwen3-0.6B-4bit"
+    assert model.ext["melix.hf_revision"] == "main"
+    assert model.ext["melix.model_path"] == str(snapshot_dir.resolve())
+    assert "melix.registry_descriptor_path" not in model.ext
+
+
+def test_registry_snapshot_drops_huggingface_cache_model_after_snapshot_deletion(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hf_cache = home / ".cache" / "huggingface" / "hub"
+    snapshot_dir = hf_cache / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / "abc123"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3"})
+    _write_weights(snapshot_dir)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(home)})
+
+    initial = {model.model_id for model in catalog.registry_snapshot().models}
+    shutil.rmtree(snapshot_dir)
+    refreshed = {model.model_id for model in catalog.registry_snapshot(rescan=True).models}
+
+    assert "mlx-community/Qwen3-0.6B-4bit" in initial
+    assert "mlx-community/Qwen3-0.6B-4bit" not in refreshed
+
+
+def test_registry_snapshot_discovers_plain_local_mlx_directory_and_hides_uncertain_directory(tmp_path: Path) -> None:
+    root = tmp_path / "roots"
+    mlx_dir = root / "local-mlx-model"
+    _write_model_config(mlx_dir, {"model_type": "qwen3"})
+    _write_weights(mlx_dir)
+    (mlx_dir / "README.md").write_text("---\nlibrary_name: mlx\ntags:\n- mlx\n---\n", encoding="utf-8")
+    uncertain_dir = root / "plain-transformers-model"
+    _write_model_config(uncertain_dir, {"model_type": "qwen3"})
+    _write_weights(uncertain_dir)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert "local-mlx-model" in discovered
+    assert "plain-transformers-model" not in discovered
+    model = discovered["local-mlx-model"]
+    assert model.model_path == str(mlx_dir.resolve())
+    assert model.ext["melix.source_kind"] == "local_mlx_directory"
+    assert model.ext["melix.registry_relative_path"] == "local-mlx-model"
+
+
+def test_registry_snapshot_raw_local_scan_skips_manifest_owned_directories(tmp_path: Path) -> None:
+    root = tmp_path / "roots"
+    model_dir = root / "mlx-community" / "ManifestOwned" / "main"
+    _write_registry_manifest(model_dir, model_id="mlx-community/ManifestOwned/main")
+    _write_model_config(model_dir, {"model_type": "qwen3"})
+    _write_weights(model_dir)
+    (model_dir / "README.md").write_text("---\nlibrary_name: mlx\n---\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    discovered_ids = [model.model_id for model in catalog.registry_snapshot().models]
+
+    assert discovered_ids == ["mlx-community/ManifestOwned/main"]
+
+
+def test_registry_snapshot_user_root_overrides_default_huggingface_cache_duplicate(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hf_cache = home / ".cache" / "huggingface" / "hub"
+    default_snapshot = hf_cache / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    user_root = tmp_path / "user-root"
+    user_snapshot = user_root / "models--mlx-community--Tiny" / "snapshots" / "def456"
+    _write_model_config(default_snapshot, {"model_type": "qwen3"})
+    _write_weights(default_snapshot)
+    _write_model_config(user_snapshot, {"model_type": "qwen3_moe"})
+    _write_weights(user_snapshot)
+
+    catalog = WorkerModelCatalog(environment={"HOME": str(home), "MELIX_MODEL_ROOTS": str(user_root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Tiny"]
+
+    assert [root.root_path for root in snapshot.roots] == [str(user_root.resolve()), str(hf_cache.resolve())]
+    assert model.model_path == str(user_snapshot.resolve())
+    assert model.ext["melix.registry_root_order"] == "1"
 
 
 def test_registry_snapshot_collects_models_from_ordered_roots_and_keeps_first_duplicate(tmp_path: Path) -> None:
@@ -177,7 +292,7 @@ def test_registry_snapshot_rescan_refreshes_discovery_and_deduplicates_empty_roo
     assert catalog.get("mlx-community/Qwen2.5-14B-Instruct/8bit") is not None
 
 
-def test_registry_snapshot_prepends_managed_root_ahead_of_configured_roots(tmp_path: Path) -> None:
+def test_registry_snapshot_prefers_configured_roots_before_legacy_managed_root(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-root"
     user_root = tmp_path / "user-root"
     duplicate_id = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -203,8 +318,8 @@ def test_registry_snapshot_prepends_managed_root_ahead_of_configured_roots(tmp_p
     snapshot = catalog.registry_snapshot()
     discovered = {model.model_id: model for model in snapshot.models}
 
-    assert [root.root_path for root in snapshot.roots] == [str(managed_root), str(user_root)]
-    assert discovered[duplicate_id].ext["source_root"] == "managed"
+    assert [root.root_path for root in snapshot.roots] == [str(user_root), str(managed_root)]
+    assert discovered[duplicate_id].ext["source_root"] == "user"
     assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
 
 
@@ -343,7 +458,7 @@ def test_registry_snapshot_explicit_root_override_reorders_precedence_without_ch
     assert initial_snapshot.roots[0].root_id == _expected_root_id(root_a)
 
 
-def test_registry_snapshot_explicit_root_override_keeps_managed_root_first(tmp_path: Path) -> None:
+def test_registry_snapshot_explicit_root_override_keeps_configured_root_before_legacy_managed_root(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-root"
     user_root = tmp_path / "user-root"
     duplicate_id = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -369,8 +484,8 @@ def test_registry_snapshot_explicit_root_override_keeps_managed_root_first(tmp_p
     snapshot = catalog.registry_snapshot(rescan=True, registry_roots=[os.fspath(user_root)])
     discovered = {model.model_id: model for model in snapshot.models}
 
-    assert [root.root_path for root in snapshot.roots] == [str(managed_root), str(user_root)]
-    assert discovered[duplicate_id].ext["source_root"] == "managed"
+    assert [root.root_path for root in snapshot.roots] == [str(user_root), str(managed_root)]
+    assert discovered[duplicate_id].ext["source_root"] == "user"
     assert discovered[duplicate_id].ext["melix.registry_root_order"] == "1"
 
 
