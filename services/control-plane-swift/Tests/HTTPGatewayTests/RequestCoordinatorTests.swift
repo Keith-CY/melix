@@ -1426,19 +1426,23 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
     }
 
-    @Test("CI_WAIT_MULTIPLIER overrides the default when set to a positive integer")
+    @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
     func ciWaitMultiplierEnvOverrideOverridesDefault() {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "8"]) == 8)
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "  16 "]) == 16)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true", "CI_WAIT_MULTIPLIER": "2"]) == 2)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100"]) == 100)
     }
 
-    @Test("CI_WAIT_MULTIPLIER falls back to the default when malformed or non-positive")
-    func ciWaitMultiplierEnvOverrideFallsBackForMalformedValues() {
+    @Test("CI_WAIT_MULTIPLIER falls back to the default when invalid")
+    func ciWaitMultiplierEnvOverrideFallsBackForInvalidValues() {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "abc"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "0"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "-3"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": ""]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "   "]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "101"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100000"]) == 4)
     }
 
     @Test("CI_WAIT_MULTIPLIER without a CI flag stays at the local default")
@@ -3273,13 +3277,14 @@ private func makeCoordinatorTextModel(
 /// actual numerical default still passes locally in a few tens of ms — the
 /// multiplier only affects the *ceiling* before a timeout returns nil.
 ///
-/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer,
-/// so future tuning doesn't require a code change.
+/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
+/// within the accepted range, so future tuning doesn't require a code change.
 private let waitAttemptsMultiplier: Int = {
     computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
 }()
 
-private let defaultCIWaitMultiplier = 4
+private let defaultCIWaitMultiplier: Int = 4
+private let maximumCIWaitMultiplier: Int = 100
 
 private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
     let ciActive = isTruthyEnvironmentFlag(environment["CI"])
@@ -3289,9 +3294,8 @@ private func computedWaitAttemptsMultiplier(environment: [String: String]) -> In
     }
     if let raw = environment["CI_WAIT_MULTIPLIER"]?
         .trimmingCharacters(in: .whitespacesAndNewlines),
-       raw.isEmpty == false,
        let parsed = Int(raw),
-       parsed > 0 {
+       (1...maximumCIWaitMultiplier).contains(parsed) {
         return parsed
     }
     return defaultCIWaitMultiplier
