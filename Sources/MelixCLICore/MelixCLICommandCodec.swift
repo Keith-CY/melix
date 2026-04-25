@@ -281,6 +281,13 @@ public enum MelixCLICommandCodec {
             appendOption("--activation-mode", value: options.activationMode, into: &arguments)
             json = options.json
         case .loraPublish(let options):
+            // Round-trip note: a `LoraPublishOptions` originally parsed from
+            // `--manifest-path X --export-kind adapter` re-emits as
+            // `--adapter-path X` (no `--export-kind`). The two argv variants
+            // parse back to identical options because both forms produce
+            // `exportKind=.adapterExport`, `artifactPath=X`,
+            // `artifactManifestPath=X` — so this is a benign normalization,
+            // not a round-trip break. Same applies to the merged path.
             arguments = ["lora", "publish"]
             appendOption("--model-id", value: options.modelID, into: &arguments)
             appendOption("--target-repo", value: options.targetRepo, into: &arguments)

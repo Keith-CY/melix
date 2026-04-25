@@ -2320,12 +2320,15 @@ def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_up
     )
     registry.complete(merged_upload.job_id, "/tmp/upload-merged/upload.receipt.json")
 
-    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-model")
+    # A completed upload that never actually hit a remote (no target_repo,
+    # no published_url, no recognized artifact kind) should stay out of the
+    # publishes lineage — it's not a publish event in any meaningful sense.
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-no-target")
     registry.attach_manifest(
         unrelated.job_id,
-        json.dumps({"target_repo": "melix/models/dev", "ext": {"artifact_kind": "model"}}),
+        json.dumps({"ext": {"artifact_kind": "model"}}),
     )
-    registry.complete(unrelated.job_id, "/tmp/upload-model/model.receipt.json")
+    registry.complete(unrelated.job_id, "/tmp/upload-no-target/upload.receipt.json")
 
     publishes = {entry["job_id"]: entry for entry in registry.snapshot()["publishes"]}
 
@@ -2440,6 +2443,77 @@ def test_job_registry_snapshot_publishes_admits_quantized_model_bundle_source_ki
     assert publishes[0]["source_artifact_kind"] == "quantized_model_bundle"
     assert publishes[0]["export_artifact_kind"] == ""
     assert publishes[0]["target_repo"] == "melix/models/quant-bundle"
+
+
+def test_job_registry_snapshot_publishes_admits_legacy_uploads_with_target_repo() -> None:
+    # Pre-Module-5 worker emissions only carried `published_repo` plus an
+    # upload backend without `export_artifact_kind` / `source_artifact_kind`.
+    # Those should still appear in the publishes lineage view so the doc
+    # claim ("old-format manifests keep working") holds.
+    registry = ModelOpsJobRegistry()
+
+    legacy_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-legacy")
+    registry.attach_manifest(
+        legacy_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/legacy-bundle",
+                "upload_backend": "huggingface_hub",
+            }
+        ),
+    )
+    registry.complete(legacy_upload.job_id, "/tmp/upload-legacy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["job_id"] == legacy_upload.job_id
+    assert publishes[0]["target_repo"] == "melix/models/legacy-bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["source_artifact_kind"] == ""
+
+
+def test_job_registry_snapshot_publishes_drops_unrelated_uploads_without_remote_target() -> None:
+    # A completed `upload` job that didn't reach a remote (no published_repo,
+    # no published_url, no recognized artifact kind) is by definition not a
+    # publish — keep it out of the publishes lineage view to avoid leaking
+    # unrelated worker emissions.
+    registry = ModelOpsJobRegistry()
+
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-unrelated")
+    registry.attach_manifest(
+        unrelated.job_id,
+        json.dumps({"ext": {"artifact_kind": "model"}}),
+    )
+    registry.complete(unrelated.job_id, "/tmp/upload-unrelated/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+    assert snapshot["publishes"] == []
+
+
+def test_job_registry_snapshot_publishes_treats_non_list_published_files_as_empty() -> None:
+    # If a hand-edited manifest stored a string in `published_files`, naive
+    # `list(...)` would split it into per-character entries. Verify the
+    # `isinstance(value, list)` guard reduces that to an empty list.
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-stringy")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/adapters/stringy",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "published_files": "weights.safetensors",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-stringy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["published_files"] == []
 
 
 def test_job_registry_snapshot_emits_empty_publishes_when_no_completed_uploads() -> None:

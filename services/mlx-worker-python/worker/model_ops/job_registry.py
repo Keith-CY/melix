@@ -622,30 +622,49 @@ class ModelOpsJobRegistry:
             source_artifact_kind = str(
                 manifest.get("source_artifact_kind") or ext.get("artifact_kind") or ""
             ).strip()
-            if export_artifact_kind == "" and source_artifact_kind not in {
-                "adapter",
-                "derived_text_model",
-                "converted_model_bundle",
-                "quantized_model_bundle",
-            }:
-                continue
-
-            raw_lineage = manifest.get("parent_lineage")
-            parent_lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
             target_repo = str(
                 manifest.get("published_repo")
                 or manifest.get("target_repo")
                 or ext.get("target_repo")
                 or ""
             )
+            published_url = str(manifest.get("published_url") or "")
+            # The export-kind / source-artifact-kind branches admit Module-5+
+            # upload manifests. Pre-Module-5 worker emissions only carried
+            # `published_repo` + `upload_backend` without an explicit kind, so
+            # the third branch admits any completed upload that successfully
+            # reached a remote target (non-empty target_repo or published_url).
+            # Together this covers legacy uploads while keeping unrelated
+            # `upload` jobs (no remote target, no recognized kind) out of the
+            # publishes lineage view.
+            if (
+                export_artifact_kind == ""
+                and source_artifact_kind
+                not in {
+                    "adapter",
+                    "derived_text_model",
+                    "converted_model_bundle",
+                    "quantized_model_bundle",
+                }
+                and not target_repo
+                and not published_url
+            ):
+                continue
+
+            raw_lineage = manifest.get("parent_lineage")
+            parent_lineage = raw_lineage if isinstance(raw_lineage, dict) else {}
+            raw_published_files = manifest.get("published_files")
+            published_files = (
+                list(raw_published_files) if isinstance(raw_published_files, list) else []
+            )
             publishes.append(
                 {
                     "job_id": job["job_id"],
                     "status": "published",
                     "target_repo": target_repo,
-                    "published_url": str(manifest.get("published_url") or ""),
+                    "published_url": published_url,
                     "published_ref": str(manifest.get("published_ref") or ""),
-                    "published_files": list(manifest.get("published_files") or []),
+                    "published_files": published_files,
                     "publish_backend": str(
                         manifest.get("upload_backend")
                         or manifest.get("publish_backend")

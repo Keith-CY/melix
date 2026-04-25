@@ -4805,56 +4805,85 @@ public actor MelixCLIRunner {
         return payload
     }
 
+    private enum LoraPublishManifestClassification {
+        case classified(LoraPublishExportKind)
+        case unclassifiable
+        case fileMissing
+        case malformed(String)
+    }
+
     private func resolveLoraPublishExportKind(options: LoraPublishOptions) throws -> LoraPublishExportKind {
-        let inferred = inferLoraPublishExportKindFromManifestIfAvailable(
-            manifestPath: options.artifactManifestPath
-        )
+        let classification = classifyLoraPublishManifest(at: options.artifactManifestPath)
         if let explicit = options.exportKind {
-            // When both an explicit override and a readable manifest are available,
-            // validate the override against the manifest. An unreadable or
-            // ambiguous manifest honors the override — that's the documented
-            // escape hatch for pre-schema-version manifests.
-            if let inferredKind = inferred, inferredKind != explicit {
+            // When both an explicit override and a *successfully-classified*
+            // manifest are present, validate the override against the
+            // manifest. Unreadable or unclassifiable manifests honor the
+            // override — that's the documented escape hatch for
+            // pre-schema-version manifests.
+            if case .classified(let inferredKind) = classification, inferredKind != explicit {
                 throw MelixCLIError.usage(
                     "--export-kind \(exportKindFlagValue(explicit)) does not match the manifest at \(options.artifactManifestPath) (classified as \(exportKindFlagValue(inferredKind))). Omit --export-kind to accept the manifest-inferred value or pass a matching manifest."
                 )
             }
             return explicit
         }
-        if let inferredKind = inferred {
-            return inferredKind
+        switch classification {
+        case .classified(let kind):
+            return kind
+        case .unclassifiable:
+            throw MelixCLIError.usage(
+                "Unable to infer export kind from manifest at \(options.artifactManifestPath); pass --export-kind (adapter|merged) explicitly."
+            )
+        case .fileMissing:
+            // Distinct error so a typo'd path is obvious without re-running
+            // with --export-kind to mask the read failure.
+            throw MelixCLIError.usage(
+                "Manifest not found at \(options.artifactManifestPath); check the path or pass --export-kind (adapter|merged) explicitly."
+            )
+        case .malformed(let detail):
+            throw MelixCLIError.usage(
+                "Manifest at \(options.artifactManifestPath) is not valid JSON (\(detail)); fix the file or pass --export-kind (adapter|merged) explicitly."
+            )
         }
-        throw MelixCLIError.usage(
-            "Unable to infer export kind from manifest at \(options.artifactManifestPath); pass --export-kind (adapter|merged) explicitly."
-        )
     }
 
-    private func inferLoraPublishExportKindFromManifestIfAvailable(
-        manifestPath: String
-    ) -> LoraPublishExportKind? {
+    private func classifyLoraPublishManifest(at manifestPath: String) -> LoraPublishManifestClassification {
         guard !manifestPath.isEmpty else {
-            return nil
+            return .fileMissing
         }
         let url = URL(fileURLWithPath: manifestPath)
-        guard
-            let data = try? Data(contentsOf: url),
-            let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else {
-            return nil
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            // Both ENOENT and EACCES land here; treat them uniformly as
+            // "file unavailable" — the operator's recovery path is the same
+            // (fix the path / permissions, or pass --export-kind to skip the
+            // manifest read entirely).
+            return .fileMissing
         }
-        let schemaVersion = (payload["schema_version"] as? String) ?? ""
-        let artifactKind = (payload["artifact_kind"] as? String) ?? ""
-        let activationMode = (payload["activation_mode"] as? String) ?? ""
+        let payload: Any
+        do {
+            payload = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            return .malformed(error.localizedDescription)
+        }
+        guard let object = payload as? [String: Any] else {
+            return .malformed("top-level value was not a JSON object")
+        }
+        let schemaVersion = (object["schema_version"] as? String) ?? ""
+        let artifactKind = (object["artifact_kind"] as? String) ?? ""
+        let activationMode = (object["activation_mode"] as? String) ?? ""
         if artifactKind == "adapter" || schemaVersion == "melix.lora_adapter_package.v1" {
-            return .adapterExport
+            return .classified(.adapterExport)
         }
         if schemaVersion == "melix.derived_text_model.v1" || activationMode == "fused_derived_model" {
-            return .mergedExport
+            return .classified(.mergedExport)
         }
         if artifactKind == "converted_model_bundle" || artifactKind == "quantized_model_bundle" {
-            return .mergedExport
+            return .classified(.mergedExport)
         }
-        return nil
+        return .unclassifiable
     }
 
     private func exportKindFlagValue(_ kind: LoraPublishExportKind) -> String {
