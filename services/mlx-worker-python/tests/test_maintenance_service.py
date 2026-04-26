@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -3506,6 +3507,48 @@ def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
 
     metrics_by_name = {metric.name: metric for metric in metrics}
     assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
+
+
+def test_vlm_bench_sample_marks_missing_fast_path_probe(caplog) -> None:
+    class RuntimeWithoutProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithoutProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    caplog.set_level(logging.DEBUG, logger="worker.engine.maintenance_core")
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.image_feature_cache_hits == -1
+    assert sample.image_feature_cache_misses == -1
+    assert sample.multimodal_decode_mode == "not_reported"
+    assert "without a fast-path probe" in caplog.text
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:

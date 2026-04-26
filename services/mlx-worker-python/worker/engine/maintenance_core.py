@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+import logging
 import math
 import os
 from pathlib import Path
@@ -39,6 +40,8 @@ from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
 _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -2597,21 +2600,48 @@ class MaintenanceCore:
         first_token_time = first_token_at or finished_at
         completed_at = last_token_at or finished_at
         probe = runtime.last_probe_snapshot() if hasattr(runtime, "last_probe_snapshot") else None
+        if probe is None:
+            logger.debug(
+                "VLM benchmark sample completed without a fast-path probe; "
+                "using not-reported sentinel values."
+            )
         return BenchSample(
             ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
             total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
             completion_tokens=completion_tokens,
-            image_feature_cache_hits=int(getattr(probe, "image_feature_cache_hits", 0) or 0),
-            image_feature_cache_misses=int(getattr(probe, "image_feature_cache_misses", 0) or 0),
-            multimodal_decode_mode=str(getattr(probe, "multimodal_decode_mode", "baseline") or "baseline"),
+            image_feature_cache_hits=int(
+                (getattr(probe, "image_feature_cache_hits", 0) or 0)
+                if probe is not None
+                else -1
+            ),
+            image_feature_cache_misses=int(
+                (getattr(probe, "image_feature_cache_misses", 0) or 0)
+                if probe is not None
+                else -1
+            ),
+            multimodal_decode_mode=str(
+                getattr(probe, "multimodal_decode_mode", "baseline")
+                if probe is not None
+                else "not_reported"
+            ),
             multimodal_fallback_reason=str(
                 getattr(probe, "multimodal_fallback_reason", "not_reported") or "not_reported"
             ),
             multimodal_decode_sync_mode=str(
-                getattr(probe, "multimodal_decode_sync_mode", "baseline") or "baseline"
+                getattr(probe, "multimodal_decode_sync_mode", "baseline")
+                if probe is not None
+                else "not_reported"
             ),
-            multi_image_scatter_mode=str(getattr(probe, "multi_image_scatter_mode", "none") or "none"),
-            quantized_load_mode=str(getattr(probe, "quantized_load_mode", "fallback") or "fallback"),
+            multi_image_scatter_mode=str(
+                getattr(probe, "multi_image_scatter_mode", "none")
+                if probe is not None
+                else "not_reported"
+            ),
+            quantized_load_mode=str(
+                getattr(probe, "quantized_load_mode", "fallback")
+                if probe is not None
+                else "not_reported"
+            ),
             quantized_load_fallback_reason=str(
                 getattr(probe, "quantized_load_fallback_reason", "not_reported") or "not_reported"
             ),
