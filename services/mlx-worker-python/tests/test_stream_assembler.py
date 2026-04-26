@@ -150,6 +150,21 @@ def test_split_structural_tag_preserves_content_until_tag_is_complete() -> None:
     assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["hidden"]
 
 
+def test_split_structural_tag_prefix_longer_than_one_character_is_not_public_content() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-split-tag-prefix",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="alpha<thi")) == []
+    deltas = assembler.accept(StreamFragment(raw_text="alpha<think>hidden</think> omega"))
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["alpha", " omega"]
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["hidden"]
+
+
 def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-truncated-reasoning",

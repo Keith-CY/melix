@@ -1302,10 +1302,12 @@ public actor RequestCoordinator {
         updated.execution.ext["melix.reasoning.continuity_key"] = record.continuityKey
         updated.execution.ext["melix.reasoning.continuity_request_id"] = record.requestID
         updated.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] = "true"
-        updated.execution.ext["melix.chat_template_kwargs.effective_json"] = chatTemplateKwargsJSON(
+        let updatedTemplateKwargsJSON = chatTemplateKwargsJSON(
             merging: updated.execution.ext["melix.chat_template_kwargs.effective_json"],
             continuityRecord: record
         )
+        updated.execution.ext["melix.chat_template_kwargs.effective_json"] = updatedTemplateKwargsJSON
+        updated.execution.scope.chatTemplateKwargsHash = updatedTemplateKwargsJSON
 
         await metricsStore.increment("http.reasoning_continuity_rehydrated_count")
         return updated

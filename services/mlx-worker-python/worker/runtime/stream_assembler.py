@@ -137,7 +137,7 @@ class RequestStreamAssembler:
         while self._buffer:
             next_tag = self._next_structural_tag()
             if next_tag is None:
-                if not final and self._buffer.endswith("<"):
+                if not final and self._has_partial_structural_tag_suffix():
                     break
                 content = self._buffer
                 self._buffer = ""
@@ -194,6 +194,16 @@ class RequestStreamAssembler:
         if not candidates:
             return None
         return min(candidates, key=lambda item: item[1])
+
+    def _has_partial_structural_tag_suffix(self) -> bool:
+        tags = [self._THINK_OPEN]
+        if self._tool_parsing_enabled:
+            tags.append(self._TOOL_OPEN)
+        return any(
+            self._buffer.endswith(tag[:prefix_length])
+            for tag in tags
+            for prefix_length in range(1, len(tag))
+        )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         self._assistant_parts.append(content)

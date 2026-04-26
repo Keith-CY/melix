@@ -192,7 +192,7 @@ struct TextEndpointContractTests {
         #expect(templateResolved.modeSource == "template")
         #expect(templateResolved.effort == "high")
         #expect(templateResolved.config?.budgetTokens == 321)
-        #expect(templateResolved.continuityRehydrated == true)
+        #expect(templateResolved.continuityRehydrated == false)
 
         let explicitlyDisabled = resolver.resolve(
             modelID: "melix-dev-text",
@@ -228,7 +228,7 @@ struct TextEndpointContractTests {
             #expect(resolved.mode == "adaptive")
             #expect(resolved.modeSource == "family_auto_detect")
             #expect(resolved.autoDetectModelFamily == family)
-            #expect(resolved.continuityRehydrated == true)
+            #expect(resolved.continuityRehydrated == false)
         }
 
         let autoDetectedRequest = try? ChatRequestTranslator(requestIDGenerator: { "reasoning-auto-detect" })
@@ -241,6 +241,54 @@ struct TextEndpointContractTests {
             )
         #expect(autoDetectedRequest?.workerRequest.execution.ext["melix.reasoning.auto_detect_model_family"] == "qwen")
         #expect(autoDetectedRequest?.workerRequest.execution.reasoning.autoDetectModelFamily == "qwen")
+    }
+
+    @Test("reasoning suppressions have lowest precedence and only apply as fallback")
+    func reasoningSuppressionsHaveLowestPrecedenceAndOnlyApplyAsFallback() {
+        let resolver = ReasoningPolicyResolver()
+        let templatePolicy = ResolvedChatTemplatePolicy(
+            effectiveValues: ["enable_thinking": .bool(true)],
+            source: "request"
+        )
+
+        let templateResolved = resolver.resolve(
+            modelID: "plain-text-model",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: templatePolicy,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(templateResolved.mode == "enabled")
+        #expect(templateResolved.modeSource == "template")
+
+        let familyResolved = resolver.resolve(
+            modelID: "Qwen3-8B",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: nil,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(familyResolved.mode == "adaptive")
+        #expect(familyResolved.modeSource == "family_auto_detect")
+
+        let suppressed = resolver.resolve(
+            modelID: "plain-text-model",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: nil,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(suppressed.mode == "off")
+        #expect(suppressed.modeSource == "structured_output_suppression")
     }
 
     @Test("reasoning continuity store rejects blank inputs and defaults blank branches")

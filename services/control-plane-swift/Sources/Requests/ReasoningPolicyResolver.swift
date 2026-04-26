@@ -45,7 +45,7 @@ public struct ReasoningPolicyResolver: Sendable {
         preset: MelixMessagesThinkingConfig?,
         modelDefault: MelixMessagesThinkingConfig?,
         suppressForStructuredOutput: Bool = false,
-        continuityAvailable: Bool = false
+        continuityAvailable _: Bool = false
     ) -> ResolvedReasoningPolicy {
         let fallback = preset ?? modelDefault
         let normalizedEffort = normalizedString(explicitEffort)
@@ -55,8 +55,54 @@ public struct ReasoningPolicyResolver: Sendable {
                 explicitEnableThinking,
                 source: "request",
                 effort: normalizedEffort,
-                fallback: fallback,
-                continuityAvailable: continuityAvailable
+                fallback: fallback
+            )
+        }
+
+        if let templateEnableThinking = boolValue(templatePolicy?.effectiveValues["enable_thinking"]) {
+            return resolvedFromEnableThinking(
+                templateEnableThinking,
+                source: "template",
+                effort: normalizedEffort ?? stringValue(templatePolicy?.effectiveValues["reasoning_effort"]),
+                fallback: fallback
+            )
+        }
+
+        if let messagesThinking {
+            return resolvedFromThinkingConfig(
+                messagesThinking,
+                source: "request",
+                effort: normalizedEffort,
+                fallback: fallback
+            )
+        }
+
+        if let preset {
+            return resolvedFromThinkingConfig(
+                preset,
+                source: "preset",
+                effort: normalizedEffort,
+                fallback: preset
+            )
+        }
+
+        if let modelDefault {
+            return resolvedFromThinkingConfig(
+                modelDefault,
+                source: "model",
+                effort: normalizedEffort,
+                fallback: modelDefault
+            )
+        }
+
+        if let family = autoDetectedFamily(modelID: modelID) {
+            return ResolvedReasoningPolicy(
+                config: .init(type: "adaptive"),
+                mode: "adaptive",
+                modeSource: "family_auto_detect",
+                effort: normalizedEffort,
+                autoDetectModelFamily: family,
+                continuityRehydrated: false
             )
         }
 
@@ -70,61 +116,10 @@ public struct ReasoningPolicyResolver: Sendable {
             )
         }
 
-        if let templateEnableThinking = boolValue(templatePolicy?.effectiveValues["enable_thinking"]) {
-            return resolvedFromEnableThinking(
-                templateEnableThinking,
-                source: "template",
-                effort: normalizedEffort ?? stringValue(templatePolicy?.effectiveValues["reasoning_effort"]),
-                fallback: fallback,
-                continuityAvailable: continuityAvailable
-            )
-        }
-
-        if let messagesThinking {
-            return resolvedFromThinkingConfig(
-                messagesThinking,
-                source: "request",
-                effort: normalizedEffort,
-                fallback: fallback,
-                continuityAvailable: continuityAvailable
-            )
-        }
-
-        if let preset {
-            return resolvedFromThinkingConfig(
-                preset,
-                source: "preset",
-                effort: normalizedEffort,
-                fallback: preset,
-                continuityAvailable: continuityAvailable
-            )
-        }
-
-        if let modelDefault {
-            return resolvedFromThinkingConfig(
-                modelDefault,
-                source: "model",
-                effort: normalizedEffort,
-                fallback: modelDefault,
-                continuityAvailable: continuityAvailable
-            )
-        }
-
-        if let family = autoDetectedFamily(modelID: modelID), !suppressForStructuredOutput {
-            return ResolvedReasoningPolicy(
-                config: .init(type: "adaptive"),
-                mode: "adaptive",
-                modeSource: "family_auto_detect",
-                effort: normalizedEffort,
-                autoDetectModelFamily: family,
-                continuityRehydrated: continuityAvailable
-            )
-        }
-
         return ResolvedReasoningPolicy(
-            config: suppressForStructuredOutput ? .init(type: "disabled") : nil,
+            config: nil,
             mode: "off",
-            modeSource: suppressForStructuredOutput ? "structured_output_suppression" : "none",
+            modeSource: "none",
             effort: normalizedEffort,
             continuityRehydrated: false
         )
@@ -134,8 +129,7 @@ public struct ReasoningPolicyResolver: Sendable {
         _ enabled: Bool,
         source: String,
         effort: String?,
-        fallback: MelixMessagesThinkingConfig?,
-        continuityAvailable: Bool
+        fallback: MelixMessagesThinkingConfig?
     ) -> ResolvedReasoningPolicy {
         guard enabled else {
             return ResolvedReasoningPolicy(
@@ -156,7 +150,7 @@ public struct ReasoningPolicyResolver: Sendable {
             mode: config.reasoningMode,
             modeSource: source,
             effort: effort,
-            continuityRehydrated: continuityAvailable
+            continuityRehydrated: false
         )
     }
 
@@ -164,8 +158,7 @@ public struct ReasoningPolicyResolver: Sendable {
         _ requested: MelixMessagesThinkingConfig,
         source: String,
         effort: String?,
-        fallback: MelixMessagesThinkingConfig?,
-        continuityAvailable: Bool
+        fallback: MelixMessagesThinkingConfig?
     ) -> ResolvedReasoningPolicy {
         let normalizedType = requested.normalizedType
         if normalizedType == "disabled" {
@@ -187,7 +180,7 @@ public struct ReasoningPolicyResolver: Sendable {
             mode: resolved.reasoningMode,
             modeSource: source,
             effort: effort,
-            continuityRehydrated: continuityAvailable
+            continuityRehydrated: false
         )
     }
 

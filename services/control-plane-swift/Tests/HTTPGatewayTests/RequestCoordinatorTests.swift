@@ -1081,6 +1081,7 @@ struct RequestCoordinatorTests {
         #expect(followupRequest.execution.ext["melix.reasoning.continuity_request_id"] == "req-continuity-parent")
         #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
         #expect(effectiveTemplate.contains("\"existing\":true"))
+        #expect(followupRequest.execution.scope.chatTemplateKwargsHash == effectiveTemplate)
         #expect(!effectiveTemplate.contains("hidden chain should stay internal"))
         #expect(!extText.contains("hidden chain should stay internal"))
         #expect(metrics.values["http.reasoning_continuity_preserved_count", default: 0] == 1)
