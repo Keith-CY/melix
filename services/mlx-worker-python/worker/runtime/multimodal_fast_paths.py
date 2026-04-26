@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+
+logger = logging.getLogger(__name__)
 
 MULTIMODAL_DECODE_BASELINE = "baseline"
 MULTIMODAL_DECODE_SINGLE_STREAM = "single_stream"
@@ -55,9 +58,12 @@ class MultimodalFastPathController:
     ) -> MultimodalFastPathDecision:
         metadata = _loaded_metadata(loaded_model)
         family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
-        execution_mode = (
+        resolved_execution_mode = (
             str(metadata.get("melix.vlm.execution_mode", "") or "").strip()
             or str(metadata.get("execution_mode", "") or "").strip()
+        )
+        execution_mode = (
+            resolved_execution_mode
             or "multimodal"
         )
         quant_profile_id = _loaded_value(loaded_model, metadata, "quant_profile_id") or "none"
@@ -77,6 +83,13 @@ class MultimodalFastPathController:
                 multi_image_scatter_mode="none",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
+            )
+
+        if not family_id or not resolved_execution_mode:
+            logger.warning(
+                "VLM fast-path metadata is incomplete; family_id_present=%s execution_mode_present=%s",
+                bool(family_id),
+                bool(resolved_execution_mode),
             )
 
         if execution_mode == "text_backed":

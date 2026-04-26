@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_DECODE_BASELINE,
     MULTIMODAL_DECODE_FALLBACK,
@@ -141,17 +143,19 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
 
 
-def test_fast_path_falls_back_when_family_metadata_is_missing() -> None:
+def test_fast_path_warns_and_falls_back_when_family_metadata_is_missing(caplog) -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
     metadata = loaded_model["metadata"]
     assert isinstance(metadata, dict)
     del metadata["vision_family_id"]
 
+    caplog.set_level(logging.WARNING, logger="worker.runtime.multimodal_fast_paths")
     decision = controller.plan(loaded_model, _request([_image(b"image")]))
 
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
     assert decision.multimodal_fallback_reason == "unsupported_family"
+    assert "VLM fast-path metadata is incomplete" in caplog.text
 
 
 def test_fast_path_uses_metadata_family_precedence_over_top_level_copy() -> None:
