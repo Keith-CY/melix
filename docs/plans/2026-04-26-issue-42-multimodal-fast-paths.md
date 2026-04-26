@@ -100,6 +100,8 @@ separate protocol change is explicitly accepted.
 - Multi-image heterogeneous prompts: `bench.<suite>.multi_image_scatter_mode`.
 - Quantized multimodal loads: `bench.<suite>.quantized_load_mode` and
   `bench.<suite>.quantized_load_fallback_reason`.
+- Mixed-mode benchmark suites: categorical VLM fast-path metrics must report a
+  distinct mixed code instead of inheriting only the final sample's mode.
 
 Live speedup claims require a real MLX multimodal model. Deterministic tests only
 prove admission, fallback, cache-key, and evidence correctness.

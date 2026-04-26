@@ -125,6 +125,12 @@ continues to use the existing numeric `RuntimeStats` bridge; adding string
 runtime-stat fields would require a separate protobuf change and is intentionally
 out of scope for the Issue 42 first stage.
 
+For VLM benchmark suites with heterogeneous samples, categorical fast-path
+metrics report a distinct mixed code when more than one value is observed. For
+`bench.<suite>.multimodal_decode_mode`, the mixed code is `5.0`; homogeneous
+suites keep the baseline `0.0`, `single_stream` `1.0`, `image_cache_reuse`
+`2.0`, `native_quantized` `3.0`, and `fallback` `4.0` codes.
+
 ## Recovery
 
 1. Stop the stack and clear stale runtime metadata.

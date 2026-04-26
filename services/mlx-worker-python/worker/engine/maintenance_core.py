@@ -2625,7 +2625,6 @@ class MaintenanceCore:
     ) -> list[BenchMetricSpec]:
         if not samples:
             return []
-        last_sample = samples[-1]
         return [
             BenchMetricSpec(
                 suite=suite_id,
@@ -2642,14 +2641,16 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.multimodal_decode_mode",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.multimodal_decode_mode,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "multimodal_decode_mode",
                     {
                         "baseline": 0.0,
                         "single_stream": 1.0,
                         "image_cache_reuse": 2.0,
                         "native_quantized": 3.0,
                         "fallback": 4.0,
+                        "mixed": 5.0,
                     },
                 ),
                 unit="code",
@@ -2657,8 +2658,9 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.multimodal_fallback_reason",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.multimodal_fallback_reason,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "multimodal_fallback_reason",
                     {
                         "": 0.0,
                         "not_reported": 0.0,
@@ -2666,6 +2668,7 @@ class MaintenanceCore:
                         "text_backed_no_vision_weights": 2.0,
                         "unsupported_family": 3.0,
                         "video_fast_path_unimplemented": 4.0,
+                        "mixed": 5.0,
                     },
                 ),
                 unit="code",
@@ -2673,11 +2676,13 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.multimodal_decode_sync_mode",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.multimodal_decode_sync_mode,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "multimodal_decode_sync_mode",
                     {
                         "baseline": 0.0,
                         "executor_stream": 1.0,
+                        "mixed": 2.0,
                     },
                 ),
                 unit="code",
@@ -2685,11 +2690,13 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.multi_image_scatter_mode",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.multi_image_scatter_mode,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "multi_image_scatter_mode",
                     {
                         "none": 0.0,
                         "per_sample": 1.0,
+                        "mixed": 2.0,
                     },
                 ),
                 unit="code",
@@ -2697,11 +2704,13 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.quantized_load_mode",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.quantized_load_mode,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "quantized_load_mode",
                     {
                         "fallback": 0.0,
                         "native_quantized": 1.0,
+                        "mixed": 2.0,
                     },
                 ),
                 unit="code",
@@ -2709,8 +2718,9 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.quantized_load_fallback_reason",
-                value=MaintenanceCore._categorical_metric_code(
-                    last_sample.quantized_load_fallback_reason,
+                value=MaintenanceCore._categorical_metric_code_for_samples(
+                    samples,
+                    "quantized_load_fallback_reason",
                     {
                         "": 0.0,
                         "not_reported": 0.0,
@@ -2718,6 +2728,7 @@ class MaintenanceCore:
                         "unsupported_quant_profile": 2.0,
                         "text_backed_no_vision_weights": 3.0,
                         "unsupported_family": 4.0,
+                        "mixed": 5.0,
                     },
                 ),
                 unit="code",
@@ -2727,6 +2738,21 @@ class MaintenanceCore:
     @staticmethod
     def _categorical_metric_code(value: str, mapping: dict[str, float]) -> float:
         return mapping.get(value, -1.0)
+
+    @staticmethod
+    def _categorical_metric_code_for_samples(
+        samples: list[BenchSample],
+        field_name: str,
+        mapping: dict[str, float],
+    ) -> float:
+        values = [
+            str(getattr(sample, field_name, "") or "")
+            for sample in samples
+        ]
+        distinct_values = set(values)
+        if len(distinct_values) > 1:
+            return MaintenanceCore._categorical_metric_code("mixed", mapping)
+        return MaintenanceCore._categorical_metric_code(values[-1], mapping)
 
     def _measure_image_generation_bench_metrics(
         self,

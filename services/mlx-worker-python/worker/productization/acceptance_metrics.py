@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from worker.productization.release_gates import (
     _evaluate_section_metrics,
     load_release_gate_policy,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def collect_operator_action_evidence(jobs_root: str | Path) -> dict[str, Any]:
@@ -627,7 +630,14 @@ def _metric_text(snapshot: dict[str, Any], key: str, default: str) -> str:
     if not isinstance(values, dict):
         return default
     value = values.get(key)
+    if value is None:
+        return default
     if not isinstance(value, str):
+        logger.warning(
+            "non-string metric text value ignored; key=%s value_type=%s",
+            key,
+            type(value).__name__,
+        )
         return default
     return value.strip()
 

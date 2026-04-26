@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from worker.productization import (
@@ -248,7 +249,9 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.quantized_load_fallback_reason"] == "not_reported"
 
 
-def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes() -> None:
+def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="worker.productization.acceptance_metrics")
+
     report = exported_build_phase6_vision_metrics_report(
         ingress={},
         ocr={},
@@ -264,6 +267,9 @@ def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(
     metrics = report["metrics"]
     assert metrics["vision.multimodal_decode_mode"] == "baseline"
     assert metrics["vision.quantized_load_mode"] == "fallback"
+    assert "non-string metric text value ignored" in caplog.text
+    assert "vision.multimodal_decode_mode" in caplog.text
+    assert "float" in caplog.text
 
 
 def test_build_phase16_video_metrics_report_includes_operator_metrics() -> None:

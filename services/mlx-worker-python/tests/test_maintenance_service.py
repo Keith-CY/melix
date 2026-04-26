@@ -3485,6 +3485,29 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     assert MaintenanceCore._vlm_fast_path_bench_metrics(suite_id="smoke", samples=[]) == []
 
 
+def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="single_stream",
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=8.0,
+                total_latency_ms=16.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_cache_reuse",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
+
+
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
     catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher())
     suite = catalog.resolve_suite(
