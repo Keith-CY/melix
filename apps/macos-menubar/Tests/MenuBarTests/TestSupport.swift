@@ -10,6 +10,10 @@ enum MenuBarTestEnvironment {
         let environment = ProcessInfo.processInfo.environment
         return environment["GITHUB_ACTIONS"] == "true" || environment["CI"] == "true"
     }
+
+    static var bootstrapConditionTimeout: Duration {
+        isHeadlessCI ? .seconds(10) : .seconds(2)
+    }
 }
 
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
