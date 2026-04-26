@@ -81,6 +81,25 @@ def test_executor_propagates_base_exceptions_from_stream_completion() -> None:
         executor.shutdown()
 
 
+def test_executor_propagates_base_exceptions_from_stream_context() -> None:
+    @contextmanager
+    def interrupted_context(_stream):
+        raise ProducerInterrupted()
+        yield
+
+    executor = MLXRuntimeExecutor(
+        stream_factory=lambda: object(),
+        stream_context_factory=interrupted_context,
+    )
+
+    try:
+        iterator = executor.iterate(lambda: ["unreachable"])
+        with pytest.raises(ProducerInterrupted):
+            next(iterator)
+    finally:
+        executor.shutdown()
+
+
 def test_executor_remains_usable_after_iterator_is_closed_early() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     env = os.environ.copy()

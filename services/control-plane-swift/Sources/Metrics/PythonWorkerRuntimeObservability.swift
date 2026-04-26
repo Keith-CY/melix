@@ -27,6 +27,6 @@ func pythonWorkerGenerationStreamOwnerModeCode(_ mode: String) -> Double {
     case "executor_owned_stream_init_failed":
         return 3
     default:
-        return 0
+        return -1
     }
 }

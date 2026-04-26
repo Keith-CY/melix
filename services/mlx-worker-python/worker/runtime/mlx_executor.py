@@ -78,6 +78,9 @@ class MLXRuntimeExecutor:
                             return
             except Exception as exc:
                 publish("error", exc)
+            except BaseException as exc:
+                publish("error", exc)
+                raise
             finally:
                 if producer_iter is not None:
                     close = getattr(producer_iter, "close", None)

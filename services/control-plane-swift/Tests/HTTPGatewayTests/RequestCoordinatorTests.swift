@@ -7,6 +7,13 @@ import MelixWorkerProtocol
 
 @Suite("Request Coordinator", .serialized)
 struct RequestCoordinatorTests {
+    @Test("python worker stream owner mode uses sentinel for unknown values")
+    func pythonWorkerStreamOwnerModeUsesSentinelForUnknownValues() {
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("") == -1)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("future_mode") == -1)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("executor_owned") == 1)
+    }
+
     @Test("empty model identifiers are rejected before dispatch")
     func emptyModelIdentifiersAreRejectedBeforeDispatch() async throws {
         let coordinator = RequestCoordinator(
