@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 public struct ResolvedReasoningPolicy: Sendable, Equatable {
     public let config: MelixMessagesThinkingConfig?
@@ -34,6 +35,11 @@ public struct ResolvedReasoningPolicy: Sendable, Equatable {
 }
 
 public struct ReasoningPolicyResolver: Sendable {
+    private let logger = Logger(
+        subsystem: "Melix.ControlPlane",
+        category: "ReasoningPolicyResolver"
+    )
+
     public init() {}
 
     public func resolve(
@@ -217,6 +223,9 @@ public struct ReasoningPolicyResolver: Sendable {
         if normalized.contains("gpt-oss") {
             return "gpt-oss"
         }
+        logger.warning(
+            "No reasoning auto-detect family matched modelID=\(modelID, privacy: .public)"
+        )
         return nil
     }
 }

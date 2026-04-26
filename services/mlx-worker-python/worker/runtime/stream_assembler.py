@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,8 @@ class RequestStreamAssembler:
             "duplicate_tool_delta_count": 0,
             "reasoning_leak_count": 0,
             "malformed_tool_fragment_count": 0,
+            "malformed_reasoning_count": 0,
+            "non_monotonic_stream_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -110,6 +115,13 @@ class RequestStreamAssembler:
             self._raw_seen = raw
             return delta
 
+        self._metrics["non_monotonic_stream_count"] += 1
+        logger.warning(
+            "Non-monotonic stream fragment for request_id=%s; seen_chars=%d raw_chars=%d",
+            self._request_id,
+            len(self._raw_seen),
+            len(raw),
+        )
         self._raw_seen += raw
         return raw
 
@@ -155,7 +167,7 @@ class RequestStreamAssembler:
                 close_index = self._buffer.find(self._THINK_CLOSE, len(self._THINK_OPEN))
                 if close_index < 0:
                     if final:
-                        self._metrics["malformed_tool_fragment_count"] += 1
+                        self._metrics["malformed_reasoning_count"] += 1
                         self._buffer = ""
                     break
                 body = self._buffer[len(self._THINK_OPEN) : close_index]
@@ -225,8 +237,12 @@ class RequestStreamAssembler:
             return None
 
         arguments = payload.get("arguments", {})
+        call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
         arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-        key = (name, arguments_fragment)
+        # Prefer model-provided call ids for dedupe so identical repeated calls
+        # can be emitted. Legacy call-id-less fragments keep content dedupe to
+        # suppress non-monotonic replay from older parsers.
+        key = ("call_id", call_id) if call_id else ("legacy", f"{name}\0{arguments_fragment}")
         if key in self._emitted_tool_keys:
             self._metrics["duplicate_tool_delta_count"] += 1
             return None
@@ -234,7 +250,7 @@ class RequestStreamAssembler:
 
         self._tool_fragment_index += 1
         return AssembledToolCall(
-            call_id=f"{self._request_id}-tool-{self._tool_fragment_index}",
+            call_id=call_id or f"{self._request_id}-tool-{self._tool_fragment_index}",
             tool_name=name,
             arguments_json_fragment=arguments_fragment,
             fragment_index=self._tool_fragment_index,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
@@ -178,7 +180,8 @@ def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
 
     assert completed.assistant_text == ""
     assert completed.reasoning_text == ""
-    assert completed.metrics["malformed_tool_fragment_count"] == 1
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["malformed_tool_fragment_count"] == 0
 
 
 def test_malformed_non_object_and_nameless_tool_calls_are_skipped() -> None:
@@ -225,3 +228,45 @@ def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_o
     assert [delta.tool_call.tool_name for delta in first if delta.tool_call] == ["search"]
     assert [delta.tool_call for delta in replay if delta.tool_call] == []
     assert completed.metrics["duplicate_tool_delta_count"] == 1
+    assert completed.metrics["non_monotonic_stream_count"] == 1
+
+
+def test_non_monotonic_raw_stream_is_observable(caplog) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-non-monotonic",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    caplog.set_level(logging.WARNING, logger="worker.runtime.stream_assembler")
+    assert assembler.accept(StreamFragment(raw_text="hello world"))[0].content_text == "hello world"
+    assert assembler.accept(StreamFragment(raw_text="reset stream"))[0].content_text == "reset stream"
+    completed = assembler.completed()
+
+    assert completed.metrics["non_monotonic_stream_count"] == 1
+    assert "Non-monotonic stream fragment" in caplog.text
+    assert "req-non-monotonic" in caplog.text
+
+
+def test_repeated_tool_calls_with_distinct_call_ids_are_emitted() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-repeated-tool",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '<tool_call>{"id":"call-1","name":"search","arguments":{"q":"apple"}}</tool_call>'
+                '<tool_call>{"id":"call-2","name":"search","arguments":{"q":"apple"}}</tool_call>'
+            )
+        )
+    )
+
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+    assert [call.call_id for call in calls] == ["call-1", "call-2"]
+    assert [call.tool_name for call in calls] == ["search", "search"]
+    assert assembler.completed().metrics["duplicate_tool_delta_count"] == 0

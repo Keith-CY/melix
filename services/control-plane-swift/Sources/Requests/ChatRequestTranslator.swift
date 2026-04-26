@@ -1761,6 +1761,8 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.scope.structuredOutputMode = shapedRequest.structuredOutput?.mode.rawValue ?? ""
         generateRequest.execution.scope.chatTemplateKwargsHash = shapedRequest.chatTemplate?.effectiveJSONString ?? ""
         generateRequest.execution.scope.reasoningContinuityPresent = shapedRequest.reasoningContinuityRehydrated
+        // CacheScope is the canonical worker cache partition. The matching ext
+        // keys are a compatibility mirror for older evidence/report readers.
         generateRequest.execution.ext["melix.cache.fingerprint.reasoning_mode"] = shapedRequest.reasoningMode
         generateRequest.execution.ext["melix.cache.fingerprint.reasoning_effort"] = shapedRequest.reasoningEffort ?? ""
         generateRequest.execution.ext["melix.cache.fingerprint.parser_mode"] = shapedRequest.toolParser?.mode.rawValue ?? ""

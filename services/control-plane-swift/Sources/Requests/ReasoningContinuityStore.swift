@@ -23,6 +23,9 @@ public struct ReasoningContinuityRecord: Sendable, Equatable {
 }
 
 public actor ReasoningContinuityStore {
+    // Latest wins per session/branch to keep continuity memory bounded. The
+    // store intentionally does not retain per-branch history beyond the most
+    // recent successful reasoning record.
     private var latestByBranch: [String: ReasoningContinuityRecord] = [:]
 
     public init() {}
