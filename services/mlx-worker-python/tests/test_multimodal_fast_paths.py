@@ -45,8 +45,9 @@ def _loaded_model(
     family_id: str = "gemma4-v1",
     execution_mode: str = "multimodal",
     quant_profile_id: str = "none",
+    top_level_family_id: str | None = None,
 ) -> dict[str, object]:
-    return {
+    loaded_model: dict[str, object] = {
         "model_id": "melix-dev-vlm",
         "revision": "main",
         "tokenizer_hash": "tok",
@@ -59,6 +60,9 @@ def _loaded_model(
             "melix.multimodal_adapter_hash": "adapter-a",
         },
     }
+    if top_level_family_id is not None:
+        loaded_model["vision_family_id"] = top_level_family_id
+    return loaded_model
 
 
 def test_fast_path_records_cache_miss_then_hit_for_repeated_image() -> None:
@@ -135,3 +139,56 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.multimodal_fallback_reason == "unsupported_family"
     assert unsupported.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
+
+
+def test_fast_path_falls_back_when_family_metadata_is_missing() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    del metadata["vision_family_id"]
+
+    decision = controller.plan(loaded_model, _request([_image(b"image")]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "unsupported_family"
+
+
+def test_fast_path_uses_metadata_family_precedence_over_top_level_copy() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1", top_level_family_id="unknown-vlm"),
+        _request([_image(b"image")]),
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == ""
+
+
+def test_fast_path_rejects_non_quantized_q_prefixed_profile_names() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(
+        _loaded_model(quant_profile_id="quality_high"),
+        _request([_image(b"image")]),
+    )
+
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
+    assert decision.quantized_load_fallback_reason == "unsupported_quant_profile"
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+
+
+def test_fast_path_evicts_oldest_image_feature_key_when_cache_is_full() -> None:
+    controller = MultimodalFastPathController(max_image_feature_cache_entries=1)
+    loaded_model = _loaded_model()
+    first_image = _image(b"first-image", filename="first.jpg")
+    second_image = _image(b"second-image", filename="second.jpg")
+
+    controller.plan(loaded_model, _request([first_image]))
+    controller.plan(loaded_model, _request([second_image]))
+    decision = controller.plan(loaded_model, _request([first_image]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 1

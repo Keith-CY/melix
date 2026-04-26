@@ -4406,6 +4406,7 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok)
         #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
+        #expect(lastRequest.parameters["require_live_model"] == nil)
         #expect(response.ops.benchmarkJob.jobID == "bench-explicit")
         #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
     }

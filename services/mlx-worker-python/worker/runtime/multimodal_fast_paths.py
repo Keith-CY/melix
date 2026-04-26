@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,12 +30,6 @@ class ImageFeatureCacheKey:
 
 
 @dataclass(frozen=True)
-class ImageFeatureCacheEntry:
-    key: ImageFeatureCacheKey
-    bytes_used: int
-
-
-@dataclass(frozen=True)
 class MultimodalFastPathDecision:
     image_feature_cache_hits: int
     image_feature_cache_misses: int
@@ -49,8 +44,9 @@ class MultimodalFastPathDecision:
 class MultimodalFastPathController:
     """Tracks Melix-owned VLM fast-path admission without changing request APIs."""
 
-    def __init__(self) -> None:
-        self._image_feature_cache: dict[ImageFeatureCacheKey, ImageFeatureCacheEntry] = {}
+    def __init__(self, *, max_image_feature_cache_entries: int = 1024) -> None:
+        self._max_image_feature_cache_entries = max(max_image_feature_cache_entries, 1)
+        self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, None] = OrderedDict()
 
     def plan(
         self,
@@ -58,7 +54,7 @@ class MultimodalFastPathController:
         prepared_request: PreparedVisionRequest,
     ) -> MultimodalFastPathDecision:
         metadata = _loaded_metadata(loaded_model)
-        family_id = _loaded_value(loaded_model, metadata, "vision_family_id") or "llava-v1"
+        family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
         execution_mode = (
             str(metadata.get("melix.vlm.execution_mode", "") or "").strip()
             or str(metadata.get("execution_mode", "") or "").strip()
@@ -116,12 +112,12 @@ class MultimodalFastPathController:
             )
             if key in self._image_feature_cache:
                 hits += 1
+                self._image_feature_cache.move_to_end(key)
                 continue
             misses += 1
-            self._image_feature_cache[key] = ImageFeatureCacheEntry(
-                key=key,
-                bytes_used=image.byte_length,
-            )
+            self._image_feature_cache[key] = None
+            while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
+                self._image_feature_cache.popitem(last=False)
 
         if hits > 0:
             decode_mode = MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
@@ -195,7 +191,9 @@ class MultimodalFastPathController:
         if not quant_profile_id or quant_profile_id.lower() in {"none", "fp16", "float16"}:
             return MULTIMODAL_LOAD_FALLBACK, "not_quantized"
         normalized = quant_profile_id.lower()
-        is_quantized = normalized in _NATIVE_QUANTIZED_PROFILES or normalized.startswith("q")
+        is_quantized = normalized in _NATIVE_QUANTIZED_PROFILES or (
+            len(normalized) > 1 and normalized[0] == "q" and normalized[1].isdigit()
+        )
         if not is_quantized:
             return MULTIMODAL_LOAD_FALLBACK, "unsupported_quant_profile"
         if execution_mode == "text_backed":
@@ -231,11 +229,13 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
 
 
 def _loaded_value(loaded_model: Any, metadata: dict[str, str], key: str) -> str:
+    if metadata_value := str(metadata.get(key, "") or "").strip():
+        return metadata_value
     if isinstance(loaded_model, dict):
         value = loaded_model.get(key, "")
         if value:
             return str(value).strip()
-    return str(metadata.get(key, "") or "").strip()
+    return ""
 
 
 def _adapter_hash(metadata: dict[str, str]) -> str:

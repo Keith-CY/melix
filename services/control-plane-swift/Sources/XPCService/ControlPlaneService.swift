@@ -2834,13 +2834,23 @@ public actor ControlPlaneService {
         if !explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
+        let explicitRepoID = model.settings.ext["melix.hf_repo_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if explicitRepoID?.contains("/") == true {
+            return true
+        }
+        let sourceRepo = model.settings.ext["melix.source_repo"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if sourceRepo?.contains("/") == true {
+            return true
+        }
         let sourceKind = model.settings.ext["melix.source_kind"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if sourceKind == "hf_repo" {
+        if sourceKind == "hf_repo" || sourceKind == "hub_repo" {
             return true
         }
-        return benchmarkSourceRepo(for: model).contains("/")
+        return model.modelID.contains("/")
     }
 
     private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {
