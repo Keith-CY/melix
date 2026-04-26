@@ -366,8 +366,13 @@ class MLXTextRuntime:
             item_iterable = self._executor.iterate(
                 lambda: self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
             )
-        for item in item_iterable:
-            if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
-                yield item
-            else:
-                yield RuntimeTokenEvent(text=str(item))
+        try:
+            for item in item_iterable:
+                if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
+                    yield item
+                else:
+                    yield RuntimeTokenEvent(text=str(item))
+        finally:
+            close = getattr(item_iterable, "close", None)
+            if callable(close):
+                close()
