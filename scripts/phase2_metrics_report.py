@@ -16,9 +16,27 @@ from typing import Any
 import grpc
 
 try:
-    from scripts.real_model_support import resolve_real_small_text_model_source
+    from scripts.real_model_support import (
+        PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID,
+        PHASE2_DRAFT_MODEL_ID_ENV,
+        PHASE2_DRAFT_MODEL_PATH_ENV,
+        PHASE2_LIVE_MODEL_ID_ENV,
+        PHASE2_LIVE_MODEL_PATH_ENV,
+        REAL_SMALL_TEXT_MODEL_ID,
+        build_runtime_model_preflight,
+        resolve_real_small_text_model_source,
+    )
 except ModuleNotFoundError:  # pragma: no cover - direct `python scripts/...` execution fallback.
-    from real_model_support import resolve_real_small_text_model_source  # type: ignore[no-redef]
+    from real_model_support import (  # type: ignore[no-redef]
+        PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID,
+        PHASE2_DRAFT_MODEL_ID_ENV,
+        PHASE2_DRAFT_MODEL_PATH_ENV,
+        PHASE2_LIVE_MODEL_ID_ENV,
+        PHASE2_LIVE_MODEL_PATH_ENV,
+        REAL_SMALL_TEXT_MODEL_ID,
+        build_runtime_model_preflight,
+        resolve_real_small_text_model_source,
+    )
 
 from packages.protocol.python.worker.v1 import (
     common_pb2,
@@ -99,6 +117,37 @@ class Phase2ModelConfiguration:
     revision: str
     source_resolution_mode: str
     warnings: tuple[str, ...] = ()
+    live_model_required: bool = False
+    served_runtime_model_class: str = ""
+    draft_model_id: str = ""
+    draft_model_path: str = ""
+    draft_revision: str = ""
+    draft_source_resolution_mode: str = ""
+    draft_runtime_model_class: str = ""
+    draft_warnings: tuple[str, ...] = ()
+    num_draft_tokens: int = 4
+
+    def model_evidence(self) -> dict[str, Any]:
+        return {
+            "served": {
+                "model_id": self.model_id,
+                "model_path": self.model_path,
+                "revision": self.revision,
+                "source_resolution_mode": self.source_resolution_mode,
+                "runtime_model_class": self.served_runtime_model_class,
+                "warnings": list(self.warnings),
+            },
+            "draft": {
+                "model_id": self.draft_model_id,
+                "model_path": self.draft_model_path,
+                "revision": self.draft_revision,
+                "source_resolution_mode": self.draft_source_resolution_mode,
+                "runtime_model_class": self.draft_runtime_model_class,
+                "warnings": list(self.draft_warnings),
+            },
+            "live_model_required": self.live_model_required,
+            "num_draft_tokens": self.num_draft_tokens,
+        }
 
 
 @dataclass
@@ -132,6 +181,29 @@ def main() -> None:
     parser.add_argument("--model-id", default="", help="Model id sent to HTTP and worker probes.")
     parser.add_argument("--model-path", default="", help="Model path or Hub id used by direct worker probes.")
     parser.add_argument("--model-revision", default="", help="Model revision used by direct worker probes.")
+    parser.add_argument(
+        "--live-model",
+        action="store_true",
+        help="Resolve the Phase 2 served model as a live Hub/local model instead of the deterministic dev model.",
+    )
+    parser.add_argument(
+        "--require-live-model",
+        action="store_true",
+        help="Fail fast when the served/draft model pair is missing or resolves to deterministic development behavior.",
+    )
+    parser.add_argument("--served-model-id", default="", help="Explicit live served model id for Phase 2 probes.")
+    parser.add_argument("--served-model-path", default="", help="Explicit live served model local path or Hub id.")
+    parser.add_argument(
+        "--draft-model-id",
+        default="",
+        help=(
+            "Explicit draft model id for speculative probes. Defaults to "
+            f"{PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID} for live Phase 2 runs."
+        ),
+    )
+    parser.add_argument("--draft-model-path", default="", help="Explicit draft model local path or Hub id.")
+    parser.add_argument("--draft-model-revision", default="", help="Draft model revision used by direct worker probes.")
+    parser.add_argument("--num-draft-tokens", type=int, default=4, help="Speculative draft proposal window.")
     parser.add_argument(
         "--real-small-model",
         action="store_true",
@@ -236,10 +308,18 @@ def main() -> None:
 
     stack = resolve_stack_configuration(Path(args.runtime_dir))
     model = resolve_model_configuration(
+        live_model=bool(args.live_model),
+        require_live_model=bool(args.require_live_model),
         real_small_model=bool(args.real_small_model),
         model_id=str(args.model_id or ""),
         model_path=str(args.model_path or ""),
         model_revision=str(args.model_revision or ""),
+        served_model_id=str(args.served_model_id or ""),
+        served_model_path=str(args.served_model_path or ""),
+        draft_model_id=str(args.draft_model_id or ""),
+        draft_model_path=str(args.draft_model_path or ""),
+        draft_model_revision=str(args.draft_model_revision or ""),
+        num_draft_tokens=max(1, int(args.num_draft_tokens or 0)),
         environment=os.environ,
     )
     baseline_http = measure_http_stream(
@@ -271,6 +351,14 @@ def main() -> None:
         "model_revision": model.revision,
         "model_source_resolution_mode": model.source_resolution_mode,
         "model_warnings": list(model.warnings),
+        "live_model_required": model.live_model_required,
+        "model_evidence": model.model_evidence(),
+        "draft_model_id": model.draft_model_id,
+        "draft_model_path": model.draft_model_path,
+        "draft_model_revision": model.draft_revision,
+        "draft_model_source_resolution_mode": model.draft_source_resolution_mode,
+        "draft_model_warnings": list(model.draft_warnings),
+        "num_draft_tokens": model.num_draft_tokens,
         "http_baseline": baseline_http,
         "queue_pressure": queue_pressure,
         **direct_worker,
@@ -344,29 +432,77 @@ def load_report_json(path: Path) -> dict[str, Any]:
 
 def resolve_model_configuration(
     *,
-    real_small_model: bool,
+    live_model: bool = False,
+    require_live_model: bool = False,
+    real_small_model: bool = False,
     model_id: str,
     model_path: str,
     model_revision: str,
+    served_model_id: str = "",
+    served_model_path: str = "",
+    draft_model_id: str = "",
+    draft_model_path: str = "",
+    draft_model_revision: str = "",
+    num_draft_tokens: int = 4,
     environment: dict[str, str] | None = None,
 ) -> Phase2ModelConfiguration:
     env = dict(os.environ if environment is None else environment)
     resolved_model_id = model_id.strip() or "melix-dev-text"
 
-    if real_small_model:
+    if real_small_model or live_model:
+        served_id = (
+            served_model_id.strip()
+            or model_id.strip()
+            or env.get(PHASE2_LIVE_MODEL_ID_ENV, "").strip()
+            or REAL_SMALL_TEXT_MODEL_ID
+        )
+        served_path = (
+            served_model_path.strip()
+            or model_path.strip()
+            or env.get(PHASE2_LIVE_MODEL_PATH_ENV, "").strip()
+        )
         source = resolve_real_small_text_model_source(
-            local_model_path=model_path,
+            model_id=served_id,
+            local_model_path=served_path,
             environment=env,
             allow_managed_root=True,
             allow_hf_cache=True,
         )
-        return Phase2ModelConfiguration(
-            model_id=resolved_model_id,
+        served_preflight = build_runtime_model_preflight(
+            model_id=source.model_id,
+            live=source.live,
+            local_model_path=source.local_model_path,
+            source_resolution_mode=source.source_resolution_mode,
+        )
+        draft = resolve_draft_model_configuration(
+            draft_model_id=draft_model_id,
+            draft_model_path=draft_model_path,
+            draft_model_revision=draft_model_revision,
+            environment=env,
+        )
+        warnings = tuple(source.warnings)
+        draft_warnings = tuple([*draft["warnings"], *draft["preflight_warnings"]])
+        configuration = Phase2ModelConfiguration(
+            model_id=source.model_id,
             model_path=source.model_path_for_runtime,
             revision=model_revision.strip() or "main",
             source_resolution_mode=source.source_resolution_mode,
-            warnings=source.warnings,
+            warnings=warnings,
+            live_model_required=bool(require_live_model),
+            served_runtime_model_class=served_preflight.runtime_model_class,
+            draft_model_id=str(draft["model_id"]),
+            draft_model_path=str(draft["model_path"]),
+            draft_revision=str(draft["revision"]),
+            draft_source_resolution_mode=str(draft["source_resolution_mode"]),
+            draft_runtime_model_class=str(draft["runtime_model_class"]),
+            draft_warnings=draft_warnings,
+            num_draft_tokens=max(1, int(num_draft_tokens or 0)),
         )
+        validate_live_model_configuration(configuration)
+        return configuration
+
+    if require_live_model:
+        raise RuntimeError("--require-live-model requires --live-model or --real-small-model.")
 
     env_model_path = env.get("MELIX_DEV_TEXT_MODEL_PATH", "").strip()
     env_model_revision = env.get("MELIX_DEV_TEXT_MODEL_REVISION", "").strip()
@@ -374,12 +510,77 @@ def resolve_model_configuration(
     source_resolution_mode = "explicit_model_path" if model_path.strip() else (
         "env_model_path" if env_model_path else "dev_text_default"
     )
+    preflight = build_runtime_model_preflight(
+        model_id=resolved_model_id,
+        live=False,
+        local_model_path=resolved_model_path,
+        source_resolution_mode=source_resolution_mode,
+    )
     return Phase2ModelConfiguration(
         model_id=resolved_model_id,
         model_path=resolved_model_path,
         revision=model_revision.strip() or env_model_revision or "dev",
         source_resolution_mode=source_resolution_mode,
+        warnings=preflight.warnings,
+        served_runtime_model_class=preflight.runtime_model_class,
+        num_draft_tokens=max(1, int(num_draft_tokens or 0)),
     )
+
+
+def resolve_draft_model_configuration(
+    *,
+    draft_model_id: str,
+    draft_model_path: str,
+    draft_model_revision: str,
+    environment: dict[str, str],
+) -> dict[str, object]:
+    resolved_draft_id = (
+        draft_model_id.strip()
+        or environment.get(PHASE2_DRAFT_MODEL_ID_ENV, "").strip()
+        or PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID
+    )
+    resolved_draft_path = draft_model_path.strip() or environment.get(PHASE2_DRAFT_MODEL_PATH_ENV, "").strip()
+
+    source = resolve_real_small_text_model_source(
+        model_id=resolved_draft_id,
+        local_model_path=resolved_draft_path,
+        environment=environment,
+        allow_managed_root=True,
+        allow_hf_cache=True,
+    )
+    preflight = build_runtime_model_preflight(
+        model_id=source.model_id,
+        live=source.live,
+        local_model_path=source.local_model_path,
+        source_resolution_mode=source.source_resolution_mode,
+    )
+    return {
+        "model_id": source.model_id,
+        "model_path": source.model_path_for_runtime,
+        "revision": draft_model_revision.strip() or "main",
+        "source_resolution_mode": source.source_resolution_mode,
+        "runtime_model_class": preflight.runtime_model_class,
+        "warnings": source.warnings,
+        "preflight_warnings": preflight.warnings,
+    }
+
+
+def validate_live_model_configuration(model: Phase2ModelConfiguration) -> None:
+    if not model.live_model_required:
+        return
+
+    failures: list[str] = []
+    if not is_live_model_runtime_class(model.served_runtime_model_class):
+        failures.append(f"served_model={model.served_runtime_model_class or 'missing'}")
+    if not is_live_model_runtime_class(model.draft_runtime_model_class):
+        failures.append(f"draft_model={model.draft_runtime_model_class or 'missing'}")
+
+    if failures:
+        raise RuntimeError(f"Phase 2 live model preflight failed: {'; '.join(failures)}")
+
+
+def is_live_model_runtime_class(runtime_model_class: str) -> bool:
+    return runtime_model_class in {"hub_required", "real_local_model"}
 
 
 def collect_direct_phase_two_metrics(
@@ -419,8 +620,30 @@ def collect_direct_phase_two_metrics(
         if not load_response.ok:
             raise RuntimeError(f"LoadModel failed for phase 2 metrics: {load_response.error}")
 
-        stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=10)
+        estimated_loaded_resident_bytes = int(max(0, load_response.estimated_resident_bytes))
         model_handle = load_response.model_handle
+        loaded_handles = [model_handle]
+        draft_model_handle = ""
+        draft_load_model_ms: float | None = None
+        if model.draft_model_id:
+            draft_load_started_at = time.perf_counter()
+            draft_load_response = runtime_stub.LoadModel(
+                runtime_pb2.LoadModelRequest(
+                    model=draft_text_model_spec(model),
+                    memory_budget_bytes=0,
+                    pin_on_load=False,
+                    warmup_after_load=False,
+                ),
+                timeout=120,
+            )
+            draft_load_model_ms = elapsed_ms(draft_load_started_at)
+            if not draft_load_response.ok:
+                raise RuntimeError(f"Draft LoadModel failed for phase 2 metrics: {draft_load_response.error}")
+            estimated_loaded_resident_bytes += int(max(0, draft_load_response.estimated_resident_bytes))
+            draft_model_handle = draft_load_response.model_handle
+            loaded_handles.append(draft_model_handle)
+
+        stats = runtime_stub.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), timeout=10)
 
         prefill_baseline = measure_prefill_probe(
             inference_stub,
@@ -500,7 +723,8 @@ def collect_direct_phase_two_metrics(
                 policy=common_pb2.AccelerationPolicy(
                     mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
                     profile_id="draft-q4",
-                    draft_model_id="melix-dev-text-draft",
+                    draft_model_id=model.draft_model_id or "melix-dev-text-draft",
+                    num_draft_tokens=model.num_draft_tokens,
                     allow_baseline_fallback=True,
                 ),
             )
@@ -519,19 +743,23 @@ def collect_direct_phase_two_metrics(
                 prompt=abort_prompt,
             )
 
-        unload = runtime_stub.UnloadModel(
-            runtime_pb2.UnloadModelRequest(model_handle=model_handle),
-            timeout=30,
-        )
-        if not unload.ok:
-            raise RuntimeError(f"UnloadModel failed for phase 2 metrics: {unload.error}")
+        for loaded_handle in reversed(list(dict.fromkeys(loaded_handles))):
+            unload = runtime_stub.UnloadModel(
+                runtime_pb2.UnloadModelRequest(model_handle=loaded_handle),
+                timeout=30,
+            )
+            if not unload.ok:
+                raise RuntimeError(f"UnloadModel failed for phase 2 metrics: {unload.error}")
 
     active_kv_release_gates = build_active_kv_release_gates(decode_rows, comparisons)
     active_kv_fused_candidate_probes = build_active_kv_fused_candidate_probes(active_kv_release_gates)
     return {
         "swift_worker_direct": {
             "load_model_ms": load_model_ms,
-            "resident_bytes": int(max(load_response.estimated_resident_bytes, stats.stats.resident_bytes)),
+            "draft_load_model_ms": draft_load_model_ms,
+            "draft_model_handle": draft_model_handle,
+            "model_evidence": model.model_evidence(),
+            "resident_bytes": int(max(estimated_loaded_resident_bytes, stats.stats.resident_bytes)),
             "prefill": [prefill_baseline, prefill_accelerated, prefill_sparse],
             "decode": decode_rows,
             "comparisons": comparisons,
@@ -781,6 +1009,7 @@ def measure_decode_probe(
         "mode": acceleration_mode_name(policy.mode),
         "profile_id": policy.profile_id or None,
         "draft_model_id": policy.draft_model_id or None,
+        "num_draft_tokens": int(policy.num_draft_tokens),
         "ttft_ms": ttft_ms,
         "total_ms": total_ms,
         "tokens_per_second": compute_tokens_per_second(completion_tokens, ttft_ms, total_ms),
@@ -792,6 +1021,17 @@ def measure_decode_probe(
         "worker_decode_tokens_per_second": exported.get("swift_text.decode_tokens_per_second"),
         "speculative_acceptance_rate": exported.get("swift_text.speculative_acceptance_rate"),
         "speculative_rollback_rate": exported.get("swift_text.speculative_rollback_rate"),
+        "speculative_accepted_tokens": exported.get("swift_text.speculative_accepted_tokens"),
+        "speculative_rejected_tokens": exported.get("swift_text.speculative_rejected_tokens"),
+        "speculative_fallback_count": exported.get("swift_text.speculative_fallback_count"),
+        "speculative_draft_model_configured": exported.get("swift_text.speculative_draft_model_configured"),
+        "speculative_num_draft_tokens": exported.get("swift_text.speculative_num_draft_tokens"),
+        "speculative_draft_propose_ms": exported.get("swift_text.speculative_draft_propose_ms"),
+        "speculative_target_verify_ms": exported.get("swift_text.speculative_target_verify_ms"),
+        "dflash_enabled": exported.get("swift_text.dflash_enabled"),
+        "dflash_block_size": exported.get("swift_text.dflash_block_size"),
+        "dflash_rollback_count": exported.get("swift_text.dflash_rollback_count"),
+        "dflash_target_hidden_layers": exported.get("swift_text.dflash_target_hidden_layers"),
         **active_kv_metrics,
     }
 
@@ -933,6 +1173,20 @@ def read_metrics_export(path: Path) -> dict[str, Any]:
     return {"values": {}}
 
 
+def phase2_text_tokenizer_hash(model_id: str, *, fallback: str) -> str:
+    normalized = model_id.lower()
+    family_markers = (
+        ("qwen", "tok-qwen"),
+        ("gemma", "tok-gemma"),
+        ("llama", "tok-llama"),
+        ("mistral", "tok-mistral"),
+    )
+    for marker, tokenizer_hash in family_markers:
+        if marker in normalized:
+            return tokenizer_hash
+    return fallback
+
+
 def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common_pb2.ModelSpec:
     model = model or resolve_model_configuration(
         real_small_model=False,
@@ -945,7 +1199,22 @@ def dev_text_model_spec(model: Phase2ModelConfiguration | None = None) -> common
         model_path=model.model_path,
         model_kind="text",
         revision=model.revision,
-        tokenizer_hash="tok-dev",
+        tokenizer_hash=phase2_text_tokenizer_hash(model.model_id, fallback="tok-dev"),
+        quant_profile_id="q4",
+        parser_mode="text",
+        reasoning_mode="off",
+        max_context=8192,
+    )
+
+
+def draft_text_model_spec(model: Phase2ModelConfiguration) -> common_pb2.ModelSpec:
+    target_tokenizer_hash = phase2_text_tokenizer_hash(model.model_id, fallback="tok-dev")
+    return common_pb2.ModelSpec(
+        model_id=model.draft_model_id,
+        model_path=model.draft_model_path,
+        model_kind="text",
+        revision=model.draft_revision or "main",
+        tokenizer_hash=phase2_text_tokenizer_hash(model.draft_model_id, fallback=target_tokenizer_hash),
         quant_profile_id="q4",
         parser_mode="text",
         reasoning_mode="off",
@@ -1834,6 +2103,12 @@ def render_report(report: dict[str, Any]) -> str:
         f"model_id: {report.get('model_id', 'melix-dev-text')}",
         f"model_path: {report.get('model_path', 'models/melix-dev-text')}",
         f"model_revision: {report.get('model_revision', 'dev')}",
+        f"live_model_required: {report.get('live_model_required', False)}",
+        f"served_runtime_model_class: {report.get('model_evidence', {}).get('served', {}).get('runtime_model_class', '')}",
+        f"draft_model_id: {report.get('draft_model_id', '')}",
+        f"draft_model_path: {report.get('draft_model_path', '')}",
+        f"draft_runtime_model_class: {report.get('model_evidence', {}).get('draft', {}).get('runtime_model_class', '')}",
+        f"num_draft_tokens: {report.get('num_draft_tokens', 4)}",
         "",
         "HTTP Baseline",
         format_table([report["http_baseline"]], ["label", "ttft_ms", "total_ms", "tokens_per_second", "completion_tokens", "finish_reason"]),
@@ -1877,6 +2152,17 @@ def render_report(report: dict[str, Any]) -> str:
                 "worker_decode_tokens_per_second",
                 "speculative_acceptance_rate",
                 "speculative_rollback_rate",
+                "speculative_accepted_tokens",
+                "speculative_rejected_tokens",
+                "speculative_fallback_count",
+                "speculative_num_draft_tokens",
+                "speculative_draft_model_configured",
+                "speculative_draft_propose_ms",
+                "speculative_target_verify_ms",
+                "dflash_enabled",
+                "dflash_block_size",
+                "dflash_rollback_count",
+                "dflash_target_hidden_layers",
                 "active_kv_quantization_ratio",
                 "active_kv_backend",
                 "active_kv_kernel_path",

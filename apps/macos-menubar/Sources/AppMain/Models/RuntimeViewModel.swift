@@ -6520,6 +6520,9 @@ public final class RuntimeViewModel {
                         port: serverSession.port,
                         rateLimitPerMinute: serverSession.rateLimitPerMinute,
                         timeoutSeconds: serverSession.timeoutSeconds,
+                        accelerationMode: serverSession.servingDefaults.accelerationMode,
+                        draftModelID: serverSession.servingDefaults.draftModelID,
+                        numDraftTokens: serverSession.servingDefaults.numDraftTokens,
                         json: true
                     )
                 )
