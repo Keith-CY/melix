@@ -43,6 +43,11 @@ class MLXRuntimeExecutor:
         self._stream_sync_fallback_count = 0
 
     def run(self, fn: Callable[[], T]) -> T:
+        """Run work on the executor-owned thread.
+
+        Nested calls from that same owner thread execute inline, so callers
+        must keep any re-entrant submission chain bounded.
+        """
         if self._is_owner_thread():
             return self._run_on_owner(fn)
         return self._submit(lambda: self._run_on_owner(fn))
@@ -71,7 +76,7 @@ class MLXRuntimeExecutor:
                     for item in producer_iter:
                         if not publish("item", item):
                             return
-            except BaseException as exc:  # pragma: no cover - BaseException keeps generator cleanup honest.
+            except Exception as exc:
                 publish("error", exc)
             finally:
                 if producer_iter is not None:

@@ -15,6 +15,10 @@ import pytest
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 
 
+class ProducerInterrupted(BaseException):
+    pass
+
+
 def test_executor_initializes_stream_and_runs_work_on_owned_thread() -> None:
     main_thread_id = get_ident()
     stream_init_thread_ids: list[int] = []
@@ -59,6 +63,22 @@ def test_executor_streams_items_and_propagates_generator_errors_from_owned_threa
         executor.shutdown()
 
     assert producer_thread_ids == [executor_thread_id, executor_thread_id]
+
+
+def test_executor_propagates_base_exceptions_from_stream_completion() -> None:
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+
+    def producer():
+        yield "first"
+        raise ProducerInterrupted()
+
+    try:
+        iterator = executor.iterate(producer)
+        assert next(iterator) == "first"
+        with pytest.raises(ProducerInterrupted):
+            next(iterator)
+    finally:
+        executor.shutdown()
 
 
 def test_executor_remains_usable_after_iterator_is_closed_early() -> None:

@@ -72,6 +72,23 @@ class ThreadRecordingWarmupBackend(FakeBackend):
         yield "warm"
 
 
+class CancelAwareWarmupBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_seen_on_close = False
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        try:
+            yield "warm"
+            while not cancel_event.is_set():
+                pass
+        finally:
+            self.cancel_seen_on_close = cancel_event.is_set()
+
+
 def build_runtime_service() -> WorkerRuntimeService:
     executor = MLXRuntimeExecutor(stream_factory=lambda: object())
     registry = WorkerRegistry(
@@ -198,6 +215,32 @@ def test_thread_recording_warmup_backend_stops_immediately_when_cancelled() -> N
 
     assert generated == []
     assert backend.generation_thread_ids == []
+
+
+def test_warmup_model_closes_generation_after_the_first_token() -> None:
+    backend = CancelAwareWarmupBackend()
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend, executor=executor),
+            mlx_executor=executor,
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    try:
+        response = service.LoadModel(
+            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+            context=None,
+        )
+        warmup = service.WarmupModel(
+            runtime_pb2.WarmupModelRequest(model_handle=response.model_handle),
+            context=None,
+        )
+    finally:
+        executor.shutdown()
+
+    assert warmup.ok is True
+    assert backend.cancel_seen_on_close is True
 
 
 def test_load_model_warmup_after_load_runs_synthetic_generation() -> None:

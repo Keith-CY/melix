@@ -291,14 +291,21 @@ class WorkerRegistry:
             max_output_tokens=1,
         )
         cancel_event = Event()
-        for _ in runtime.generate_tokens(
+        token_stream = runtime.generate_tokens(
             loaded.runtime_model,
             prompt,
             sampling,
             cancel_event,
             execution_ext={},
-        ):
-            break
+        )
+        try:
+            for _ in token_stream:
+                cancel_event.set()
+                break
+        finally:
+            close = getattr(token_stream, "close", None)
+            if callable(close):
+                close()
         return int(round(max(0.0, (time.perf_counter() - started_at) * 1000.0)))
 
     def get_loaded_model(self, handle: str) -> LoadedModel | None:
