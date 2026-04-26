@@ -148,6 +148,7 @@ struct DeterministicTextBackend: TextRuntimeBackend {
 
     func decodeEvents(
         model: LoadedTextModel,
+        draftModel: LoadedTextModel? = nil,
         context: TextPrefillContext,
         sampling: Melix_Worker_V1_SamplingConfig,
         maxOutputTokens: UInt32,

@@ -1588,6 +1588,9 @@ public actor RequestCoordinator {
                             totalTokens: effectivePromptTokens,
                             restoreStage: restoreStage,
                             cachePressure: cachePressure,
+                            accelerationMode: controlPlaneAccelerationMode(
+                                from: prefillResponse.appliedAcceleration.mode
+                            ),
                             source: "swift-text-worker"
                         )
                         var progressEvent = makePrefillProgressEvent(

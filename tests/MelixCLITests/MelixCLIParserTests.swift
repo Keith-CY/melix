@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import MelixCLICore
@@ -252,6 +253,8 @@ struct MelixCLIParserTests {
             (.loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)), "lora.publish"),
             (.loraExperimentsList(.init(modelID: "model", json: true)), "lora.experiments.list"),
             (.loraExperimentsShow(.init(modelID: "model", groupID: "nightly-qwen35", json: true)), "lora.experiments.show"),
+            (.loraPublishesList(.init(modelID: "model", json: true)), "lora.publishes.list"),
+            (.loraPublishesShow(.init(modelID: "model", jobID: "model-ops-0042", json: true)), "lora.publishes.show"),
             (.loraResume(.init(modelID: "model", groupID: "nightly-qwen35", presetID: "balanced_adapter", adapterName: "resumed", datasetURI: "/tmp/data.jsonl", json: true)), "lora.resume"),
             (.benchRun(.init(modelID: "model", suites: ["smoke"], contextLengths: [1024], generationLength: 128, batchSizes: [1], repeats: 2, cacheProfile: "cold", reasoningMode: "disabled", structuredOutputMode: "disabled", parameters: ["sample_size": "4", "batch_factor": "1"], json: true)), "bench.run"),
             (.benchList(.init(json: true)), "bench.list"),
@@ -549,6 +552,8 @@ struct MelixCLIParserTests {
             "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--host", "127.0.0.1",
             "--port", "12434",
+            "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
+            "--num-draft-tokens", "4",
             "--json",
         ])
         let updateCommand = try MelixCLIParser.parse([
@@ -559,6 +564,9 @@ struct MelixCLIParserTests {
             "--model-id", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--port", "12434",
             "--timeout-seconds", "90",
+            "--acceleration-mode", "speculative_decode",
+            "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
+            "--num-draft-tokens", "8",
         ])
         let removeCommand = try MelixCLIParser.parse([
             "server",
@@ -594,11 +602,17 @@ struct MelixCLIParserTests {
         #expect(createOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(createOptions.host == "127.0.0.1")
         #expect(createOptions.port == 12434)
+        #expect(createOptions.accelerationMode == "speculative_decode")
+        #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(createOptions.numDraftTokens == 4)
         #expect(createOptions.json)
         #expect(updateOptions.serverSessionID == "server-session-qwen")
         #expect(updateOptions.modelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
         #expect(updateOptions.port == 12434)
         #expect(updateOptions.timeoutSeconds == 90)
+        #expect(updateOptions.accelerationMode == "speculative_decode")
+        #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(updateOptions.numDraftTokens == 8)
         #expect(removeOptions.serverSessionID == "server-session-qwen")
         #expect(selectOptions.serverSessionID == "server-session-qwen")
     }
@@ -999,6 +1013,116 @@ struct MelixCLIParserTests {
     func loraResumeRequiresGroupID() throws {
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse(["lora", "resume"])
+        }
+    }
+
+    @Test("parses lora publishes list with optional model id")
+    func parsesLoraPublishesListCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "publishes", "list",
+            "--model-id", "melix-dev-text",
+            "--json",
+        ])
+        guard case .loraPublishesList(let options) = command else {
+            Issue.record("Expected loraPublishesList command")
+            return
+        }
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.json)
+    }
+
+    @Test("parses lora publishes show with explicit job id")
+    func parsesLoraPublishesShowCommand() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "publishes", "show",
+            "--job-id", "model-ops-0042",
+            "--json",
+        ])
+        guard case .loraPublishesShow(let options) = command else {
+            Issue.record("Expected loraPublishesShow command")
+            return
+        }
+        #expect(options.jobID == "model-ops-0042")
+        #expect(options.json)
+    }
+
+    @Test("lora publishes show requires a job id")
+    func loraPublishesShowRequiresJobID() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["lora", "publishes", "show"])
+        }
+    }
+
+    @Test("lora publish --manifest-path with explicit --export-kind carries the explicit value forward")
+    func loraPublishExplicitExportKindCarriesForward() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "publish",
+            "--model-id", "melix-dev-text",
+            "--target-repo", "melix/adapters/demo",
+            "--manifest-path", "/tmp/demo/manifest.json",
+            "--export-kind", "adapter",
+        ])
+        guard case .loraPublish(let options) = command else {
+            Issue.record("Expected loraPublish command")
+            return
+        }
+        #expect(options.exportKind == .adapterExport)
+        #expect(options.artifactPath == "/tmp/demo/manifest.json")
+        #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
+    }
+
+    @Test("lora publish --manifest-path without --export-kind defers classification to the runner")
+    func loraPublishDeferredExportKind() throws {
+        let command = try MelixCLIParser.parse([
+            "lora", "publish",
+            "--model-id", "melix-dev-text",
+            "--target-repo", "melix/adapters/demo",
+            "--manifest-path", "/tmp/demo/manifest.json",
+        ])
+        guard case .loraPublish(let options) = command else {
+            Issue.record("Expected loraPublish command")
+            return
+        }
+        #expect(options.exportKind == nil)
+        #expect(options.artifactManifestPath == "/tmp/demo/manifest.json")
+    }
+
+    @Test("lora publish rejects unknown --export-kind values")
+    func loraPublishRejectsUnknownExportKind() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "lora", "publish",
+                "--model-id", "melix-dev-text",
+                "--target-repo", "melix/adapters/demo",
+                "--manifest-path", "/tmp/demo/manifest.json",
+                "--export-kind", "mystery",
+            ])
+        }
+    }
+
+    @Test("lora publish rejects mismatched --export-kind and --adapter-path")
+    func loraPublishRejectsMismatchedExportKindAdapter() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "lora", "publish",
+                "--model-id", "melix-dev-text",
+                "--target-repo", "melix/adapters/demo",
+                "--adapter-path", "/tmp/demo.adapter.json",
+                "--export-kind", "merged",
+            ])
+        }
+    }
+
+    @Test("lora publish rejects mismatched --export-kind and --merged-model-path")
+    func loraPublishRejectsMismatchedExportKindMerged() throws {
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "lora", "publish",
+                "--model-id", "melix-dev-text",
+                "--target-repo", "melix/models/demo",
+                "--merged-model-path", "/tmp/demo-merged",
+                "--export-kind", "adapter",
+            ])
         }
     }
 
@@ -1800,6 +1924,7 @@ struct MelixCLIParserTests {
             "--model-id", "melix-dev-text",
             "--target-repo", "melix/models/demo-merged",
             "--manifest-path", "/tmp/melix/activate_adapter/manifest.json",
+            "--export-kind", "merged",
             "--json",
         ])
 

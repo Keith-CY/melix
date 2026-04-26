@@ -28,16 +28,27 @@ struct TextDecodeEngine: Sendable {
                 Task { await registry.finishDecode() }
             }
 
-            let acceleration = try resolveDecodeAcceleration(
-                requested: request.execution.acceleration,
-                stored: session.prefill.acceleration,
-                supportsSpeculative: await registry.supportsSpeculativeDecoding()
-            )
-
             var sampling = request.sampling
             if request.maxOutputTokens > 0 {
                 sampling.maxOutputTokens = request.maxOutputTokens
             }
+
+            let accelerationResolution = try await resolveDecodeAcceleration(
+                requested: request.execution.acceleration,
+                stored: session.prefill.acceleration,
+                sampling: sampling,
+                supportsSpeculative: await registry.supportsSpeculativeDecoding(),
+                requiresLoadedDraftModel: await registry.requiresLoadedDraftModelForSpeculativeDecoding(),
+                draftModelReadiness: { draftModelID in
+                    await registry.speculativeDraftModelReadiness(
+                        id: draftModelID,
+                        excludingModelHandle: session.loadedModel.handle,
+                        targetSpec: session.loadedModel.spec
+                    )
+                }
+            )
+            let acceleration = accelerationResolution.policy
+            recordSpeculativeRequestMetrics(accelerationResolution)
 
             let runtimeStream = try await registry.decodeEvents(
                 session: session,
@@ -57,6 +68,13 @@ struct TextDecodeEngine: Sendable {
             var tokensPerSecond: Double?
             var speculativeAccepted: Int?
             var speculativeRejected: Int?
+            var speculativeFallbackCount: Int?
+            var speculativeDraftProposeMillis: Int?
+            var speculativeTargetVerifyMillis: Int?
+            var dflashEnabled = false
+            var dflashBlockSize: Int?
+            var dflashRollbackCount: Int?
+            var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
 
             if acceleration.mode != .baseline {
@@ -150,6 +168,13 @@ struct TextDecodeEngine: Sendable {
                     tokensPerSecond = summary.tokensPerSecond
                     speculativeAccepted = summary.speculativeAcceptedTokens
                     speculativeRejected = summary.speculativeRejectedTokens
+                    speculativeFallbackCount = summary.speculativeFallbackCount
+                    speculativeDraftProposeMillis = summary.speculativeDraftProposeMillis
+                    speculativeTargetVerifyMillis = summary.speculativeTargetVerifyMillis
+                    dflashEnabled = summary.dflashEnabled
+                    dflashBlockSize = summary.dflashBlockSize
+                    dflashRollbackCount = summary.dflashRollbackCount
+                    dflashTargetHiddenLayers = summary.dflashTargetHiddenLayers
                     activeKVProbe = summary.activeKVProbe
                 }
             }
@@ -240,7 +265,16 @@ struct TextDecodeEngine: Sendable {
             recordActiveKVProbeMetrics(activeKVProbe)
             recordSpeculativeMetrics(
                 accepted: speculativeAccepted,
-                rejected: speculativeRejected
+                rejected: speculativeRejected,
+                fallbackCount: speculativeFallbackCount,
+                draftProposeMillis: speculativeDraftProposeMillis,
+                targetVerifyMillis: speculativeTargetVerifyMillis
+            )
+            recordDFlashMetrics(
+                enabled: dflashEnabled,
+                blockSize: dflashBlockSize,
+                rollbackCount: dflashRollbackCount,
+                targetHiddenLayers: dflashTargetHiddenLayers
             )
         } catch let error as WorkerRuntimeRegistryError where error == .unknownDecodeHandle {
             metrics.increment("swift_text.rpc_error_count")
@@ -279,13 +313,55 @@ struct TextDecodeEngine: Sendable {
 
     private func recordSpeculativeMetrics(
         accepted: Int?,
-        rejected: Int?
+        rejected: Int?,
+        fallbackCount: Int?,
+        draftProposeMillis: Int?,
+        targetVerifyMillis: Int?
     ) {
         let accepted = max(0, accepted ?? 0)
         let rejected = max(0, rejected ?? 0)
         let total = max(accepted + rejected, 1)
+        metrics.set("swift_text.speculative_accepted_tokens", value: accepted)
+        metrics.set("swift_text.speculative_rejected_tokens", value: rejected)
         metrics.set("swift_text.speculative_acceptance_rate", value: (accepted * 100) / total)
         metrics.set("swift_text.speculative_rollback_rate", value: (rejected * 100) / total)
+        if let fallbackCount, fallbackCount > 0 {
+            metrics.increment("swift_text.speculative_fallback_count", by: fallbackCount)
+        }
+        metrics.set("swift_text.speculative_draft_propose_ms", value: max(0, draftProposeMillis ?? 0))
+        metrics.set("swift_text.speculative_target_verify_ms", value: max(0, targetVerifyMillis ?? 0))
+    }
+
+    private func recordSpeculativeRequestMetrics(_ resolution: DecodeAccelerationResolution) {
+        guard resolution.requestedPolicy.mode == .speculativeDecode else {
+            metrics.set("swift_text.speculative_draft_model_configured", value: 0)
+            metrics.set("swift_text.speculative_num_draft_tokens", value: 0)
+            return
+        }
+
+        metrics.set(
+            "swift_text.speculative_draft_model_configured",
+            value: resolution.requestedPolicy.draftModelID.isEmpty ? 0 : 1
+        )
+        metrics.set(
+            "swift_text.speculative_num_draft_tokens",
+            value: Int(resolution.requestedPolicy.numDraftTokens)
+        )
+        if resolution.fallbackReason != nil {
+            metrics.increment("swift_text.speculative_fallback_count")
+        }
+    }
+
+    private func recordDFlashMetrics(
+        enabled: Bool,
+        blockSize: Int?,
+        rollbackCount: Int?,
+        targetHiddenLayers: Int?
+    ) {
+        metrics.set("swift_text.dflash_enabled", value: enabled ? 1 : 0)
+        metrics.set("swift_text.dflash_block_size", value: max(0, blockSize ?? 0))
+        metrics.set("swift_text.dflash_rollback_count", value: max(0, rollbackCount ?? 0))
+        metrics.set("swift_text.dflash_target_hidden_layers", value: max(0, targetHiddenLayers ?? 0))
     }
 
     private func recordActiveKVProbeMetrics(_ probe: ActiveKVProbeSummary?) {
@@ -393,11 +469,20 @@ private struct DecodeAccelerationError: LocalizedError {
     }
 }
 
+private struct DecodeAccelerationResolution {
+    let policy: Melix_Worker_V1_AccelerationPolicy
+    let requestedPolicy: Melix_Worker_V1_AccelerationPolicy
+    let fallbackReason: String?
+}
+
 private func resolveDecodeAcceleration(
     requested: Melix_Worker_V1_AccelerationPolicy,
     stored: Melix_Worker_V1_AccelerationPolicy,
-    supportsSpeculative: Bool
-) throws -> Melix_Worker_V1_AccelerationPolicy {
+    sampling: Melix_Worker_V1_SamplingConfig,
+    supportsSpeculative: Bool,
+    requiresLoadedDraftModel: Bool,
+    draftModelReadiness: @escaping @Sendable (String) async -> SpeculativeDraftModelReadiness
+) async throws -> DecodeAccelerationResolution {
     var resolved = requested
     if resolved.mode == .unspecified {
         resolved = stored
@@ -405,10 +490,16 @@ private func resolveDecodeAcceleration(
     if resolved.mode == .unspecified {
         resolved.mode = .baseline
     }
+    let requestedPolicy = resolved
 
     if resolved.mode == .speculativeDecode && !supportsSpeculative {
         if resolved.allowBaselineFallback {
             resolved.mode = .baseline
+            return DecodeAccelerationResolution(
+                policy: resolved,
+                requestedPolicy: requestedPolicy,
+                fallbackReason: "backend_unsupported"
+            )
         } else {
             throw DecodeAccelerationError(
                 message: "Speculative decode is not available for the active Swift text backend."
@@ -416,7 +507,54 @@ private func resolveDecodeAcceleration(
         }
     }
 
-    return resolved
+    if resolved.mode == .speculativeDecode && !isGreedySpeculativeSampling(sampling) {
+        if resolved.allowBaselineFallback {
+            resolved.mode = .baseline
+            return DecodeAccelerationResolution(
+                policy: resolved,
+                requestedPolicy: requestedPolicy,
+                fallbackReason: "non_greedy_sampling"
+            )
+        } else {
+            throw DecodeAccelerationError(
+                message: "Speculative decode currently requires greedy sampling: temperature=0, top_p=1, top_k=0."
+            )
+        }
+    }
+
+    if resolved.mode == .speculativeDecode && requiresLoadedDraftModel {
+        let draftModelID = resolved.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftReadiness = draftModelID.isEmpty
+            ? .unavailable(reason: "draft_model_unavailable")
+            : await draftModelReadiness(draftModelID)
+        if !draftReadiness.available || !draftReadiness.compatible {
+            if resolved.allowBaselineFallback {
+                resolved.mode = .baseline
+                return DecodeAccelerationResolution(
+                    policy: resolved,
+                    requestedPolicy: requestedPolicy,
+                    fallbackReason: draftReadiness.fallbackReason
+                )
+            } else {
+                throw DecodeAccelerationError(
+                    message: draftReadiness.errorMessage
+                )
+            }
+        }
+    }
+
+    return DecodeAccelerationResolution(
+        policy: resolved,
+        requestedPolicy: requestedPolicy,
+        fallbackReason: nil
+    )
+}
+
+private func isGreedySpeculativeSampling(_ sampling: Melix_Worker_V1_SamplingConfig) -> Bool {
+    let effectiveTopP = sampling.topP > 0 ? sampling.topP : 1
+    return sampling.temperature <= 0
+        && effectiveTopP >= 1
+        && sampling.topK == 0
 }
 
 private func effectiveRequestID(

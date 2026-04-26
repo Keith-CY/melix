@@ -42,6 +42,9 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C := \
 	"HTTPGatewayTests.RequestCoordinatorTests/progressWaitHelperSkipsSnapshotsUntilPredicateMetadataMatches()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierIgnoresFalseyEnvironmentValues()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierWidensBudgetsForTruthyEnvironmentValues()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierEnvOverrideOverridesDefault()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierEnvOverrideFallsBackForInvalidValues()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/ciWaitMultiplierEnvOverrideRequiresCIFlag()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/phaseAwareStreamEventsPreserveAccelerationMetadataAndTerminalAborts()"
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_D := \
 	"HTTPGatewayTests.RequestCoordinatorTests/phaseAwareTextRequestsJoinTheActiveContinuousBatchCohort()" \

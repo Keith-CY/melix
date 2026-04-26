@@ -1432,6 +1432,32 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
     }
 
+    @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
+    func ciWaitMultiplierEnvOverrideOverridesDefault() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "8"]) == 8)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "  16 "]) == 16)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true", "CI_WAIT_MULTIPLIER": "2"]) == 2)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100"]) == 100)
+    }
+
+    @Test("CI_WAIT_MULTIPLIER falls back to the default when invalid")
+    func ciWaitMultiplierEnvOverrideFallsBackForInvalidValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "abc"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "0"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "-3"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": ""]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "   "]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "101"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100000"]) == 4)
+    }
+
+    @Test("CI_WAIT_MULTIPLIER without a CI flag stays at the local default")
+    func ciWaitMultiplierEnvOverrideRequiresCIFlag() {
+        // The env var alone shouldn't widen budgets on a developer laptop —
+        // the operator has to opt in explicitly via CI/GITHUB_ACTIONS.
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI_WAIT_MULTIPLIER": "8"]) == 1)
+    }
+
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
     func chunkedPrefillsEmitProgressEventsAndSchedulerMetricsForLongPrompts() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -3256,16 +3282,29 @@ private func makeCoordinatorTextModel(
 /// phase-transition polls can't race the scheduler under contention. The
 /// actual numerical default still passes locally in a few tens of ms — the
 /// multiplier only affects the *ceiling* before a timeout returns nil.
+///
+/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
+/// within the accepted range, so future tuning doesn't require a code change.
 private let waitAttemptsMultiplier: Int = {
     computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
 }()
 
+private let defaultCIWaitMultiplier: Int = 4
+private let maximumCIWaitMultiplier: Int = 100
+
 private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
-    if isTruthyEnvironmentFlag(environment["CI"])
-        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"]) {
-        return 4
+    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
+        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
+    guard ciActive else {
+        return 1
     }
-    return 1
+    if let raw = environment["CI_WAIT_MULTIPLIER"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       let parsed = Int(raw),
+       (1...maximumCIWaitMultiplier).contains(parsed) {
+        return parsed
+    }
+    return defaultCIWaitMultiplier
 }
 
 private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {

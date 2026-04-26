@@ -559,6 +559,51 @@ public class Qwen35TextModelInner: Module {
 
         return norm(hiddenStates)
     }
+
+    func dflashForwardHidden(
+        _ inputs: MLXArray,
+        cache: [KVCache]? = nil,
+        targetLayerIDs: [Int]
+    ) throws -> (normalizedHidden: MLXArray, targetHidden: MLXArray) {
+        var hiddenStates = embedTokens(inputs)
+        var cacheArray = cache?.map { Optional($0) }
+        if cacheArray == nil {
+            cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
+        }
+
+        let faCache = cacheArray?.indices.contains(faIdx) == true ? cacheArray?[faIdx] : nil
+        let ssmCache = cacheArray?.indices.contains(ssmIdx) == true ? cacheArray?[ssmIdx] : nil
+        let faMask = createAttentionMask(h: hiddenStates, cache: faCache)
+        let ssmMask = createSSMMask(h: hiddenStates, cache: ssmCache as? MambaCache)
+        let selectedLayers = Set(targetLayerIDs)
+        var selectedHiddenByLayer = [Int: MLXArray]()
+
+        for (i, layer) in layers.enumerated() {
+            let mask = layer.isLinear ? ssmMask : nil
+            let attnMask =
+                layer.isLinear
+                ? MLXFast.ScaledDotProductAttentionMaskMode.none : faMask
+            hiddenStates = layer(
+                hiddenStates,
+                attentionMask: attnMask,
+                ssmMask: mask,
+                cache: cacheArray?[i]
+            )
+            if selectedLayers.contains(i) {
+                selectedHiddenByLayer[i] = hiddenStates
+            }
+        }
+
+        let selectedHidden = targetLayerIDs.compactMap { selectedHiddenByLayer[$0] }
+        guard selectedHidden.count == targetLayerIDs.count else {
+            throw DFlashModelError.missingRequiredConfiguration("dflash_config.target_layer_ids")
+        }
+
+        return (
+            normalizedHidden: norm(hiddenStates),
+            targetHidden: concatenated(selectedHidden, axis: -1)
+        )
+    }
 }
 
 public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
@@ -645,6 +690,43 @@ extension Qwen35TextModel: LoRAModel {
     }
 }
 
+extension Qwen35TextModel: DFlashTargetModel {
+    public var dflashHiddenSize: Int {
+        configuration.hiddenSize
+    }
+
+    public var dflashLayerCount: Int {
+        configuration.hiddenLayers
+    }
+
+    public func dflashTokenEmbeddings(_ tokenIDs: MLXArray) throws -> MLXArray {
+        model.embedTokens(tokenIDs)
+    }
+
+    public func dflashLogits(fromHiddenStates hiddenStates: MLXArray) throws -> MLXArray {
+        if let lmHead {
+            return lmHead(hiddenStates)
+        }
+        return model.embedTokens.asLinear(hiddenStates)
+    }
+
+    public func dflashForward(
+        input: LMInput.Text,
+        cache: [KVCache]?,
+        targetLayerIDs: [Int]
+    ) throws -> DFlashTargetForwardResult {
+        let result = try model.dflashForwardHidden(
+            input.tokens,
+            cache: cache,
+            targetLayerIDs: targetLayerIDs
+        )
+        return DFlashTargetForwardResult(
+            logits: try dflashLogits(fromHiddenStates: result.normalizedHidden),
+            hidden: result.targetHidden
+        )
+    }
+}
+
 // MARK: - Top-level Model
 
 public class Qwen35Model: Module, LLMModel, KVCacheDimensionProvider {
@@ -692,5 +774,35 @@ public class Qwen35Model: Module, LLMModel, KVCacheDimensionProvider {
 extension Qwen35Model: LoRAModel {
     public var loraLayers: [Module] {
         languageModel.model.layers
+    }
+}
+
+extension Qwen35Model: DFlashTargetModel {
+    public var dflashHiddenSize: Int {
+        languageModel.dflashHiddenSize
+    }
+
+    public var dflashLayerCount: Int {
+        languageModel.dflashLayerCount
+    }
+
+    public func dflashTokenEmbeddings(_ tokenIDs: MLXArray) throws -> MLXArray {
+        try languageModel.dflashTokenEmbeddings(tokenIDs)
+    }
+
+    public func dflashLogits(fromHiddenStates hiddenStates: MLXArray) throws -> MLXArray {
+        try languageModel.dflashLogits(fromHiddenStates: hiddenStates)
+    }
+
+    public func dflashForward(
+        input: LMInput.Text,
+        cache: [KVCache]?,
+        targetLayerIDs: [Int]
+    ) throws -> DFlashTargetForwardResult {
+        try languageModel.dflashForward(
+            input: input,
+            cache: cache,
+            targetLayerIDs: targetLayerIDs
+        )
     }
 }

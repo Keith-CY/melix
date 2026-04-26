@@ -572,6 +572,30 @@ def test_run_local_suite_uses_loaded_runtime_predictions_for_live_evaluation(
     assert run.samples[0].validation_status == "validated"
     assert run.samples[0].typed_score == 1.0
     assert run.result.primary_score_value == 1.0
+    assert run.job.parameters["runtime_live_model"] == "true"
+    assert run.job.parameters["runtime_name"] == "scripted-evaluation"
+    assert run.job.parameters["runtime_model_handle"] == registry.handle
+
+
+def test_run_local_suite_require_live_model_rejects_offline_fallback(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2 + 2?", "expected": "4"},
+        ),
+    )
+    runner = EvaluationCore(registry=None)
+
+    with pytest.raises(ValueError, match="requires a loaded live model runtime"):
+        runner.run_local_suite(
+            model_id="melix-dev-text",
+            suite_id="mmlu",
+            dataset_root=dataset_root,
+            sample_size=1,
+            parameters={"require_live_model": "true"},
+        )
 
 
 def test_run_local_suite_records_vlm_probe_for_live_evaluation(tmp_path: Path) -> None:
@@ -1717,6 +1741,9 @@ def test_worker_maintenance_service_run_evaluation_maps_request_task_metadata(
     assert response.job.parameters["judge"] == "deterministic"
     assert response.job.parameters["task_kind"] == "text-generation"
     assert response.job.parameters["source_repo"] == "unsloth/gemma-4-E4B-it-MLX-8bit"
+    assert response.job.parameters["runtime_live_model"] == "true"
+    assert response.job.parameters["runtime_name"] == "scripted-evaluation"
+    assert response.job.parameters["runtime_model_handle"] == loaded_model.handle
     assert response.job.output_dir.endswith("/runs/eval-0001")
     assert response.job.created_at_unix_ms > 0
     assert response.job.updated_at_unix_ms > 0

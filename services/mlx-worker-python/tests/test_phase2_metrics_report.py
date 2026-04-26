@@ -672,6 +672,11 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.decode_tokens_per_second": 4,
                     "swift_text.speculative_acceptance_rate": 0,
                     "swift_text.speculative_rollback_rate": 0,
+                    "swift_text.speculative_accepted_tokens": 0,
+                    "swift_text.speculative_rejected_tokens": 0,
+                    "swift_text.speculative_fallback_count": 0,
+                    "swift_text.speculative_draft_model_configured": 0,
+                    "swift_text.speculative_num_draft_tokens": 0,
                     "swift_text.active_kv_quantization_ratio": 25,
                     "swift_text.active_kv_backend_code": 1,
                     "swift_text.active_kv_kernel_path_code": 10,
@@ -759,6 +764,7 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert baseline["active_kv_fused_attention_inactive_lane_total"] == 0
     assert baseline["active_kv_fused_attention_softmax_lane_total"] == 0
     assert baseline["active_kv_fused_attention_softmax_token_lane_total"] == 0
+    assert baseline["speculative_fallback_count"] == 0
     assert active["active_kv_backend"] == "affine"
     assert active["active_kv_kernel_path"] == "affine_quantized_sdpa"
     assert active["active_kv_runtime_route"] is None
@@ -791,6 +797,53 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_cache_materialize_call_count"] == 3
     assert active["active_kv_cache_materialize_avg_us"] == 5
     assert active["active_kv_candidate_eligibility_check_count"] == 7
+
+
+def test_measure_decode_probe_surfaces_dflash_metrics(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "swift-worker-metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "values": {
+                    "swift_text.decode_ttft_ms": 9,
+                    "swift_text.decode_tokens_per_second": 11,
+                    "swift_text.speculative_acceptance_rate": 83,
+                    "swift_text.speculative_rollback_rate": 17,
+                    "swift_text.speculative_accepted_tokens": 10,
+                    "swift_text.speculative_rejected_tokens": 2,
+                    "swift_text.speculative_fallback_count": 0,
+                    "swift_text.speculative_draft_model_configured": 1,
+                    "swift_text.speculative_num_draft_tokens": 4,
+                    "swift_text.speculative_draft_propose_ms": 12,
+                    "swift_text.speculative_target_verify_ms": 34,
+                    "swift_text.dflash_enabled": 1,
+                    "swift_text.dflash_block_size": 4,
+                    "swift_text.dflash_rollback_count": 2,
+                    "swift_text.dflash_target_hidden_layers": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = phase2_metrics_report.measure_decode_probe(
+        _FakeInferenceStub(),
+        metrics_path,
+        model_handle="melix-dev-text::1",
+        prompt="decode dflash",
+        label="decode_speculative",
+        policy=common_pb2.AccelerationPolicy(
+            mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+            draft_model_id="z-lab/Qwen3.5-27B-DFlash",
+            num_draft_tokens=4,
+            allow_baseline_fallback=True,
+        ),
+    )
+
+    assert result["dflash_enabled"] == 1
+    assert result["dflash_block_size"] == 4
+    assert result["dflash_rollback_count"] == 2
+    assert result["dflash_target_hidden_layers"] == 5
 
 
 def test_active_kv_helper_edges_return_stable_defaults() -> None:
@@ -879,7 +932,7 @@ def test_resolve_model_configuration_real_small_model_uses_hf_cache_snapshot(tmp
         environment={"HOME": str(home)},
     )
 
-    assert model.model_id == "melix-dev-text"
+    assert model.model_id == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
     assert model.model_path == str(snapshot.resolve())
     assert model.revision == "main"
     assert model.source_resolution_mode == "hf_cache_snapshot"
@@ -914,6 +967,114 @@ def test_resolve_model_configuration_real_small_model_warns_on_hf_cache_snapshot
     assert len(model.warnings) == 1
     assert "refs/main" in model.warnings[0]
     assert "def456" in model.warnings[0]
+
+
+def test_resolve_model_configuration_live_pair_uses_explicit_env(tmp_path: Path) -> None:
+    served = tmp_path / "served"
+    draft = tmp_path / "draft"
+    served.mkdir()
+    draft.mkdir()
+    (served / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+    (draft / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+
+    model = phase2_metrics_report.resolve_model_configuration(
+        live_model=True,
+        require_live_model=True,
+        real_small_model=False,
+        model_id="",
+        model_path="",
+        model_revision="",
+        environment={
+            "MELIX_PHASE2_LIVE_MODEL_ID": "served/live",
+            "MELIX_PHASE2_LIVE_MODEL_PATH": str(served),
+            "MELIX_PHASE2_DRAFT_MODEL_ID": "draft/live",
+            "MELIX_PHASE2_DRAFT_MODEL_PATH": str(draft),
+        },
+    )
+
+    assert model.model_id == "served/live"
+    assert model.model_path == str(served.resolve())
+    assert model.served_runtime_model_class == "real_local_model"
+    assert model.draft_model_id == "draft/live"
+    assert model.draft_model_path == str(draft.resolve())
+    assert model.draft_runtime_model_class == "real_local_model"
+    assert model.live_model_required is True
+
+
+def test_resolve_model_configuration_live_pair_defaults_draft_to_hub_when_cache_is_missing(
+    tmp_path: Path,
+) -> None:
+    model = phase2_metrics_report.resolve_model_configuration(
+        live_model=True,
+        require_live_model=True,
+        real_small_model=False,
+        model_id="served/live",
+        model_path="",
+        model_revision="",
+        environment={"HOME": str(tmp_path / "empty-home")},
+    )
+
+    assert model.model_id == "served/live"
+    assert model.served_runtime_model_class == "hub_required"
+    assert model.draft_model_id == "mlx-community/Qwen3-0.6B-4bit"
+    assert model.draft_model_path == "mlx-community/Qwen3-0.6B-4bit"
+    assert model.draft_source_resolution_mode == "hub_fallback"
+    assert model.draft_runtime_model_class == "hub_required"
+
+
+def test_resolve_model_configuration_live_pair_uses_default_draft_hf_cache_snapshot(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    draft_snapshot = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3-0.6B-4bit"
+        / "snapshots"
+        / "draft123"
+    )
+    draft_snapshot.mkdir(parents=True)
+    (draft_snapshot / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+    refs = draft_snapshot.parents[1] / "refs"
+    refs.mkdir()
+    (refs / "main").write_text("draft123\n", encoding="utf-8")
+
+    model = phase2_metrics_report.resolve_model_configuration(
+        live_model=True,
+        require_live_model=True,
+        real_small_model=False,
+        model_id="served/live",
+        model_path="",
+        model_revision="",
+        environment={"HOME": str(home)},
+    )
+
+    assert model.draft_model_id == "mlx-community/Qwen3-0.6B-4bit"
+    assert model.draft_model_path == str(draft_snapshot.resolve())
+    assert model.draft_source_resolution_mode == "hf_cache_snapshot"
+    assert model.draft_runtime_model_class == "real_local_model"
+
+
+def test_resolve_model_configuration_require_live_rejects_invalid_local_draft(
+    tmp_path: Path,
+) -> None:
+    draft = tmp_path / "empty-draft"
+    draft.mkdir()
+
+    with pytest.raises(RuntimeError, match="draft_model=missing_real_local_model"):
+        phase2_metrics_report.resolve_model_configuration(
+            live_model=True,
+            require_live_model=True,
+            real_small_model=False,
+            model_id="served/live",
+            model_path="",
+            model_revision="",
+            draft_model_id="draft/live",
+            draft_model_path=str(draft),
+            environment={"HF_HOME": str(tmp_path / "empty-hf-cache")},
+        )
 
 
 def test_collect_direct_phase_two_metrics_loads_configured_model_revision(
@@ -982,6 +1143,84 @@ def test_collect_direct_phase_two_metrics_loads_configured_model_revision(
     assert loaded_model.model_id == "melix-dev-text"
     assert loaded_model.model_path == str(tmp_path / "qwen-real-small")
     assert loaded_model.revision == "main"
+
+
+def test_collect_direct_phase_two_metrics_loads_configured_draft_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stack = phase2_metrics_report.StackConfiguration(
+        runtime_dir=tmp_path,
+        swift_socket_path=tmp_path / "swift.sock",
+        python_socket_path=tmp_path / "python.sock",
+        http_port=8080,
+        swift_backend_mode="swift",
+        python_backend_mode="auto",
+        control_plane_metrics_path=tmp_path / "control-plane-metrics.json",
+        swift_worker_metrics_path=tmp_path / "swift-worker-metrics.json",
+    )
+    stack.control_plane_metrics_path.write_text(json.dumps({"values": {}}), encoding="utf-8")
+    stack.swift_worker_metrics_path.write_text(
+        json.dumps(
+            {
+                "values": {
+                    "swift_text.speculative_fallback_count": 1,
+                    "swift_text.speculative_draft_model_configured": 1,
+                    "swift_text.speculative_num_draft_tokens": 6,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_stub = _FakeRuntimeStub()
+
+    monkeypatch.setattr(phase2_metrics_report.grpc, "insecure_channel", lambda target: _FakeChannel())
+    monkeypatch.setattr(phase2_metrics_report.runtime_pb2_grpc, "RuntimeServiceStub", lambda channel: runtime_stub)
+    monkeypatch.setattr(phase2_metrics_report.inference_pb2_grpc, "InferenceServiceStub", lambda channel: _FakeInferenceStub())
+    monkeypatch.setattr(phase2_metrics_report, "wait_for_worker_handshake", lambda *args, **kwargs: None)
+    monkeypatch.setattr(phase2_metrics_report, "measure_prefill_probe", lambda *args, **kwargs: {"label": kwargs["label"]})
+    monkeypatch.setattr(
+        phase2_metrics_report,
+        "measure_decode_abort",
+        lambda *args, **kwargs: {"label": "decode_abort", "abort_ms": 1.0, "finish_reason": "cancelled"},
+    )
+
+    observed_policies: list[common_pb2.AccelerationPolicy] = []
+
+    def fake_measure_decode_probe(*args, **kwargs):  # noqa: ANN002, ANN003
+        observed_policies.append(kwargs["policy"])
+        return {"label": kwargs["label"], "mode": "ACCELERATION_MODE_BASELINE"}
+
+    monkeypatch.setattr(phase2_metrics_report, "measure_decode_probe", fake_measure_decode_probe)
+
+    model = phase2_metrics_report.Phase2ModelConfiguration(
+        model_id="served/live",
+        model_path="/models/served",
+        revision="main",
+        source_resolution_mode="explicit_local_path",
+        draft_model_id="draft/live",
+        draft_model_path="/models/draft",
+        draft_revision="main",
+        draft_source_resolution_mode="explicit_local_path",
+        num_draft_tokens=6,
+    )
+    result = phase2_metrics_report.collect_direct_phase_two_metrics(
+        stack=stack,
+        prompt="decode",
+        queue_prompt='{"kind":"structured"}',
+        abort_prompt="abort prompt",
+        decode_repeats=1,
+        active_kv_profiles=["q4"],
+        model=model,
+    )
+
+    assert [request.model.model_id for request in runtime_stub.load_requests] == ["served/live", "draft/live"]
+    assert runtime_stub.load_requests[0].model.tokenizer_hash == runtime_stub.load_requests[1].model.tokenizer_hash
+    speculative_policy = observed_policies[-1]
+    assert speculative_policy.draft_model_id == "draft/live"
+    assert speculative_policy.num_draft_tokens == 6
+    assert result["swift_worker_direct"]["draft_load_model_ms"] is not None
+    assert result["swift_worker_direct"]["resident_bytes"] == 8192
 
 
 def test_collect_direct_phase_two_metrics_can_skip_abort_probe(
