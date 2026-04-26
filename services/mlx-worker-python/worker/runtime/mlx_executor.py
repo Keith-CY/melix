@@ -3,8 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
-from queue import Queue
-from threading import Lock, get_ident
+from queue import Empty, Full, Queue
+from threading import Event, Lock, get_ident
 import time
 from typing import Any, Callable, Iterable, Iterator, TypeVar
 
@@ -49,18 +49,36 @@ class MLXRuntimeExecutor:
 
     def iterate(self, producer: Callable[[], Iterable[T]]) -> Iterator[T]:
         output: Queue[tuple[str, T | BaseException | None]] = Queue(maxsize=16)
+        stop_requested = Event()
+
+        def publish(kind: str, payload: T | BaseException | None) -> bool:
+            while True:
+                if stop_requested.is_set():
+                    return False
+                try:
+                    output.put((kind, payload), timeout=0.05)
+                    return True
+                except Full:
+                    continue
 
         def pump() -> None:
+            producer_iter: Iterator[T] | None = None
             try:
                 self._ensure_initialized()
                 context = self._stream_context()
                 with context:
-                    for item in producer():
-                        output.put(("item", item))
+                    producer_iter = iter(producer())
+                    for item in producer_iter:
+                        if not publish("item", item):
+                            return
             except BaseException as exc:  # pragma: no cover - BaseException keeps generator cleanup honest.
-                output.put(("error", exc))
+                publish("error", exc)
             finally:
-                output.put(("done", None))
+                if producer_iter is not None:
+                    close = getattr(producer_iter, "close", None)
+                    if callable(close):
+                        close()
+                publish("done", None)
 
         future = self._submit_async(pump)
         try:
@@ -74,8 +92,13 @@ class MLXRuntimeExecutor:
                     future.result()
                     break
         finally:
-            if future.cancelled():
-                return
+            stop_requested.set()
+            while True:
+                try:
+                    output.get_nowait()
+                except Empty:
+                    break
+            future.result()
 
     def synchronize(self) -> None:
         self.run(self._synchronize_on_owner)

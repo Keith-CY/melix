@@ -1,10 +1,22 @@
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
+from threading import Event, get_ident
 
 from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+class ThreadRecordingTokenizer:
+    def __init__(self) -> None:
+        self.thread_ids: list[int] = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        _ = messages
+        _ = kwargs
+        self.thread_ids.append(get_ident())
+        return "<warmup-prompt>"
 
 
 class FakeBackend:
@@ -36,6 +48,28 @@ class WarmupFailingBackend(FakeBackend):
         _ = cancel_event
         raise RuntimeError("warmup exploded")
         yield "unreachable"
+
+
+class ThreadRecordingWarmupBackend(FakeBackend):
+    def __init__(self, tokenizer: ThreadRecordingTokenizer) -> None:
+        super().__init__()
+        self._tokenizer = tokenizer
+        self.generation_thread_ids: list[int] = []
+
+    def load_model(self, model_spec):
+        return {
+            "model_id": model_spec.model_id,
+            "tokenizer": self._tokenizer,
+        }
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        self.generation_thread_ids.append(get_ident())
+        yield "warm"
 
 
 def build_runtime_service() -> WorkerRuntimeService:
@@ -114,6 +148,56 @@ def test_warmup_model_runs_loaded_text_model_and_reports_executor_stats() -> Non
     assert stats.generation_stream_owner_mode == "executor_owned"
     assert stats.worker_thread_init_latency_ms >= 0.0
     assert stats.stream_sync_fallback_count == 0
+
+
+def test_warmup_model_renders_prompt_and_generates_on_executor_thread() -> None:
+    tokenizer = ThreadRecordingTokenizer()
+    backend = ThreadRecordingWarmupBackend(tokenizer)
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend, executor=executor),
+            mlx_executor=executor,
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    main_thread_id = get_ident()
+    try:
+        load_response = service.LoadModel(
+            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+            context=None,
+        )
+        response = service.WarmupModel(
+            runtime_pb2.WarmupModelRequest(model_handle=load_response.model_handle),
+            context=None,
+        )
+        executor_thread_id = executor.run(get_ident)
+    finally:
+        executor.shutdown()
+
+    assert response.ok is True
+    assert tokenizer.thread_ids == [executor_thread_id]
+    assert backend.generation_thread_ids == [executor_thread_id]
+    assert executor_thread_id != main_thread_id
+
+
+def test_thread_recording_warmup_backend_stops_immediately_when_cancelled() -> None:
+    tokenizer = ThreadRecordingTokenizer()
+    backend = ThreadRecordingWarmupBackend(tokenizer)
+    cancel_event = Event()
+    cancel_event.set()
+
+    generated = list(
+        backend.generate_tokens(
+            loaded_model=backend.load_model(WorkerModelCatalog.dev_text_model()),
+            prompt="<warmup-prompt>",
+            sampling=None,
+            cancel_event=cancel_event,
+        )
+    )
+
+    assert generated == []
+    assert backend.generation_thread_ids == []
 
 
 def test_load_model_warmup_after_load_runs_synthetic_generation() -> None:

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import builtins
+import os
+from pathlib import Path
+import subprocess
 import sys
 from contextlib import contextmanager
+from threading import Event
 from types import ModuleType
 from threading import get_ident
 
@@ -55,6 +59,62 @@ def test_executor_streams_items_and_propagates_generator_errors_from_owned_threa
         executor.shutdown()
 
     assert producer_thread_ids == [executor_thread_id, executor_thread_id]
+
+
+def test_executor_remains_usable_after_iterator_is_closed_early() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(repo_root),
+            str(repo_root / "services" / "mlx-worker-python"),
+        ]
+    )
+    script = """
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
+
+executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+try:
+    iterator = executor.iterate(lambda: range(64))
+    assert next(iterator) == 0
+    iterator.close()
+    assert executor.run(lambda: "after-close") == "after-close"
+finally:
+    executor.shutdown()
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env=env,
+    )
+
+    assert result.returncode == 0
+
+
+def test_executor_stops_a_full_producer_when_iterator_is_closed() -> None:
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    producer_closed = Event()
+
+    def producer():
+        try:
+            for item in range(256):
+                yield item
+        finally:
+            producer_closed.set()
+
+    try:
+        iterator = executor.iterate(producer)
+        assert next(iterator) == 0
+        iterator.close()
+        assert executor.run(lambda: "after-close") == "after-close"
+    finally:
+        executor.shutdown()
+
+    assert producer_closed.is_set()
 
 
 def test_executor_nested_run_executes_inline_on_owner_thread() -> None:

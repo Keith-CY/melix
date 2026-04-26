@@ -298,6 +298,29 @@ class MLXTextRuntime:
         template_kwargs: dict[str, Any] | None = None,
         execution_ext: dict[str, str] | None = None,
     ) -> str:
+        if self._executor is not None:
+            return self._executor.run(
+                lambda: self._render_prompt(
+                    messages,
+                    loaded_model=loaded_model,
+                    template_kwargs=template_kwargs,
+                    execution_ext=execution_ext,
+                )
+            )
+        return self._render_prompt(
+            messages,
+            loaded_model=loaded_model,
+            template_kwargs=template_kwargs,
+            execution_ext=execution_ext,
+        )
+
+    def _render_prompt(
+        self,
+        messages,
+        loaded_model: Any | None = None,
+        template_kwargs: dict[str, Any] | None = None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> str:
         _ = execution_ext
         tokenizer = None
         if isinstance(loaded_model, dict):
