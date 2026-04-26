@@ -10,6 +10,7 @@ from typing import Any
 from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_registry.dflash_metadata import dflash_draft_metadata
 
 _HF_AUTH_FAILED_MESSAGE = "Hugging Face authentication failed. Check your token and try again."
 _HF_TOKEN_EXT_KEYS = {
@@ -402,6 +403,8 @@ class DownloadPipeline:
         total_bytes: int,
     ) -> str:
         public_ext = self._public_ext(request.ext)
+        config_payload = self._load_model_config_payload(runtime_model_path)
+        draft_metadata = dflash_draft_metadata(config_payload)
         payload = {
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
@@ -434,6 +437,7 @@ class DownloadPipeline:
                 "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
                 "melix.model_path": str(runtime_model_path),
+                **draft_metadata,
             },
             "metrics": {
                 "download.resume_success_rate": 0.0,
@@ -447,6 +451,17 @@ class DownloadPipeline:
     @staticmethod
     def _directory_size(path: Path) -> int:
         return sum(file_path.stat().st_size for file_path in path.rglob("*") if file_path.is_file())
+
+    @staticmethod
+    def _load_model_config_payload(model_dir: Path) -> dict[str, Any]:
+        config_path = model_dir / "config.json"
+        if not config_path.is_file():
+            return {}
+        try:
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _is_huggingface_hub_failure(exc: Exception) -> bool:

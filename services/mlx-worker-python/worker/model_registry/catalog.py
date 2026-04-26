@@ -19,6 +19,7 @@ from worker.runtime.text_family_adapters import (
     resolve_text_family_config,
 )
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.model_registry.dflash_metadata import dflash_draft_metadata
 
 _ADAPTER_SET_HASH_KEY = "melix.adapter_set_hash"
 _CAPABILITY_ROUTE_KIND_KEY = "melix.capability.route_kind"
@@ -1090,6 +1091,7 @@ class WorkerModelCatalog:
             "melix.model_path": runtime_model_path,
         }
         config_payload = _load_model_config_payload(model_dir)
+        ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
             ext.update(
@@ -1179,6 +1181,7 @@ class WorkerModelCatalog:
         else:
             normalized_ext.pop("melix.model_path_missing", None)
         config_payload = _load_model_config_payload(runtime_model_dir)
+        normalized_ext.update(dflash_draft_metadata(config_payload))
         model_kind = (
             "vlm"
             if requested_model_kind == "text" and _is_gemma4_vlm_config(config_payload)

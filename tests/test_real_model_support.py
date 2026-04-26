@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.real_model_support import (
+    PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
     _descriptor_runtime_model_path,
@@ -11,6 +12,10 @@ from scripts.real_model_support import (
     resolve_real_small_text_model_path,
     resolve_real_small_text_model_source,
 )
+
+
+def test_phase2_default_draft_model_is_small_mlx_qwen() -> None:
+    assert PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID == "mlx-community/Qwen3-0.6B-4bit"
 
 
 def test_real_small_model_source_prefers_valid_env_local_path(tmp_path: Path) -> None:

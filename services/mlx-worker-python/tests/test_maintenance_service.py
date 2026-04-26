@@ -826,6 +826,91 @@ def test_managed_hub_source_download_omits_blank_revision_and_normalizes_hub_and
     assert auth_exc_info.value.message == "Hugging Face authentication failed. Check your token and try again."
 
 
+def test_download_job_marks_managed_dflash_draft_metadata(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    source_dir = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--z-lab--Qwen3.5-27B-DFlash"
+        / "snapshots"
+        / "abc123"
+    )
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3",
+                "architectures": ["DFlashDraftModel"],
+                "auto_map": {"AutoModel": "dflash.DFlashDraftModel"},
+                "block_size": 8,
+                "dflash_config": {"target_layer_ids": [5, 12, 19]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    (source_dir / "dflash.py").write_text("class DFlashDraftModel: pass\n", encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    registry = WorkerRegistry(
+        model_catalog=WorkerModelCatalog(
+            environment={
+                "HOME": str(home),
+            }
+        )
+    )
+    service = build_service(tmp_path, registry=registry)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="z-lab/Qwen3.5-27B-DFlash",
+                output_dir=str(tmp_path / "download-dflash"),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "z-lab/Qwen3.5-27B-DFlash",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "source_path": str(source_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    download_manifest = json.loads((tmp_path / "download-dflash" / "download.state.json").read_text(encoding="utf-8"))
+
+    assert events[-1].completed.output_path == str(source_dir.resolve())
+    assert download_manifest["managed_model_path"] == str(source_dir.resolve())
+    assert download_manifest["ext"]["melix.model_path"] == str(source_dir.resolve())
+    assert download_manifest["ext"]["melix.draft.runtime_kind"] == "dflash"
+    assert download_manifest["ext"]["melix.draft.architecture"] == "DFlashDraftModel"
+    assert download_manifest["ext"]["melix.dflash.block_size"] == "8"
+    assert download_manifest["ext"]["melix.dflash.target_layer_ids"] == "5,12,19"
+
+    snapshot_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "snapshot-after-dflash-download"),
+                generate_manifest=True,
+                ext={"operation": "registry_snapshot"},
+            ),
+            context=None,
+        )
+    )
+    snapshot_payload = json.loads(
+        next(event.manifest for event in snapshot_events if event.HasField("manifest")).manifest_json
+    )
+    discovered = {model["model_id"]: model for model in snapshot_payload["model_registry"]["models"]}
+
+    assert discovered["z-lab/Qwen3.5-27B-DFlash"]["ext"]["melix.draft.runtime_kind"] == "dflash"
+
+
 def test_local_import_job_materializes_a_local_model_into_managed_root_and_registry_snapshot(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed-models"
     source_dir = tmp_path / "local-source"
@@ -1371,27 +1456,27 @@ def test_quantize_job_conflict_lock_blocks_parallel_quantization_on_same_scope(t
 
     def run_first_job() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-a"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    generate_manifest=True,
-                    ext={
-                        "operation": "quantize",
-                        "test_hold_ms": "150",
-                    },
-                ),
-                context=None,
-            )
-        )
-        started.set()
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-a"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={
+                    "operation": "quantize",
+                    "test_hold_ms": "150",
+                },
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_first_job)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     second_events = list(
         service.ConvertModel(
@@ -1435,26 +1520,28 @@ def test_quantize_job_conflict_lock_blocks_upload_on_same_linked_quantization_sc
     )
     bundle_path = Path(completed_quantize[-1].completed.output_path)
 
+    started = threading.Event()
     first_events: list[maintenance_pb2.ConvertModelEvent] = []
 
     def run_held_quantize() -> None:
         nonlocal first_events
-        first_events = list(
-            service.ConvertModel(
-                maintenance_pb2.ConvertModelRequest(
-                    source_model="melix-dev-text",
-                    output_dir=str(tmp_path / "quantize-held"),
-                    weight_quant="q4",
-                    kv_quant="q8",
-                    ext={"operation": "quantize", "test_hold_ms": "150"},
-                ),
-                context=None,
-            )
-        )
+        for event in service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize-held"),
+                weight_quant="q4",
+                kv_quant="q8",
+                ext={"operation": "quantize", "test_hold_ms": "150"},
+            ),
+            context=None,
+        ):
+            first_events.append(event)
+            if event.HasField("started"):
+                started.set()
 
     worker = threading.Thread(target=run_held_quantize)
     worker.start()
-    time.sleep(0.03)
+    assert started.wait(timeout=1.0)
 
     upload_events = list(
         service.ConvertModel(
@@ -2371,6 +2458,288 @@ def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models
     assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
 
 
+def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_uploads() -> None:
+    registry = ModelOpsJobRegistry()
+
+    adapter_train = registry.start("train_lora", "melix-dev-text", "/tmp/train-a")
+    registry.attach_manifest(
+        adapter_train.job_id,
+        json.dumps({"adapter_name": "adapter-a"}),
+    )
+    registry.complete(adapter_train.job_id, "/tmp/train-a/train_lora.adapter.json")
+
+    adapter_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-adapter")
+    registry.attach_manifest(
+        adapter_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/adapters/adapter-a",
+                "published_url": "https://huggingface.co/melix/adapters/adapter-a",
+                "published_ref": "main",
+                "published_files": ["train_lora.adapter.json", "adapter/adapters.safetensors"],
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "distribution_contract": "adapter_only",
+                "adapter_name": "adapter-a",
+                "source_model": "melix-dev-text",
+                "source_model_from_artifact": "melix-dev-text",
+                "parent_lineage": {
+                    "local_artifact_path": "/tmp/train-a/train_lora.adapter.json",
+                    "local_manifest_path": "/tmp/train-a/train_lora.adapter.json",
+                    "source_artifact_kind": "adapter",
+                    "source_job_id": adapter_train.job_id,
+                    "source_model": "melix-dev-text",
+                    "export_artifact_kind": "adapter_export",
+                },
+                "upload_duration_ms": 120.5,
+                "ext": {"artifact_kind": "adapter", "adapter_name": "adapter-a"},
+            }
+        ),
+    )
+    registry.complete(adapter_upload.job_id, "/tmp/upload-adapter/upload.receipt.json")
+
+    merged_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-merged")
+    registry.attach_manifest(
+        merged_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-fused",
+                "published_url": "https://huggingface.co/melix/models/melix-dev-fused",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "source_artifact_kind": "derived_text_model",
+                "distribution_contract": "merged_model",
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-fused",
+                    "local_manifest_path": "/runtime/activate/melix-dev-fused/manifest.json",
+                    "source_artifact_kind": "derived_text_model",
+                    "source_job_id": "model-ops-0099",
+                    "source_adapter_job_id": adapter_train.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-fused",
+                    "source_model": "melix-dev-text",
+                    "export_artifact_kind": "merged_export",
+                },
+                "upload_duration_ms": 321.0,
+            }
+        ),
+    )
+    registry.complete(merged_upload.job_id, "/tmp/upload-merged/upload.receipt.json")
+
+    # A completed upload that never actually hit a remote (no target_repo,
+    # no published_url, no recognized artifact kind) should stay out of the
+    # publishes lineage — it's not a publish event in any meaningful sense.
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-no-target")
+    registry.attach_manifest(
+        unrelated.job_id,
+        json.dumps({"ext": {"artifact_kind": "model"}}),
+    )
+    registry.complete(unrelated.job_id, "/tmp/upload-no-target/upload.receipt.json")
+
+    publishes = {entry["job_id"]: entry for entry in registry.snapshot()["publishes"]}
+
+    assert adapter_upload.job_id in publishes
+    assert merged_upload.job_id in publishes
+    assert unrelated.job_id not in publishes
+
+    adapter_entry = publishes[adapter_upload.job_id]
+    assert adapter_entry["status"] == "published"
+    assert adapter_entry["target_repo"] == "melix/adapters/adapter-a"
+    assert adapter_entry["export_artifact_kind"] == "adapter_export"
+    assert adapter_entry["source_artifact_kind"] == "adapter"
+    assert adapter_entry["distribution_contract"] == "adapter_only"
+    assert adapter_entry["publish_backend"] == "huggingface_hub"
+    assert adapter_entry["adapter_name"] == "adapter-a"
+    assert adapter_entry["source_job_id"] == adapter_train.job_id
+    assert adapter_entry["source_artifact_path"] == "/tmp/train-a/train_lora.adapter.json"
+    assert adapter_entry["source_manifest_path"] == "/tmp/train-a/train_lora.adapter.json"
+    assert adapter_entry["published_url"].endswith("/adapters/adapter-a")
+    assert adapter_entry["published_ref"] == "main"
+    assert "train_lora.adapter.json" in adapter_entry["published_files"]
+    assert adapter_entry["receipt_path"] == "/tmp/upload-adapter/upload.receipt.json"
+    assert adapter_entry["upload_duration_ms"] == 120.5
+
+    merged_entry = publishes[merged_upload.job_id]
+    assert merged_entry["export_artifact_kind"] == "merged_export"
+    assert merged_entry["source_artifact_kind"] == "derived_text_model"
+    assert merged_entry["distribution_contract"] == "merged_model"
+    assert merged_entry["derived_model_id"] == "melix-dev-fused"
+    assert merged_entry["activation_mode"] == "fused_derived_model"
+    assert merged_entry["source_artifact_path"] == "/runtime/activate/melix-dev-fused"
+    assert merged_entry["source_manifest_path"].endswith("/melix-dev-fused/manifest.json")
+    assert merged_entry["parent_lineage"]["source_adapter_job_id"] == adapter_train.job_id
+
+
+def test_job_registry_snapshot_publishes_tolerates_null_manifest_fields() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-null")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": None,
+                "target_repo": "melix/adapters/adapter-null",
+                "published_url": None,
+                "published_ref": None,
+                "published_files": None,
+                "upload_backend": None,
+                "publish_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "distribution_contract": None,
+                "adapter_name": None,
+                "source_model": None,
+                "parent_lineage": None,
+                "upload_duration_ms": None,
+                "ext": {"artifact_kind": "adapter", "adapter_name": "adapter-null"},
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-null/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    entry = publishes[0]
+
+    # str(None) would have leaked "None" into these fields without the or-fallbacks.
+    for key in (
+        "published_url",
+        "published_ref",
+        "distribution_contract",
+        "adapter_name",
+        "derived_model_id",
+        "activation_mode",
+        "source_artifact_path",
+        "source_manifest_path",
+        "source_model",
+    ):
+        assert entry[key] != "None", f"{key} leaked str(None)"
+        assert entry[key] != "null"
+    assert entry["target_repo"] == "melix/adapters/adapter-null"
+    assert entry["publish_backend"] == "huggingface_hub"
+    assert entry["adapter_name"] == "adapter-null"
+    # float(None) would have raised TypeError; verify the fallback.
+    assert entry["upload_duration_ms"] == 0.0
+    assert entry["parent_lineage"] == {}
+    assert entry["published_files"] == []
+
+
+def test_job_registry_snapshot_publishes_admits_quantized_model_bundle_source_kind() -> None:
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-quant")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "target_repo": "melix/models/quant-bundle",
+                "upload_backend": "huggingface_hub",
+                # Worker emitted a quantized-bundle upload without
+                # export_artifact_kind; the source-kind branch should still
+                # admit it into publishes.
+                "source_artifact_kind": "quantized_model_bundle",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-quant/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["source_artifact_kind"] == "quantized_model_bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["target_repo"] == "melix/models/quant-bundle"
+
+
+def test_job_registry_snapshot_publishes_admits_legacy_uploads_with_target_repo() -> None:
+    # Pre-Module-5 worker emissions only carried `published_repo` plus an
+    # upload backend without `export_artifact_kind` / `source_artifact_kind`.
+    # Those should still appear in the publishes lineage view so the doc
+    # claim ("old-format manifests keep working") holds.
+    registry = ModelOpsJobRegistry()
+
+    legacy_upload = registry.start("upload", "melix-dev-text", "/tmp/upload-legacy")
+    registry.attach_manifest(
+        legacy_upload.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/legacy-bundle",
+                "upload_backend": "huggingface_hub",
+            }
+        ),
+    )
+    registry.complete(legacy_upload.job_id, "/tmp/upload-legacy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["job_id"] == legacy_upload.job_id
+    assert publishes[0]["target_repo"] == "melix/models/legacy-bundle"
+    assert publishes[0]["export_artifact_kind"] == ""
+    assert publishes[0]["source_artifact_kind"] == ""
+
+
+def test_job_registry_snapshot_publishes_drops_unrelated_uploads_without_remote_target() -> None:
+    # A completed `upload` job that didn't reach a remote (no published_repo,
+    # no published_url, no recognized artifact kind) is by definition not a
+    # publish — keep it out of the publishes lineage view to avoid leaking
+    # unrelated worker emissions.
+    registry = ModelOpsJobRegistry()
+
+    unrelated = registry.start("upload", "melix-dev-text", "/tmp/upload-unrelated")
+    registry.attach_manifest(
+        unrelated.job_id,
+        json.dumps({"ext": {"artifact_kind": "model"}}),
+    )
+    registry.complete(unrelated.job_id, "/tmp/upload-unrelated/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+    assert snapshot["publishes"] == []
+
+
+def test_job_registry_snapshot_publishes_treats_non_list_published_files_as_empty() -> None:
+    # If a hand-edited manifest stored a string in `published_files`, naive
+    # `list(...)` would split it into per-character entries. Verify the
+    # `isinstance(value, list)` guard reduces that to an empty list.
+    registry = ModelOpsJobRegistry()
+
+    upload_job = registry.start("upload", "melix-dev-text", "/tmp/upload-stringy")
+    registry.attach_manifest(
+        upload_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/adapters/stringy",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "adapter_export",
+                "source_artifact_kind": "adapter",
+                "published_files": "weights.safetensors",
+            }
+        ),
+    )
+    registry.complete(upload_job.job_id, "/tmp/upload-stringy/upload.receipt.json")
+
+    publishes = registry.snapshot()["publishes"]
+    assert len(publishes) == 1
+    assert publishes[0]["published_files"] == []
+
+
+def test_job_registry_snapshot_emits_empty_publishes_when_no_completed_uploads() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/tmp/train-only")
+    registry.attach_manifest(train_job.job_id, json.dumps({"adapter_name": "adapter-only"}))
+    registry.complete(train_job.job_id, "/tmp/train-only/train_lora.adapter.json")
+
+    in_flight_upload = registry.start("upload", "melix-dev-text", "/tmp/in-flight")
+    registry.attach_manifest(
+        in_flight_upload.job_id,
+        json.dumps({"export_artifact_kind": "adapter_export"}),
+    )
+
+    snapshot = registry.snapshot()
+    assert snapshot["publishes"] == []
+
+
 def test_job_registry_snapshot_surfaces_dataset_provenance_and_derived_model_linkage() -> None:
     registry = ModelOpsJobRegistry()
 
@@ -2913,7 +3282,53 @@ def test_run_bench_measures_runtime_behavior_from_loaded_backend(tmp_path: Path)
         runtime=MLXTextRuntime(backend=FastBenchmarkBackend()),
         model_catalog=WorkerModelCatalog(),
     )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     service = build_service(tmp_path, registry=registry)
+    service._core._benchmark_suite_catalog = BenchmarkSuiteCatalog(
+        hf_dataset_fetcher=FakeBenchmarkHFDatasetFetcher()
+    )
+
+    events = list(
+        service.RunBench(
+            maintenance_pb2.RunBenchRequest(
+                model_handle=loaded.handle,
+                suites=["smoke"],
+                parameters={"require_live_model": "true"},
+            ),
+            context=None,
+        )
+    )
+
+    report_path = Path(events[-1].completed.report_path)
+    run_dir = report_path.parent
+    summary = json.loads((run_dir / "bench-summary.json").read_text(encoding="utf-8"))
+    report = report_path.read_text(encoding="utf-8")
+
+    assert summary["parameters"]["runtime_live_model"] == "true"
+    assert summary["parameters"]["runtime_name"] == "fast-benchmark"
+    assert summary["parameters"]["runtime_model_handle"] == loaded.handle
+    assert "runtime_name: fast-benchmark" in report
+
+
+def test_run_bench_require_live_model_rejects_deterministic_runtime(tmp_path: Path) -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    service = build_service(tmp_path, registry=registry)
+
+    with pytest.raises(ModelOperationError, match="requires a loaded live model runtime"):
+        list(
+            service.RunBench(
+                maintenance_pb2.RunBenchRequest(
+                    model_handle=loaded.handle,
+                    suites=["smoke"],
+                    parameters={"require_live_model": "true"},
+                ),
+                context=None,
+            )
+        )
 
 
 def test_doctor_reports_warning_for_loaded_models_without_cache_bytes(tmp_path: Path) -> None:
@@ -4126,6 +4541,17 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         "reasoning_mode": "step-by-step",
         "structured_output_mode": "json",
     }
+    expected_job_parameters = {
+        **bench_parameters,
+        "runtime_live_model": "false",
+        "runtime_model_handle": "melix-dev-text::1",
+        "runtime_kind": "text",
+        "runtime_name": "deterministic-text",
+        "runtime_model_id": "melix-dev-text",
+        "runtime_model_path": "models/melix-dev-text",
+        "runtime_source_kind": "",
+        "runtime_source_repo": "",
+    }
     job_manifest = run_dir / "bench-job.json"
     summary_manifest = run_dir / "bench-summary.json"
     context_rows_path = run_dir / "bench-context-rows.jsonl"
@@ -4180,9 +4606,9 @@ def test_run_bench_persists_job_manifest_and_per_suite_results(tmp_path: Path) -
         cache_profile=job_payload["cache_profile"],
         reasoning_mode=job_payload["reasoning_mode"],
         structured_output_mode=job_payload["structured_output_mode"],
-        request_p50_ms=job_payload["request_p50_ms"],
-        request_p95_ms=job_payload["request_p95_ms"],
-        parameters=bench_parameters,
+            request_p50_ms=job_payload["request_p50_ms"],
+            request_p95_ms=job_payload["request_p95_ms"],
+            parameters=expected_job_parameters,
         status="completed",
         output_dir=str(run_dir),
         created_at_unix_ms=job_payload["created_at_unix_ms"],

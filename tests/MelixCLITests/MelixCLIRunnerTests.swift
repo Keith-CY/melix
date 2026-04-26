@@ -2698,7 +2698,10 @@ struct MelixCLIRunnerTests {
                     title: "Vision Session",
                     modelID: "melix-dev-vlm",
                     host: "127.0.0.1",
-                    port: 12434
+                    port: 12434,
+                    accelerationMode: "speculative_decode",
+                    draftModelID: "z-lab/Qwen3.5-27B-DFlash",
+                    numDraftTokens: 4
                 )
             )
         )
@@ -2725,6 +2728,9 @@ struct MelixCLIRunnerTests {
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
         #expect(gatewayConfigCall.servedModelID == "melix-dev-vlm")
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
+        #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
+        #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(servingDefaultsCall.numDraftTokens == 4)
 
         try await store.save(
             MelixOperatorSessionState(
@@ -2747,6 +2753,50 @@ struct MelixCLIRunnerTests {
         await #expect(throws: MelixCLIError.self) {
             _ = try await runner.run(.serverStart(.init(serverSessionID: "server-session-1")))
         }
+    }
+
+    @Test("server session update persists draft serving defaults for start")
+    func serverSessionUpdatePersistsDraftServingDefaultsForStart() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: "mlx-community/Qwen3.5-27B-4bit", kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Qwen Session",
+                    modelID: "mlx-community/Qwen3.5-27B-4bit"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionUpdate(
+                .init(
+                    serverSessionID: "server-session-1",
+                    draftModelID: "z-lab/Qwen3.5-27B-DFlash"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+        #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
+        #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(servingDefaultsCall.numDraftTokens == 4)
     }
 
     @Test("server start falls back to model info when the snapshot omits an imported model")
@@ -3020,6 +3070,128 @@ struct MelixCLIRunnerTests {
                 Issue.record("Expected runtime error, got \(error)")
             }
         }
+    }
+
+    @Test("lora publishes list renders fixed-width table with export kind column")
+    func loraPublishesListRendersFixedWidthTable() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makePublishesRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraPublishesList(.init(modelID: "melix-dev-text"))
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.operation == "registry_snapshot")
+        #expect(output.contains("JOB_ID"))
+        #expect(output.contains("KIND"))
+        #expect(output.contains("TARGET_REPO"))
+        #expect(output.contains("SOURCE_JOB"))
+        #expect(output.contains("ADAPTER/DERIVED"))
+        #expect(output.contains("model-ops-0100"))
+        #expect(output.contains("adapter_export"))
+        #expect(output.contains("merged_export"))
+        #expect(output.contains("melix/adapters/adapter-a"))
+    }
+
+    @Test("lora publishes list emits JSON when requested")
+    func loraPublishesListEmitsJSON() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makePublishesRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraPublishesList(.init(modelID: "melix-dev-text", json: true))
+        )
+        let payload = try #require(parseJSONObject(output))
+        let publishes = try #require(payload["publishes"] as? [[String: Any]])
+        #expect(publishes.count == 2)
+    }
+
+    @Test("lora publishes show renders detail with source lineage")
+    func loraPublishesShowRendersDetail() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makePublishesRegistryManifest()
+        ))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraPublishesShow(.init(modelID: "melix-dev-text", jobID: "model-ops-0100"))
+        )
+
+        #expect(output.contains("Publish: model-ops-0100"))
+        #expect(output.contains("Export kind: adapter_export"))
+        #expect(output.contains("Target repo: melix/adapters/adapter-a"))
+        #expect(output.contains("Distribution contract: adapter_only"))
+        #expect(output.contains("Source job: model-ops-0050"))
+        #expect(output.contains("Adapter name: adapter-a"))
+        #expect(output.contains("Published files"))
+        #expect(output.contains("\t") == false)
+    }
+
+    @Test("lora publishes show errors for an unknown job id and lists known ids")
+    func loraPublishesShowErrorsForUnknownJob() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: makePublishesRegistryManifest()
+        ))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublishesShow(.init(modelID: "melix-dev-text", jobID: "missing"))
+            )
+            Issue.record("Expected publishes show to throw for an unknown job id")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("missing"))
+                #expect(message.contains("model-ops-0100"))
+            } else {
+                Issue.record("Expected missingRequired error, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora publishes show truncates the known-jobs list past 10 entries")
+    func loraPublishesShowTruncatesKnownJobList() async throws {
+        let client = StubControlPlaneXPCClient()
+        let publishes = (1...15).map { index -> String in
+            let jobID = "model-ops-\(String(format: "%04d", index))"
+            return """
+            {"job_id":"\(jobID)","status":"published","target_repo":"melix/adapters/\(jobID)","export_artifact_kind":"adapter_export"}
+            """
+        }.joined(separator: ",")
+        let manifest = "{\"operation\":\"registry_snapshot\",\"publishes\":[\(publishes)]}"
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: manifest))
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublishesShow(.init(modelID: "melix-dev-text", jobID: "missing"))
+            )
+            Issue.record("Expected publishes show to throw for an unknown job id")
+        } catch let error as MelixCLIError {
+            if case .missingRequired(let message) = error {
+                #expect(message.contains("… (5 more)"))
+                #expect(message.contains("model-ops-0001"))
+                // 11th+ jobs must not be listed verbatim.
+                #expect(message.contains("model-ops-0012") == false)
+            } else {
+                Issue.record("Expected missingRequired error, got \(error)")
+            }
+        }
+    }
+
+    @Test("lora publishes list surfaces a readable message when no publishes are recorded")
+    func loraPublishesListRendersEmptyMessage() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(
+            manifestJSON: #"{"operation":"registry_snapshot","publishes":[]}"#
+        ))
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraPublishesList(.init(modelID: "melix-dev-text"))
+        )
+        #expect(output == "No publishes recorded.\n")
     }
 
     @Test("lora resume inherits hf dataset fields from the manifest when dataset_uri is absent")
@@ -3575,6 +3747,176 @@ struct MelixCLIRunnerTests {
         #expect(mergedCall.ext["artifact_kind"] == "merged_export")
         #expect(mergedCall.ext["artifact_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
         #expect(mergedCall.ext["artifact_manifest_path"] == "/tmp/melix/activate_adapter/job-2/manifest.json")
+    }
+
+    @Test("lora publish infers adapter export from the manifest schema at runtime")
+    func loraPublishInfersAdapterExportFromManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-adapter-infer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "artifact_kind": "adapter",
+                "adapter_name": "demo",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/inferred-adapter"))
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/adapters/demo",
+                    exportKind: nil,
+                    artifactPath: manifestURL.path,
+                    artifactManifestPath: manifestURL.path
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "adapter_export")
+    }
+
+    @Test("lora publish infers merged export from a fused derived-model manifest at runtime")
+    func loraPublishInfersMergedExportFromManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-merged-infer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("manifest.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.derived_text_model.v1",
+                "activation_mode": "fused_derived_model",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/inferred-merged"))
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/models/demo",
+                    exportKind: nil,
+                    artifactPath: manifestURL.path,
+                    artifactManifestPath: manifestURL.path
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "merged_export")
+    }
+
+    @Test("lora publish rejects an explicit --export-kind that contradicts the manifest content")
+    func loraPublishRejectsExportKindMismatchAgainstManifest() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-mismatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("train_lora.adapter.json")
+        try writeJSONObjectForTest(
+            [
+                "schema_version": "melix.lora_adapter_package.v1",
+                "artifact_kind": "adapter",
+            ],
+            to: manifestURL
+        )
+
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublish(
+                    .init(
+                        modelID: "melix-dev-text",
+                        targetRepo: "melix/models/demo",
+                        exportKind: .mergedExport,
+                        artifactPath: manifestURL.path,
+                        artifactManifestPath: manifestURL.path
+                    )
+                )
+            )
+            Issue.record("Expected publish to reject mismatched --export-kind vs manifest")
+        } catch let error as MelixCLIError {
+            if case .usage(let message) = error {
+                #expect(message.contains("--export-kind merged"))
+                #expect(message.contains("adapter"))
+            } else {
+                Issue.record("Expected .usage error, got \(error)")
+            }
+        }
+        #expect(await client.lastModelOperationCall == nil)
+    }
+
+    @Test("lora publish errors when the manifest cannot be inferred and --export-kind is absent")
+    func loraPublishErrorsOnAmbiguousManifestWithoutExportKind() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-publish-ambiguous-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let manifestURL = tempDir.appendingPathComponent("unknown.json")
+        try "{}".write(to: manifestURL, atomically: true, encoding: .utf8)
+
+        let client = StubControlPlaneXPCClient()
+
+        do {
+            _ = try await MelixCLIRunner(client: client).run(
+                .loraPublish(
+                    .init(
+                        modelID: "melix-dev-text",
+                        targetRepo: "melix/models/demo",
+                        exportKind: nil,
+                        artifactPath: manifestURL.path,
+                        artifactManifestPath: manifestURL.path
+                    )
+                )
+            )
+            Issue.record("Expected publish to reject ambiguous manifest without --export-kind")
+        } catch let error as MelixCLIError {
+            if case .usage(let message) = error {
+                #expect(message.contains("--export-kind"))
+            } else {
+                Issue.record("Expected .usage error, got \(error)")
+            }
+        }
+        #expect(await client.lastModelOperationCall == nil)
+    }
+
+    @Test("lora publish honors explicit --export-kind when the manifest file is unreadable")
+    func loraPublishHonorsExplicitKindWhenManifestUnreadable() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/upload/escape-hatch"))
+
+        // Path intentionally does not exist on disk — the explicit override is the escape hatch.
+        let missingPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-missing-\(UUID().uuidString).json").path
+
+        _ = try await MelixCLIRunner(client: client).run(
+            .loraPublish(
+                .init(
+                    modelID: "melix-dev-text",
+                    targetRepo: "melix/adapters/demo",
+                    exportKind: .adapterExport,
+                    artifactPath: missingPath,
+                    artifactManifestPath: missingPath
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        #expect(call.ext["artifact_kind"] == "adapter_export")
     }
 
     @Test("subprocess-backed lora operations build public melix arguments and decode manifest payloads")
@@ -6176,6 +6518,62 @@ private func makeDoctorReport(
         return item
     }
     return report
+}
+
+private func makePublishesRegistryManifest() -> String {
+    #"""
+    {
+      "operation": "registry_snapshot",
+      "adapters": [],
+      "derived_models": [],
+      "publishes": [
+        {
+          "job_id": "model-ops-0100",
+          "status": "published",
+          "target_repo": "melix/adapters/adapter-a",
+          "published_url": "https://huggingface.co/melix/adapters/adapter-a",
+          "published_ref": "main",
+          "published_files": ["train_lora.adapter.json", "adapter/adapters.safetensors", "adapter/adapter_config.json"],
+          "publish_backend": "huggingface_hub",
+          "export_artifact_kind": "adapter_export",
+          "source_artifact_kind": "adapter",
+          "distribution_contract": "adapter_only",
+          "source_job_id": "model-ops-0050",
+          "source_artifact_path": "/tmp/train-a/train_lora.adapter.json",
+          "source_manifest_path": "/tmp/train-a/train_lora.adapter.json",
+          "source_model": "melix-dev-text",
+          "adapter_name": "adapter-a",
+          "derived_model_id": "",
+          "activation_mode": "",
+          "parent_lineage": {"source_job_id": "model-ops-0050"},
+          "receipt_path": "/tmp/upload-adapter/upload.receipt.json",
+          "upload_duration_ms": 120.5
+        },
+        {
+          "job_id": "model-ops-0101",
+          "status": "published",
+          "target_repo": "melix/models/melix-dev-fused",
+          "published_url": "https://huggingface.co/melix/models/melix-dev-fused",
+          "published_ref": "main",
+          "published_files": ["manifest.json", "config.json", "weights/model-00001-of-00001.safetensors"],
+          "publish_backend": "huggingface_hub",
+          "export_artifact_kind": "merged_export",
+          "source_artifact_kind": "derived_text_model",
+          "distribution_contract": "merged_model",
+          "source_job_id": "model-ops-0080",
+          "source_artifact_path": "/runtime/activate/melix-dev-fused",
+          "source_manifest_path": "/runtime/activate/melix-dev-fused/manifest.json",
+          "source_model": "melix-dev-text",
+          "adapter_name": "",
+          "derived_model_id": "melix-dev-fused",
+          "activation_mode": "fused_derived_model",
+          "parent_lineage": {"source_job_id": "model-ops-0080", "derived_model_id": "melix-dev-fused"},
+          "receipt_path": "/runtime/upload/upload.receipt.json",
+          "upload_duration_ms": 321.0
+        }
+      ]
+    }
+    """#
 }
 
 private func makeExperimentsRegistryManifestWithoutBestLoss() -> String {
