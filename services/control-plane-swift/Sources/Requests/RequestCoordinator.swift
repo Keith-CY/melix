@@ -221,6 +221,12 @@ private actor ResumableExecutionHub {
     private func detachLifecycleStream(_ streamID: UUID) {
         lifecycleContinuations.removeValue(forKey: streamID)
     }
+
+#if DEBUG
+    func testingDetachAllConsumersWithoutLifecycleCallback() {
+        eventContinuations.removeAll()
+    }
+#endif
 }
 
 private enum CacheRouteClass: String, Sendable {
@@ -570,6 +576,11 @@ public actor RequestCoordinator {
         }
 
         disconnectResumeAttemptCount += 1
+        if disconnectStartedAt[requestID] == nil,
+           disconnectGraceTasks[requestID] == nil,
+           !(await hub.hasConsumers()) {
+            await handleLastConsumerDetached(requestID: requestID)
+        }
         if let startedAt = disconnectStartedAt.removeValue(forKey: requestID) {
             disconnectGraceTasks.removeValue(forKey: requestID)?.cancel()
             let recoveryLatencyMs = now().timeIntervalSince(startedAt) * 1000
@@ -598,6 +609,26 @@ public actor RequestCoordinator {
             }
         )
     }
+
+#if DEBUG
+    func testingInstallExecutionHubWithoutConsumers(requestID: String, modelID: String) {
+        executionHubs[requestID] = ResumableExecutionHub(
+            requestID: requestID,
+            modelID: modelID,
+            bufferLimit: lifecyclePolicy.resumeBufferLimit,
+            onLastConsumerDetached: { [self] in
+                await self.handleLastConsumerDetached(requestID: requestID)
+            }
+        )
+    }
+
+    func testingDetachExecutionConsumersWithoutBookkeeping(requestID: String) async {
+        guard let hub = executionHubs[requestID] else {
+            return
+        }
+        await hub.testingDetachAllConsumersWithoutLifecycleCallback()
+    }
+#endif
 
     public func startChatCompletion(
         _ translatedRequest: TranslatedChatRequest,

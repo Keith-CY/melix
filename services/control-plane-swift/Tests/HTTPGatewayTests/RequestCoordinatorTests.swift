@@ -151,6 +151,40 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
     }
 
+    @Test("resume synthesizes disconnect bookkeeping when a request has no active consumers")
+    func resumeSynthesizesDisconnectBookkeepingWhenARequestHasNoActiveConsumers() async throws {
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: BlockingWorkerClient()),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.1
+            )
+        )
+
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-detach",
+            modelID: "test-model"
+        )
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "req-detach")
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "missing")
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-resume-race",
+            modelID: "test-model"
+        )
+
+        let resumedExecution = try await coordinator.resumeChatCompletion(requestID: "req-resume-race")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(resumedExecution.requestID == "req-resume-race")
+        #expect(resumedExecution.modelID == "test-model")
+        #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
+    }
+
     @Test("disconnect grace expiry aborts the worker and records a terminal lifecycle failure")
     func disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure() async throws {
         let workerClient = PhaseAwareWorkerClient()
