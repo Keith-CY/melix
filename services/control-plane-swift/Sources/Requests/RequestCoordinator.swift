@@ -46,6 +46,8 @@ private actor ResumableExecutionHub {
     private var lifecycleEvents: [ConnectionLifecycleEvent]
     private var eventContinuations: [UUID: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation]
     private var lifecycleContinuations: [UUID: AsyncStream<ConnectionLifecycleEvent>.Continuation]
+    private var terminatedEventStreamIDs: Set<UUID>
+    private var terminatedLifecycleStreamIDs: Set<UUID>
     private var terminalState: TerminalState?
 
     init(
@@ -62,6 +64,8 @@ private actor ResumableExecutionHub {
         self.lifecycleEvents = [.active]
         self.eventContinuations = [:]
         self.lifecycleContinuations = [:]
+        self.terminatedEventStreamIDs = []
+        self.terminatedLifecycleStreamIDs = []
         self.terminalState = nil
     }
 
@@ -187,11 +191,17 @@ private actor ResumableExecutionHub {
     private func registerEventContinuation(
         _ streamID: UUID,
         continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation
-    ) -> (replay: [Melix_Worker_V1_ExecuteEvent], terminalState: TerminalState?) {
+    ) async -> (replay: [Melix_Worker_V1_ExecuteEvent], terminalState: TerminalState?) {
         let replay = bufferedEvents
         let terminalState = self.terminalState
         if terminalState == nil {
-            eventContinuations[streamID] = continuation
+            if terminatedEventStreamIDs.remove(streamID) != nil {
+                if eventContinuations.isEmpty {
+                    await onLastConsumerDetached()
+                }
+            } else {
+                eventContinuations[streamID] = continuation
+            }
         }
         return (replay, terminalState)
     }
@@ -199,17 +209,22 @@ private actor ResumableExecutionHub {
     private func registerLifecycleContinuation(
         _ streamID: UUID,
         continuation: AsyncStream<ConnectionLifecycleEvent>.Continuation
-    ) -> (replay: [ConnectionLifecycleEvent], isTerminal: Bool) {
+    ) async -> (replay: [ConnectionLifecycleEvent], isTerminal: Bool) {
         let replay = lifecycleEvents
         let isTerminal = terminalState != nil
         if !isTerminal {
-            lifecycleContinuations[streamID] = continuation
+            if terminatedLifecycleStreamIDs.remove(streamID) == nil {
+                lifecycleContinuations[streamID] = continuation
+            }
         }
         return (replay, isTerminal)
     }
 
     private func detachStream(_ streamID: UUID) async {
         guard eventContinuations.removeValue(forKey: streamID) != nil else {
+            if terminalState == nil {
+                terminatedEventStreamIDs.insert(streamID)
+            }
             return
         }
         guard eventContinuations.isEmpty, terminalState == nil else {
@@ -219,15 +234,78 @@ private actor ResumableExecutionHub {
     }
 
     private func detachLifecycleStream(_ streamID: UUID) {
-        lifecycleContinuations.removeValue(forKey: streamID)
+        if lifecycleContinuations.removeValue(forKey: streamID) == nil, terminalState == nil {
+            terminatedLifecycleStreamIDs.insert(streamID)
+        }
     }
 
-#if DEBUG
+    #if DEBUG
+    func testingRegisterEventStreamAfterPreRegistrationTermination() async {
+        let streamID = UUID()
+        await detachStream(streamID)
+        var capturedContinuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation?
+        _ = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            capturedContinuation = continuation
+        }
+        guard let capturedContinuation else {
+            return
+        }
+        _ = await registerEventContinuation(streamID, continuation: capturedContinuation)
+    }
+
+    func testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination() async -> Bool {
+        let streamID = UUID()
+        detachLifecycleStream(streamID)
+        var capturedContinuation: AsyncStream<ConnectionLifecycleEvent>.Continuation?
+        _ = AsyncStream<ConnectionLifecycleEvent> { continuation in
+            capturedContinuation = continuation
+        }
+        guard let capturedContinuation else {
+            return false
+        }
+        _ = await registerLifecycleContinuation(streamID, continuation: capturedContinuation)
+        return lifecycleContinuations[streamID] == nil
+    }
+
     func testingDetachAllConsumersWithoutLifecycleCallback() {
         eventContinuations.removeAll()
     }
-#endif
+    #endif
 }
+
+#if DEBUG
+func testingResumableExecutionHubPreRegistrationTerminationSnapshot() async -> (
+    detachCount: Int,
+    hasConsumers: Bool,
+    lifecycleDetached: Bool
+) {
+    let detachCounter = TestingResumableExecutionDetachCounter()
+    let hub = ResumableExecutionHub(
+        requestID: "req-pre-registration-termination",
+        modelID: "melix-dev-text",
+        bufferLimit: 8,
+        onLastConsumerDetached: {
+            await detachCounter.increment()
+        }
+    )
+
+    await hub.testingRegisterEventStreamAfterPreRegistrationTermination()
+    let lifecycleDetached = await hub.testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination()
+    return (
+        detachCount: await detachCounter.value,
+        hasConsumers: await hub.hasConsumers(),
+        lifecycleDetached: lifecycleDetached
+    )
+}
+
+private actor TestingResumableExecutionDetachCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+#endif
 
 private enum CacheRouteClass: String, Sendable {
     case cold

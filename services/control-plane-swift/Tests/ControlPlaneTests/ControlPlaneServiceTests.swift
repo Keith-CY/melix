@@ -4407,6 +4407,7 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok)
         #expect(lastRequest.modelHandle == "melix-dev-text::explicit")
+        #expect(lastRequest.parameters["require_live_model"] == nil)
         #expect(response.ops.benchmarkJob.jobID == "bench-explicit")
         #expect(response.ops.benchmarkJob.modelID == "melix-dev-text")
     }
@@ -4483,6 +4484,50 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.benchmarkJob.modelID == registryModelID)
     }
 
+    @Test("execute tags catalog hub repo benchmark targets with hub live-model source")
+    func executeTagsCatalogHubRepoBenchmarkTargetsWithHubLiveModelSource() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-hub-catalog-report.md").path
+        try "# Hub Catalog Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        var hubModel = ModelCatalog.devTextModel()
+        hubModel.modelID = "local-qwen-hub"
+        hubModel.settings.ext["melix.source_kind"] = "hub_repo"
+        hubModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        hubModel.settings.ext["melix.task_kind"] = "text-generation"
+
+        let catalog = ModelCatalog(seedModels: [hubModel])
+        _ = await catalog.loadModel(id: "local-qwen-hub", dispatchHandle: "local-qwen-hub::hub")
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-hub-catalog", reportPath: reportPath))
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(
+                modelID: "local-qwen-hub",
+                suites: ["smoke"],
+                contextLengths: [256],
+                generationLength: 8,
+                batchSizes: [1],
+                repeats: 1,
+                cacheProfile: "cold",
+                reasoningMode: "disabled",
+                structuredOutputMode: "plain_text"
+            )
+        )
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastBenchRequest.parameters["require_live_model"] == "true")
+        #expect(lastBenchRequest.parameters["live_model_source"] == "hub_repo")
+        #expect(lastBenchRequest.sourceRepo == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
     @Test("execute does not require live-model evidence for local-path benchmark targets")
     func executeDoesNotRequireLiveModelEvidenceForLocalPathBenchmarkTargets() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-local-path-report.md").path
@@ -4533,6 +4578,50 @@ struct ControlPlaneServiceTests {
         #expect(response.ok)
         #expect(lastBenchRequest.sourceRepo == localModelPath)
         #expect(lastBenchRequest.parameters["require_live_model"] == nil)
+    }
+
+    @Test("execute does not tag local catalog benchmark targets as live model evidence")
+    func executeDoesNotTagLocalCatalogBenchmarkTargetsAsLiveModelEvidence() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-local-catalog-report.md").path
+        try "# Local Catalog Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        var localModel = ModelCatalog.devTextModel()
+        localModel.modelID = "mlx-community/local-cache-model"
+        localModel.settings.ext["melix.source_kind"] = "local_path"
+        localModel.settings.ext["melix.model_path"] = "/tmp/melix/local-cache-model"
+        localModel.settings.ext["melix.task_kind"] = "text-generation"
+
+        let catalog = ModelCatalog(seedModels: [localModel])
+        _ = await catalog.loadModel(id: "mlx-community/local-cache-model", dispatchHandle: "local-cache::loaded")
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-local-catalog", reportPath: reportPath))
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(
+                modelID: "mlx-community/local-cache-model",
+                suites: ["smoke"],
+                contextLengths: [256],
+                generationLength: 8,
+                batchSizes: [1],
+                repeats: 1,
+                cacheProfile: "cold",
+                reasoningMode: "disabled",
+                structuredOutputMode: "plain_text"
+            )
+        )
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastBenchRequest.parameters["require_live_model"] == nil)
+        #expect(lastBenchRequest.parameters["live_model_source"] == nil)
+        #expect(lastBenchRequest.sourceRepo == "/tmp/melix/local-cache-model")
     }
 
     @Test("execute allows deterministic runtime evidence override for dev benchmark targets")
@@ -4793,6 +4882,53 @@ struct ControlPlaneServiceTests {
         #expect(evalRequest.parameters["require_live_model"] == "true")
         #expect(evalRequest.parameters["live_model_source"] == "hf_repo")
         #expect(response.ops.evaluationJob.taskKind == "image-text-to-text")
+    }
+
+    @Test("execute tags catalog hub repo evaluation targets with hub live-model source")
+    func executeTagsCatalogHubRepoEvaluationTargetsWithHubLiveModelSource() async throws {
+        var hubModel = ModelCatalog.devTextModel()
+        hubModel.modelID = "local-eval-qwen-hub"
+        hubModel.settings.ext["melix.source_kind"] = "hub_repo"
+        hubModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        hubModel.settings.ext["melix.task_kind"] = "text-generation"
+
+        let catalog = ModelCatalog(seedModels: [hubModel])
+        _ = await catalog.loadModel(id: "local-eval-qwen-hub", dispatchHandle: "local-eval-qwen-hub::hub")
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job.jobID = "eval-hub-catalog"
+            response.job.modelID = "local-eval-qwen-hub"
+            response.job.taskKind = "text-generation"
+            response.job.sourceRepo = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+            response.job.suiteID = "qa_smoke"
+            response.job.datasetID = "qa_smoke.dev.v1"
+            response.job.sampleSize = 8
+            response.job.status = "completed"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunEvaluationRequest(
+                modelID: "local-eval-qwen-hub",
+                suiteID: "qa_smoke",
+                datasetID: "qa_smoke.dev.v1"
+            )
+        )
+        let evalRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        #expect(response.ok)
+        #expect(evalRequest.parameters["require_live_model"] == "true")
+        #expect(evalRequest.parameters["live_model_source"] == "hub_repo")
+        #expect(evalRequest.sourceRepo == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
     }
 
     @Test("execute rejects unsupported any-to-any evaluation targets that are not gemma4 vision imports")

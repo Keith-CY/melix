@@ -1082,8 +1082,7 @@ private func waitForBootstrapCondition(
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @MainActor () async -> Bool
 ) async throws {
-    let resolvedTimeout = timeout ?? (MenuBarTestEnvironment.isHeadlessCI ? .seconds(10) : .seconds(2))
-    let deadline = ContinuousClock.now + resolvedTimeout
+    let deadline = ContinuousClock.now + (timeout ?? MenuBarTestEnvironment.bootstrapConditionTimeout)
     while ContinuousClock.now < deadline {
         if await condition() {
             return

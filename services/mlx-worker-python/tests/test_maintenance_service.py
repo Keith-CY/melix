@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -3487,6 +3488,170 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+    assert MaintenanceCore._vlm_fast_path_bench_metrics(suite_id="smoke", samples=[]) == []
+
+
+def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="single_stream",
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=8.0,
+                total_latency_ms=16.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_cache_reuse",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
+
+
+def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")
+
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="future_mode",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == -1.0
+    assert "unmapped categorical metric value" in caplog.text
+    assert "future_mode" in caplog.text
+
+
+def test_vlm_fast_path_bench_metrics_ignore_missing_probe_sentinels_in_cache_sums() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                image_feature_cache_hits=-1,
+                image_feature_cache_misses=-1,
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=8.0,
+                total_latency_ms=16.0,
+                completion_tokens=2,
+                image_feature_cache_hits=2,
+                image_feature_cache_misses=3,
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.image_feature_cache_hits"].value == 2.0
+    assert metrics_by_name["bench.smoke.image_feature_cache_misses"].value == 3.0
+
+
+def test_vlm_bench_sample_marks_missing_fast_path_probe(caplog) -> None:
+    class RuntimeWithoutProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithoutProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    caplog.set_level(logging.DEBUG, logger="worker.engine.maintenance_core")
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.image_feature_cache_hits == -1
+    assert sample.image_feature_cache_misses == -1
+    assert sample.multimodal_decode_mode == "not_reported"
+    assert "without a fast-path probe" in caplog.text
+
+
+def test_vlm_bench_sample_preserves_empty_success_fallback_reasons() -> None:
+    class RuntimeWithSuccessProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                multimodal_decode_mode="image_cache_reuse",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_stream",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithSuccessProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.multimodal_fallback_reason == ""
+    assert sample.quantized_load_fallback_reason == ""
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
@@ -5217,6 +5382,14 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
     ]
     assert "bench.smoke.image_ttft_ms" in metric_names
     assert "bench.smoke.vlm_tokens_per_second" in metric_names
+    assert "bench.smoke.image_feature_cache_hits" in metric_names
+    assert "bench.smoke.image_feature_cache_misses" in metric_names
+    assert "bench.smoke.multimodal_decode_mode" in metric_names
+    assert "bench.smoke.multimodal_fallback_reason" in metric_names
+    assert "bench.smoke.multimodal_decode_sync_mode" in metric_names
+    assert "bench.smoke.multi_image_scatter_mode" in metric_names
+    assert "bench.smoke.quantized_load_mode" in metric_names
+    assert "bench.smoke.quantized_load_fallback_reason" in metric_names
     assert "bench.smoke.ttft_ms" not in metric_names
 
     report_event = next(event for event in events if event.HasField("completed"))

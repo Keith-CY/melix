@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from threading import Event
 from threading import get_ident
@@ -177,6 +178,93 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
     assert probe.temp_media_cleanup_latency_ms >= 0.0
     assert probe.temp_media_cleanup_failure_count == 0
+    assert probe.image_feature_cache_misses == 1
+    assert probe.image_feature_cache_hits == 0
+    assert probe.multimodal_decode_mode == "native_quantized"
+    assert probe.multimodal_decode_sync_mode == "executor_stream"
+    assert probe.multi_image_scatter_mode == "none"
+
+
+def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(
+                config=SimpleNamespace(model_type="gemma4"),
+                vision_tower=object(),
+                embed_vision=object(),
+            ),
+            SimpleNamespace(image_processor=object()),
+        )
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = num_images
+        _ = kwargs
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        yield SimpleNamespace(
+            text="A photo of a cat",
+            prompt_tokens=12,
+            generation_tokens=1,
+            prompt_tps=110.0,
+            generation_tps=24.0,
+            peak_memory=1.5,
+        )
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    image_bytes = b"direct-generate-image"
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=image_bytes,
+                source_kind="inline",
+                reference="inline:sample.jpg",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="sample.jpg",
+                sha256_hex=hashlib.sha256(image_bytes).hexdigest(),
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=1.0,
+        preprocess_input_bytes=len(image_bytes),
+        preprocess_peak_memory_bytes=len(image_bytes),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=16),
+            Event(),
+        )
+    )
+
+    assert "".join(event.text for event in events) == "A photo of a cat"
+    probe = runtime.last_probe_snapshot()
+    assert probe.image_feature_cache_hits == 0
+    assert probe.image_feature_cache_misses == 1
+    assert probe.multimodal_decode_mode == "native_quantized"
 
 
 def test_mlx_vlm_runtime_load_template_and_stream_run_on_executor_thread() -> None:
@@ -653,6 +741,119 @@ def test_mlx_vlm_runtime_render_prompt_preserves_text_backed_image_inputs_until_
     assert prepared.prompt_text == "Describe the image."
     assert len(prepared.images) == 1
     assert prepared.videos == []
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "fallback"
+    assert probe.multimodal_fallback_reason == "text_backed_no_vision_weights"
+
+
+def test_mlx_vlm_runtime_records_repeated_image_fast_path_probe() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(
+                    config=SimpleNamespace(model_type="gemma4"),
+                    vision_tower=object(),
+                    embed_vision=object(),
+                ),
+                SimpleNamespace(image_processor=object()),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Describe the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"fake-image-payload",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        filename="sample.jpg",
+                        format="jpg",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    runtime.render_prompt(messages, loaded_model=loaded_model)
+    first_probe = runtime.last_probe_snapshot()
+    runtime.render_prompt(messages, loaded_model=loaded_model)
+    second_probe = runtime.last_probe_snapshot()
+
+    assert first_probe.multimodal_decode_mode == "native_quantized"
+    assert first_probe.image_feature_cache_misses == 1
+    assert second_probe.multimodal_decode_mode == "image_cache_reuse"
+    assert second_probe.image_feature_cache_hits == 1
+    assert second_probe.image_feature_cache_misses == 0
+
+
+def test_mlx_vlm_runtime_records_partial_multi_image_reuse_probe() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(
+                    config=SimpleNamespace(model_type="gemma4"),
+                    vision_tower=object(),
+                    embed_vision=object(),
+                ),
+                SimpleNamespace(image_processor=object()),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    first_image = common_pb2.MessagePart(
+        image_bytes=b"fake-image-payload",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+            filename="sample.jpg",
+            format="jpg",
+        ),
+    )
+    runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Describe."), first_image],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Compare."),
+                    first_image,
+                    common_pb2.MessagePart(
+                        image_bytes=b"new-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="second.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "image_cache_reuse"
+    assert probe.image_feature_cache_hits == 1
+    assert probe.image_feature_cache_misses == 1
+    assert probe.multi_image_scatter_mode == "per_sample"
 
 
 def test_mlx_vlm_runtime_rewrites_video_only_requests_for_text_backed_models() -> None:

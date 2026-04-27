@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from worker.productization import (
@@ -162,6 +163,14 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
                 "vision.preprocess_peak_memory_bytes": 4096,
                 "vision.cache_memory_bytes": 8192,
                 "vision.cache_hit_rate": 75.0,
+                "vision.image_feature_cache_hits": 3.0,
+                "vision.image_feature_cache_misses": 1.0,
+                "vision.multimodal_decode_mode": "image_cache_reuse",
+                "vision.multimodal_fallback_reason": "",
+                "vision.multimodal_decode_sync_mode": "executor_stream",
+                "vision.multi_image_scatter_mode": "per_sample",
+                "vision.quantized_load_mode": "native_quantized",
+                "vision.quantized_load_fallback_reason": "",
             }
         },
     )
@@ -187,6 +196,14 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
     assert metrics["vision.preprocess_peak_memory_bytes"] == 4096.0
     assert metrics["vision.cache_memory_bytes"] == 8192.0
     assert metrics["vision.cache_hit_rate"] == 75.0
+    assert metrics["vision.image_feature_cache_hits"] == 3.0
+    assert metrics["vision.image_feature_cache_misses"] == 1.0
+    assert metrics["vision.multimodal_decode_mode"] == "image_cache_reuse"
+    assert metrics["vision.multimodal_fallback_reason"] == ""
+    assert metrics["vision.multimodal_decode_sync_mode"] == "executor_stream"
+    assert metrics["vision.multi_image_scatter_mode"] == "per_sample"
+    assert metrics["vision.quantized_load_mode"] == "native_quantized"
+    assert metrics["vision.quantized_load_fallback_reason"] == ""
 
 
 def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
@@ -222,6 +239,40 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.preprocess_peak_memory_bytes"] == 0.0
     assert metrics["vision.cache_memory_bytes"] == 0.0
     assert metrics["vision.cache_hit_rate"] == 0.0
+    assert metrics["vision.image_feature_cache_hits"] == 0.0
+    assert metrics["vision.image_feature_cache_misses"] == 0.0
+    assert metrics["vision.multimodal_decode_mode"] == "baseline"
+    assert metrics["vision.multimodal_fallback_reason"] == "not_reported"
+    assert metrics["vision.multimodal_decode_sync_mode"] == "baseline"
+    assert metrics["vision.multi_image_scatter_mode"] == "none"
+    assert metrics["vision.quantized_load_mode"] == "fallback"
+    assert metrics["vision.quantized_load_fallback_reason"] == "not_reported"
+
+
+def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="worker.productization.acceptance_metrics")
+
+    report = exported_build_phase6_vision_metrics_report(
+        ingress={},
+        ocr={},
+        vlm={},
+        metrics_snapshot={
+            "values": {
+                "vision.multimodal_decode_mode": 1.0,
+                "vision.quantized_load_mode": ["x" * 220],
+            }
+        },
+    )
+
+    metrics = report["metrics"]
+    assert metrics["vision.multimodal_decode_mode"] == "baseline"
+    assert metrics["vision.quantized_load_mode"] == "fallback"
+    assert "non-string metric text value ignored" in caplog.text
+    assert "vision.multimodal_decode_mode" in caplog.text
+    assert "float" in caplog.text
+    assert "1.0" in caplog.text
+    assert "list" in caplog.text
+    assert "..." in caplog.text
 
 
 def test_build_phase16_video_metrics_report_includes_operator_metrics() -> None:

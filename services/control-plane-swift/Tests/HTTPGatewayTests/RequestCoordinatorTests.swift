@@ -86,6 +86,15 @@ struct RequestCoordinatorTests {
         #expect(progress?.phase != .requestAborted)
     }
 
+    @Test("hub ignores stream registrations that arrive after termination")
+    func hubIgnoresStreamRegistrationsThatArriveAfterTermination() async throws {
+        let snapshot = await testingResumableExecutionHubPreRegistrationTerminationSnapshot()
+
+        #expect(snapshot.detachCount == 1)
+        #expect(snapshot.hasConsumers == false)
+        #expect(snapshot.lifecycleDetached)
+    }
+
     @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
     func disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -223,12 +232,10 @@ struct RequestCoordinatorTests {
         initialConsumer.cancel()
         _ = await initialConsumer.result
 
-        for _ in 0..<100 {
-            let metrics = await metricsStore.snapshot()
-            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
-                break
-            }
+        var disconnectMetrics = await metricsStore.snapshot()
+        for _ in 0..<100 where disconnectMetrics.values["http.stream_disconnect_count", default: 0] < 1 {
             try? await Task.sleep(nanoseconds: 10_000_000)
+            disconnectMetrics = await metricsStore.snapshot()
         }
 
         let terminalProgress = try #require(await waitForProgress(
@@ -243,6 +250,7 @@ struct RequestCoordinatorTests {
             metrics = await metricsStore.snapshot()
         }
 
+        #expect(disconnectMetrics.values["http.stream_disconnect_count", default: 0] == 1)
         do {
             _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
             Issue.record("Expected expired disconnect grace to reject resume.")

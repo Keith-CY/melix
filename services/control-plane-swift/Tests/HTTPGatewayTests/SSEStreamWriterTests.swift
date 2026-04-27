@@ -63,6 +63,30 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("SSE emits an id-bearing completion when upstream finishes without frames")
+    func emitsIdBearingCompletionForEmptyUpstream() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-empty",
+                modelID: "melix-dev-text"
+            )
+        )
+
+        #expect(payload.contains("\"id\":\"req-empty\""))
+        #expect(payload.contains("\"finish_reason\":\"stop\""))
+        #expect(orderedRanges(in: payload, needles: [
+            "\"finish_reason\":\"stop\"",
+            "data: [DONE]",
+        ]))
+    }
+
     @Test("SSE emits keepalive comments while upstream is idle")
     func emitsKeepaliveCommentsWhileUpstreamIsIdle() async throws {
         let writer = SSEStreamWriter(
