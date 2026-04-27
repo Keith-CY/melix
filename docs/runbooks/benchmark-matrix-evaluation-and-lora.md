@@ -554,6 +554,8 @@ The workflow:
 - runs the same benchmark, matrix, and evaluation smoke suite for both revisions
 - defaults the CI runtime to the deterministic text backend so PR reports do not depend on a
   runner-local model checkout or Swift MLX metallib cache
+- prebuilds the Swift worker and control plane before startup so worker readiness waits measure
+  process readiness instead of cold Swift compilation
 - isolates each run with a separate `MELIX_HOME`, `.runtime` tree, model-ops root, and HTTP port
 - uploads base, head, and report artifacts
 - updates one sticky pull-request comment marked with

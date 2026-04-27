@@ -949,8 +949,9 @@ Report semantics:
 The PR workflow must run base SHA and PR head on the same macOS runner with isolated `MELIX_HOME`,
 runtime directories, model-ops roots, and HTTP ports. The default CI report runtime is
 deterministic so reports remain comparable on hosted runners without a runner-local model checkout
-or Swift MLX metallib cache. It uploads base, head, and report artifacts, then updates one sticky
-pull-request comment identified by:
+or Swift MLX metallib cache. The workflow prebuilds Swift runtime products before startup so worker
+readiness waits measure process readiness rather than cold compilation time. It uploads base, head,
+and report artifacts, then updates one sticky pull-request comment identified by:
 
 ```html
 <!-- melix-benchmark-evaluation-report -->

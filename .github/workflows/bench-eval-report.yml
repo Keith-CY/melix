@@ -73,9 +73,20 @@ jobs:
               mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
               touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
             fi
+            print_runtime_logs() {
+              for log_path in "$MELIX_RUNTIME_DIR"/*.log; do
+                [[ -f "$log_path" ]] || continue
+                printf '\n===== %s =====\n' "$log_path"
+                tail -n 200 "$log_path"
+              done
+            }
 
             make bootstrap
-            bash scripts/dev_up.sh
+            make swift-build-integration-prereqs
+            if ! bash scripts/dev_up.sh --prefer-built; then
+              print_runtime_logs
+              exit 1
+            fi
             trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
 
             swift run melix bench run \
@@ -153,9 +164,20 @@ jobs:
               mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
               touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
             fi
+            print_runtime_logs() {
+              for log_path in "$MELIX_RUNTIME_DIR"/*.log; do
+                [[ -f "$log_path" ]] || continue
+                printf '\n===== %s =====\n' "$log_path"
+                tail -n 200 "$log_path"
+              done
+            }
 
             make bootstrap
-            bash scripts/dev_up.sh
+            make swift-build-integration-prereqs
+            if ! bash scripts/dev_up.sh --prefer-built; then
+              print_runtime_logs
+              exit 1
+            fi
             trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
 
             swift run melix bench run \
