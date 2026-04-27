@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Central design tokens for the Melix macOS operator app.
@@ -7,27 +8,85 @@ import SwiftUI
 /// typographic structure, whitespace as hierarchy, accent as ink.
 enum MelixDesignTokens {
 
+    struct DesignColor: Equatable {
+        let red: Int
+        let green: Int
+        let blue: Int
+        let opacity: Double
+
+        init(red: Int, green: Int, blue: Int, opacity: Double = 1.0) {
+            self.red = red
+            self.green = green
+            self.blue = blue
+            self.opacity = opacity
+        }
+
+        var color: Color {
+            Color(
+                red: Double(red) / 255.0,
+                green: Double(green) / 255.0,
+                blue: Double(blue) / 255.0,
+                opacity: opacity
+            )
+        }
+
+        var nsColor: NSColor {
+            NSColor(
+                srgbRed: CGFloat(red) / 255.0,
+                green: CGFloat(green) / 255.0,
+                blue: CGFloat(blue) / 255.0,
+                alpha: CGFloat(opacity)
+            )
+        }
+    }
+
+    enum Palette {
+        static let accent = DesignColor(red: 0x0F, green: 0x76, blue: 0x6E)
+
+        static let foregroundPrimary = DesignColor(red: 0x0A, green: 0x0A, blue: 0x0A)
+        static let foregroundSecondary = DesignColor(red: 0x3A, green: 0x3A, blue: 0x3A)
+        static let foregroundTertiary = DesignColor(red: 0x6B, green: 0x6B, blue: 0x6B)
+        static let foregroundQuaternary = DesignColor(red: 0x9A, green: 0x9A, blue: 0x9A)
+        static let foregroundInverse = DesignColor(red: 0xFD, green: 0xFD, blue: 0xFD)
+
+        static let backgroundBaseLight = DesignColor(red: 0xFA, green: 0xFA, blue: 0xFA)
+        static let backgroundSurfaceLight = DesignColor(red: 0xFF, green: 0xFF, blue: 0xFF)
+        static let backgroundElevatedLight = DesignColor(red: 0xF5, green: 0xF5, blue: 0xF5)
+        static let backgroundSunkenLight = DesignColor(red: 0xF0, green: 0xF0, blue: 0xF0)
+
+        static let success = DesignColor(red: 0x14, green: 0xA0, blue: 0x5A)
+        static let warning = DesignColor(red: 0xD9, green: 0x77, blue: 0x06)
+        static let error = DesignColor(red: 0xDC, green: 0x26, blue: 0x26)
+
+        static let userBubble = DesignColor(red: 0x00, green: 0x64, blue: 0xDC)
+        static let assistantBubble = DesignColor(red: 0x14, green: 0xA0, blue: 0x50)
+        static let reasoningBubble = DesignColor(red: 0xDC, green: 0x6E, blue: 0x14)
+        static let toolBubble = DesignColor(red: 0x78, green: 0x3C, blue: 0xC8)
+        static let errorBubble = DesignColor(red: 0xD2, green: 0x28, blue: 0x28)
+    }
+
     // MARK: - Accent
 
     /// Brand teal (`#0F766E`). Used for places where the Melix identity
     /// must be fixed regardless of the user's system accent (app icon,
     /// workspace badge, printed/exported artifacts).
-    static let brandAccent = Color(red: 0x0F / 255.0, green: 0x76 / 255.0, blue: 0x6E / 255.0)
+    static let brandAccent = Palette.accent.color
 
-    /// System accent. Prefer this for interaction signals (focus, selection,
-    /// active tab, one primary CTA per screen) so macOS users' accent
-    /// customization is honored.
-    static let accent = Color.accentColor
+    /// Design-system accent. Use for interaction signals: links, focus,
+    /// selection, active tabs, and one primary CTA per screen.
+    static let accent = Palette.accent.color
 
     enum AccentOpacity {
+        /// Medium accent wash (`--accent-medium` = 32%).
+        static let medium: Double = 0.32
         /// Selected row / bubble background (`--accent-weak` ≈ 12%).
         static let weak: Double = 0.12
-        /// Selection emphasis for chips and primary pills.
-        static let selected: Double = 0.14
+        /// Selection emphasis for rows, chips, and primary pills.
+        static let selected: Double = weak
         /// Capsule tab active fill.
-        static let capsule: Double = 0.18
+        static let capsule: Double = weak
         /// Stroke / border accent (focus ring, emphasis outline).
-        static let stroke: Double = 0.22
+        static let stroke: Double = medium
         /// Hover hint for interactive surfaces.
         static let faint: Double = 0.06
     }
@@ -54,27 +113,33 @@ enum MelixDesignTokens {
 
     // MARK: - Status tints
 
+    enum StatusColor {
+        static let success = Palette.success.color
+        static let warning = Palette.warning.color
+        static let error = Palette.error.color
+        static let info = accent
+    }
+
     /// Base hues for chat transcript bubble backgrounds. Paired with
     /// `BubbleOpacity` to stay consistent with the `AccentOpacity` pattern.
     /// These are intentionally flat `Color` values; transcript bubbles do not
     /// use gradients or materials in the Digital Broadsheet system.
     enum BubbleTint {
-        static let user = Color.blue
-        static let assistant = Color.green
-        static let reasoning = Color.orange
-        static let tool = Color.purple
-        static let error = Color.red
+        static let user = Palette.userBubble.color
+        static let assistant = Palette.assistantBubble.color
+        static let reasoning = Palette.reasoningBubble.color
+        static let tool = Palette.toolBubble.color
+        static let error = Palette.errorBubble.color
     }
 
-    /// Per-role opacities for chat bubble backgrounds. The user bubble sits
-    /// slightly stronger (0.14) because blue reads softer than the warm
-    /// tones on a near-white canvas; the rest match spec at 0.12.
+    /// Per-role opacities for chat bubble backgrounds, matching
+    /// `docs/design-system/colors_and_type.css`.
     enum BubbleOpacity {
-        static let user: Double = 0.14
-        static let assistant: Double = 0.12
-        static let reasoning: Double = 0.12
-        static let tool: Double = 0.12
-        static let error: Double = 0.12
+        static let user: Double = 0.10
+        static let assistant: Double = 0.09
+        static let reasoning: Double = 0.09
+        static let tool: Double = 0.09
+        static let error: Double = 0.09
     }
 
     // MARK: - Corner radii

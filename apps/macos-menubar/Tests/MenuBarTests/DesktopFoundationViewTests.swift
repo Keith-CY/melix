@@ -63,18 +63,46 @@ struct DesktopFoundationViewTests {
 
         #expect(MelixDesignTokens.StrokeOpacity.hairline == MelixDesignTokens.SurfaceOpacity.card)
         #expect(MelixDesignTokens.StrokeOpacity.interactive == 0.08)
-        #expect(MelixDesignTokens.BubbleOpacity.user == 0.14)
-        #expect(MelixDesignTokens.BubbleOpacity.assistant == 0.12)
-        #expect(MelixDesignTokens.BubbleOpacity.reasoning == 0.12)
-        #expect(MelixDesignTokens.BubbleOpacity.tool == 0.12)
-        #expect(MelixDesignTokens.BubbleOpacity.error == 0.12)
+        #expect(MelixDesignTokens.AccentOpacity.medium == 0.32)
+        #expect(MelixDesignTokens.AccentOpacity.weak == 0.12)
+        #expect(MelixDesignTokens.AccentOpacity.selected == 0.12)
+        #expect(MelixDesignTokens.AccentOpacity.capsule == 0.12)
+        #expect(MelixDesignTokens.AccentOpacity.faint == 0.06)
+        #expect(MelixDesignTokens.BubbleOpacity.user == 0.10)
+        #expect(MelixDesignTokens.BubbleOpacity.assistant == 0.09)
+        #expect(MelixDesignTokens.BubbleOpacity.reasoning == 0.09)
+        #expect(MelixDesignTokens.BubbleOpacity.tool == 0.09)
+        #expect(MelixDesignTokens.BubbleOpacity.error == 0.09)
     }
 
-    @Test("lora visual polish tokens use a white marketing background with clearer hierarchy")
-    func loraVisualPolishTokensUseWhiteMarketingBackground() {
+    @Test("design color palette matches the design system css tokens")
+    func designColorPaletteMatchesDesignSystemCSSTokens() {
+        #expect(MelixDesignTokens.Palette.accent == MelixDesignTokens.DesignColor(red: 0x0F, green: 0x76, blue: 0x6E))
+        #expect(MelixDesignTokens.Palette.foregroundPrimary == MelixDesignTokens.DesignColor(red: 0x0A, green: 0x0A, blue: 0x0A))
+        #expect(MelixDesignTokens.Palette.foregroundSecondary == MelixDesignTokens.DesignColor(red: 0x3A, green: 0x3A, blue: 0x3A))
+        #expect(MelixDesignTokens.Palette.foregroundTertiary == MelixDesignTokens.DesignColor(red: 0x6B, green: 0x6B, blue: 0x6B))
+        #expect(MelixDesignTokens.Palette.foregroundQuaternary == MelixDesignTokens.DesignColor(red: 0x9A, green: 0x9A, blue: 0x9A))
+        #expect(MelixDesignTokens.Palette.foregroundInverse == MelixDesignTokens.DesignColor(red: 0xFD, green: 0xFD, blue: 0xFD))
+        #expect(MelixDesignTokens.Palette.backgroundBaseLight == MelixDesignTokens.DesignColor(red: 0xFA, green: 0xFA, blue: 0xFA))
+        #expect(MelixDesignTokens.Palette.backgroundSurfaceLight == MelixDesignTokens.DesignColor(red: 0xFF, green: 0xFF, blue: 0xFF))
+        #expect(MelixDesignTokens.Palette.backgroundElevatedLight == MelixDesignTokens.DesignColor(red: 0xF5, green: 0xF5, blue: 0xF5))
+        #expect(MelixDesignTokens.Palette.backgroundSunkenLight == MelixDesignTokens.DesignColor(red: 0xF0, green: 0xF0, blue: 0xF0))
+        #expect(MelixDesignTokens.Palette.success == MelixDesignTokens.DesignColor(red: 0x14, green: 0xA0, blue: 0x5A))
+        #expect(MelixDesignTokens.Palette.warning == MelixDesignTokens.DesignColor(red: 0xD9, green: 0x77, blue: 0x06))
+        #expect(MelixDesignTokens.Palette.error == MelixDesignTokens.DesignColor(red: 0xDC, green: 0x26, blue: 0x26))
+        #expect(MelixDesignTokens.Palette.userBubble == MelixDesignTokens.DesignColor(red: 0x00, green: 0x64, blue: 0xDC))
+        #expect(MelixDesignTokens.Palette.assistantBubble == MelixDesignTokens.DesignColor(red: 0x14, green: 0xA0, blue: 0x50))
+        #expect(MelixDesignTokens.Palette.reasoningBubble == MelixDesignTokens.DesignColor(red: 0xDC, green: 0x6E, blue: 0x14))
+        #expect(MelixDesignTokens.Palette.toolBubble == MelixDesignTokens.DesignColor(red: 0x78, green: 0x3C, blue: 0xC8))
+        #expect(MelixDesignTokens.Palette.errorBubble == MelixDesignTokens.DesignColor(red: 0xD2, green: 0x28, blue: 0x28))
+    }
+
+    @Test("lora visual polish tokens use the design system base background with clearer hierarchy")
+    func loraVisualPolishTokensUseDesignSystemBaseBackground() {
+        #expect(DesktopLoRAVisualPolish.pageBackgroundColorSpec == MelixDesignTokens.Palette.backgroundBaseLight)
         #expect(DesktopLoRAVisualPolish.sectionSurfaceOpacity == 0.04)
         #expect(DesktopLoRAVisualPolish.metricSurfaceOpacity == 0.032)
-        #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == 0.14)
+        #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == MelixDesignTokens.AccentOpacity.selected)
         #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
     }
 
