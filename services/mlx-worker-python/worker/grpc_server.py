@@ -327,11 +327,22 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def RunEvaluation(self, request, context):
         try:
             parameters = dict(request.parameters)
+            parameters.setdefault("dataset_id", request.dataset_id)
             if request.task_kind:
                 parameters.setdefault("task_kind", request.task_kind)
             if request.source_repo:
                 parameters.setdefault("source_repo", request.source_repo)
-            dataset_root = self._resolve_evaluation_dataset_root(request, parameters)
+            scoring_mode = request.scoring_mode or request.profile.scoring_mode
+            if scoring_mode == "event_extraction_weighted_f1":
+                source_kind = request.source.WhichOneof("kind")
+                if source_kind != "local_jsonl":
+                    raise ValueError("event_extraction_weighted_f1 requires --source-jsonl.")
+                parameters.setdefault("event_source_jsonl", request.source.local_jsonl.path)
+                parameters.setdefault("evaluation_source_kind", "jsonl")
+                parameters.setdefault("evaluation_source_locator", request.source.local_jsonl.path)
+                dataset_root = self._evaluation_materialization_root()
+            else:
+                dataset_root = self._resolve_evaluation_dataset_root(request, parameters)
             run = self._evaluation_core.run_local_suite(
                 model_id=request.model_handle.split("::", 1)[0] if request.model_handle else "melix-dev-text",
                 model_handle=request.model_handle or None,
@@ -343,6 +354,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 scoring_mode=request.scoring_mode or None,
                 code_exec_policy=request.code_exec_policy or None,
                 parameters=parameters,
+                remote_target=request.remote_target if request.remote_target.remote_server_id else None,
             )
         except ValueError as exc:
             return maintenance_pb2.RunEvaluationResponse(

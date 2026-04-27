@@ -365,6 +365,8 @@ public struct BenchExportCSVOptions: Equatable, Sendable {
 public struct EvalRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
+    public let remoteServerID: String
+    public let remoteModelID: String
     public let suites: [String]
     public let datasetID: String
     public let sampleSize: UInt32
@@ -377,6 +379,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     public init(
         modelID: String = "",
         hfRepoID: String = "",
+        remoteServerID: String = "",
+        remoteModelID: String = "",
         suites: [String] = [],
         datasetID: String = "",
         sampleSize: UInt32 = 0,
@@ -388,6 +392,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
+        self.remoteServerID = remoteServerID
+        self.remoteModelID = remoteModelID
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
@@ -745,19 +751,25 @@ public struct ManagedModelReceipt: Codable, Equatable, Sendable {
 
 public struct ChatRunOptions: Equatable, Sendable {
     public let modelID: String
+    public let remoteServerID: String
+    public let remoteModelID: String
     public let message: String
     public let systemPrompt: String
     public let serverSessionID: String
     public let json: Bool
 
     public init(
-        modelID: String,
+        modelID: String = "",
+        remoteServerID: String = "",
+        remoteModelID: String = "",
         message: String,
         systemPrompt: String = "",
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         json: Bool = false
     ) {
         self.modelID = modelID
+        self.remoteServerID = remoteServerID
+        self.remoteModelID = remoteModelID
         self.message = message
         self.systemPrompt = systemPrompt
         self.serverSessionID = serverSessionID.isEmpty
@@ -922,6 +934,76 @@ public struct ServerSessionIDOptions: Equatable, Sendable {
     }
 }
 
+public struct RemoteServerListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct RemoteServerMutationOptions: Equatable, Sendable {
+    public let remoteServerID: String
+    public let title: String
+    public let providerPreset: RemoteServerProviderPreset?
+    public let providerKind: String
+    public let baseURL: String
+    public let defaultModelID: String
+    public let apiKey: String
+    public let timeoutSeconds: UInt32
+    public let rateLimitPerMinute: UInt32
+    public let json: Bool
+
+    public init(
+        remoteServerID: String,
+        title: String = "",
+        providerPreset: RemoteServerProviderPreset? = nil,
+        providerKind: String = "openai-compatible",
+        baseURL: String = "",
+        defaultModelID: String = "",
+        apiKey: String = "",
+        timeoutSeconds: UInt32 = 60,
+        rateLimitPerMinute: UInt32 = 0,
+        json: Bool = false
+    ) {
+        self.remoteServerID = remoteServerID
+        self.title = title
+        self.providerPreset = providerPreset
+        self.providerKind = providerKind
+        self.baseURL = baseURL
+        self.defaultModelID = defaultModelID
+        self.apiKey = apiKey
+        self.timeoutSeconds = timeoutSeconds
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.json = json
+    }
+}
+
+public typealias RemoteServerAddOptions = RemoteServerMutationOptions
+public typealias RemoteServerUpdateOptions = RemoteServerMutationOptions
+
+public struct RemoteServerIDOptions: Equatable, Sendable {
+    public let remoteServerID: String
+    public let json: Bool
+
+    public init(remoteServerID: String, json: Bool = false) {
+        self.remoteServerID = remoteServerID
+        self.json = json
+    }
+}
+
+public struct RemoteServerTestOptions: Equatable, Sendable {
+    public let remoteServerID: String
+    public let remoteModelID: String
+    public let json: Bool
+
+    public init(remoteServerID: String, remoteModelID: String = "", json: Bool = false) {
+        self.remoteServerID = remoteServerID
+        self.remoteModelID = remoteModelID
+        self.json = json
+    }
+}
+
 public struct PipelineRunOptions: Equatable, Sendable {
     public let filePath: String
     public let inputsPath: String
@@ -1005,6 +1087,11 @@ public enum MelixCLICommand: Equatable, Sendable {
     case serverWake(ServerControlOptions)
     case serverStop(ServerControlOptions)
     case serverSetIdlePolicy(ServerIdlePolicyOptions)
+    case remoteServerList(RemoteServerListOptions)
+    case remoteServerAdd(RemoteServerAddOptions)
+    case remoteServerUpdate(RemoteServerUpdateOptions)
+    case remoteServerRemove(RemoteServerIDOptions)
+    case remoteServerTest(RemoteServerTestOptions)
     case chatRun(ChatRunOptions)
     case loraList(LoraListOptions)
     case loraTrain(LoraTrainOptions)
@@ -1105,6 +1192,8 @@ public enum MelixCLIParser {
             return try parseModel(tail)
         case "server":
             return try parseServer(tail)
+        case "remote-server":
+            return try parseRemoteServer(tail)
         case "chat":
             return try parseChat(tail)
         case "lora":
@@ -1152,7 +1241,12 @@ public enum MelixCLIParser {
       melix server wake [--server-session-id ID] [--json]
       melix server stop [--server-session-id ID] [--json]
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
-      melix chat run --model-id MODEL_ID --message TEXT [--system TEXT] [--server-session-id ID] [--json]
+      melix remote-server list [--json]
+      melix remote-server add --remote-server-id ID --title TITLE --provider kimi|gemini|deepseek|glm|custom [--base-url URL] --model MODEL [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--json]
+      melix remote-server update --remote-server-id ID [--title TITLE] [--provider PROVIDER] [--base-url URL] [--model MODEL] [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--json]
+      melix remote-server remove --remote-server-id ID [--json]
+      melix remote-server test --remote-server-id ID [--model MODEL] [--json]
+      melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--json]
       melix lora dataset inspect --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) [--template TEMPLATE] [--dataset-id ID] [--validation-ratio N] [--sample-limit N] [--preview-count N] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--json]
@@ -1172,7 +1266,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -1618,8 +1712,17 @@ public enum MelixCLIParser {
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
         switch action {
         case "run":
-            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
-                throw MelixCLIError.missingRequired("--model-id is required for melix chat run.")
+            let modelID = values.single["--model-id"] ?? ""
+            let remoteServerID = values.single["--remote-server-id"] ?? ""
+            let remoteModelID = values.single["--model"] ?? values.single["--remote-model"] ?? ""
+            let explicitTargetCount = [modelID, remoteServerID].filter { !$0.isEmpty }.count
+            guard explicitTargetCount == 1 else {
+                throw MelixCLIError.missingRequired(
+                    "Exactly one of --model-id or --remote-server-id is required for melix chat run."
+                )
+            }
+            if remoteServerID.isEmpty == false, remoteModelID.isEmpty {
+                throw MelixCLIError.missingRequired("--model is required when using --remote-server-id for melix chat run.")
             }
             guard let message = values.single["--message"], !message.isEmpty else {
                 throw MelixCLIError.missingRequired("--message is required for melix chat run.")
@@ -1627,6 +1730,8 @@ public enum MelixCLIParser {
             return .chatRun(
                 .init(
                     modelID: modelID,
+                    remoteServerID: remoteServerID,
+                    remoteModelID: remoteModelID,
                     message: message,
                     systemPrompt: values.single["--system"] ?? "",
                     serverSessionID: values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID,
@@ -1636,6 +1741,145 @@ public enum MelixCLIParser {
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseRemoteServer(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let json = values.flags.contains("--json")
+        switch action {
+        case "list":
+            return .remoteServerList(.init(json: json))
+        case "add":
+            guard let remoteServerID = values.single["--remote-server-id"], remoteServerID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--remote-server-id is required for melix remote-server add.")
+            }
+            guard let title = values.single["--title"], title.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--title is required for melix remote-server add.")
+            }
+            let providerPreset = try parseRemoteServerProviderPreset(values.single["--provider"] ?? "custom")
+            let baseURL = try parseRemoteServerBaseURL(
+                providerPreset: providerPreset,
+                explicitBaseURL: values.single["--base-url"] ?? "",
+                requiresCustomBaseURL: true,
+                action: "add"
+            )
+            guard let modelID = values.single["--model"], modelID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--model is required for melix remote-server add.")
+            }
+            return .remoteServerAdd(
+                .init(
+                    remoteServerID: remoteServerID,
+                    title: title,
+                    providerPreset: providerPreset,
+                    providerKind: providerPreset.providerKind,
+                    baseURL: baseURL,
+                    defaultModelID: modelID,
+                    apiKey: values.single["--api-key"] ?? "",
+                    timeoutSeconds: try parseUInt32Value(
+                        values.single["--timeout-seconds"],
+                        option: "--timeout-seconds",
+                        defaultValue: 60
+                    ) ?? 60,
+                    rateLimitPerMinute: try parseUInt32Value(
+                        values.single["--rate-limit-per-minute"],
+                        option: "--rate-limit-per-minute",
+                        defaultValue: 0
+                    ) ?? 0,
+                    json: json
+                )
+            )
+        case "update":
+            guard let remoteServerID = values.single["--remote-server-id"], remoteServerID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--remote-server-id is required for melix remote-server update.")
+            }
+            let providerPreset = try values.single["--provider"].map { try parseRemoteServerProviderPreset($0) }
+            let baseURL: String
+            if let providerPreset {
+                baseURL = try parseRemoteServerBaseURL(
+                    providerPreset: providerPreset,
+                    explicitBaseURL: values.single["--base-url"] ?? "",
+                    requiresCustomBaseURL: providerPreset == .custom,
+                    action: "update"
+                )
+            } else {
+                baseURL = values.single["--base-url"] ?? ""
+            }
+            return .remoteServerUpdate(
+                .init(
+                    remoteServerID: remoteServerID,
+                    title: values.single["--title"] ?? "",
+                    providerPreset: providerPreset,
+                    providerKind: providerPreset?.providerKind ?? "",
+                    baseURL: baseURL,
+                    defaultModelID: values.single["--model"] ?? "",
+                    apiKey: values.single["--api-key"] ?? "",
+                    timeoutSeconds: try parseUInt32Value(
+                        values.single["--timeout-seconds"],
+                        option: "--timeout-seconds",
+                        defaultValue: 0
+                    ) ?? 0,
+                    rateLimitPerMinute: try parseUInt32Value(
+                        values.single["--rate-limit-per-minute"],
+                        option: "--rate-limit-per-minute",
+                        defaultValue: 0
+                    ) ?? 0,
+                    json: json
+                )
+            )
+        case "remove":
+            guard let remoteServerID = values.single["--remote-server-id"], remoteServerID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--remote-server-id is required for melix remote-server remove.")
+            }
+            return .remoteServerRemove(.init(remoteServerID: remoteServerID, json: json))
+        case "test":
+            guard let remoteServerID = values.single["--remote-server-id"], remoteServerID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--remote-server-id is required for melix remote-server test.")
+            }
+            return .remoteServerTest(
+                .init(
+                    remoteServerID: remoteServerID,
+                    remoteModelID: values.single["--model"] ?? values.single["--remote-model"] ?? "",
+                    json: json
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseRemoteServerProviderPreset(_ rawValue: String) throws -> RemoteServerProviderPreset {
+        if let providerPreset = RemoteServerProviderPreset.normalized(rawValue) {
+            return providerPreset
+        }
+        throw MelixCLIError.usage(
+            "--provider must be one of kimi, gemini, deepseek, glm, or custom."
+        )
+    }
+
+    private static func parseRemoteServerBaseURL(
+        providerPreset: RemoteServerProviderPreset,
+        explicitBaseURL: String,
+        requiresCustomBaseURL: Bool,
+        action: String
+    ) throws -> String {
+        let trimmedBaseURL = explicitBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fixedBaseURL = providerPreset.fixedBaseURL {
+            if trimmedBaseURL.isEmpty == false {
+                throw MelixCLIError.usage(
+                    "--base-url cannot be used with --provider \(providerPreset.rawValue); Melix uses \(fixedBaseURL)."
+                )
+            }
+            return fixedBaseURL
+        }
+        if requiresCustomBaseURL && trimmedBaseURL.isEmpty {
+            throw MelixCLIError.missingRequired(
+                "--base-url is required for melix remote-server \(action) when --provider custom is used."
+            )
+        }
+        return trimmedBaseURL
     }
 
     private static func parseLora(_ arguments: [String]) throws -> MelixCLICommand {
@@ -2195,20 +2439,33 @@ public enum MelixCLIParser {
             )
             let modelID = values.single["--model-id"] ?? ""
             let hfRepoID = values.single["--repo-id"] ?? ""
-            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+            let remoteServerID = values.single["--remote-server-id"] ?? ""
+            let remoteModelID = values.single["--remote-model"] ?? values.single["--model"] ?? ""
+            let explicitTargetCount = [modelID, hfRepoID, remoteServerID].filter { !$0.isEmpty }.count
             guard explicitTargetCount == 1 else {
-                throw MelixCLIError.missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+                throw MelixCLIError.missingRequired(
+                    "Exactly one of --model-id, --repo-id, or --remote-server-id is required for melix eval run."
+                )
+            }
+            if remoteServerID.isEmpty == false, remoteModelID.isEmpty {
+                throw MelixCLIError.missingRequired("--remote-model is required when using --remote-server-id for melix eval run.")
             }
             let sourceConfiguration = try parseEvaluationSourceConfiguration(
                 values,
                 command: "melix eval run"
             )
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
+            let scoringMode = sourceConfiguration.profile.scoringMode
+            let suites = (values.multi["--suite"] ?? []).isEmpty && scoringMode == "event_extraction_weighted_f1"
+                ? ["event_extraction"]
+                : (values.multi["--suite"] ?? [])
             return .evalRun(
                 EvalRunOptions(
                     modelID: modelID,
                     hfRepoID: hfRepoID,
-                    suites: values.multi["--suite"] ?? [],
+                    remoteServerID: remoteServerID,
+                    remoteModelID: remoteModelID,
+                    suites: suites,
                     datasetID: values.single["--dataset-id"] ?? "",
                     sampleSize: sampleSize,
                     source: sourceConfiguration.source,
@@ -2418,6 +2675,9 @@ public enum MelixCLIParser {
         if source.kind != .builtinPackage {
             if values.single["--dataset-root"]?.isEmpty == false {
                 throw MelixCLIError.usage("--dataset-root is only supported for builtin evaluation datasets.")
+            }
+            if profile.scoringMode == "event_extraction_weighted_f1" {
+                return (source, fieldMapping, profile)
             }
             guard fieldMapping.inputTextPath.isEmpty == false else {
                 throw MelixCLIError.missingRequired("--field-input-text-path is required when using a custom evaluation dataset source.")
@@ -3336,13 +3596,100 @@ public actor MelixCLIRunner {
                 deepSleepAfterSeconds: options.deepSleepAfterSeconds
             )
             return try renderServerSnapshot(snapshot, json: options.json)
+        case .remoteServerList(let options):
+            let servers = try remoteServerStore().list()
+            if options.json {
+                return try prettyJSON(servers)
+            }
+            return renderRemoteServers(servers)
+        case .remoteServerAdd(let options):
+            let server = try remoteServerStore().save(
+                RemoteServerMutation(
+                    id: options.remoteServerID,
+                    title: options.title,
+                    providerPreset: options.providerPreset ?? .custom,
+                    providerKind: options.providerKind,
+                    baseURL: options.baseURL,
+                    defaultModelID: options.defaultModelID,
+                    timeoutSeconds: options.timeoutSeconds,
+                    rateLimitPerMinute: options.rateLimitPerMinute,
+                    apiKey: options.apiKey
+                )
+            )
+            if options.json {
+                return try prettyJSON(server)
+            }
+            return renderRemoteServers([server])
+        case .remoteServerUpdate(let options):
+            let store = remoteServerStore()
+            guard let existing = try store.get(id: options.remoteServerID) else {
+                throw MelixCLIError.runtime("Remote server \(options.remoteServerID) was not found.")
+            }
+            if options.providerPreset == nil,
+               options.baseURL.isEmpty == false,
+               let fixedBaseURL = existing.providerPreset.fixedBaseURL
+            {
+                throw MelixCLIError.runtime(
+                    "--base-url cannot be used with remote server \(existing.id) because provider \(existing.providerPreset.rawValue) uses \(fixedBaseURL)."
+                )
+            }
+            let server = try store.save(
+                RemoteServerMutation(
+                    id: existing.id,
+                    title: options.title.isEmpty ? existing.title : options.title,
+                    providerPreset: options.providerPreset ?? existing.providerPreset,
+                    providerKind: options.providerKind.isEmpty ? existing.providerKind : options.providerKind,
+                    baseURL: options.baseURL.isEmpty ? existing.baseURL : options.baseURL,
+                    defaultModelID: options.defaultModelID.isEmpty ? existing.defaultModelID : options.defaultModelID,
+                    timeoutSeconds: options.timeoutSeconds == 0 ? existing.timeoutSeconds : options.timeoutSeconds,
+                    rateLimitPerMinute: options.rateLimitPerMinute == 0 ? existing.rateLimitPerMinute : options.rateLimitPerMinute,
+                    apiKey: options.apiKey
+                )
+            )
+            if options.json {
+                return try prettyJSON(server)
+            }
+            return renderRemoteServers([server])
+        case .remoteServerRemove(let options):
+            try remoteServerStore().remove(id: options.remoteServerID)
+            if options.json {
+                return try prettyJSON(["removed_id": options.remoteServerID])
+            }
+            return "Removed remote server \(options.remoteServerID).\n"
+        case .remoteServerTest(let options):
+            let target = try remoteChatTarget(remoteServerID: options.remoteServerID, remoteModelID: options.remoteModelID)
+            let execution = try await client.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "",
+                    messages: [.init(role: "user", content: "Reply with OK.")],
+                    remoteTarget: target
+                )
+            )
+            let result = try await collectChatResult(from: execution)
+            let payload: [String: Any] = [
+                "remote_server_id": target.serverID,
+                "remote_model_id": target.modelID,
+                "ok": true,
+                "finish_reason": result.finishReason,
+            ]
+            if options.json {
+                return try prettyJSON(payload)
+            }
+            return "Remote server \(target.serverID) responded with \(result.finishReason).\n"
         case .chatRun(let options):
             let execution: ControlPlaneChatExecution
             do {
+                let remoteTarget = options.remoteServerID.isEmpty
+                    ? nil
+                    : try remoteChatTarget(
+                        remoteServerID: options.remoteServerID,
+                        remoteModelID: options.remoteModelID
+                    )
                 execution = try await client.startChat(
                     ControlPlaneChatRequest(
                         modelID: options.modelID,
-                        messages: buildChatMessages(options: options)
+                        messages: buildChatMessages(options: options),
+                        remoteTarget: remoteTarget
                     )
                 )
             } catch {
@@ -4044,7 +4391,6 @@ public actor MelixCLIRunner {
              .modelUnload,
              .serverSnapshot,
              .serverStart,
-             .chatRun,
              .loraList,
              .loraTrain,
              .loraActivate,
@@ -4056,9 +4402,12 @@ public actor MelixCLIRunner {
              .loraResume,
              .benchRun,
              .benchMatrixRun,
-             .evalRun,
              .evalCompare:
             return true
+        case .chatRun(let options):
+            return options.remoteServerID.isEmpty
+        case .evalRun(let options):
+            return options.remoteServerID.isEmpty
         default:
             return false
         }
@@ -4108,6 +4457,62 @@ public actor MelixCLIRunner {
             return session
         }
         throw MelixCLIError.runtime("Server session \(resolvedID) is not configured.")
+    }
+
+    private func remoteServerStore() -> RemoteServerStore {
+        RemoteServerStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func remoteServerAPIKeyStore() -> RemoteServerAPIKeyStore {
+        RemoteServerAPIKeyStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func remoteChatTarget(
+        remoteServerID: String,
+        remoteModelID: String
+    ) throws -> ControlPlaneChatRequest.RemoteTarget {
+        let normalizedRemoteServerID = remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let server = try remoteServerStore().get(id: normalizedRemoteServerID) else {
+            throw MelixCLIError.runtime("Remote server \(normalizedRemoteServerID) was not found.")
+        }
+        let apiKey = try remoteServerAPIKeyStore()
+            .loadAPIKey(remoteServerID: server.id)?
+            .apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard apiKey.isEmpty == false else {
+            throw MelixCLIError.runtime("Remote server \(server.id) has no API key configured.")
+        }
+        let modelID = remoteModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? server.defaultModelID
+            : remoteModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelID.isEmpty == false else {
+            throw MelixCLIError.runtime("Remote server \(server.id) has no model configured.")
+        }
+        return ControlPlaneChatRequest.RemoteTarget(
+            serverID: server.id,
+            providerKind: server.providerKind,
+            baseURL: server.baseURL,
+            apiKey: apiKey,
+            modelID: modelID,
+            timeoutSeconds: server.timeoutSeconds,
+            rateLimitPerMinute: server.rateLimitPerMinute
+        )
+    }
+
+    private func remoteEvaluationTarget(
+        remoteServerID: String,
+        remoteModelID: String
+    ) throws -> ControlPlaneEvaluationRequest.RemoteTarget {
+        let target = try remoteChatTarget(remoteServerID: remoteServerID, remoteModelID: remoteModelID)
+        return ControlPlaneEvaluationRequest.RemoteTarget(
+            remoteServerID: target.serverID,
+            providerKind: target.providerKind,
+            baseURL: target.baseURL,
+            apiKey: target.apiKey,
+            modelID: target.modelID,
+            timeoutSeconds: target.timeoutSeconds,
+            rateLimitPerMinute: target.rateLimitPerMinute
+        )
     }
 
     private func buildChatMessages(options: ChatRunOptions) -> [ControlPlaneChatRequest.Message] {
@@ -4541,6 +4946,16 @@ public actor MelixCLIRunner {
             return "\(selectedMarker)\(session.id)\t\(session.title)\t\(session.modelID)\t\(session.lifecycle.rawValue)"
         }
         return (["server_session_id\ttitle\tmodel_id\tlifecycle"] + rows).joined(separator: "\n") + "\n"
+    }
+
+    private func renderRemoteServers(_ servers: [RemoteServer]) -> String {
+        guard servers.isEmpty == false else {
+            return "No remote servers configured.\n"
+        }
+        let rows = servers.map { server in
+            "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.healthStatus)\t\(server.apiKeyHint)"
+        }
+        return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func makeModelSummaryPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
@@ -5409,6 +5824,12 @@ public actor MelixCLIRunner {
         var collected: [ControlPlaneEvaluationResult] = []
         for suiteID in suites {
             let usesCustomSource = options.source.kind != .builtinPackage
+            let remoteTarget = options.remoteServerID.isEmpty
+                ? nil
+                : try remoteEvaluationTarget(
+                    remoteServerID: options.remoteServerID,
+                    remoteModelID: options.remoteModelID
+                )
             let request = ControlPlaneEvaluationRequest(
                 modelID: options.modelID,
                 hfRepoID: options.hfRepoID,
@@ -5420,7 +5841,8 @@ public actor MelixCLIRunner {
                 source: options.source,
                 fieldMapping: options.fieldMapping,
                 profile: options.profile,
-                parameters: options.parameters
+                parameters: options.parameters,
+                remoteTarget: remoteTarget
             )
             collected.append(try await client.runEvaluation(request))
         }

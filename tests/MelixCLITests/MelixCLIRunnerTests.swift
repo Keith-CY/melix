@@ -2043,6 +2043,194 @@ struct MelixCLIRunnerTests {
         #expect(payload["request_id"] as? String == "chat-run-1")
     }
 
+    @Test("remote server commands persist secrets and feed chat and evaluation targets")
+    func remoteServerCommandsPersistSecretsAndFeedChatAndEvaluationTargets() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-remote-server-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setChatExecution(
+            requestID: "remote-chat-1",
+            modelID: "kimi-2.6",
+            events: [
+                .tokenDelta("remote ok"),
+                .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            ]
+        )
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-remote-1",
+                suiteID: "event_extraction",
+                datasetID: "top200",
+                metricName: "eval.event_extraction.weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+
+        #expect(try await runner.run(.remoteServerList(.init())) == "No remote servers configured.\n")
+
+        let addOutput = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "kimi",
+                    title: "Kimi",
+                    providerPreset: .kimi,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://api.kimi.com/coding/v1",
+                    defaultModelID: "kimi-2.6",
+                    apiKey: "sk-kimi-secret-value",
+                    timeoutSeconds: 42,
+                    rateLimitPerMinute: 9,
+                    json: true
+                )
+            )
+        )
+        let added = try #require(parseJSONObject(addOutput))
+        #expect(added["id"] as? String == "kimi")
+        #expect(added["provider_preset"] as? String == "kimi")
+        #expect(addOutput.contains("sk-kimi-secret-value") == false)
+        #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi")?.apiKey == "sk-kimi-secret-value")
+
+        let listOutput = try await runner.run(.remoteServerList(.init()))
+        #expect(listOutput.contains("remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key"))
+        #expect(listOutput.contains("kimi\tKimi\tkimi\topenai-compatible\tkimi-2.6"))
+        let listJSONOutput = try await runner.run(.remoteServerList(.init(json: true)))
+        let listed = try #require(parseJSONArray(listJSONOutput))
+        #expect(listed.count == 1)
+
+        await #expect(throws: MelixCLIError.runtime("--base-url cannot be used with remote server kimi because provider kimi uses https://api.kimi.com/coding/v1.")) {
+            try await runner.run(
+                .remoteServerUpdate(
+                    .init(
+                        remoteServerID: "kimi",
+                        baseURL: "https://override.example/v1"
+                    )
+                )
+            )
+        }
+
+        let updateOutput = try await runner.run(
+            .remoteServerUpdate(
+                .init(
+                    remoteServerID: "kimi",
+                    title: "Kimi Updated",
+                    defaultModelID: "kimi-2.6-chat",
+                    apiKey: "sk-new-secret-value",
+                    timeoutSeconds: 43,
+                    rateLimitPerMinute: 10,
+                    json: true
+                )
+            )
+        )
+        let updated = try #require(parseJSONObject(updateOutput))
+        #expect(updated["title"] as? String == "Kimi Updated")
+        #expect(updated["default_model_id"] as? String == "kimi-2.6-chat")
+        #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi")?.apiKey == "sk-new-secret-value")
+
+        let testOutput = try await runner.run(.remoteServerTest(.init(remoteServerID: "kimi", remoteModelID: "kimi-2.6", json: true)))
+        let testPayload = try #require(parseJSONObject(testOutput))
+        let testRequest = try #require(await client.lastChatRequest)
+        #expect(testPayload["remote_server_id"] as? String == "kimi")
+        #expect(testPayload["remote_model_id"] as? String == "kimi-2.6")
+        #expect(testPayload["ok"] as? Bool == true)
+        #expect(testRequest.remoteTarget?.apiKey == "sk-new-secret-value")
+        #expect(testRequest.messages == [.init(role: "user", content: "Reply with OK.")])
+
+        let plainTestOutput = try await runner.run(.remoteServerTest(.init(remoteServerID: "kimi", remoteModelID: "kimi-2.6")))
+        #expect(plainTestOutput == "Remote server kimi responded with stop.\n")
+
+        let chatOutput = try await runner.run(
+            .chatRun(
+                .init(
+                    remoteServerID: "kimi",
+                    remoteModelID: "",
+                    message: "extract events",
+                    systemPrompt: "Return JSON.",
+                    json: true
+                )
+            )
+        )
+        let chatPayload = try #require(parseJSONObject(chatOutput))
+        let chatRequest = try #require(await client.lastChatRequest)
+        #expect(chatPayload["model_id"] as? String == "kimi-2.6")
+        #expect(chatPayload["assistant_text"] as? String == "remote ok")
+        #expect(chatRequest.remoteTarget?.serverID == "kimi")
+        #expect(chatRequest.remoteTarget?.modelID == "kimi-2.6-chat")
+        #expect(chatRequest.remoteTarget?.timeoutSeconds == 43)
+        #expect(chatRequest.remoteTarget?.rateLimitPerMinute == 10)
+        #expect(chatRequest.messages == [
+            .init(role: "system", content: "Return JSON."),
+            .init(role: "user", content: "extract events"),
+        ])
+
+        _ = try await runner.run(
+            .evalRun(
+                .init(
+                    remoteServerID: "kimi",
+                    remoteModelID: "",
+                    suites: ["event_extraction"],
+                    datasetID: "top200",
+                    sampleSize: 3,
+                    profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                    json: true
+                )
+            )
+        )
+        let evaluationRequest = try #require((await client.evaluationRequests).first)
+        #expect(evaluationRequest.remoteTarget?.remoteServerID == "kimi")
+        #expect(evaluationRequest.remoteTarget?.modelID == "kimi-2.6-chat")
+        #expect(evaluationRequest.remoteTarget?.apiKey == "sk-new-secret-value")
+        #expect(evaluationRequest.remoteTarget?.baseURL == "https://api.kimi.com/coding/v1")
+
+        let removeOutput = try await runner.run(.remoteServerRemove(.init(remoteServerID: "kimi", json: true)))
+        let removed = try #require(parseJSONObject(removeOutput))
+        #expect(removed["removed_id"] as? String == "kimi")
+        #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi") == nil)
+        #expect(try await runner.run(.remoteServerList(.init())) == "No remote servers configured.\n")
+    }
+
+    @Test("remote server commands surface missing records and credentials")
+    func remoteServerCommandsSurfaceMissingRecordsAndCredentials() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-remote-server-errors-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        await #expect(throws: MelixCLIError.runtime("Remote server missing was not found.")) {
+            try await runner.run(.remoteServerUpdate(.init(remoteServerID: "missing", title: "Missing")))
+        }
+        await #expect(throws: MelixCLIError.runtime("Remote server missing was not found.")) {
+            try await runner.run(.remoteServerTest(.init(remoteServerID: "missing")))
+        }
+
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "custom",
+                    title: "Custom",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://sub2api.example/v1",
+                    defaultModelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(throws: MelixCLIError.runtime("Remote server custom has no API key configured.")) {
+            try await runner.run(.remoteServerTest(.init(remoteServerID: "custom")))
+        }
+    }
+
     @Test("chat run surfaces stream failures as runtime errors")
     func chatRunSurfacesStreamFailuresAsRuntimeErrors() async throws {
         let client = StubControlPlaneXPCClient()
@@ -4921,8 +5109,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,1712200000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
     }
 
     @Test("bench matrix export-summary-csv returns the written path in plain text")
@@ -4973,8 +5161,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,1712200000000"))
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
     }
 
     @Test("bench matrix export-requests-csv returns the written path in plain text")

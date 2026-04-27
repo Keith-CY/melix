@@ -286,6 +286,16 @@ message EvaluationProfile {
   repeated string ignored_paths = 7;
 }
 
+message RemoteProviderTarget {
+  string remote_server_id = 1;
+  string provider_kind = 2;
+  string base_url = 3;
+  string api_key = 4;
+  string model_id = 5;
+  uint32 timeout_seconds = 6;
+  uint32 rate_limit_per_minute = 7;
+}
+
 message RunEvaluationRequest {
   string model_handle = 1;
   string suite_id = 2;
@@ -302,6 +312,7 @@ message RunEvaluationRequest {
   EvaluationSource source = 13;
   EvaluationFieldMapping field_mapping = 14;
   EvaluationProfile profile = 15;
+  RemoteProviderTarget remote_target = 16;
 }
 
 message EvaluationMetricValue {

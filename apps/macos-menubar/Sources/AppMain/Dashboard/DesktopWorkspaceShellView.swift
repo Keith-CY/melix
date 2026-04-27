@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import MelixCLICore
 import SwiftUI
 
 @MainActor
@@ -664,9 +665,198 @@ private struct DesktopServerSessionSidebar: View {
                 }
             }
 
+            Divider()
+
+            HStack {
+                Text("Remote Servers")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    viewModel.prepareNewRemoteServerDraft()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("New Remote Server")
+                .accessibilityLabel("New Remote Server")
+            }
+
+            if viewModel.remoteServers.isEmpty {
+                Text("No Remote Servers")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.remoteServers, id: \.id) { server in
+                        Button {
+                            viewModel.selectRemoteServer(id: server.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(server.title)
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(server.healthStatus)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("\(server.defaultModelID) • \(server.providerKind)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(
+                                viewModel.selectedRemoteServerID == server.id
+                                ? Color.accentColor.opacity(0.14)
+                                : Color.secondary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 12)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
             Spacer()
         }
         .padding(20)
+    }
+}
+
+private struct DesktopRemoteServerEditor: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedRemoteServer: RemoteServer? {
+        viewModel.remoteServers.first { $0.id == viewModel.selectedRemoteServerID }
+    }
+
+    var body: some View {
+        MelixSectionCard("Remote Server") {
+            VStack(alignment: .leading, spacing: 12) {
+                if let selectedRemoteServer {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "network.badge.shield.half.filled")
+                            .foregroundStyle(MelixDesignTokens.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedRemoteServer.title)
+                                .font(.headline)
+                            Text("\(selectedRemoteServer.defaultModelID) • key \(selectedRemoteServer.apiKeyHint.isEmpty ? "not saved" : selectedRemoteServer.apiKeyHint)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Remote Server ID",
+                        text: Binding(
+                            get: { viewModel.remoteServerIDDraft },
+                            set: { viewModel.remoteServerIDDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isRemoteServerIDEditable == false)
+
+                    TextField(
+                        "Title",
+                        text: Binding(
+                            get: { viewModel.remoteServerTitleDraft },
+                            set: { viewModel.remoteServerTitleDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    Picker(
+                        "Provider",
+                        selection: Binding(
+                            get: { viewModel.remoteServerProviderPresetDraft },
+                            set: { viewModel.selectRemoteServerProviderPreset($0) }
+                        )
+                    ) {
+                        ForEach(RemoteServerProviderPreset.allCases) { providerPreset in
+                            Text(providerPreset.title).tag(providerPreset)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    TextField(
+                        "Default Model",
+                        text: Binding(
+                            get: { viewModel.remoteServerDefaultModelIDDraft },
+                            set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                TextField(
+                    viewModel.isRemoteServerBaseURLEditable ? "Base URL" : "Base URL (preset)",
+                    text: Binding(
+                        get: { viewModel.remoteServerBaseURLDraft },
+                        set: { viewModel.remoteServerBaseURLDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isRemoteServerBaseURLEditable == false)
+
+                SecureField(
+                    selectedRemoteServer?.apiKeyHint.isEmpty == false ? "Replace API Key" : "API Key",
+                    text: Binding(
+                        get: { viewModel.remoteServerAPIKeyDraft },
+                        set: { viewModel.remoteServerAPIKeyDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Timeout (s)",
+                        value: Binding(
+                            get: { viewModel.remoteServerTimeoutSecondsDraft },
+                            set: { viewModel.remoteServerTimeoutSecondsDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Rate limit / min",
+                        value: Binding(
+                            get: { viewModel.remoteServerRateLimitPerMinuteDraft },
+                            set: { viewModel.remoteServerRateLimitPerMinuteDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Button("New") {
+                        viewModel.prepareNewRemoteServerDraft()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Save Remote Server") {
+                        viewModel.saveRemoteServerDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Remove") {
+                        viewModel.removeSelectedRemoteServer()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.selectedRemoteServerID.isEmpty)
+
+                    Spacer()
+                }
+            }
+        }
     }
 }
 
@@ -688,6 +878,8 @@ private struct DesktopServerSessionEditor: View {
                     title: "Server",
                     subtitle: "Choose model, configure listener, then start the server session."
                 ) {}
+
+                DesktopRemoteServerEditor(viewModel: viewModel)
 
                 if let session = viewModel.selectedServerSession {
                     if let notice = session.lifecycleBannerState {

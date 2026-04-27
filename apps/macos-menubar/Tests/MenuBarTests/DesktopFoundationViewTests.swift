@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -394,6 +395,64 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 2)
         #expect(viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests == 6)
         #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
+    }
+
+    @Test("workspace server surface renders remote server picker and editor")
+    @MainActor
+    func workspaceServerSurfaceRendersRemoteServerPickerAndEditor() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "kimi",
+                title: "Kimi",
+                providerPreset: .kimi,
+                providerKind: "openai-compatible",
+                baseURL: "https://api.kimi.com/coding",
+                defaultModelID: "kimi-2.6",
+                timeoutSeconds: 60,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "kimi"),
+                apiKeyHint: "sk-k...7890",
+                healthStatus: "healthy"
+            ),
+            RemoteServer(
+                id: "gemini",
+                title: "Gemini",
+                providerPreset: .gemini,
+                providerKind: "gemini-generative-language",
+                baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                defaultModelID: "gemini-2.5-flash",
+                timeoutSeconds: 90,
+                rateLimitPerMinute: 3,
+                credentialRef: RemoteServerStore.credentialRef(for: "gemini"),
+                apiKeyHint: "AIza...cret",
+                healthStatus: "unknown"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: store)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+        viewModel.selectRemoteServer(id: "gemini")
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        view.frame = NSRect(x: 0, y: 0, width: 1200, height: 2600)
+        view.layoutSubtreeIfNeeded()
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Gemini"))
+        #expect(renderedTexts.contains("gemini-2.5-flash"))
+        #expect(renderedTexts.contains("https://generativelanguage.googleapis.com/v1beta"))
+        #expect(renderedTexts.contains("90"))
+        #expect(renderedTexts.contains("3"))
+        #expect(viewModel.selectedRemoteServerID == "gemini")
+        #expect(viewModel.remoteServerProviderPresetDraft == .gemini)
+        #expect(viewModel.isRemoteServerBaseURLEditable == false)
     }
 
     @Test("server workspace folds advanced serving defaults by default")

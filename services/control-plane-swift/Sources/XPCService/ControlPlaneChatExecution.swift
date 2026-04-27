@@ -33,12 +33,41 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         }
     }
 
+    public struct RemoteTarget: Sendable, Equatable {
+        public let serverID: String
+        public let providerKind: String
+        public let baseURL: String
+        public let apiKey: String
+        public let modelID: String
+        public let timeoutSeconds: UInt32
+        public let rateLimitPerMinute: UInt32
+
+        public init(
+            serverID: String,
+            providerKind: String,
+            baseURL: String,
+            apiKey: String,
+            modelID: String,
+            timeoutSeconds: UInt32 = 60,
+            rateLimitPerMinute: UInt32 = 0
+        ) {
+            self.serverID = serverID
+            self.providerKind = providerKind
+            self.baseURL = baseURL
+            self.apiKey = apiKey
+            self.modelID = modelID
+            self.timeoutSeconds = timeoutSeconds
+            self.rateLimitPerMinute = rateLimitPerMinute
+        }
+    }
+
     public let modelID: String
     public let messages: [Message]
     public let resumeRequestID: String?
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
+    public let remoteTarget: RemoteTarget?
 
     public init(
         modelID: String,
@@ -46,7 +75,8 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         resumeRequestID: String? = nil,
         temperature: Double? = nil,
         topP: Double? = nil,
-        maxTokens: UInt32? = nil
+        maxTokens: UInt32? = nil,
+        remoteTarget: RemoteTarget? = nil
     ) {
         self.modelID = modelID
         self.messages = messages
@@ -54,6 +84,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
+        self.remoteTarget = remoteTarget
     }
 }
 

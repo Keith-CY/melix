@@ -60,6 +60,250 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-vlm")
     }
 
+    @Test("remote server draft saves through app store and clears the API key field")
+    @MainActor
+    func remoteServerDraftSavesThroughAppStoreAndClearsTheAPIKeyField() throws {
+        let store = FakeRemoteServerStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.remoteServerIDDraft = "sub2api"
+        viewModel.remoteServerTitleDraft = "sub2api"
+        viewModel.remoteServerProviderKindDraft = "openai-compatible"
+        viewModel.remoteServerBaseURLDraft = "https://sub2api.example/v1/"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        viewModel.remoteServerAPIKeyDraft = "sk-test-1234567890"
+        viewModel.remoteServerTimeoutSecondsDraft = 180
+        viewModel.remoteServerRateLimitPerMinuteDraft = 60
+
+        viewModel.saveRemoteServerDraft()
+
+        let saved = try #require(viewModel.remoteServers.first)
+        #expect(saved.id == "sub2api")
+        #expect(saved.baseURL == "https://sub2api.example/v1/")
+        #expect(saved.defaultModelID == "gemini-2.5-flash")
+        #expect(saved.apiKeyHint == "sk-t...7890")
+        #expect(viewModel.selectedRemoteServerID == "sub2api")
+        #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
+        #expect(store.savedMutations.first?.apiKey == "sk-test-1234567890")
+    }
+
+    @Test("remote server provider presets lock base URL and save resolved execution kind")
+    @MainActor
+    func remoteServerProviderPresetsLockBaseURLAndSaveResolvedExecutionKind() throws {
+        let store = FakeRemoteServerStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.selectRemoteServerProviderPreset(.gemini)
+        viewModel.remoteServerIDDraft = "gemini"
+        viewModel.remoteServerTitleDraft = "Gemini"
+        viewModel.remoteServerBaseURLDraft = "https://operator-override.example/v1"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        viewModel.remoteServerAPIKeyDraft = "AIza-secret"
+
+        #expect(viewModel.isRemoteServerBaseURLEditable == false)
+        #expect(viewModel.remoteServerProviderKindDraft == "gemini-generative-language")
+        #expect(viewModel.remoteServerBaseURLDraft == "https://generativelanguage.googleapis.com/v1beta")
+
+        viewModel.saveRemoteServerDraft()
+
+        let savedMutation = try #require(store.savedMutations.first)
+        #expect(savedMutation.providerPreset == .gemini)
+        #expect(savedMutation.providerKind == "gemini-generative-language")
+        #expect(savedMutation.baseURL == "https://generativelanguage.googleapis.com/v1beta")
+        #expect(viewModel.remoteServers.first?.providerPreset == .gemini)
+
+        viewModel.selectRemoteServerProviderPreset(.custom)
+        #expect(viewModel.isRemoteServerBaseURLEditable)
+        viewModel.remoteServerBaseURLDraft = "https://llm2api.owlia.ai/v1"
+        #expect(viewModel.remoteServerBaseURLDraft == "https://llm2api.owlia.ai/v1")
+    }
+
+    @Test("remote server selection hydrates metadata but not the API key")
+    @MainActor
+    func remoteServerSelectionHydratesMetadataButNotTheAPIKey() throws {
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "sub2api",
+                title: "sub2api",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://sub2api.example/v1",
+                defaultModelID: "deepseek-v4",
+                timeoutSeconds: 120,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
+                apiKeyHint: "sk-t...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "sub2api")
+
+        #expect(viewModel.remoteServerIDDraft == "sub2api")
+        #expect(viewModel.remoteServerBaseURLDraft == "https://sub2api.example/v1")
+        #expect(viewModel.remoteServerDefaultModelIDDraft == "deepseek-v4")
+        #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
+    }
+
+    @Test("remote server save rejects id changes for selected records")
+    @MainActor
+    func remoteServerSaveRejectsIDChangesForSelectedRecords() throws {
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "sub2api",
+                title: "sub2api",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://sub2api.example/v1",
+                defaultModelID: "deepseek-v4",
+                timeoutSeconds: 120,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
+                apiKeyHint: "sk-t...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "sub2api")
+        viewModel.remoteServerIDDraft = "kimi"
+        viewModel.remoteServerTitleDraft = "Kimi"
+        viewModel.remoteServerDefaultModelIDDraft = "kimi-2.6"
+
+        viewModel.saveRemoteServerDraft()
+
+        #expect(viewModel.remoteServers.map(\.id) == ["sub2api"])
+        #expect(store.savedMutations.isEmpty)
+        #expect(viewModel.lastError == "Remote Server ID cannot be changed after creation. Use New to create another server.")
+    }
+
+    @Test("remote server draft validates required fields and records persistence failures")
+    @MainActor
+    func remoteServerDraftValidatesRequiredFieldsAndRecordsPersistenceFailures() async throws {
+        let store = FakeRemoteServerStore()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.remoteServerIDDraft = " "
+        viewModel.saveRemoteServerDraft()
+
+        #expect(viewModel.lastError == "Remote Server requires id, title, provider, base URL, and default model.")
+        #expect(store.savedMutations.isEmpty)
+
+        viewModel.remoteServerIDDraft = "sub2api"
+        viewModel.remoteServerTitleDraft = "sub2api"
+        viewModel.remoteServerBaseURLDraft = "https://sub2api.example/v1"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        store.saveError = .save
+
+        viewModel.saveRemoteServerDraft()
+        try await waitForRuntimeMetric(
+            metrics,
+            name: "remote_server.persist_failures",
+            equals: 1
+        )
+
+        #expect(viewModel.lastError == "Remote Server save failed: save")
+    }
+
+    @Test("remote server removal selects the next server and surfaces failures")
+    @MainActor
+    func remoteServerRemovalSelectsNextServerAndSurfacesFailures() async throws {
+        let metrics = MenuBarMetricsStore()
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "kimi",
+                title: "Kimi",
+                providerPreset: .kimi,
+                providerKind: "openai-compatible",
+                baseURL: "https://api.kimi.com/coding",
+                defaultModelID: "kimi-2.6",
+                timeoutSeconds: 60,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "kimi"),
+                apiKeyHint: "sk-k...7890"
+            ),
+            RemoteServer(
+                id: "glm",
+                title: "GLM",
+                providerPreset: .glm,
+                providerKind: "openai-compatible",
+                baseURL: "https://open.bigmodel.cn/api/paas/v4",
+                defaultModelID: "glm-5.1",
+                timeoutSeconds: 90,
+                rateLimitPerMinute: 5,
+                credentialRef: RemoteServerStore.credentialRef(for: "glm"),
+                apiKeyHint: "sk-g...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "kimi")
+        viewModel.removeSelectedRemoteServer()
+
+        #expect(store.removedIDs == ["kimi"])
+        #expect(viewModel.remoteServers.map(\.id) == ["glm"])
+        #expect(viewModel.selectedRemoteServerID == "glm")
+        #expect(viewModel.remoteServerIDDraft == "glm")
+
+        store.removeError = .remove
+        viewModel.removeSelectedRemoteServer()
+        try await waitForRuntimeMetric(
+            metrics,
+            name: "remote_server.persist_failures",
+            equals: 1
+        )
+
+        #expect(viewModel.lastError == "Remote Server remove failed: remove")
+    }
+
+    @Test("null remote server store materializes non-secret state")
+    func nullRemoteServerStoreMaterializesNonSecretState() throws {
+        let server = try NullRemoteServerStore().save(
+            RemoteServerMutation(
+                id: "gemini",
+                title: "Gemini",
+                providerPreset: .gemini,
+                providerKind: "gemini-generative-language",
+                baseURL: "https://override.example/v1",
+                defaultModelID: "gemini-2.5-flash",
+                timeoutSeconds: 75,
+                rateLimitPerMinute: 12,
+                apiKey: "AIza-secret"
+            )
+        )
+
+        #expect(server.id == "gemini")
+        #expect(server.providerKind == "gemini-generative-language")
+        #expect(server.baseURL == "https://generativelanguage.googleapis.com/v1beta")
+        #expect(server.defaultModelID == "gemini-2.5-flash")
+        #expect(server.apiKeyHint == "AIza...cret")
+        try NullRemoteServerStore().remove(id: "gemini")
+        #expect(try NullRemoteServerStore().list().isEmpty)
+    }
+
     @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
     @MainActor
     func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {
@@ -8807,6 +9051,27 @@ private func waitForRuntimeViewModelCondition(
     }
 
     throw MenuBarTestError(description: description)
+}
+
+private func waitForRuntimeMetric(
+    _ metrics: MenuBarMetricsStore,
+    name: String,
+    equals expectedValue: Double,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await metrics.snapshot()[name] == expectedValue {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    let actualValue = await metrics.snapshot()[name]
+    throw MenuBarTestError(
+        description: "expected metric \(name) to equal \(expectedValue), got \(String(describing: actualValue))"
+    )
 }
 
 private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {

@@ -39,6 +39,12 @@ from worker.productization.evaluation_final_result import (
     extract_final_result,
     score_final_result,
 )
+from worker.productization.event_extraction import (
+    RemoteEventExtractionTarget,
+    evaluate_event_extraction,
+    make_event_extraction_client,
+    normalize_event_fields,
+)
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
     EvaluationCompareSample,
@@ -130,7 +136,24 @@ class EvaluationCore:
         scoring_mode: str | None = None,
         code_exec_policy: str | None = None,
         parameters: dict[str, str] | None = None,
+        remote_target: Any | None = None,
     ) -> EvaluationRun:
+        requested_scoring_mode = (
+            scoring_mode
+            if scoring_mode is not None and scoring_mode != ""
+            else (parameters or {}).get("scoring_mode", "")
+        )
+        if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
+            return self._run_event_extraction_suite(
+                model_id=model_id,
+                suite_id=suite_id,
+                dataset_id=(parameters or {}).get("dataset_id", ""),
+                sample_size=sample_size,
+                scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
+                parameters=dict(parameters or {}),
+                remote_target=remote_target,
+            )
+
         dataset_root = Path(dataset_root).resolve()
         manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
         if manifest["suite_id"] != suite_id:
@@ -476,6 +499,245 @@ class EvaluationCore:
                 updated_at_unix_ms=int(time.time() * 1000),
             )
         return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
+
+    def _run_event_extraction_suite(
+        self,
+        *,
+        model_id: str,
+        suite_id: str,
+        dataset_id: str,
+        sample_size: int,
+        scoring_mode: str,
+        parameters: dict[str, str],
+        remote_target: Any | None,
+    ) -> EvaluationRun:
+        source_jsonl = parameters.get("event_source_jsonl") or parameters.get("evaluation_source_locator", "")
+        if not source_jsonl:
+            raise ValueError("event_extraction_weighted_f1 requires a local JSONL source.")
+        if remote_target is None or not getattr(remote_target, "api_key", ""):
+            raise ValueError("event_extraction_weighted_f1 requires a remote provider target.")
+
+        created_at_unix_ms = int(time.time() * 1000)
+        job_id = self._next_job_id()
+        output_root = (
+            self._jobs_root / "event-extraction" / job_id
+            if self._jobs_root is not None
+            else Path.cwd() / "event-extraction" / job_id
+        )
+        remote_model_id = str(getattr(remote_target, "model_id", "") or model_id)
+        safe_model_name = re.sub(r"[^A-Za-z0-9._-]+", "_", remote_model_id).strip("_") or "remote-model"
+        predictions_dir = output_root / "predictions"
+        reports_dir = output_root / "reports" / safe_model_name
+        predictions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        prediction_path = predictions_dir / f"{safe_model_name}.jsonl"
+        failure_path = predictions_dir / f"{safe_model_name}.failures.jsonl"
+        gold_subset_path = output_root / "gold_subset.jsonl"
+        summary_path = reports_dir / "event_eval_summary.json"
+        details_path = reports_dir / "event_eval_details.jsonl"
+
+        rows = self._read_event_extraction_rows(Path(source_jsonl), sample_size=sample_size)
+        gold_subset_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+
+        client = make_event_extraction_client(
+            RemoteEventExtractionTarget(
+                provider_kind=str(getattr(remote_target, "provider_kind", "")),
+                base_url=str(getattr(remote_target, "base_url", "")),
+                api_key=str(getattr(remote_target, "api_key", "")),
+                model_id=remote_model_id,
+                timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
+            )
+        )
+        rate_limit_per_minute = int(getattr(remote_target, "rate_limit_per_minute", 0) or 0)
+        min_interval_seconds = 60.0 / rate_limit_per_minute if rate_limit_per_minute > 0 else 0.0
+        last_request_started = 0.0
+        prediction_rows: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        raw_response_dir = output_root / "raw-responses" / safe_model_name
+        raw_response_dir.mkdir(parents=True, exist_ok=True)
+
+        started_at = time.perf_counter()
+        events_written = 0
+        for line_number, row in enumerate(rows, start=1):
+            dialogue_id = str(row.get("dialogue_id") or "")
+            dialogue = self._dialogue_lines(row.get("dialogue"))
+            if min_interval_seconds > 0 and last_request_started > 0:
+                elapsed = time.perf_counter() - last_request_started
+                if elapsed < min_interval_seconds:
+                    time.sleep(min_interval_seconds - elapsed)
+            last_request_started = time.perf_counter()
+            try:
+                extracted_events, raw_response = client.extract_events(dialogue)
+                (raw_response_dir / f"{line_number:04d}-{self._safe_path_component(dialogue_id)}.txt").write_text(
+                    raw_response,
+                    encoding="utf-8",
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    {
+                        "dialogue_id": dialogue_id,
+                        "line_number": line_number,
+                        "event_index": None,
+                        "reason": str(exc),
+                    }
+                )
+                prediction_rows.append({"dialogue_id": dialogue_id, "dialogue": dialogue, "events": []})
+                continue
+
+            normalized_events: list[dict[str, object]] = []
+            for event_index, event in enumerate(extracted_events):
+                try:
+                    normalized_events.append(normalize_event_fields(event))
+                    events_written += 1
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(
+                        {
+                            "dialogue_id": dialogue_id,
+                            "line_number": line_number,
+                            "event_index": event_index,
+                            "reason": str(exc),
+                        }
+                    )
+            prediction_rows.append(
+                {
+                    "dialogue_id": dialogue_id,
+                    "dialogue": dialogue,
+                    "events": normalized_events,
+                }
+            )
+
+        prediction_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
+            encoding="utf-8",
+        )
+        failure_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
+            encoding="utf-8",
+        )
+        summary = evaluate_event_extraction(
+            gold_jsonl=gold_subset_path,
+            pred_jsonl=prediction_path,
+            summary_output=summary_path,
+            details_output=details_path,
+        )
+        duration_seconds = round(time.perf_counter() - started_at, 6)
+        overall_weighted_f1 = float(summary["summary"]["overall_weighted_f1"])
+        events_evaluated = int(summary["summary"]["events_evaluated"])
+        events_matched = int(summary["summary"]["events_matched"])
+        events_unmatched_gold = int(summary["summary"]["events_unmatched_gold"])
+        events_unmatched_pred = int(summary["summary"]["events_unmatched_pred"])
+        field_metrics = summary["field_metrics"]
+
+        job_parameters = dict(parameters)
+        job_parameters.pop("api_key", None)
+        job_parameters.pop("remote_api_key", None)
+        job_parameters["dataset_root"] = str(Path(source_jsonl).resolve())
+        job_parameters["event_source_jsonl"] = str(Path(source_jsonl).resolve())
+        job_parameters["prediction_jsonl"] = str(prediction_path)
+        job_parameters["failure_jsonl"] = str(failure_path)
+        job_parameters["event_eval_summary"] = str(summary_path)
+        job_parameters["event_eval_details"] = str(details_path)
+        job_parameters["effective_scoring_mode"] = "event_extraction_weighted_f1"
+        job_parameters["scoring_mode"] = "event_extraction_weighted_f1"
+        job_parameters.setdefault("remote_model_id", remote_model_id)
+
+        result_metrics = {
+            f"eval.{suite_id}.overall_weighted_f1": overall_weighted_f1,
+            f"eval.{suite_id}.events_evaluated": float(events_evaluated),
+            f"eval.{suite_id}.events_matched": float(events_matched),
+            f"eval.{suite_id}.events_unmatched_gold": float(events_unmatched_gold),
+            f"eval.{suite_id}.events_unmatched_pred": float(events_unmatched_pred),
+            f"eval.{suite_id}.events_written": float(events_written),
+            f"eval.{suite_id}.events_failed": float(len(failures)),
+            f"eval.{suite_id}.duration_seconds": duration_seconds,
+        }
+        result_units = {
+            f"eval.{suite_id}.overall_weighted_f1": "ratio",
+            f"eval.{suite_id}.events_evaluated": "count",
+            f"eval.{suite_id}.events_matched": "count",
+            f"eval.{suite_id}.events_unmatched_gold": "count",
+            f"eval.{suite_id}.events_unmatched_pred": "count",
+            f"eval.{suite_id}.events_written": "count",
+            f"eval.{suite_id}.events_failed": "count",
+            f"eval.{suite_id}.duration_seconds": "s",
+        }
+        if isinstance(field_metrics, dict):
+            for field_name, values in field_metrics.items():
+                if isinstance(values, dict):
+                    metric_name = f"eval.{suite_id}.{field_name}_f1"
+                    result_metrics[metric_name] = float(values.get("f1", 0.0))
+                    result_units[metric_name] = "ratio"
+
+        resolved_dataset_id = dataset_id or "top200"
+        job = build_evaluation_job_record(
+            job_id=job_id,
+            model_id=remote_model_id,
+            task_kind="text-generation",
+            source_repo=job_parameters.get("source_repo", ""),
+            suite_id=suite_id,
+            dataset_id=resolved_dataset_id,
+            sample_size=len(rows),
+            scoring_mode="event_extraction_weighted_f1",
+            parameters=job_parameters,
+            status="completed",
+            output_dir=str(output_root),
+            created_at_unix_ms=created_at_unix_ms,
+            updated_at_unix_ms=created_at_unix_ms,
+        )
+        result = build_evaluation_result_record(
+            job_id=job.job_id,
+            suite_id=suite_id,
+            dataset_id=resolved_dataset_id,
+            sample_size=len(rows),
+            primary_score_name="overall_weighted_f1",
+            primary_score_value=overall_weighted_f1,
+            extraction_success_count=max(len(rows) - len(failures), 0),
+            validation_success_count=events_matched,
+            scored_sample_count=events_evaluated,
+            failure_count=len(failures),
+            duration_seconds=duration_seconds,
+            metrics=result_metrics,
+            report_path=str(summary_path),
+            units=result_units,
+        )
+        persisted_paths: dict[str, Path] = {}
+        if self._jobs_root is not None:
+            queue_root = self._jobs_root / "queue"
+            self._queue_store.enqueue(
+                queue_root=queue_root,
+                record=BenchmarkQueueRecord(
+                    queue_item_id=job.job_id,
+                    job_kind="evaluation",
+                    model_id=remote_model_id,
+                    suite_ids=(suite_id,),
+                    parameters=job_parameters,
+                    status="queued",
+                    created_at_unix_ms=created_at_unix_ms,
+                    updated_at_unix_ms=created_at_unix_ms,
+                ),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="running",
+                updated_at_unix_ms=created_at_unix_ms + 1,
+            )
+            persisted_paths = self._store.persist_result(
+                jobs_root=self._jobs_root,
+                job=job,
+                result=result,
+                samples=(),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="completed",
+                updated_at_unix_ms=int(time.time() * 1000),
+            )
+        return EvaluationRun(job=job, results=(result,), samples=(), persisted_paths=persisted_paths)
 
     def _run_compare_suite(
         self,
@@ -827,6 +1089,42 @@ class EvaluationCore:
         if self._jobs_root is not None:
             return run_root / "evaluation-result.json"
         return run_root / "evaluation-result.json"
+
+    @staticmethod
+    def _read_event_extraction_rows(path: Path, *, sample_size: int) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError(f"expected JSON object at {path}:{line_number}")
+                if not isinstance(row.get("dialogue_id"), str) or not row.get("dialogue_id"):
+                    raise ValueError(f"missing dialogue_id at {path}:{line_number}")
+                if not isinstance(row.get("events"), list):
+                    raise ValueError(f"events must be a list at {path}:{line_number}")
+                normalized = dict(row)
+                normalized["dialogue"] = EvaluationCore._dialogue_lines(row.get("dialogue"))
+                rows.append(normalized)
+                if sample_size > 0 and len(rows) >= sample_size:
+                    break
+        if not rows:
+            raise ValueError(f"event extraction source JSONL is empty: {path}")
+        return rows
+
+    @staticmethod
+    def _dialogue_lines(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        if isinstance(value, str):
+            return [line.strip() for line in value.splitlines() if line.strip()]
+        return []
+
+    @staticmethod
+    def _safe_path_component(value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "dialogue"
 
     def _next_job_id(self) -> str:
         if self._jobs_root is None:

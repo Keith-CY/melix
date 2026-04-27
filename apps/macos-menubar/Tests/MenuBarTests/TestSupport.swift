@@ -12,6 +12,70 @@ enum MenuBarTestEnvironment {
     }
 }
 
+final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
+    enum StoreError: Error, Equatable {
+        case list
+        case save
+        case remove
+    }
+
+    private(set) var savedMutations: [RemoteServerMutation] = []
+    private(set) var removedIDs: [String] = []
+    var servers: [RemoteServer]
+    var listError: StoreError?
+    var saveError: StoreError?
+    var removeError: StoreError?
+
+    init(servers: [RemoteServer] = []) {
+        self.servers = servers
+    }
+
+    func list() throws -> [RemoteServer] {
+        if let listError {
+            throw listError
+        }
+        return servers.sorted { $0.id < $1.id }
+    }
+
+    @discardableResult
+    func save(_ mutation: RemoteServerMutation) throws -> RemoteServer {
+        if let saveError {
+            throw saveError
+        }
+        savedMutations.append(mutation)
+        let now = Date()
+        let existing = servers.first { $0.id == mutation.id }
+        let server = RemoteServer(
+            id: mutation.id,
+            title: mutation.title,
+            providerPreset: mutation.providerPreset,
+            providerKind: mutation.providerPreset.providerKind,
+            baseURL: mutation.providerPreset.fixedBaseURL ?? mutation.baseURL,
+            defaultModelID: mutation.defaultModelID,
+            timeoutSeconds: mutation.timeoutSeconds,
+            rateLimitPerMinute: mutation.rateLimitPerMinute,
+            credentialRef: RemoteServerStore.credentialRef(for: mutation.id),
+            apiKeyHint: mutation.apiKey.isEmpty
+                ? (existing?.apiKeyHint ?? "")
+                : RemoteServerAPIKeyStore.maskedHint(for: mutation.apiKey),
+            healthStatus: existing?.healthStatus ?? "unknown",
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now
+        )
+        servers.removeAll { $0.id == mutation.id }
+        servers.append(server)
+        return server
+    }
+
+    func remove(id: String) throws {
+        if let removeError {
+            throw removeError
+        }
+        removedIDs.append(id)
+        servers.removeAll { $0.id == id }
+    }
+}
+
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     struct ScheduledChatEvent: Equatable, Sendable {
         let delay: Duration

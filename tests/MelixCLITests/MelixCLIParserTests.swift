@@ -11,6 +11,217 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))
     }
 
+    @Test("documents and parses remote server direct target commands")
+    func documentsAndParsesRemoteServerDirectTargetCommands() throws {
+        #expect(MelixCLIParser.usageText.contains("melix remote-server add"))
+        #expect(MelixCLIParser.usageText.contains("melix remote-server test"))
+        #expect(MelixCLIParser.usageText.contains("melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL)"))
+        #expect(MelixCLIParser.usageText.contains("melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL)"))
+
+        let add = try MelixCLIParser.parse([
+            "remote-server", "add",
+            "--remote-server-id", "sub2api",
+            "--title", "sub2api",
+            "--provider", "custom",
+            "--base-url", "https://sub2api.example/v1/",
+            "--model", "gemini-2.5-flash",
+            "--api-key", "sk-secret",
+            "--timeout-seconds", "90",
+            "--rate-limit-per-minute", "30",
+            "--json",
+        ])
+        let test = try MelixCLIParser.parse([
+            "remote-server", "test",
+            "--remote-server-id", "sub2api",
+            "--model", "gemini-2.5-flash",
+            "--json",
+        ])
+        let list = try MelixCLIParser.parse([
+            "remote-server", "list",
+            "--json",
+        ])
+        let update = try MelixCLIParser.parse([
+            "remote-server", "update",
+            "--remote-server-id", "sub2api",
+            "--title", "sub2api updated",
+            "--provider", "custom",
+            "--base-url", "https://sub2api.example/updated/v1",
+            "--model", "deepseek-v4",
+            "--api-key", "sk-updated",
+            "--timeout-seconds", "91",
+            "--rate-limit-per-minute", "31",
+            "--json",
+        ])
+        let remove = try MelixCLIParser.parse([
+            "remote-server", "remove",
+            "--remote-server-id", "sub2api",
+            "--json",
+        ])
+        let chat = try MelixCLIParser.parse([
+            "chat", "run",
+            "--remote-server-id", "sub2api",
+            "--model", "gemini-2.5-flash",
+            "--message", "hello",
+            "--json",
+        ])
+        let eval = try MelixCLIParser.parse([
+            "eval", "run",
+            "--remote-server-id", "sub2api",
+            "--remote-model", "gemini-2.5-flash",
+            "--source-jsonl", "/Users/ChenYu/Downloads/top200_final.jsonl",
+            "--scoring-mode", "event_extraction_weighted_f1",
+            "--sample-size", "3",
+            "--json",
+        ])
+
+        guard case .remoteServerAdd(let addOptions) = add else {
+            Issue.record("Expected remoteServerAdd command")
+            return
+        }
+        guard case .remoteServerTest(let testOptions) = test else {
+            Issue.record("Expected remoteServerTest command")
+            return
+        }
+        guard case .remoteServerList(let listOptions) = list else {
+            Issue.record("Expected remoteServerList command")
+            return
+        }
+        guard case .remoteServerUpdate(let updateOptions) = update else {
+            Issue.record("Expected remoteServerUpdate command")
+            return
+        }
+        guard case .remoteServerRemove(let removeOptions) = remove else {
+            Issue.record("Expected remoteServerRemove command")
+            return
+        }
+        guard case .chatRun(let chatOptions) = chat else {
+            Issue.record("Expected remote chat command")
+            return
+        }
+        guard case .evalRun(let evalOptions) = eval else {
+            Issue.record("Expected remote eval command")
+            return
+        }
+
+        #expect(addOptions.remoteServerID == "sub2api")
+        #expect(addOptions.title == "sub2api")
+        #expect(addOptions.providerPreset == .custom)
+        #expect(addOptions.providerKind == "openai-compatible")
+        #expect(addOptions.baseURL == "https://sub2api.example/v1/")
+        #expect(addOptions.defaultModelID == "gemini-2.5-flash")
+        #expect(addOptions.apiKey == "sk-secret")
+        #expect(addOptions.timeoutSeconds == 90)
+        #expect(addOptions.rateLimitPerMinute == 30)
+        #expect(addOptions.json)
+
+        #expect(testOptions.remoteServerID == "sub2api")
+        #expect(testOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(testOptions.json)
+
+        #expect(listOptions.json)
+        #expect(updateOptions.remoteServerID == "sub2api")
+        #expect(updateOptions.title == "sub2api updated")
+        #expect(updateOptions.providerPreset == .custom)
+        #expect(updateOptions.providerKind == "openai-compatible")
+        #expect(updateOptions.baseURL == "https://sub2api.example/updated/v1")
+        #expect(updateOptions.defaultModelID == "deepseek-v4")
+        #expect(updateOptions.apiKey == "sk-updated")
+        #expect(updateOptions.timeoutSeconds == 91)
+        #expect(updateOptions.rateLimitPerMinute == 31)
+        #expect(updateOptions.json)
+        #expect(removeOptions.remoteServerID == "sub2api")
+        #expect(removeOptions.json)
+
+        #expect(chatOptions.modelID == "")
+        #expect(chatOptions.remoteServerID == "sub2api")
+        #expect(chatOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(chatOptions.message == "hello")
+        #expect(chatOptions.json)
+
+        #expect(evalOptions.modelID == "")
+        #expect(evalOptions.hfRepoID == "")
+        #expect(evalOptions.remoteServerID == "sub2api")
+        #expect(evalOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(evalOptions.suites == ["event_extraction"])
+        #expect(evalOptions.source == .localJSONL(path: "/Users/ChenYu/Downloads/top200_final.jsonl"))
+        #expect(evalOptions.profile.scoringMode == "event_extraction_weighted_f1")
+        #expect(evalOptions.sampleSize == 3)
+        #expect(evalOptions.json)
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "chat", "run",
+                "--remote-server-id", "sub2api",
+                "--message", "hello",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "eval", "run",
+                "--remote-server-id", "sub2api",
+                "--source-jsonl", "/tmp/top200.jsonl",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["remote-server"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["remote-server", "unknown"])
+        }
+    }
+
+    @Test("remote server parser supports provider presets and rejects base URL overrides")
+    func remoteServerParserSupportsProviderPresetsAndRejectsBaseURLOverrides() throws {
+        let gemini = try MelixCLIParser.parse([
+            "remote-server", "add",
+            "--remote-server-id", "gemini",
+            "--title", "Gemini",
+            "--provider", "gemini",
+            "--model", "gemini-2.5-flash",
+            "--api-key", "AIza-secret",
+        ])
+
+        guard case .remoteServerAdd(let addOptions) = gemini else {
+            Issue.record("Expected remoteServerAdd command")
+            return
+        }
+
+        #expect(addOptions.providerPreset == .gemini)
+        #expect(addOptions.providerKind == "gemini-generative-language")
+        #expect(addOptions.baseURL == "https://generativelanguage.googleapis.com/v1beta")
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "remote-server", "add",
+                "--remote-server-id", "kimi",
+                "--title", "Kimi",
+                "--provider", "kimi",
+                "--base-url", "https://override.example/v1",
+                "--model", "kimi-2.6",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "remote-server", "add",
+                "--remote-server-id", "custom",
+                "--title", "Custom",
+                "--provider", "custom",
+                "--model", "kimi-2.6",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "remote-server", "add",
+                "--remote-server-id", "unknown",
+                "--title", "Unknown",
+                "--provider", "unknown-provider",
+                "--model", "remote-model",
+            ])
+        }
+    }
+
     @Test("documents and parses public model ops commands")
     func documentsAndParsesPublicModelOpsCommands() throws {
         #expect(MelixCLIParser.usageText.contains("melix doctor [--json]"))
@@ -243,7 +454,13 @@ struct MelixCLIParserTests {
             (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
             (.serverStop(.init(serverSessionID: "server-session-1", json: true)), "server.stop"),
             (.serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: true, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)), "server.set-idle-policy"),
+            (.remoteServerList(.init(json: true)), "remote-server.list"),
+            (.remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)), "remote-server.add"),
+            (.remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, json: true)), "remote-server.update"),
+            (.remoteServerRemove(.init(remoteServerID: "custom", json: true)), "remote-server.remove"),
+            (.remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)), "remote-server.test"),
             (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
+            (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
             (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)), "lora.train"),
             (.loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl", json: true)), "lora.dataset.inspect"),
@@ -264,6 +481,7 @@ struct MelixCLIParserTests {
             (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
             (.benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)), "bench.matrix.export-requests-csv"),
             (.evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)), "eval.run"),
+            (.evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), json: true)), "eval.run"),
             (.evalCompare(.init(modelID: "base", targetModelIDs: ["target"], suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, json: true)), "eval.compare"),
             (.evalList(.init(json: true)), "eval.list"),
             (.evalCompareExportSummaryCSV(.init(jobID: "compare-1", outputPath: "/tmp/compare.csv", json: true)), "eval.compare.export-summary-csv"),
@@ -301,7 +519,13 @@ struct MelixCLIParserTests {
             .serverWake(.init(serverSessionID: "server-session-1", json: true)),
             .serverStop(.init(serverSessionID: "server-session-1", json: true)),
             .serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: false, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)),
+            .remoteServerList(.init(json: true)),
+            .remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)),
+            .remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, json: true)),
+            .remoteServerRemove(.init(remoteServerID: "custom", json: true)),
+            .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
             .loraActivate(.init(modelID: "model", adapterPath: "/tmp/adapter.json", derivedModelAlias: "derived", activationMode: "adapter_backed_runtime", json: true)),
             .loraPublish(.init(modelID: "model", targetRepo: "melix/adapter", exportKind: .adapterExport, artifactPath: "/tmp/adapter/manifest.json", artifactManifestPath: "/tmp/adapter/manifest.json", json: true)),
@@ -311,6 +535,7 @@ struct MelixCLIParserTests {
             .benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)),
             .benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)),
             .evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .huggingFaceDataset(datasetPath: "org/ds", datasetName: "name", datasetRevision: "rev", split: "test"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)),
+            .evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), json: true)),
             .evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval.csv", json: true)),
             .evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.csv", json: true)),
             .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.jsonl", json: true)),
@@ -526,7 +751,7 @@ struct MelixCLIParserTests {
             ])
         }
 
-        #expect(throws: MelixCLIError.missingRequired("--model-id is required for melix chat run.")) {
+        #expect(throws: MelixCLIError.missingRequired("Exactly one of --model-id or --remote-server-id is required for melix chat run.")) {
             try MelixCLIParser.parse([
                 "chat",
                 "run",
@@ -2092,11 +2317,11 @@ struct MelixCLIParserTests {
         try assertError(for: ["bench", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(
             for: ["eval", "run"],
-            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+            equals: .missingRequired("Exactly one of --model-id, --repo-id, or --remote-server-id is required for melix eval run.")
         )
         try assertError(
             for: ["eval", "run", "--model-id", "melix-dev-text", "--repo-id", "repo"],
-            equals: .missingRequired("Exactly one of --model-id or --repo-id is required for melix eval run.")
+            equals: .missingRequired("Exactly one of --model-id, --repo-id, or --remote-server-id is required for melix eval run.")
         )
         try assertError(
             for: ["eval", "compare", "--model-id", "melix-dev-text"],

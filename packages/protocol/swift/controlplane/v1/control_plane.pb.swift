@@ -3525,6 +3525,30 @@ public struct Melix_Controlplane_V1_EvaluationProfile: Sendable {
   public init() {}
 }
 
+public struct Melix_Controlplane_V1_RemoteProviderTarget: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var remoteServerID: String = String()
+
+  public var providerKind: String = String()
+
+  public var baseURL: String = String()
+
+  public var apiKey: String = String()
+
+  public var modelID: String = String()
+
+  public var timeoutSeconds: UInt32 = 0
+
+  public var rateLimitPerMinute: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public struct Melix_Controlplane_V1_RunEvaluation: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -3606,6 +3630,15 @@ public struct Melix_Controlplane_V1_RunEvaluation: @unchecked Sendable {
   public var hasProfile: Bool {_storage._profile != nil}
   /// Clears the value of `profile`. Subsequent reads from it will return its default value.
   public mutating func clearProfile() {_uniqueStorage()._profile = nil}
+
+  public var remoteTarget: Melix_Controlplane_V1_RemoteProviderTarget {
+    get {_storage._remoteTarget ?? Melix_Controlplane_V1_RemoteProviderTarget()}
+    set {_uniqueStorage()._remoteTarget = newValue}
+  }
+  /// Returns true if `remoteTarget` has been explicitly set.
+  public var hasRemoteTarget: Bool {_storage._remoteTarget != nil}
+  /// Clears the value of `remoteTarget`. Subsequent reads from it will return its default value.
+  public mutating func clearRemoteTarget() {_uniqueStorage()._remoteTarget = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -11131,9 +11164,69 @@ extension Melix_Controlplane_V1_EvaluationProfile: SwiftProtobuf.Message, SwiftP
   }
 }
 
+extension Melix_Controlplane_V1_RemoteProviderTarget: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoteProviderTarget"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}remote_server_id\0\u{3}provider_kind\0\u{3}base_url\0\u{3}api_key\0\u{3}model_id\0\u{3}timeout_seconds\0\u{3}rate_limit_per_minute\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.remoteServerID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.providerKind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.baseURL) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.apiKey) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutSeconds) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.rateLimitPerMinute) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.remoteServerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.remoteServerID, fieldNumber: 1)
+    }
+    if !self.providerKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerKind, fieldNumber: 2)
+    }
+    if !self.baseURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.baseURL, fieldNumber: 3)
+    }
+    if !self.apiKey.isEmpty {
+      try visitor.visitSingularStringField(value: self.apiKey, fieldNumber: 4)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 5)
+    }
+    if self.timeoutSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.timeoutSeconds, fieldNumber: 6)
+    }
+    if self.rateLimitPerMinute != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rateLimitPerMinute, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_RemoteProviderTarget, rhs: Melix_Controlplane_V1_RemoteProviderTarget) -> Bool {
+    if lhs.remoteServerID != rhs.remoteServerID {return false}
+    if lhs.providerKind != rhs.providerKind {return false}
+    if lhs.baseURL != rhs.baseURL {return false}
+    if lhs.apiKey != rhs.apiKey {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
+    if lhs.rateLimitPerMinute != rhs.rateLimitPerMinute {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}few_shot\0\u{1}seed\0\u{3}scoring_mode\0\u{3}code_exec_policy\0\u{1}source\0\u{3}field_mapping\0\u{1}profile\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}few_shot\0\u{1}seed\0\u{3}scoring_mode\0\u{3}code_exec_policy\0\u{1}source\0\u{3}field_mapping\0\u{1}profile\0\u{3}remote_target\0")
 
   fileprivate class _StorageClass {
     var _suiteID: String = String()
@@ -11149,6 +11242,7 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
     var _source: Melix_Controlplane_V1_EvaluationSource? = nil
     var _fieldMapping: Melix_Controlplane_V1_EvaluationFieldMapping? = nil
     var _profile: Melix_Controlplane_V1_EvaluationProfile? = nil
+    var _remoteTarget: Melix_Controlplane_V1_RemoteProviderTarget? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -11172,6 +11266,7 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
       _source = source._source
       _fieldMapping = source._fieldMapping
       _profile = source._profile
+      _remoteTarget = source._remoteTarget
     }
   }
 
@@ -11203,6 +11298,7 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
         case 11: try { try decoder.decodeSingularMessageField(value: &_storage._source) }()
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._fieldMapping) }()
         case 13: try { try decoder.decodeSingularMessageField(value: &_storage._profile) }()
+        case 14: try { try decoder.decodeSingularMessageField(value: &_storage._remoteTarget) }()
         default: break
         }
       }
@@ -11254,6 +11350,9 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
       try { if let v = _storage._profile {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
       } }()
+      try { if let v = _storage._remoteTarget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -11276,6 +11375,7 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
         if _storage._source != rhs_storage._source {return false}
         if _storage._fieldMapping != rhs_storage._fieldMapping {return false}
         if _storage._profile != rhs_storage._profile {return false}
+        if _storage._remoteTarget != rhs_storage._remoteTarget {return false}
         return true
       }
       if !storagesAreEqual {return false}

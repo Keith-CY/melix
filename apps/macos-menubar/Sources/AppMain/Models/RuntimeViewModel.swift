@@ -1473,6 +1473,7 @@ public final class RuntimeViewModel {
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = []
     public private(set) var serverSessions: [DesktopServerSessionState] = []
+    public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
     public private(set) var lastCLIWorkflowFailure: RuntimeCLIWorkflowFailureState?
@@ -1533,6 +1534,24 @@ public final class RuntimeViewModel {
         loraWorkflowStatus?.phase == .running
     }
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
+    public var selectedRemoteServerID = ""
+    public var remoteServerIDDraft = "sub2api"
+    public var remoteServerTitleDraft = "sub2api"
+    public var remoteServerProviderPresetDraft: RemoteServerProviderPreset = .custom
+    public var remoteServerProviderKindDraft = "openai-compatible"
+    public var remoteServerBaseURLDraft = "" {
+        didSet {
+            if let fixedBaseURL = remoteServerProviderPresetDraft.fixedBaseURL,
+               remoteServerBaseURLDraft != fixedBaseURL
+            {
+                remoteServerBaseURLDraft = fixedBaseURL
+            }
+        }
+    }
+    public var remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+    public var remoteServerAPIKeyDraft = ""
+    public var remoteServerTimeoutSecondsDraft: UInt32 = 120
+    public var remoteServerRateLimitPerMinuteDraft: UInt32 = 0
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
     public var selectedLoraModelID = "melix-dev-text"
@@ -1692,6 +1711,7 @@ public final class RuntimeViewModel {
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let remoteServerStore: any RemoteServerStoring
     private let huggingFaceTokenStore: any HuggingFaceTokenStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -1713,6 +1733,7 @@ public final class RuntimeViewModel {
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
+    private var remoteServerPersistFailures = 0.0
     private var lastAppliedGatewaySessionID = ""
     private var lastAppliedGatewayPrimaryKey = ""
     private var gatewayApplyTask: Task<Void, Never>?
@@ -1905,6 +1926,7 @@ public final class RuntimeViewModel {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         huggingFaceTokenStore: any HuggingFaceTokenStoring = NullHuggingFaceTokenStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
@@ -1914,8 +1936,10 @@ public final class RuntimeViewModel {
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.remoteServerStore = remoteServerStore
         self.huggingFaceTokenStore = huggingFaceTokenStore
         self.productInstallStateProvider = productInstallStateProvider
+        reloadRemoteServers()
         reloadHuggingFaceTokenHint()
     }
 
@@ -1932,6 +1956,22 @@ public final class RuntimeViewModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    public func reloadRemoteServers() {
+        do {
+            let servers = try remoteServerStore.list()
+            remoteServers = servers
+            if selectedRemoteServerID.isEmpty || servers.contains(where: { $0.id == selectedRemoteServerID }) == false {
+                selectedRemoteServerID = servers.first?.id ?? ""
+            }
+            if let selected = servers.first(where: { $0.id == selectedRemoteServerID }) {
+                applyRemoteServerDraft(from: selected)
+            }
+        } catch {
+            remoteServerPersistFailures += 1
+            recordLocalError("Remote Server load failed: \(error)")
+        }
+    }
+
     deinit {
         MainActor.assumeIsolated {
             subscriptionTask?.cancel()
@@ -1941,6 +1981,149 @@ public final class RuntimeViewModel {
     public func selectSurface(_ surface: DesktopSurface) {
         selectedSurface = surface
         notifyStateChanged()
+    }
+
+    public func prepareNewRemoteServerDraft() {
+        selectedRemoteServerID = ""
+        remoteServerIDDraft = "sub2api"
+        remoteServerTitleDraft = "sub2api"
+        remoteServerProviderPresetDraft = .custom
+        remoteServerProviderKindDraft = "openai-compatible"
+        remoteServerBaseURLDraft = ""
+        remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        remoteServerAPIKeyDraft = ""
+        remoteServerTimeoutSecondsDraft = 120
+        remoteServerRateLimitPerMinuteDraft = 0
+        selectedSurface = .server
+        notifyStateChanged()
+    }
+
+    public var isRemoteServerBaseURLEditable: Bool {
+        remoteServerProviderPresetDraft.isBaseURLEditable
+    }
+
+    public var isRemoteServerIDEditable: Bool {
+        selectedRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public func selectRemoteServerProviderPreset(_ providerPreset: RemoteServerProviderPreset) {
+        let previousFixedBaseURL = remoteServerProviderPresetDraft.fixedBaseURL
+        remoteServerProviderPresetDraft = providerPreset
+        remoteServerProviderKindDraft = providerPreset.providerKind
+        if let fixedBaseURL = providerPreset.fixedBaseURL {
+            remoteServerBaseURLDraft = fixedBaseURL
+        } else if let previousFixedBaseURL,
+                  remoteServerBaseURLDraft == previousFixedBaseURL
+        {
+            remoteServerBaseURLDraft = ""
+        }
+        notifyStateChanged()
+    }
+
+    public func selectRemoteServer(id: String) {
+        selectedRemoteServerID = id
+        if let server = remoteServers.first(where: { $0.id == id }) {
+            applyRemoteServerDraft(from: server)
+        }
+        selectedSurface = .server
+        notifyStateChanged()
+    }
+
+    public func saveRemoteServerDraft() {
+        let id = remoteServerIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = remoteServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerKind = remoteServerProviderKindDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = remoteServerProviderPresetDraft.fixedBaseURL
+            ?? remoteServerBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultModelID = remoteServerDefaultModelIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedID = selectedRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if selectedID.isEmpty == false, id != selectedID {
+            remoteServerIDDraft = selectedID
+            recordLocalError("Remote Server ID cannot be changed after creation. Use New to create another server.")
+            notifyStateChanged()
+            return
+        }
+        guard id.isEmpty == false,
+              title.isEmpty == false,
+              providerKind.isEmpty == false,
+              baseURL.isEmpty == false,
+              defaultModelID.isEmpty == false
+        else {
+            recordLocalError("Remote Server requires id, title, provider, base URL, and default model.")
+            notifyStateChanged()
+            return
+        }
+
+        do {
+            let saved = try remoteServerStore.save(
+                RemoteServerMutation(
+                    id: id,
+                    title: title,
+                    providerPreset: remoteServerProviderPresetDraft,
+                    providerKind: providerKind,
+                    baseURL: baseURL,
+                    defaultModelID: defaultModelID,
+                    timeoutSeconds: remoteServerTimeoutSecondsDraft,
+                    rateLimitPerMinute: remoteServerRateLimitPerMinuteDraft,
+                    apiKey: remoteServerAPIKeyDraft
+                )
+            )
+            remoteServerAPIKeyDraft = ""
+            selectedRemoteServerID = saved.id
+            remoteServers = try remoteServerStore.list()
+            applyRemoteServerDraft(from: saved)
+            notifyStateChanged()
+        } catch {
+            remoteServerPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "remote_server.persist_failures",
+                    valueMs: remoteServerPersistFailures
+                )
+            }
+            recordLocalError("Remote Server save failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func removeSelectedRemoteServer() {
+        let targetID = selectedRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard targetID.isEmpty == false else {
+            return
+        }
+        do {
+            try remoteServerStore.remove(id: targetID)
+            remoteServers = try remoteServerStore.list()
+            if let first = remoteServers.first {
+                selectedRemoteServerID = first.id
+                applyRemoteServerDraft(from: first)
+            } else {
+                prepareNewRemoteServerDraft()
+            }
+            notifyStateChanged()
+        } catch {
+            remoteServerPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "remote_server.persist_failures",
+                    valueMs: remoteServerPersistFailures
+                )
+            }
+            recordLocalError("Remote Server remove failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    private func applyRemoteServerDraft(from server: RemoteServer) {
+        remoteServerIDDraft = server.id
+        remoteServerTitleDraft = server.title
+        remoteServerProviderPresetDraft = server.providerPreset
+        remoteServerProviderKindDraft = server.providerKind
+        remoteServerBaseURLDraft = server.baseURL
+        remoteServerDefaultModelIDDraft = server.defaultModelID
+        remoteServerAPIKeyDraft = ""
+        remoteServerTimeoutSecondsDraft = server.timeoutSeconds
+        remoteServerRateLimitPerMinuteDraft = server.rateLimitPerMinute
     }
 
     public func selectToolSection(_ section: DesktopToolSection) {
