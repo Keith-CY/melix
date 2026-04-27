@@ -11,7 +11,7 @@ from typing import Any, Callable
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
-from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
+from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
@@ -485,7 +485,7 @@ class MLXVLMRuntime:
         hashes should include real prompt and media identity, so the edge case is
         metrics-only and does not affect generated data.
         """
-        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
+        signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
             return
         self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
@@ -498,7 +498,7 @@ class MLXVLMRuntime:
         signature: tuple[str, ...] | None = None,
     ) -> None:
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
-        self._last_fast_path_signature = signature or self._fast_path_probe_signature(
+        self._last_fast_path_signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
@@ -521,43 +521,6 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
-        )
-
-    @staticmethod
-    def _fast_path_probe_signature(
-        loaded_model,
-        prepared_request: PreparedVisionRequest,
-    ) -> tuple[str, ...]:
-        metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
-        metadata_items: tuple[tuple[str, str], ...] = ()
-        if isinstance(metadata, dict):
-            metadata_items = tuple(
-                sorted(
-                    (str(key), str(value))
-                    for key, value in metadata.items()
-                    if key in {
-                        "melix.vlm.execution_mode",
-                        "vision_family_id",
-                        "vision_prompt_profile_id",
-                        "vision_tokenization_mode",
-                        "vision_max_images_per_prompt",
-                        "melix.multimodal_adapter_hash",
-                        "multimodal_adapter_hash",
-                    }
-                )
-            )
-        top_level_items: tuple[tuple[str, str], ...] = ()
-        if isinstance(loaded_model, dict):
-            top_level_items = tuple(
-                sorted(
-                    (key, str(loaded_model.get(key, "")))
-                    for key in ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
-                )
-            )
-        return (
-            prepared_request.multimodal_hash_hex,
-            repr(top_level_items),
-            repr(metadata_items),
         )
 
     @staticmethod

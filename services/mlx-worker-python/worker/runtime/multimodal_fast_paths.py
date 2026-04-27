@@ -22,6 +22,18 @@ MULTIMODAL_LOAD_FALLBACK = "fallback"
 
 _SUPPORTED_FAST_PATH_FAMILIES = frozenset({"gemma4-v1", "llava-v1", "paligemma-v1"})
 _NATIVE_QUANTIZED_PROFILES = frozenset({"q4", "q6", "q8", "int4", "int8", "mlx-q4", "mlx-q8"})
+_FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
+    {
+        "melix.vlm.execution_mode",
+        "vision_family_id",
+        "vision_prompt_profile_id",
+        "vision_tokenization_mode",
+        "vision_max_images_per_prompt",
+        "melix.multimodal_adapter_hash",
+        "multimodal_adapter_hash",
+    }
+)
+_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
 
 
 @dataclass(frozen=True)
@@ -220,6 +232,42 @@ class MultimodalFastPathController:
         if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
             return MULTIMODAL_LOAD_FALLBACK, "unsupported_family"
         return MULTIMODAL_LOAD_NATIVE_QUANTIZED, ""
+
+
+def fast_path_probe_signature(
+    loaded_model: Any,
+    prepared_request: PreparedVisionRequest,
+) -> tuple[str, ...]:
+    metadata: dict[str, str] = {}
+    if isinstance(loaded_model, dict):
+        for key in _FAST_PATH_SIGNATURE_METADATA_KEYS:
+            value = loaded_model.get(key)
+            if isinstance(value, str) and value.strip():
+                metadata[key] = value.strip()
+        nested_metadata = loaded_model.get("metadata", {})
+        if isinstance(nested_metadata, dict):
+            # Nested runtime metadata is authoritative over import-time top-level copies.
+            for key, value in nested_metadata.items():
+                if key not in _FAST_PATH_SIGNATURE_METADATA_KEYS:
+                    continue
+                normalized = str(value).strip()
+                if normalized:
+                    metadata[str(key)] = normalized
+
+    metadata_items = tuple(sorted(metadata.items()))
+    top_level_items: tuple[tuple[str, str], ...] = ()
+    if isinstance(loaded_model, dict):
+        top_level_items = tuple(
+            sorted(
+                (key, str(loaded_model.get(key, "")))
+                for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS
+            )
+        )
+    return (
+        prepared_request.multimodal_hash_hex,
+        repr(top_level_items),
+        repr(metadata_items),
+    )
 
 
 def _loaded_metadata(loaded_model: Any) -> dict[str, str]:

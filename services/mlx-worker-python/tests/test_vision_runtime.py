@@ -14,6 +14,7 @@ from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime import multimodal_preprocessing
+from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
     _prepare_image_part,
@@ -1461,7 +1462,7 @@ def test_vlm_runtime_fast_path_signature_uses_nested_runtime_metadata() -> None:
         ]
     )
 
-    signature = runtime._fast_path_probe_signature(loaded_model, prepared)
+    signature = fast_path_probe_signature(loaded_model, prepared)
 
     assert "paligemma-v1" in signature[2]
     assert "paligemma-caption-v1" in signature[2]

@@ -32,7 +32,7 @@ public struct CoordinatedChatExecution: Sendable {
     }
 }
 
-actor ResumableExecutionHub {
+private actor ResumableExecutionHub {
     private enum TerminalState {
         case finished
         case failed(any Error)
@@ -272,6 +272,40 @@ actor ResumableExecutionHub {
     }
     #endif
 }
+
+#if DEBUG
+func testingResumableExecutionHubPreRegistrationTerminationSnapshot() async -> (
+    detachCount: Int,
+    hasConsumers: Bool,
+    lifecycleDetached: Bool
+) {
+    let detachCounter = TestingResumableExecutionDetachCounter()
+    let hub = ResumableExecutionHub(
+        requestID: "req-pre-registration-termination",
+        modelID: "melix-dev-text",
+        bufferLimit: 8,
+        onLastConsumerDetached: {
+            await detachCounter.increment()
+        }
+    )
+
+    await hub.testingRegisterEventStreamAfterPreRegistrationTermination()
+    let lifecycleDetached = await hub.testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination()
+    return (
+        detachCount: await detachCounter.value,
+        hasConsumers: await hub.hasConsumers(),
+        lifecycleDetached: lifecycleDetached
+    )
+}
+
+private actor TestingResumableExecutionDetachCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+#endif
 
 private enum CacheRouteClass: String, Sendable {
     case cold

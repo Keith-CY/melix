@@ -3514,6 +3514,27 @@ def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
     assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
 
 
+def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")
+
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="future_mode",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == -1.0
+    assert "unmapped categorical metric value" in caplog.text
+    assert "future_mode" in caplog.text
+
+
 def test_vlm_fast_path_bench_metrics_ignore_missing_probe_sentinels_in_cache_sums() -> None:
     metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
         suite_id="smoke",

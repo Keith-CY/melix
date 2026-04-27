@@ -259,7 +259,7 @@ def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(
         metrics_snapshot={
             "values": {
                 "vision.multimodal_decode_mode": 1.0,
-                "vision.quantized_load_mode": 0.0,
+                "vision.quantized_load_mode": ["x" * 220],
             }
         },
     )
@@ -270,6 +270,9 @@ def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(
     assert "non-string metric text value ignored" in caplog.text
     assert "vision.multimodal_decode_mode" in caplog.text
     assert "float" in caplog.text
+    assert "1.0" in caplog.text
+    assert "list" in caplog.text
+    assert "..." in caplog.text
 
 
 def test_build_phase16_video_metrics_report_includes_operator_metrics() -> None:

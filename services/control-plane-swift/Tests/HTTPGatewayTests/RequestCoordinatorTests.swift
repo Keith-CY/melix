@@ -88,22 +88,11 @@ struct RequestCoordinatorTests {
 
     @Test("hub ignores stream registrations that arrive after termination")
     func hubIgnoresStreamRegistrationsThatArriveAfterTermination() async throws {
-        let detachCounter = DetachCounter()
-        let hub = ResumableExecutionHub(
-            requestID: "req-pre-registration-termination",
-            modelID: "melix-dev-text",
-            bufferLimit: 8,
-            onLastConsumerDetached: {
-                await detachCounter.increment()
-            }
-        )
+        let snapshot = await testingResumableExecutionHubPreRegistrationTerminationSnapshot()
 
-        await hub.testingRegisterEventStreamAfterPreRegistrationTermination()
-        let lifecycleDetached = await hub.testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination()
-
-        #expect(await detachCounter.value == 1)
-        #expect(await hub.hasConsumers() == false)
-        #expect(lifecycleDetached)
+        #expect(snapshot.detachCount == 1)
+        #expect(snapshot.hasConsumers == false)
+        #expect(snapshot.lifecycleDetached)
     }
 
     @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
@@ -3377,14 +3366,6 @@ private actor PhaseAwareWorkerClient:
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
-    }
-}
-
-private actor DetachCounter {
-    private(set) var value = 0
-
-    func increment() {
-        value += 1
     }
 }
 

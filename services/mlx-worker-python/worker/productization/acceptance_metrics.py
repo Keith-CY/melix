@@ -633,10 +633,14 @@ def _metric_text(snapshot: dict[str, Any], key: str, default: str) -> str:
     if value is None:
         return default
     if not isinstance(value, str):
+        value_repr = repr(value)
+        if len(value_repr) > 200:
+            value_repr = f"{value_repr[:197]}..."
         logger.warning(
-            "non-string metric text value ignored; key=%s value_type=%s",
+            "non-string metric text value ignored; key=%s value_type=%s value=%s",
             key,
             type(value).__name__,
+            value_repr,
         )
         return default
     return value.strip()

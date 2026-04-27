@@ -3104,7 +3104,15 @@ class MaintenanceCore:
 
     @staticmethod
     def _categorical_metric_code(value: str, mapping: dict[str, float]) -> float:
-        return mapping.get(value, -1.0)
+        mapped_value = mapping.get(value)
+        if mapped_value is None:
+            logger.warning(
+                "unmapped categorical metric value; value=%r allowed_values=%s",
+                value,
+                sorted(mapping),
+            )
+            return -1.0
+        return mapped_value
 
     @staticmethod
     def _categorical_metric_code_for_samples(

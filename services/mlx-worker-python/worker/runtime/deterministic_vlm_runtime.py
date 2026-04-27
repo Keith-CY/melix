@@ -10,7 +10,7 @@ from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
-from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
+from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
@@ -343,7 +343,7 @@ class DeterministicVLMRuntime:
         loaded_model,
         prepared_request: PreparedVisionRequest,
     ) -> None:
-        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
+        signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
             return
         self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
@@ -356,7 +356,7 @@ class DeterministicVLMRuntime:
         signature: tuple[str, ...] | None = None,
     ) -> None:
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
-        self._last_fast_path_signature = signature or self._fast_path_probe_signature(
+        self._last_fast_path_signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
@@ -379,55 +379,6 @@ class DeterministicVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
-        )
-
-    @staticmethod
-    def _fast_path_probe_signature(
-        loaded_model,
-        prepared_request: PreparedVisionRequest,
-    ) -> tuple[str, ...]:
-        metadata: dict[str, str] = {}
-        if isinstance(loaded_model, dict):
-            for key in (
-                "melix.vlm.execution_mode",
-                "vision_family_id",
-                "vision_prompt_profile_id",
-                "vision_tokenization_mode",
-                "vision_max_images_per_prompt",
-                "melix.multimodal_adapter_hash",
-                "multimodal_adapter_hash",
-            ):
-                value = loaded_model.get(key)
-                if isinstance(value, str) and value.strip():
-                    metadata[key] = value.strip()
-            nested_metadata = loaded_model.get("metadata", {})
-            if isinstance(nested_metadata, dict):
-                for key, value in nested_metadata.items():
-                    if key in {
-                        "melix.vlm.execution_mode",
-                        "vision_family_id",
-                        "vision_prompt_profile_id",
-                        "vision_tokenization_mode",
-                        "vision_max_images_per_prompt",
-                        "melix.multimodal_adapter_hash",
-                        "multimodal_adapter_hash",
-                    }:
-                        normalized = str(value).strip()
-                        if normalized:
-                            metadata[str(key)] = normalized
-        metadata_items = tuple(sorted(metadata.items()))
-        top_level_items: tuple[tuple[str, str], ...] = ()
-        if isinstance(loaded_model, dict):
-            top_level_items = tuple(
-                sorted(
-                    (key, str(loaded_model.get(key, "")))
-                    for key in ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
-                )
-            )
-        return (
-            prepared_request.multimodal_hash_hex,
-            repr(top_level_items),
-            repr(metadata_items),
         )
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
