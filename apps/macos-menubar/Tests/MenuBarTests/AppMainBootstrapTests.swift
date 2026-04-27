@@ -1078,11 +1078,12 @@ private func posixPermissions(at url: URL) throws -> Int {
 @MainActor
 private func waitForBootstrapCondition(
     _ description: String,
-    timeout: Duration = .seconds(2),
+    timeout: Duration? = nil,
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @MainActor () async -> Bool
 ) async throws {
-    let deadline = ContinuousClock.now + timeout
+    let resolvedTimeout = timeout ?? (MenuBarTestEnvironment.isHeadlessCI ? .seconds(10) : .seconds(2))
+    let deadline = ContinuousClock.now + resolvedTimeout
     while ContinuousClock.now < deadline {
         if await condition() {
             return
