@@ -2224,7 +2224,7 @@ struct DesktopTrainingToolSectionView: View {
         case .succeeded:
             return MelixDesignTokens.StatusColor.success
         case .failed:
-            return MelixDesignTokens.StatusColor.warning
+            return MelixDesignTokens.StatusColor.error
         }
     }
 
@@ -2320,7 +2320,7 @@ enum DesktopTrainingWorkspaceDefaults {
 }
 
 enum DesktopLoRAVisualPolish {
-    static let pageBackgroundColorSpec = MelixDesignTokens.Palette.backgroundBaseLight
+    static let pageBackgroundColorSpec = MelixDesignTokens.Palette.backgroundBase
     static let pageBackgroundNSColor = pageBackgroundColorSpec.nsColor
     static let pageBackgroundColor = Color(nsColor: pageBackgroundNSColor)
     static let sectionSurfaceOpacity = 0.04

@@ -73,20 +73,24 @@ struct DesktopFoundationViewTests {
         #expect(MelixDesignTokens.BubbleOpacity.reasoning == 0.09)
         #expect(MelixDesignTokens.BubbleOpacity.tool == 0.09)
         #expect(MelixDesignTokens.BubbleOpacity.error == 0.09)
+        #expect(MelixDesignTokens.StateOpacity.background == 0.09)
     }
 
     @Test("design color palette matches the design system css tokens")
     func designColorPaletteMatchesDesignSystemCSSTokens() {
+        typealias DesignColor = MelixDesignTokens.DesignColor
+        typealias Components = DesignColor.Components
+
         #expect(MelixDesignTokens.Palette.accent == MelixDesignTokens.DesignColor(red: 0x0F, green: 0x76, blue: 0x6E))
-        #expect(MelixDesignTokens.Palette.foregroundPrimary == MelixDesignTokens.DesignColor(red: 0x0A, green: 0x0A, blue: 0x0A))
-        #expect(MelixDesignTokens.Palette.foregroundSecondary == MelixDesignTokens.DesignColor(red: 0x3A, green: 0x3A, blue: 0x3A))
-        #expect(MelixDesignTokens.Palette.foregroundTertiary == MelixDesignTokens.DesignColor(red: 0x6B, green: 0x6B, blue: 0x6B))
-        #expect(MelixDesignTokens.Palette.foregroundQuaternary == MelixDesignTokens.DesignColor(red: 0x9A, green: 0x9A, blue: 0x9A))
-        #expect(MelixDesignTokens.Palette.foregroundInverse == MelixDesignTokens.DesignColor(red: 0xFD, green: 0xFD, blue: 0xFD))
-        #expect(MelixDesignTokens.Palette.backgroundBaseLight == MelixDesignTokens.DesignColor(red: 0xFA, green: 0xFA, blue: 0xFA))
-        #expect(MelixDesignTokens.Palette.backgroundSurfaceLight == MelixDesignTokens.DesignColor(red: 0xFF, green: 0xFF, blue: 0xFF))
-        #expect(MelixDesignTokens.Palette.backgroundElevatedLight == MelixDesignTokens.DesignColor(red: 0xF5, green: 0xF5, blue: 0xF5))
-        #expect(MelixDesignTokens.Palette.backgroundSunkenLight == MelixDesignTokens.DesignColor(red: 0xF0, green: 0xF0, blue: 0xF0))
+        #expect(MelixDesignTokens.Palette.foregroundPrimary == DesignColor(light: Components(red: 0x0A, green: 0x0A, blue: 0x0A), dark: Components(red: 0xFD, green: 0xFD, blue: 0xFD)))
+        #expect(MelixDesignTokens.Palette.foregroundSecondary == DesignColor(light: Components(red: 0x3A, green: 0x3A, blue: 0x3A), dark: Components(red: 0xC8, green: 0xC8, blue: 0xC8)))
+        #expect(MelixDesignTokens.Palette.foregroundTertiary == DesignColor(light: Components(red: 0x6B, green: 0x6B, blue: 0x6B), dark: Components(red: 0x8A, green: 0x8A, blue: 0x8A)))
+        #expect(MelixDesignTokens.Palette.foregroundQuaternary == DesignColor(light: Components(red: 0x9A, green: 0x9A, blue: 0x9A), dark: Components(red: 0x5A, green: 0x5A, blue: 0x5A)))
+        #expect(MelixDesignTokens.Palette.foregroundInverse == DesignColor(light: Components(red: 0xFD, green: 0xFD, blue: 0xFD), dark: Components(red: 0x0A, green: 0x0A, blue: 0x0A)))
+        #expect(MelixDesignTokens.Palette.backgroundBase == DesignColor(light: Components(red: 0xFA, green: 0xFA, blue: 0xFA), dark: Components(red: 0x1A, green: 0x1A, blue: 0x1A)))
+        #expect(MelixDesignTokens.Palette.backgroundSurface == DesignColor(light: Components(red: 0xFF, green: 0xFF, blue: 0xFF), dark: Components(red: 0x22, green: 0x22, blue: 0x22)))
+        #expect(MelixDesignTokens.Palette.backgroundElevated == DesignColor(light: Components(red: 0xF5, green: 0xF5, blue: 0xF5), dark: Components(red: 0x2A, green: 0x2A, blue: 0x2A)))
+        #expect(MelixDesignTokens.Palette.backgroundSunken == DesignColor(light: Components(red: 0xF0, green: 0xF0, blue: 0xF0), dark: Components(red: 0x16, green: 0x16, blue: 0x16)))
         #expect(MelixDesignTokens.Palette.success == MelixDesignTokens.DesignColor(red: 0x14, green: 0xA0, blue: 0x5A))
         #expect(MelixDesignTokens.Palette.warning == MelixDesignTokens.DesignColor(red: 0xD9, green: 0x77, blue: 0x06))
         #expect(MelixDesignTokens.Palette.error == MelixDesignTokens.DesignColor(red: 0xDC, green: 0x26, blue: 0x26))
@@ -99,7 +103,7 @@ struct DesktopFoundationViewTests {
 
     @Test("lora visual polish tokens use the design system base background with clearer hierarchy")
     func loraVisualPolishTokensUseDesignSystemBaseBackground() {
-        #expect(DesktopLoRAVisualPolish.pageBackgroundColorSpec == MelixDesignTokens.Palette.backgroundBaseLight)
+        #expect(DesktopLoRAVisualPolish.pageBackgroundColorSpec == MelixDesignTokens.Palette.backgroundBase)
         #expect(DesktopLoRAVisualPolish.sectionSurfaceOpacity == 0.04)
         #expect(DesktopLoRAVisualPolish.metricSurfaceOpacity == 0.032)
         #expect(DesktopLoRAVisualPolish.selectedHistorySurfaceOpacity == MelixDesignTokens.AccentOpacity.selected)

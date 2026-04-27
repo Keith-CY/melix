@@ -1,6 +1,33 @@
 import AppKit
 import SwiftUI
 
+private extension MelixDesignTokens.DesignColor.Components {
+    func nsColor(alpha: Double) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(red) / 255.0,
+            green: CGFloat(green) / 255.0,
+            blue: CGFloat(blue) / 255.0,
+            alpha: CGFloat(alpha)
+        )
+    }
+}
+
+private extension NSAppearance {
+    var isDarkMode: Bool {
+        let darkAppearances: Set<NSAppearance.Name> = [
+            .darkAqua,
+            .accessibilityHighContrastDarkAqua,
+        ]
+        let bestMatch = bestMatch(from: [
+            .aqua,
+            .darkAqua,
+            .accessibilityHighContrastAqua,
+            .accessibilityHighContrastDarkAqua,
+        ])
+        return bestMatch.map { darkAppearances.contains($0) } ?? false
+    }
+}
+
 /// Central design tokens for the Melix macOS operator app.
 ///
 /// Mirrors `docs/design-system/colors_and_type.css`. Refer to
@@ -9,50 +36,83 @@ import SwiftUI
 enum MelixDesignTokens {
 
     struct DesignColor: Equatable {
-        let red: Int
-        let green: Int
-        let blue: Int
+        struct Components: Equatable {
+            let red: UInt8
+            let green: UInt8
+            let blue: UInt8
+        }
+
+        let light: Components
+        let dark: Components
         let opacity: Double
 
-        init(red: Int, green: Int, blue: Int, opacity: Double = 1.0) {
-            self.red = red
-            self.green = green
-            self.blue = blue
+        init(red: UInt8, green: UInt8, blue: UInt8, opacity: Double = 1.0) {
+            let components = Components(red: red, green: green, blue: blue)
+            self.light = components
+            self.dark = components
+            self.opacity = opacity
+        }
+
+        init(light: Components, dark: Components, opacity: Double = 1.0) {
+            self.light = light
+            self.dark = dark
             self.opacity = opacity
         }
 
         var color: Color {
-            Color(
-                red: Double(red) / 255.0,
-                green: Double(green) / 255.0,
-                blue: Double(blue) / 255.0,
-                opacity: opacity
-            )
+            Color(nsColor: nsColor)
         }
 
         var nsColor: NSColor {
-            NSColor(
-                srgbRed: CGFloat(red) / 255.0,
-                green: CGFloat(green) / 255.0,
-                blue: CGFloat(blue) / 255.0,
-                alpha: CGFloat(opacity)
-            )
+            NSColor(name: nil) { appearance in
+                let components = appearance.isDarkMode ? dark : light
+                return components.nsColor(alpha: opacity)
+            }
         }
     }
+
+    private typealias Components = DesignColor.Components
 
     enum Palette {
         static let accent = DesignColor(red: 0x0F, green: 0x76, blue: 0x6E)
 
-        static let foregroundPrimary = DesignColor(red: 0x0A, green: 0x0A, blue: 0x0A)
-        static let foregroundSecondary = DesignColor(red: 0x3A, green: 0x3A, blue: 0x3A)
-        static let foregroundTertiary = DesignColor(red: 0x6B, green: 0x6B, blue: 0x6B)
-        static let foregroundQuaternary = DesignColor(red: 0x9A, green: 0x9A, blue: 0x9A)
-        static let foregroundInverse = DesignColor(red: 0xFD, green: 0xFD, blue: 0xFD)
+        static let foregroundPrimary = DesignColor(
+            light: Components(red: 0x0A, green: 0x0A, blue: 0x0A),
+            dark: Components(red: 0xFD, green: 0xFD, blue: 0xFD)
+        )
+        static let foregroundSecondary = DesignColor(
+            light: Components(red: 0x3A, green: 0x3A, blue: 0x3A),
+            dark: Components(red: 0xC8, green: 0xC8, blue: 0xC8)
+        )
+        static let foregroundTertiary = DesignColor(
+            light: Components(red: 0x6B, green: 0x6B, blue: 0x6B),
+            dark: Components(red: 0x8A, green: 0x8A, blue: 0x8A)
+        )
+        static let foregroundQuaternary = DesignColor(
+            light: Components(red: 0x9A, green: 0x9A, blue: 0x9A),
+            dark: Components(red: 0x5A, green: 0x5A, blue: 0x5A)
+        )
+        static let foregroundInverse = DesignColor(
+            light: Components(red: 0xFD, green: 0xFD, blue: 0xFD),
+            dark: Components(red: 0x0A, green: 0x0A, blue: 0x0A)
+        )
 
-        static let backgroundBaseLight = DesignColor(red: 0xFA, green: 0xFA, blue: 0xFA)
-        static let backgroundSurfaceLight = DesignColor(red: 0xFF, green: 0xFF, blue: 0xFF)
-        static let backgroundElevatedLight = DesignColor(red: 0xF5, green: 0xF5, blue: 0xF5)
-        static let backgroundSunkenLight = DesignColor(red: 0xF0, green: 0xF0, blue: 0xF0)
+        static let backgroundBase = DesignColor(
+            light: Components(red: 0xFA, green: 0xFA, blue: 0xFA),
+            dark: Components(red: 0x1A, green: 0x1A, blue: 0x1A)
+        )
+        static let backgroundSurface = DesignColor(
+            light: Components(red: 0xFF, green: 0xFF, blue: 0xFF),
+            dark: Components(red: 0x22, green: 0x22, blue: 0x22)
+        )
+        static let backgroundElevated = DesignColor(
+            light: Components(red: 0xF5, green: 0xF5, blue: 0xF5),
+            dark: Components(red: 0x2A, green: 0x2A, blue: 0x2A)
+        )
+        static let backgroundSunken = DesignColor(
+            light: Components(red: 0xF0, green: 0xF0, blue: 0xF0),
+            dark: Components(red: 0x16, green: 0x16, blue: 0x16)
+        )
 
         static let success = DesignColor(red: 0x14, green: 0xA0, blue: 0x5A)
         static let warning = DesignColor(red: 0xD9, green: 0x77, blue: 0x06)
@@ -67,9 +127,9 @@ enum MelixDesignTokens {
 
     // MARK: - Accent
 
-    /// Brand teal (`#0F766E`). Used for places where the Melix identity
-    /// must be fixed regardless of the user's system accent (app icon,
-    /// workspace badge, printed/exported artifacts).
+    /// Brand teal (`#0F766E`). Kept separate from `accent` so identity marks
+    /// and interactive affordances remain semantically distinct, even though
+    /// the design system intentionally maps both to CSS `--accent`.
     static let brandAccent = Palette.accent.color
 
     /// Design-system accent. Use for interaction signals: links, focus,
@@ -85,8 +145,6 @@ enum MelixDesignTokens {
         static let selected: Double = weak
         /// Capsule tab active fill.
         static let capsule: Double = weak
-        /// Stroke / border accent (focus ring, emphasis outline).
-        static let stroke: Double = medium
         /// Hover hint for interactive surfaces.
         static let faint: Double = 0.06
     }
@@ -117,7 +175,14 @@ enum MelixDesignTokens {
         static let success = Palette.success.color
         static let warning = Palette.warning.color
         static let error = Palette.error.color
+        /// CSS `--color-info` intentionally aliases `--accent`; informational
+        /// notices use ink color rather than introducing a separate blue.
         static let info = accent
+    }
+
+    enum StateOpacity {
+        /// Non-chat status background tint for rows and job states.
+        static let background: Double = 0.09
     }
 
     /// Base hues for chat transcript bubble backgrounds. Paired with

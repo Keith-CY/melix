@@ -16,6 +16,8 @@ and `docs/design-system/colors_and_type.css`.
 - Keep the change inside the macOS menu bar app surface.
 - Make the design-system teal `#0F766E` the fixed interaction accent in app
   code instead of the user-configurable macOS system accent color.
+- Preserve the design-system dark-mode foreground and background overrides in
+  the native token model.
 - Add explicit SwiftUI tokens for design-system status colors and chat bubble
   base hues.
 - Replace direct `Color.accentColor`, `.green`, `.orange`, `.red`, and `.blue`
@@ -33,8 +35,8 @@ and `docs/design-system/colors_and_type.css`.
    production code changes.
 3. Update
    `apps/macos-menubar/Sources/AppMain/Branding/MelixDesignTokens.swift` with
-   explicit sRGB color specs, fixed accent color, exact status colors, and
-   exact chat bubble opacities from `colors_and_type.css`.
+   explicit light/dark sRGB color specs, fixed accent color, exact status
+   colors, and exact chat bubble opacities from `colors_and_type.css`.
 4. Replace direct app accent and status color references in the macOS app
    sources with the new tokens.
 5. Run the targeted macOS tests, then the relevant repository command

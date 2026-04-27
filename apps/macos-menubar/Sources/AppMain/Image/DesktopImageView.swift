@@ -582,11 +582,11 @@ private struct DesktopImageJobRowView: View {
         }
         switch job.state {
         case .imageJobCompleted:
-            return MelixDesignTokens.StatusColor.success.opacity(MelixDesignTokens.BubbleOpacity.assistant)
+            return MelixDesignTokens.StatusColor.success.opacity(MelixDesignTokens.StateOpacity.background)
         case .imageJobFailed:
-            return MelixDesignTokens.StatusColor.error.opacity(MelixDesignTokens.BubbleOpacity.error)
+            return MelixDesignTokens.StatusColor.error.opacity(MelixDesignTokens.StateOpacity.background)
         case .imageJobRunning:
-            return MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.BubbleOpacity.reasoning)
+            return MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.StateOpacity.background)
         default:
             return .secondary.opacity(0.08)
         }
