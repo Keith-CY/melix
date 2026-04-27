@@ -6,11 +6,14 @@ from pathlib import Path
 import pytest
 
 from worker.productization.benchmark_evaluation_report import (
+    _aggregate_probe_values,
+    _markdown_cell,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
     load_report_input,
     render_markdown_report,
     render_terminal_report,
+    write_report_outputs,
 )
 
 
@@ -83,6 +86,74 @@ def test_report_builder_computes_direction_aware_deltas() -> None:
     )
     assert report["summary"]["warning_count"] == 4
     assert report["summary"]["status"] == "warning"
+
+
+def test_report_builder_warns_on_zero_baseline_regressions() -> None:
+    baseline = {
+        "benchmark_matrix_summary_rows": [
+            {
+                "suite_id": "smoke",
+                "context_length": 1024,
+                "generation_length": 128,
+                "batch_size": 1,
+                "concurrency_level": 1,
+                "failed_count": 0,
+            }
+        ]
+    }
+    candidate = {
+        "benchmark_matrix_summary_rows": [
+            {
+                "suite_id": "smoke",
+                "context_length": 1024,
+                "generation_length": 128,
+                "batch_size": 1,
+                "concurrency_level": 1,
+                "failed_count": 1,
+            }
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+    row = rows_by_metric["bench.matrix.smoke.ctx1024.gen128.b1.c1.failed_count"]
+
+    assert row["delta_pct"] is None
+    assert row["status"] == "warning"
+
+
+def test_report_builder_treats_cache_hit_rate_as_higher_is_better() -> None:
+    baseline = {
+        "benchmark_context_rows": [
+            {
+                "suite": "smoke",
+                "context_length": 128,
+                "generation_length": 32,
+                "batch_size": 1,
+                "cache_hit": True,
+            }
+        ]
+    }
+    candidate = {
+        "benchmark_context_rows": [
+            {
+                "suite": "smoke",
+                "context_length": 128,
+                "generation_length": 32,
+                "batch_size": 1,
+                "cache_hit": False,
+            }
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+    row = rows_by_metric["bench.context.smoke.ctx128.gen32.b1.cache_hit_rate"]
+
+    assert row["direction"] == "higher_is_better"
+    assert row["status"] == "warning"
 
 
 def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
@@ -158,7 +229,50 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
     )
     assert rows_by_metric[f"{label}.dflash_rollback_count_sum"]["status"] == "warning"
     assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "not_comparable"
-    assert report["summary"]["warning_count"] == 3
+    assert report["summary"]["warning_count"] == 4
+
+
+def test_aggregate_probe_values_handles_empty_inputs() -> None:
+    assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
+    assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
+    assert _aggregate_probe_values("speculative_fallback_count", []) == ("sum", 0.0)
+
+
+def test_report_builder_reports_missing_metrics_and_non_numeric_status() -> None:
+    missing_report = build_benchmark_evaluation_report(
+        baseline={"benchmark_results": [{"metrics": [{"name": "bench.smoke.ttft_ms", "value": 100.0}]}]},
+        candidate={"benchmark_results": []},
+    )
+    missing_row = missing_report["rows"][0]
+
+    assert missing_row["status"] == "missing"
+    assert missing_report["summary"]["status"] == "missing"
+    assert _markdown_cell(render_terminal_report(missing_report)).find("-") >= 0
+
+    comparable_runtime_report = build_benchmark_evaluation_report(
+        baseline={
+            "benchmark_jobs": [
+                {"parameters": "legacy"},
+                {"parameters": {"runtime_kind": "text", "runtime_model_id": "base"}},
+            ]
+        },
+        candidate={"benchmark_jobs": [{"parameters": {"runtime_kind": "text", "runtime_model_id": "head"}}]},
+    )
+    rows_by_metric = {row["metric"]: row for row in comparable_runtime_report["rows"]}
+
+    assert comparable_runtime_report["summary"]["status"] == "not_comparable"
+    assert rows_by_metric["bench.runtime.runtime_kind"]["status"] == "ok"
+    assert rows_by_metric["bench.runtime.runtime_model_id"]["status"] == "not_comparable"
+
+
+def test_report_builder_ignores_non_list_row_sets() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={"benchmark_results": {"metrics": []}},
+        candidate={"benchmark_results": {"metrics": []}},
+    )
+
+    assert report["rows"] == []
+    assert report["summary"]["status"] == "ok"
 
 
 def test_report_direction_uses_metric_key_not_suite_label() -> None:
@@ -290,12 +404,27 @@ def test_report_renderers_are_stable_and_sticky_comment_is_marked() -> None:
     assert comment.endswith("\n")
 
 
+def test_markdown_cell_escapes_table_control_characters() -> None:
+    assert _markdown_cell("model`a|b\nc") == "model\\`a\\|b c"
+
+
 def test_report_loader_rejects_malformed_inputs(tmp_path: Path) -> None:
     malformed = tmp_path / "bad.json"
     malformed.write_text("{", encoding="utf-8")
 
     with pytest.raises(ValueError, match="could not be decoded"):
         load_report_input(malformed)
+
+
+def test_report_loader_rejects_missing_and_non_object_inputs(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="is missing"):
+        load_report_input(tmp_path / "missing")
+
+    non_object = tmp_path / "array.json"
+    non_object.write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        load_report_input(non_object)
 
 
 def test_report_loader_accepts_export_bundle_path(tmp_path: Path) -> None:
@@ -308,3 +437,32 @@ def test_report_loader_accepts_export_bundle_path(tmp_path: Path) -> None:
     payload = load_report_input(bundle_path)
 
     assert payload["export_schema_version"] == "melix.benchmark_export.v1"
+
+
+def test_report_loader_accepts_export_bundle_directory_fallback(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "artifact"
+    bundle_dir.mkdir()
+    (bundle_dir / "export-bundle.json").write_text(
+        json.dumps(_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8)) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_report_input(bundle_dir)
+
+    assert payload["export_schema_version"] == "melix.benchmark_export.v1"
+
+
+def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
+    report = build_benchmark_evaluation_report(
+        baseline=_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
+        candidate=_bundle(ttft_ms=95.0, tokens_per_second=55.0, accuracy=0.82),
+    )
+
+    outputs = write_report_outputs(report=report, output_dir=tmp_path / "report")
+
+    assert json.loads(outputs["json"].read_text(encoding="utf-8"))["schema_version"] == (
+        "melix.benchmark_evaluation_report.v1"
+    )
+    assert "| Metric | Baseline | Candidate | Delta | Status |" in outputs["markdown"].read_text(
+        encoding="utf-8"
+    )

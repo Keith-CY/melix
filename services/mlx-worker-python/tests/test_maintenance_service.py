@@ -4841,6 +4841,46 @@ def test_run_bench_matrix_records_failed_request_rows_when_sampling_raises(tmp_p
     assert len(request_rows) == 1
     assert request_rows[0]["status"] == "failed"
     assert request_rows[0]["error_code"] == "benchmark_failed"
+    assert request_rows[0]["error_stage"] == "runtime"
+
+
+def test_run_bench_matrix_records_failure_stage_from_sampling_error(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    sample_error = ModelOperationError(
+        code="benchmark_failed",
+        message="forced prompt render failure",
+        details={"error_stage": "prompt_render"},
+    )
+    service._core._measure_benchmark_matrix_sample = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        sample_error
+    )
+
+    response = service._core.bench_matrix_response(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle="melix-dev-text::1",
+            task_kind="text-generation",
+            suite_ids=["smoke"],
+            context_lengths=[1024],
+            generation_lengths=[128],
+            batch_sizes=[1],
+            cache_profiles=["cold"],
+            reasoning_modes=["default"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            requests=1,
+        )
+    )
+
+    run_dir = tmp_path / "model-ops" / "bench" / "matrix-runs" / response.job.job_id
+    request_rows = [
+        json.loads(line)
+        for line in (run_dir / "bench-matrix-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(request_rows) == 1
+    assert request_rows[0]["status"] == "failed"
+    assert request_rows[0]["error_code"] == "benchmark_failed"
+    assert request_rows[0]["error_stage"] == "prompt_render"
 
 
 def test_benchmark_matrix_task_kind_resolution_prefers_runtime_metadata_then_model_kind() -> None:

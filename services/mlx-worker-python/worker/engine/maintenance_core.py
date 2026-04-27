@@ -83,6 +83,17 @@ class BenchSample:
     dflash_target_hidden_layers: int = 0
 
 
+_BENCHMARK_ERROR_STAGES = {
+    "dataset_materialize",
+    "prompt_render",
+    "warmup",
+    "prefill",
+    "decode",
+    "runtime",
+    "validation",
+}
+
+
 @dataclass(frozen=True)
 class ImageBenchSample:
     latency_ms: float
@@ -1472,7 +1483,7 @@ class MaintenanceCore:
                                                         created_at_unix_ms=created_at_unix_ms,
                                                         dataset_materialize_ms=dataset_materialize_ms,
                                                         runtime_kind=getattr(loaded_model, "runtime_kind", ""),
-                                                        error_stage="runtime",
+                                                        error_stage=self._benchmark_error_stage(exc),
                                                     )
                                                 cell_rows.append(row)
                                                 request_rows.append(row)
@@ -2186,58 +2197,65 @@ class MaintenanceCore:
         reasoning_mode: str,
         structured_output_mode: str,
     ) -> BenchSample:
-        parameters = {"max_output_tokens": str(generation_length)}
-        if task_kind == "text-generation":
-            prompt = ""
-            if case is not None:
-                prompt = getattr(case, "prompt", "") or ""
-            prompt = prompt or suite.title
-            return self._measure_text_bench_sample(
-                loaded_model=loaded_model,
-                suite=suite,
-                prompt=prompt,
-                parameters=parameters,
-                context_length=context_length,
-                repeat_index=repeat_index,
-                batch_size=batch_size,
-                cache_profile=cache_profile,
-                reasoning_mode=reasoning_mode,
-                structured_output_mode=structured_output_mode,
-            )
-        if task_kind in {"image-to-text", "image-text-to-text"}:
-            if case is None:
-                raise ModelOperationError(
-                    code="benchmark_failed",
-                    message="Benchmark matrix suite did not provide a VLM case.",
+        error_stage = "validation"
+        try:
+            parameters = {"max_output_tokens": str(generation_length)}
+            if task_kind == "text-generation":
+                prompt = ""
+                if case is not None:
+                    prompt = getattr(case, "prompt", "") or ""
+                prompt = prompt or suite.title
+                error_stage = "prompt_render"
+                return self._measure_text_bench_sample(
+                    loaded_model=loaded_model,
+                    suite=suite,
+                    prompt=prompt,
+                    parameters=parameters,
+                    context_length=context_length,
+                    repeat_index=repeat_index,
+                    batch_size=batch_size,
+                    cache_profile=cache_profile,
+                    reasoning_mode=reasoning_mode,
+                    structured_output_mode=structured_output_mode,
                 )
-            sample = self._measure_vlm_bench_sample(
-                loaded_model=loaded_model,
-                suite=suite,
-                case=case,
-                parameters=parameters,
-            )
-            request_latency_ms = sample.request_latency_ms or sample.total_latency_ms
-            decode_tokens_per_second = sample.decode_tokens_per_second
-            if decode_tokens_per_second <= 0.0:
-                decode_tokens_per_second = round(
-                    sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
-                    2,
+            if task_kind in {"image-to-text", "image-text-to-text"}:
+                error_stage = "dataset_materialize"
+                if case is None:
+                    raise ModelOperationError(
+                        code="benchmark_failed",
+                        message="Benchmark matrix suite did not provide a VLM case.",
+                    )
+                error_stage = "prompt_render"
+                sample = self._measure_vlm_bench_sample(
+                    loaded_model=loaded_model,
+                    suite=suite,
+                    case=case,
+                    parameters=parameters,
                 )
-            return BenchSample(
-                ttft_ms=sample.ttft_ms,
-                total_latency_ms=sample.total_latency_ms,
-                completion_tokens=sample.completion_tokens,
-                prompt_tokens=sample.prompt_tokens,
-                request_latency_ms=request_latency_ms,
-                prefill_tokens_per_second=sample.prefill_tokens_per_second,
-                decode_tokens_per_second=decode_tokens_per_second,
-                peak_memory_bytes=sample.peak_memory_bytes,
+                request_latency_ms = sample.request_latency_ms or sample.total_latency_ms
+                decode_tokens_per_second = sample.decode_tokens_per_second
+                if decode_tokens_per_second <= 0.0:
+                    decode_tokens_per_second = round(
+                        sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
+                        2,
+                    )
+                return BenchSample(
+                    ttft_ms=sample.ttft_ms,
+                    total_latency_ms=sample.total_latency_ms,
+                    completion_tokens=sample.completion_tokens,
+                    prompt_tokens=sample.prompt_tokens,
+                    request_latency_ms=request_latency_ms,
+                    prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                    decode_tokens_per_second=decode_tokens_per_second,
+                    peak_memory_bytes=sample.peak_memory_bytes,
+                )
+            raise ModelOperationError(
+                code="unsupported_task_family",
+                message=f"Unsupported benchmark matrix task kind: {task_kind}",
+                details={"task_kind": task_kind},
             )
-        raise ModelOperationError(
-            code="unsupported_task_family",
-            message=f"Unsupported benchmark matrix task kind: {task_kind}",
-            details={"task_kind": task_kind},
-        )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, error_stage)
 
     def _measure_text_bench_metrics(
         self,
@@ -2433,39 +2451,48 @@ class MaintenanceCore:
         cache_hit = False
         if cache_profile == "warm":
             warmup_started_at = time.perf_counter()
-            self._benchmark_warmup_text_request(
-                loaded_model=loaded_model,
-                prompt=shaped_prompt,
-                execution_ext=execution_ext,
-                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
-            )
+            try:
+                self._benchmark_warmup_text_request(
+                    loaded_model=loaded_model,
+                    prompt=shaped_prompt,
+                    execution_ext=execution_ext,
+                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
+                )
+            except Exception as exc:
+                self._raise_benchmark_error_with_stage(exc, "warmup")
             warmup_ms = round((time.perf_counter() - warmup_started_at) * 1_000.0, 2)
             cache_hit = True
         elif cache_profile == "partial_prefix":
             partial_prefix = shaped_prompt[: max(1, len(shaped_prompt) // 2)]
             warmup_started_at = time.perf_counter()
-            self._benchmark_warmup_text_request(
-                loaded_model=loaded_model,
-                prompt=partial_prefix,
-                execution_ext=execution_ext,
-                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
-            )
+            try:
+                self._benchmark_warmup_text_request(
+                    loaded_model=loaded_model,
+                    prompt=partial_prefix,
+                    execution_ext=execution_ext,
+                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
+                )
+            except Exception as exc:
+                self._raise_benchmark_error_with_stage(exc, "warmup")
             warmup_ms = round((time.perf_counter() - warmup_started_at) * 1_000.0, 2)
             cache_hit = True
         elif cache_profile != "cold":
             raise ModelOperationError(
                 code="invalid_argument",
                 message=f"Unsupported cache profile: {cache_profile}",
-                details={"cache_profile": cache_profile},
+                details={"cache_profile": cache_profile, "error_stage": "validation"},
             )
 
         messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=shaped_prompt)])]
         render_started_at = time.perf_counter()
-        rendered_prompt = runtime.render_prompt(
-            messages,
-            loaded_model=loaded_model.runtime_model,
-            execution_ext=execution_ext,
-        )
+        try:
+            rendered_prompt = runtime.render_prompt(
+                messages,
+                loaded_model=loaded_model.runtime_model,
+                execution_ext=execution_ext,
+            )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prompt_render")
         prompt_render_ms = round((time.perf_counter() - render_started_at) * 1_000.0, 2)
         rendered_prompt = self._annotated_text_benchmark_input(
             rendered_prompt,
@@ -2485,9 +2512,9 @@ class MaintenanceCore:
             request_id=request_id,
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
+        first_token_at: float | None = None
         try:
             started_at = time.perf_counter()
-            first_token_at: float | None = None
             last_token_at: float | None = None
             first_token_index = 0
             completion_tokens = 0
@@ -2600,6 +2627,8 @@ class MaintenanceCore:
                     dflash_target_hidden_layers,
                 )
             finished_at = time.perf_counter()
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prefill" if first_token_at is None else "decode")
         finally:
             self._registry.finish_request(request_id)
 
@@ -2644,6 +2673,23 @@ class MaintenanceCore:
             dflash_rollback_count=dflash_rollback_count,
             dflash_target_hidden_layers=dflash_target_hidden_layers,
         )
+
+    @staticmethod
+    def _benchmark_error_stage(exc: Exception, default_stage: str = "runtime") -> str:
+        stage = getattr(exc, "error_stage", "") or getattr(exc, "details", {}).get("error_stage", "")
+        normalized = str(stage).strip()
+        if normalized in _BENCHMARK_ERROR_STAGES:
+            return normalized
+        return default_stage
+
+    @staticmethod
+    def _raise_benchmark_error_with_stage(exc: Exception, error_stage: str) -> None:
+        stage = error_stage if error_stage in _BENCHMARK_ERROR_STAGES else "runtime"
+        if not getattr(exc, "error_stage", ""):
+            setattr(exc, "error_stage", stage)
+        if isinstance(exc, ModelOperationError):
+            exc.details.setdefault("error_stage", stage)
+        raise exc
 
     @staticmethod
     def _runtime_event_float_probe(runtime_event: object, field_name: str, current: float) -> float:
@@ -2775,20 +2821,23 @@ class MaintenanceCore:
             parts.insert(0, common_pb2.MessagePart(text=case.prompt))
         messages = [common_pb2.ChatMessage(role="user", parts=parts)]
         render_started_at = time.perf_counter()
-        prepared = runtime.render_prompt(
-            messages,
-            loaded_model=loaded_model.runtime_model,
-            execution_ext={},
-        )
+        try:
+            prepared = runtime.render_prompt(
+                messages,
+                loaded_model=loaded_model.runtime_model,
+                execution_ext={},
+            )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prompt_render")
         prompt_render_ms = round((time.perf_counter() - render_started_at) * 1_000.0, 2)
         request_id = f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash((case.prompt, case.image_uris)))}"
         cancel_event = self._registry.start_request(
             request_id=request_id,
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
+        first_token_at: float | None = None
         try:
             started_at = time.perf_counter()
-            first_token_at: float | None = None
             last_token_at: float | None = None
             first_token_index = 0
             completion_tokens = 0
@@ -2815,6 +2864,8 @@ class MaintenanceCore:
                 last_token_at = now
                 completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
             finished_at = time.perf_counter()
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prefill" if first_token_at is None else "decode")
         finally:
             self._registry.finish_request(request_id)
 

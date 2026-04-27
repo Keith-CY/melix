@@ -23,9 +23,9 @@ jobs:
     timeout-minutes: 120
 
     env:
-      MELIX_BENCH_EVAL_CI_MODEL_ID: melix-dev-text
-      MELIX_BENCH_EVAL_CI_MODEL_PATH: melix-dev-text
-      MELIX_BENCH_EVAL_CI_BACKEND_MODE: deterministic
+      MELIX_BENCH_EVAL_CI_MODEL_ID: ${{ vars.MELIX_BENCH_EVAL_CI_MODEL_ID || 'melix-dev-text' }}
+      MELIX_BENCH_EVAL_CI_MODEL_PATH: ${{ vars.MELIX_BENCH_EVAL_CI_MODEL_PATH || vars.MELIX_BENCH_EVAL_CI_MODEL_ID || 'melix-dev-text' }}
+      MELIX_BENCH_EVAL_CI_BACKEND_MODE: ${{ vars.MELIX_BENCH_EVAL_CI_BACKEND_MODE || 'deterministic' }}
 
     steps:
       - name: Checkout base
@@ -255,6 +255,7 @@ jobs:
               --sticky-comment > artifacts/report/pr-comment.md
 
       - name: Upload report artifacts
+        if: success() || failure()
         uses: actions/upload-artifact@v7
         with:
           name: bench-eval-report
@@ -264,12 +265,23 @@ jobs:
             artifacts/report
 
       - name: Update PR comment
+        if: github.event_name == 'pull_request' && (success() || failure())
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
             const marker = '<!-- melix-benchmark-evaluation-report -->';
-            const body = fs.readFileSync('artifacts/report/pr-comment.md', 'utf8');
+            let body;
+            try {
+              body = fs.readFileSync('artifacts/report/pr-comment.md', 'utf8');
+            } catch (error) {
+              body = [
+                marker,
+                '# Melix Benchmark/Evaluation Report',
+                '',
+                'Report generation did not complete. See the workflow logs and uploaded artifacts for the failing phase.',
+              ].join('\n');
+            }
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const comments = await github.paginate(github.rest.issues.listComments, {

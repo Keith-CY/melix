@@ -70,6 +70,8 @@ def test_runtime_core_prefill_memory_guard_rejects_live_requests() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
         environment_overrides={
+            # 16 prompt tokens with 16384 bytes of headroom requires 49152 bytes
+            # during prefill, so this budget exercises the request guard after load.
             "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "40960",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
         },
@@ -147,6 +149,7 @@ def run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, object]:
                 messages=[
                     common_pb2.ChatMessage(
                         role="user",
+                        # Keep the prompt aligned with the probe budget math above.
                         parts=[common_pb2.MessagePart(text=" ".join(["alpha"] * 16))],
                     )
                 ],

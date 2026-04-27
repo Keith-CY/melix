@@ -193,6 +193,11 @@ artifacts, but new runners should populate them so operators can distinguish dat
 materialization, prompt rendering, prefill, decode, runtime-cache, speculative decode, DFlash, and
 failure-stage regressions.
 
+Swift export decoders may default missing additive numeric and boolean probes to `0` or `false`
+when reading legacy artifacts. Consumers must treat those defaults as compatibility sentinels
+unless the producing runner version is known to emit the probe field; they are not proof that the
+phase completed in zero milliseconds or that a boolean probe was explicitly observed as false.
+
 ### Summary Metrics
 
 The summary metric set is:

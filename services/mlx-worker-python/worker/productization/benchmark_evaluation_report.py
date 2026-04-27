@@ -294,9 +294,15 @@ def _build_metric_row(
     delta = candidate_number - baseline_number
     delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
     status = "not_comparable" if direction == "neutral" else "ok"
-    if direction == "lower_is_better" and delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT:
+    if direction == "lower_is_better" and (
+        (delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT)
+        or (baseline_number == 0 and candidate_number > baseline_number)
+    ):
         status = "warning"
-    elif direction == "higher_is_better" and delta_pct is not None and delta_pct < -_WARNING_THRESHOLD_PCT:
+    elif direction == "higher_is_better" and (
+        (delta_pct is not None and delta_pct < -_WARNING_THRESHOLD_PCT)
+        or (baseline_number == 0 and candidate_number < baseline_number)
+    ):
         status = "warning"
     return {
         "metric": metric_name,
@@ -342,6 +348,7 @@ def _metric_direction(metric_name: str) -> str:
         "acceptance_rate",
         "accepted_tokens",
         "speedup",
+        "cache_hit",
     )
     if any(fragment in metric_key for fragment in lower_fragments):
         return "lower_is_better"
@@ -406,12 +413,19 @@ def _collect_evaluation_sample_probe_metrics(
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
     for (suite_id, key), values in values_by_suite_and_key.items():
-        metrics[f"eval.sample.{suite_id}.{key}_mean"] = sum(values) / len(values)
+        if values:
+            metrics[f"eval.sample.{suite_id}.{key}_mean"] = sum(values) / len(values)
     for (suite_id, failure_stage), count in failure_stage_counts.items():
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 
 
 def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
+    if not values:
+        if key in _RATE_PROBE_KEYS:
+            return "rate", 0.0
+        if key in _COUNT_PROBE_KEYS:
+            return "sum", 0.0
+        return "mean", 0.0
     if key in _COUNT_PROBE_KEYS:
         return "sum", sum(values)
     if key in _RATE_PROBE_KEYS:
@@ -486,4 +500,4 @@ def _format_delta(row: dict[str, object]) -> str:
 
 
 def _markdown_cell(value: object) -> str:
-    return str(value).replace("\n", " ").replace("|", "\\|")
+    return str(value).replace("\n", " ").replace("|", "\\|").replace("`", "\\`")

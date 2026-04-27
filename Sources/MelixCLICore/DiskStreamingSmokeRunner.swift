@@ -212,6 +212,8 @@ public struct DiskStreamingSmokeRunner: Sendable {
 }
 
 private func baselineBenchParameters(modelID: String) -> [String: String] {
+    // Melix dev aliases are repository-owned deterministic fixtures for smoke tests.
+    // User-imported and external models should keep the real runtime path unless explicitly opted in.
     guard modelID.hasPrefix("melix-dev-") else {
         return [:]
     }

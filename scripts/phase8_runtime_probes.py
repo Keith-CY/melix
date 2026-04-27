@@ -675,6 +675,8 @@ def _collect_prefill_memory_guard_evidence(repo_root: Path) -> dict[str, Any]:
     stack = LiveMelixStack(
         repo_root,
         environment_overrides={
+            # Keep load below the process budget, then force prefill over budget:
+            # 16 prompt tokens * 2048 bytes/token + 16384 headroom = 49152 bytes.
             "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "40960",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
         },
@@ -775,6 +777,8 @@ def _run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, Any]:
                 messages=[
                     common_pb2.ChatMessage(
                         role="user",
+                        # This prompt is intentionally 16 tokens to make the prefill projection
+                        # exceed the 40960-byte probe budget while the deterministic model still loads.
                         parts=[common_pb2.MessagePart(text=" ".join(["alpha"] * 16))],
                     )
                 ],

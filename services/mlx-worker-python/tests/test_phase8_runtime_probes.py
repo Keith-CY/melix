@@ -334,6 +334,8 @@ def test_collect_runtime_core_evidence_reports_multimodel_and_guard_signals(
         phase8_runtime_probes,
         "wait_for_metrics",
         lambda *args, **kwargs: {
+            # 16 tokens * 2048 bytes/token + 16384 bytes headroom = 49152 bytes,
+            # which is intentionally above the 40960-byte probe budget.
             "swift_text.prefill_guard_last_prompt_tokens": 16.0,
             "swift_text.prefill_guard_last_required_bytes": 49152.0,
             "swift_text.prefill_guard_last_budget_bytes": 40960.0,
@@ -479,6 +481,8 @@ def test_collect_prefill_memory_guard_evidence_raises_when_probe_does_not_reject
         phase8_runtime_probes,
         "wait_for_metrics",
         lambda *args, **kwargs: {
+            # Keep this aligned with the successful probe fixture: 16 tokens plus
+            # 16384 bytes of headroom must exceed the 40960-byte budget.
             "swift_text.prefill_guard_last_prompt_tokens": 16.0,
             "swift_text.prefill_guard_last_required_bytes": 49152.0,
             "swift_text.prefill_guard_last_budget_bytes": 40960.0,
