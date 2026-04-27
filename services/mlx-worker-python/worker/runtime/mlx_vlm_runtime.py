@@ -397,6 +397,9 @@ class MLXVLMRuntime:
             image_paths = self._materialize_media(prepared_request, temp_media_session)
 
             def backend_events():
+                # Must run on the executor-owned thread so the MLX runtime is
+                # initialized inside the same stream ownership context used for
+                # the subsequent token generation work.
                 self._backend._ensure_runtime()
                 if cancel_event.is_set():
                     return

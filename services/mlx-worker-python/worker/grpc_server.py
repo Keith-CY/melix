@@ -162,7 +162,11 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
             )
         if request.warmup_after_load:
             try:
-                self._registry.warmup_model(loaded.handle)
+                warmup_ms = self._registry.warmup_model(loaded.handle)
+                if warmup_ms is None:
+                    raise RuntimeError(
+                        f"warmup_model returned None for freshly loaded handle {loaded.handle}"
+                    )
             except NotImplementedError as exc:
                 return runtime_pb2.LoadModelResponse(
                     ok=False,

@@ -76,11 +76,10 @@ class MLXRuntimeExecutor:
                     for item in producer_iter:
                         if not publish("item", item):
                             return
-            except Exception as exc:
-                publish("error", exc)
             except BaseException as exc:
                 publish("error", exc)
-                raise
+                if not isinstance(exc, Exception):
+                    raise
             finally:
                 if producer_iter is not None:
                     close = getattr(producer_iter, "close", None)
@@ -97,6 +96,9 @@ class MLXRuntimeExecutor:
                 elif kind == "error":
                     raise payload  # type: ignore[misc]
                 else:
+                    # Cleanup is intentionally synchronous and unbounded here so
+                    # the next task never reuses the single-owner executor while
+                    # the current producer is still tearing down MLX state.
                     future.result()
                     break
         finally:
@@ -106,6 +108,8 @@ class MLXRuntimeExecutor:
                     output.get_nowait()
                 except Empty:
                     break
+            # Keep close() semantics aligned with the normal completion path:
+            # do not release the owner thread until producer teardown finishes.
             future.result()
 
     def synchronize(self) -> None:
@@ -140,36 +144,55 @@ class MLXRuntimeExecutor:
             return fn()
 
     def _ensure_initialized(self) -> None:
-        if self._initialized:
-            return
+        # Only callable from the executor-owned thread. We keep the MLX stream
+        # discovery and lazy callback binding here so future callers do not
+        # accidentally initialize stream state from an arbitrary gRPC thread.
+        with self._lock:
+            if self._initialized:
+                return
 
         started_at = time.perf_counter()
-        self._owner_thread_id = get_ident()
+        owner_thread_id = get_ident()
         try:
-            self._stream = self._make_stream()
-            self._generation_stream_owner_mode = (
-                "executor_owned" if self._stream is not None else "executor_owned_no_stream"
+            stream, stream_context_factory, synchronize_fn = self._make_stream()
+            generation_stream_owner_mode = (
+                "executor_owned" if stream is not None else "executor_owned_no_stream"
             )
         except Exception:
-            self._stream = None
-            self._generation_stream_owner_mode = "executor_owned_stream_init_failed"
-        self._worker_thread_init_latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
-        self._initialized = True
+            stream = None
+            stream_context_factory = self._stream_context_factory
+            synchronize_fn = self._synchronize_fn
+            generation_stream_owner_mode = "executor_owned_stream_init_failed"
+        worker_thread_init_latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        with self._lock:
+            if self._initialized:
+                return
+            self._owner_thread_id = owner_thread_id
+            self._stream = stream
+            self._stream_context_factory = stream_context_factory
+            self._synchronize_fn = synchronize_fn
+            self._generation_stream_owner_mode = generation_stream_owner_mode
+            self._worker_thread_init_latency_ms = worker_thread_init_latency_ms
+            self._initialized = True
 
-    def _make_stream(self) -> Any | None:
+    def _make_stream(
+        self,
+    ) -> tuple[
+        Any | None,
+        Callable[[Any], Any] | None,
+        Callable[[Any | None], None] | None,
+    ]:
         if self._stream_factory is not None:
-            return self._stream_factory()
+            return self._stream_factory(), self._stream_context_factory, self._synchronize_fn
 
         try:
             import mlx.core as mx
         except ModuleNotFoundError:
-            return None
+            return None, self._stream_context_factory, self._synchronize_fn
 
         stream = mx.new_stream(mx.gpu)
         mx.set_default_stream(stream)
-        self._stream_context_factory = mx.stream
-        self._synchronize_fn = mx.synchronize
-        return stream
+        return stream, mx.stream, mx.synchronize
 
     def _stream_context(self):
         if self._stream is None or self._stream_context_factory is None:
@@ -183,7 +206,8 @@ class MLXRuntimeExecutor:
                 return
             self._synchronize_fn(self._stream)
         except Exception:
-            self._stream_sync_fallback_count += 1
+            with self._lock:
+                self._stream_sync_fallback_count += 1
             if self._fallback_synchronize_fn is not None:
                 self._fallback_synchronize_fn()
                 return
@@ -194,4 +218,5 @@ class MLXRuntimeExecutor:
             mx.synchronize()
 
     def _is_owner_thread(self) -> bool:
-        return self._initialized and self._owner_thread_id == get_ident()
+        with self._lock:
+            return self._initialized and self._owner_thread_id == get_ident()

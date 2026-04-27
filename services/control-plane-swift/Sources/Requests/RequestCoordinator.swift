@@ -576,6 +576,9 @@ public actor RequestCoordinator {
         }
 
         disconnectResumeAttemptCount += 1
+        // Race: the last consumer detached, but the disconnect bookkeeping
+        // has not recorded `disconnectStartedAt` yet. Synthesize it here so
+        // resume metrics still capture the recovery path correctly.
         if disconnectStartedAt[requestID] == nil,
            disconnectGraceTasks[requestID] == nil,
            !(await hub.hasConsumers()) {

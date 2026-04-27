@@ -1,5 +1,6 @@
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 from threading import Event, get_ident
+import time
 
 from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -83,8 +84,13 @@ class CancelAwareWarmupBackend(FakeBackend):
         _ = sampling
         try:
             yield "warm"
+            deadline = time.perf_counter() + 1.0
             while not cancel_event.is_set():
-                pass
+                if time.perf_counter() >= deadline:
+                    raise RuntimeError(
+                        "CancelAwareWarmupBackend: cancel_event not set within 1 s"
+                    )
+                time.sleep(0.001)
         finally:
             self.cancel_seen_on_close = cancel_event.is_set()
 
@@ -297,6 +303,27 @@ def test_load_model_warmup_after_load_reports_warmup_failures() -> None:
 
     assert response.ok is False
     assert response.error.code == "warmup_failed"
+
+
+def test_load_model_warmup_after_load_rejects_missing_warmup_result(monkeypatch) -> None:
+    service = build_runtime_service()
+    monkeypatch.setattr(
+        service._registry,
+        "warmup_model",
+        lambda handle, synthetic_messages=None: None,
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            warmup_after_load=True,
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "warmup_failed"
+    assert "returned None" in response.error.message
 
 
 def test_warmup_model_rejects_unknown_model_handle() -> None:
