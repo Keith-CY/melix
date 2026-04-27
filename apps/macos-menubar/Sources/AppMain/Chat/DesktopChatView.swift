@@ -483,10 +483,10 @@ private struct DesktopChatCapabilityIconTile: View {
                 Image(systemName: capability.systemImageName)
                     .font(.system(size: 18, weight: .medium))
                     .frame(width: 34, height: 28)
-                    .foregroundStyle(capability.isReady ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(capability.isReady ? MelixDesignTokens.accent : Color.secondary)
 
                 Circle()
-                    .fill(capability.isReady ? Color.green : Color.secondary.opacity(0.45))
+                    .fill(capability.isReady ? MelixDesignTokens.StatusColor.success : Color.secondary.opacity(0.45))
                     .frame(width: 7, height: 7)
                     .offset(x: 2, y: -1)
             }

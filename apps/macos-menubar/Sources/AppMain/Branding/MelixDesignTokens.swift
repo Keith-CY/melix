@@ -1,4 +1,32 @@
+import AppKit
 import SwiftUI
+
+private extension MelixDesignTokens.DesignColor.Components {
+    func nsColor(alpha: Double) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(red) / 255.0,
+            green: CGFloat(green) / 255.0,
+            blue: CGFloat(blue) / 255.0,
+            alpha: CGFloat(alpha)
+        )
+    }
+}
+
+private extension NSAppearance {
+    var isDarkMode: Bool {
+        let darkAppearances: Set<NSAppearance.Name> = [
+            .darkAqua,
+            .accessibilityHighContrastDarkAqua,
+        ]
+        let bestMatch = bestMatch(from: [
+            .aqua,
+            .darkAqua,
+            .accessibilityHighContrastAqua,
+            .accessibilityHighContrastDarkAqua,
+        ])
+        return bestMatch.map { darkAppearances.contains($0) } ?? false
+    }
+}
 
 /// Central design tokens for the Melix macOS operator app.
 ///
@@ -7,27 +35,116 @@ import SwiftUI
 /// typographic structure, whitespace as hierarchy, accent as ink.
 enum MelixDesignTokens {
 
+    struct DesignColor: Equatable {
+        struct Components: Equatable {
+            let red: UInt8
+            let green: UInt8
+            let blue: UInt8
+        }
+
+        let light: Components
+        let dark: Components
+        let opacity: Double
+
+        init(red: UInt8, green: UInt8, blue: UInt8, opacity: Double = 1.0) {
+            let components = Components(red: red, green: green, blue: blue)
+            self.light = components
+            self.dark = components
+            self.opacity = opacity
+        }
+
+        init(light: Components, dark: Components, opacity: Double = 1.0) {
+            self.light = light
+            self.dark = dark
+            self.opacity = opacity
+        }
+
+        var color: Color {
+            Color(nsColor: nsColor)
+        }
+
+        var nsColor: NSColor {
+            NSColor(name: nil) { appearance in
+                let components = appearance.isDarkMode ? dark : light
+                return components.nsColor(alpha: opacity)
+            }
+        }
+    }
+
+    private typealias Components = DesignColor.Components
+
+    enum Palette {
+        static let accent = DesignColor(red: 0x0F, green: 0x76, blue: 0x6E)
+
+        static let foregroundPrimary = DesignColor(
+            light: Components(red: 0x0A, green: 0x0A, blue: 0x0A),
+            dark: Components(red: 0xFD, green: 0xFD, blue: 0xFD)
+        )
+        static let foregroundSecondary = DesignColor(
+            light: Components(red: 0x3A, green: 0x3A, blue: 0x3A),
+            dark: Components(red: 0xC8, green: 0xC8, blue: 0xC8)
+        )
+        static let foregroundTertiary = DesignColor(
+            light: Components(red: 0x6B, green: 0x6B, blue: 0x6B),
+            dark: Components(red: 0x8A, green: 0x8A, blue: 0x8A)
+        )
+        static let foregroundQuaternary = DesignColor(
+            light: Components(red: 0x9A, green: 0x9A, blue: 0x9A),
+            dark: Components(red: 0x5A, green: 0x5A, blue: 0x5A)
+        )
+        static let foregroundInverse = DesignColor(
+            light: Components(red: 0xFD, green: 0xFD, blue: 0xFD),
+            dark: Components(red: 0x0A, green: 0x0A, blue: 0x0A)
+        )
+
+        static let backgroundBase = DesignColor(
+            light: Components(red: 0xFA, green: 0xFA, blue: 0xFA),
+            dark: Components(red: 0x1A, green: 0x1A, blue: 0x1A)
+        )
+        static let backgroundSurface = DesignColor(
+            light: Components(red: 0xFF, green: 0xFF, blue: 0xFF),
+            dark: Components(red: 0x22, green: 0x22, blue: 0x22)
+        )
+        static let backgroundElevated = DesignColor(
+            light: Components(red: 0xF5, green: 0xF5, blue: 0xF5),
+            dark: Components(red: 0x2A, green: 0x2A, blue: 0x2A)
+        )
+        static let backgroundSunken = DesignColor(
+            light: Components(red: 0xF0, green: 0xF0, blue: 0xF0),
+            dark: Components(red: 0x16, green: 0x16, blue: 0x16)
+        )
+
+        static let success = DesignColor(red: 0x14, green: 0xA0, blue: 0x5A)
+        static let warning = DesignColor(red: 0xD9, green: 0x77, blue: 0x06)
+        static let error = DesignColor(red: 0xDC, green: 0x26, blue: 0x26)
+
+        static let userBubble = DesignColor(red: 0x00, green: 0x64, blue: 0xDC)
+        static let assistantBubble = DesignColor(red: 0x14, green: 0xA0, blue: 0x50)
+        static let reasoningBubble = DesignColor(red: 0xDC, green: 0x6E, blue: 0x14)
+        static let toolBubble = DesignColor(red: 0x78, green: 0x3C, blue: 0xC8)
+        static let errorBubble = DesignColor(red: 0xD2, green: 0x28, blue: 0x28)
+    }
+
     // MARK: - Accent
 
-    /// Brand teal (`#0F766E`). Used for places where the Melix identity
-    /// must be fixed regardless of the user's system accent (app icon,
-    /// workspace badge, printed/exported artifacts).
-    static let brandAccent = Color(red: 0x0F / 255.0, green: 0x76 / 255.0, blue: 0x6E / 255.0)
+    /// Brand teal (`#0F766E`). Kept separate from `accent` so identity marks
+    /// and interactive affordances remain semantically distinct, even though
+    /// the design system intentionally maps both to CSS `--accent`.
+    static let brandAccent = Palette.accent.color
 
-    /// System accent. Prefer this for interaction signals (focus, selection,
-    /// active tab, one primary CTA per screen) so macOS users' accent
-    /// customization is honored.
-    static let accent = Color.accentColor
+    /// Design-system accent. Use for interaction signals: links, focus,
+    /// selection, active tabs, and one primary CTA per screen.
+    static let accent = Palette.accent.color
 
     enum AccentOpacity {
+        /// Medium accent wash (`--accent-medium` = 32%).
+        static let medium: Double = 0.32
         /// Selected row / bubble background (`--accent-weak` ≈ 12%).
         static let weak: Double = 0.12
-        /// Selection emphasis for chips and primary pills.
-        static let selected: Double = 0.14
+        /// Selection emphasis for rows, chips, and primary pills.
+        static let selected: Double = weak
         /// Capsule tab active fill.
-        static let capsule: Double = 0.18
-        /// Stroke / border accent (focus ring, emphasis outline).
-        static let stroke: Double = 0.22
+        static let capsule: Double = weak
         /// Hover hint for interactive surfaces.
         static let faint: Double = 0.06
     }
@@ -54,27 +171,40 @@ enum MelixDesignTokens {
 
     // MARK: - Status tints
 
+    enum StatusColor {
+        static let success = Palette.success.color
+        static let warning = Palette.warning.color
+        static let error = Palette.error.color
+        /// CSS `--color-info` intentionally aliases `--accent`; informational
+        /// notices use ink color rather than introducing a separate blue.
+        static let info = accent
+    }
+
+    enum StateOpacity {
+        /// Non-chat status background tint for rows and job states.
+        static let background: Double = 0.09
+    }
+
     /// Base hues for chat transcript bubble backgrounds. Paired with
     /// `BubbleOpacity` to stay consistent with the `AccentOpacity` pattern.
     /// These are intentionally flat `Color` values; transcript bubbles do not
     /// use gradients or materials in the Digital Broadsheet system.
     enum BubbleTint {
-        static let user = Color.blue
-        static let assistant = Color.green
-        static let reasoning = Color.orange
-        static let tool = Color.purple
-        static let error = Color.red
+        static let user = Palette.userBubble.color
+        static let assistant = Palette.assistantBubble.color
+        static let reasoning = Palette.reasoningBubble.color
+        static let tool = Palette.toolBubble.color
+        static let error = Palette.errorBubble.color
     }
 
-    /// Per-role opacities for chat bubble backgrounds. The user bubble sits
-    /// slightly stronger (0.14) because blue reads softer than the warm
-    /// tones on a near-white canvas; the rest match spec at 0.12.
+    /// Per-role opacities for chat bubble backgrounds, matching
+    /// `docs/design-system/colors_and_type.css`.
     enum BubbleOpacity {
-        static let user: Double = 0.14
-        static let assistant: Double = 0.12
-        static let reasoning: Double = 0.12
-        static let tool: Double = 0.12
-        static let error: Double = 0.12
+        static let user: Double = 0.10
+        static let assistant: Double = 0.09
+        static let reasoning: Double = 0.09
+        static let tool: Double = 0.09
+        static let error: Double = 0.09
     }
 
     // MARK: - Corner radii

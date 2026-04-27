@@ -578,15 +578,15 @@ private struct DesktopImageJobRowView: View {
 
     private var backgroundStyle: Color {
         if isSelected {
-            return .blue.opacity(0.16)
+            return MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
         }
         switch job.state {
         case .imageJobCompleted:
-            return .green.opacity(0.10)
+            return MelixDesignTokens.StatusColor.success.opacity(MelixDesignTokens.StateOpacity.background)
         case .imageJobFailed:
-            return .red.opacity(0.10)
+            return MelixDesignTokens.StatusColor.error.opacity(MelixDesignTokens.StateOpacity.background)
         case .imageJobRunning:
-            return .orange.opacity(0.10)
+            return MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.StateOpacity.background)
         default:
             return .secondary.opacity(0.08)
         }

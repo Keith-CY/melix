@@ -149,8 +149,11 @@ struct DesktopModelsTabView: View {
                                     .font(.caption2)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 3)
-                                    .background(Color.orange.opacity(0.16), in: Capsule())
-                                    .foregroundStyle(.orange)
+                                    .background(
+                                        MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.AccentOpacity.weak),
+                                        in: Capsule()
+                                    )
+                                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
                                     .accessibilityLabel(model.runtimeCacheStatusText)
                             }
                         }
@@ -160,7 +163,7 @@ struct DesktopModelsTabView: View {
                         if model.runtimeCacheMissing {
                             Text(model.runtimeCacheDetailText)
                                 .font(.caption2)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.warning)
                         }
                         if !model.typeOverrideText.isEmpty {
                             Text("type override: \(model.typeOverrideText)")
@@ -176,7 +179,7 @@ struct DesktopModelsTabView: View {
                         if !model.memoryAlertText.isEmpty {
                             Text(model.memoryAlertText)
                                 .font(.caption2)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
                         }
                         if model.adaptiveThinkingText != "Off" || model.toolParserFallbackText != "Off" {
                             Text("adaptive thinking: \(model.adaptiveThinkingText) • parser fallback: \(model.toolParserFallbackText)")
@@ -690,7 +693,7 @@ private struct DesktopRegistryRootRowView: View {
                     .font(.headline)
                 Text("#\(root.rootOrder) • \(root.statusText)")
                     .font(.caption)
-                    .foregroundStyle(root.accessible ? Color.secondary : Color.orange)
+                    .foregroundStyle(root.accessible ? Color.secondary : MelixDesignTokens.StatusColor.warning)
                 Text(root.detailText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -726,7 +729,7 @@ private struct DesktopResidencyRowsSection: View {
                             Spacer()
                             Text(model.stateText)
                                 .font(.caption)
-                                .foregroundStyle(model.memoryAlertText.isEmpty ? Color.secondary : Color.orange)
+                                .foregroundStyle(model.memoryAlertText.isEmpty ? Color.secondary : MelixDesignTokens.StatusColor.warning)
                         }
                         Text(model.residencyText)
                             .font(.caption)
@@ -737,7 +740,7 @@ private struct DesktopResidencyRowsSection: View {
                         if !model.memoryAlertText.isEmpty {
                             Text(model.memoryAlertText)
                                 .font(.caption2)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1300,7 +1303,7 @@ struct DesktopLogsTabView: View {
                     Spacer()
                     Text(entry.level.uppercased())
                         .font(.caption2)
-                        .foregroundStyle(entry.level == "error" ? .red : .secondary)
+                        .foregroundStyle(entry.level == "error" ? MelixDesignTokens.StatusColor.error : .secondary)
                 }
                 Text(entry.message)
                     .font(.body)
