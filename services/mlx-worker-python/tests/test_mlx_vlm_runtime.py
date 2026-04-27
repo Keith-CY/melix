@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from threading import Event
+from threading import get_ident
 import time
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ from worker.runtime.mlx_vlm_runtime import (
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
 )
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -263,6 +265,162 @@ def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> N
     assert probe.image_feature_cache_hits == 0
     assert probe.image_feature_cache_misses == 1
     assert probe.multimodal_decode_mode == "native_quantized"
+
+
+def test_mlx_vlm_runtime_load_template_and_stream_run_on_executor_thread() -> None:
+    main_thread_id = get_ident()
+    seen: dict[str, int] = {}
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        seen["load_thread_id"] = get_ident()
+        model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=object(),
+            embed_vision=object(),
+        )
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = prompt
+        _ = num_images
+        _ = kwargs
+        seen["template_thread_id"] = get_ident()
+        return "formatted::prompt"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        seen["stream_thread_id"] = get_ident()
+        yield SimpleNamespace(text="VLM", prompt_tokens=8, generation_tokens=1)
+
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        ),
+        executor=executor,
+    )
+    try:
+        loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+        prepared = runtime.render_prompt(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Say hello.")],
+                )
+            ],
+            loaded_model=loaded_model,
+        )
+        events = list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(max_output_tokens=8),
+                Event(),
+            )
+        )
+        executor_thread_id = executor.run(get_ident)
+    finally:
+        executor.shutdown()
+
+    assert [event.text for event in events] == ["VLM"]
+    assert seen == {
+        "load_thread_id": executor_thread_id,
+        "template_thread_id": executor_thread_id,
+        "stream_thread_id": executor_thread_id,
+    }
+    assert executor_thread_id != main_thread_id
+
+
+def test_mlx_vlm_runtime_skips_empty_backend_chunks() -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        yield SimpleNamespace(text="", prompt_tokens=4, generation_tokens=1)
+        yield SimpleNamespace(text="visible", prompt_tokens=4, generation_tokens=2)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["visible"]
+
+
+def test_mlx_vlm_runtime_stops_stream_when_cancelled_before_backend_chunk() -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace()
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        yield SimpleNamespace(text="hidden", prompt_tokens=4, generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+    cancel_event = Event()
+    cancel_event.set()
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            cancel_event,
+        )
+    )
+
+    assert events == []
 
 
 def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: Path) -> None:

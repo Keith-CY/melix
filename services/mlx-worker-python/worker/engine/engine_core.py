@@ -7,6 +7,7 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
+from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
 class EngineCore:
@@ -22,6 +23,7 @@ class EngineCore:
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        assembler = self._stream_assembler(request)
         prompt_tokens_default = 0
         last_token_event: RuntimeTokenEvent | None = None
 
@@ -61,14 +63,45 @@ class EngineCore:
                     continue
 
                 last_token_event = runtime_event
-                if runtime_event.text:
-                    state.append_token(runtime_event.text)
-                    yield inference_pb2.ExecuteEvent(
-                        request_id=request_id,
-                        execution_kind="generate",
-                        seq=state.allocate_seq(),
-                        token_delta=inference_pb2.TokenDelta(text=runtime_event.text),
-                    )
+                for delta in assembler.accept(
+                    StreamFragment(text=runtime_event.text, raw_text=runtime_event.raw_text)
+                ):
+                    if delta.reasoning_text:
+                        yield inference_pb2.ExecuteEvent(
+                            request_id=request_id,
+                            execution_kind="generate",
+                            seq=state.allocate_seq(),
+                            reasoning_delta=inference_pb2.ReasoningDelta(
+                                text=delta.reasoning_text,
+                                raw_text=delta.raw_text,
+                                mode_source=request.execution.reasoning.mode_source,
+                            ),
+                        )
+                    if delta.tool_call is not None:
+                        yield inference_pb2.ExecuteEvent(
+                            request_id=request_id,
+                            execution_kind="generate",
+                            seq=state.allocate_seq(),
+                            tool_call_delta=inference_pb2.ToolCallDelta(
+                                call_id=delta.tool_call.call_id,
+                                tool_name=delta.tool_call.tool_name,
+                                arguments_json_fragment=delta.tool_call.arguments_json_fragment,
+                                fragment_index=delta.tool_call.fragment_index,
+                                parser_mode=delta.tool_call.parser_mode,
+                                complete=delta.tool_call.complete,
+                            ),
+                        )
+                    if delta.content_text:
+                        state.append_token(delta.content_text)
+                        yield inference_pb2.ExecuteEvent(
+                            request_id=request_id,
+                            execution_kind="generate",
+                            seq=state.allocate_seq(),
+                            token_delta=inference_pb2.TokenDelta(
+                                text=delta.content_text,
+                                raw_text=delta.raw_text,
+                            ),
+                        )
 
             if request.return_usage and not state.cancel_event.is_set():
                 prompt_tokens = prompt_tokens_default
@@ -92,13 +125,20 @@ class EngineCore:
             elif last_token_event is not None and last_token_event.finish_reason:
                 finish_reason = last_token_event.finish_reason
 
+            assembled = assembler.completed()
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
                 seq=state.allocate_seq(),
                 completed=inference_pb2.Completed(
                     finish_reason=finish_reason,
-                    assistant_text=state.assistant_text,
+                    assistant_text=assembled.assistant_text,
+                    reasoning_text=assembled.reasoning_text,
+                    raw_assistant_text=assembled.raw_text,
+                    reasoning_mode_source=request.execution.reasoning.mode_source,
+                    reasoning_effort=request.execution.reasoning.effort,
+                    reasoning_continuity_preserved=request.execution.reasoning.continuity_rehydrated,
+                    parser_metrics={key: str(value) for key, value in assembled.metrics.items()},
                 ),
             )
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -321,6 +361,21 @@ class EngineCore:
             error=inference_pb2.ErrorEvent(
                 error=common_pb2.ErrorStatus(code=code, message=message)
             ),
+        )
+
+    @staticmethod
+    def _stream_assembler(request: inference_pb2.GenerateRequest) -> RequestStreamAssembler:
+        ext = request.execution.ext
+        reasoning_mode = ext.get("melix.reasoning.mode", "").strip().lower()
+        reasoning_enabled = bool(request.execution.reasoning.enabled) or reasoning_mode in {
+            "enabled",
+            "adaptive",
+        }
+        return RequestStreamAssembler(
+            request_id=request.execution.id.request_id,
+            reasoning_enabled=reasoning_enabled,
+            structured_output_mode=ext.get("melix.structured_output.mode", ""),
+            tool_parser_mode=ext.get("melix.tool_parser.mode", ""),
         )
 
     @staticmethod

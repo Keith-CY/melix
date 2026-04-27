@@ -1238,6 +1238,9 @@ struct OpenAIHandlerTests {
             response.stats.lastTempMediaArtifactBytes = 2_048
             response.stats.lastTempMediaCleanupLatencyMs = 4
             response.stats.lastTempMediaCleanupFailureCount = 1
+            response.stats.generationStreamOwnerMode = "executor_owned"
+            response.stats.workerThreadInitLatencyMs = 7
+            response.stats.streamSyncFallbackCount = 0
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -1341,6 +1344,9 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2_048)
         #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
         #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 1)
+        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 7)
+        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 0)
     }
 
     @Test("chat completions translator preserves recovery metadata on worker requests")

@@ -106,6 +106,9 @@ message RuntimeStats {
   uint64 last_temp_media_artifact_bytes = 38;
   double last_temp_media_cleanup_latency_ms = 39;
   uint64 last_temp_media_cleanup_failure_count = 40;
+  string generation_stream_owner_mode = 41;
+  double worker_thread_init_latency_ms = 42;
+  uint64 stream_sync_fallback_count = 43;
 }
 
 message GetRuntimeStatsRequest {}

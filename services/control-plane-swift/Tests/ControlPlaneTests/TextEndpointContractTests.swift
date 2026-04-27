@@ -50,6 +50,342 @@ struct TextEndpointContractTests {
         #expect(decoded.includeUsage == true)
     }
 
+    @Test("reasoning controls decode across shipped text endpoints")
+    func reasoningControlsDecodeAcrossShippedTextEndpoints() throws {
+        let decoder = JSONDecoder()
+
+        let chat = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "enable_thinking": true,
+                  "reasoning_effort": "high",
+                  "messages": [
+                    { "role": "user", "content": "Think carefully." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let completions = try decoder.decode(
+            OpenAICompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "enable_thinking": false,
+                  "reasoning_effort": "low",
+                  "prompt": "Answer without hidden reasoning."
+                }
+                """.utf8
+            )
+        )
+        let responses = try decoder.decode(
+            OpenAIResponsesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "enable_thinking": true,
+                  "reasoning_effort": "medium",
+                  "input": "Use hidden reasoning."
+                }
+                """.utf8
+            )
+        )
+        let messages = try decoder.decode(
+            MelixMessagesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "enable_thinking": true,
+                  "reasoning_effort": "high",
+                  "messages": [
+                    { "role": "user", "content": "Use hidden reasoning." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(chat.enableThinking == true)
+        #expect(chat.reasoningEffort == "high")
+        #expect(completions.enableThinking == false)
+        #expect(completions.reasoningEffort == "low")
+        #expect(responses.enableThinking == true)
+        #expect(responses.reasoningEffort == "medium")
+        #expect(messages.enableThinking == true)
+        #expect(messages.reasoningEffort == "high")
+    }
+
+    @Test("reasoning resolver emits shared execution metadata across endpoint variants")
+    func reasoningResolverEmitsSharedExecutionMetadataAcrossEndpointVariants() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "reasoning-policy" })
+        let chat = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Think carefully.")],
+            enableThinking: true,
+            reasoningEffort: "high"
+        )
+        let completions = OpenAICompletionsRequest(
+            model: "melix-dev-text",
+            prompt: "Think carefully.",
+            enableThinking: true,
+            reasoningEffort: "high"
+        )
+        let responses = OpenAIResponsesRequest(
+            model: "melix-dev-text",
+            input: .text("Think carefully."),
+            enableThinking: true,
+            reasoningEffort: "high"
+        )
+        let messages = MelixMessagesRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Think carefully.")],
+            enableThinking: true,
+            reasoningEffort: "high"
+        )
+
+        let translated = try [
+            translator.translate(chat, modelHandle: "worker-text"),
+            translator.translate(completions, modelHandle: "worker-text"),
+            translator.translate(responses, modelHandle: "worker-text"),
+            translator.translate(messages, modelHandle: "worker-text"),
+        ]
+
+        for request in translated {
+            #expect(request.workerRequest.execution.reasoning.enabled)
+            #expect(request.workerRequest.execution.reasoning.separateStream)
+            #expect(request.workerRequest.execution.reasoning.modeSource == "request")
+            #expect(request.workerRequest.execution.reasoning.effort == "high")
+            #expect(request.workerRequest.execution.ext["melix.reasoning.mode"] == "enabled")
+            #expect(request.workerRequest.execution.ext["melix.reasoning.mode_source"] == "request")
+            #expect(request.workerRequest.execution.ext["melix.reasoning.effort"] == "high")
+        }
+    }
+
+    @Test("reasoning policy resolver covers template explicit-disable and family auto-detect precedence")
+    func reasoningPolicyResolverCoversTemplateExplicitDisableAndFamilyAutoDetectPrecedence() {
+        let resolver = ReasoningPolicyResolver()
+        let templatePolicy = ResolvedChatTemplatePolicy(
+            effectiveValues: [
+                "enable_thinking": .bool(true),
+                "reasoning_effort": .string(" HIGH ")
+            ],
+            source: "request"
+        )
+
+        let templateResolved = resolver.resolve(
+            modelID: "melix-dev-text",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: templatePolicy,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: .init(type: "adaptive", budgetTokens: 321)
+        )
+        #expect(templateResolved.mode == "enabled")
+        #expect(templateResolved.modeSource == "template")
+        #expect(templateResolved.effort == "high")
+        #expect(templateResolved.config?.budgetTokens == 321)
+        #expect(templateResolved.continuityRehydrated == false)
+
+        let explicitlyDisabled = resolver.resolve(
+            modelID: "melix-dev-text",
+            explicitEnableThinking: false,
+            explicitEffort: " LOW ",
+            templatePolicy: templatePolicy,
+            messagesThinking: nil,
+            preset: .init(type: "enabled", budgetTokens: 512),
+            modelDefault: nil
+        )
+        #expect(explicitlyDisabled.mode == "off")
+        #expect(explicitlyDisabled.modeSource == "request")
+        #expect(explicitlyDisabled.effort == "low")
+        #expect(explicitlyDisabled.continuityRehydrated == false)
+
+        let families = [
+            ("Qwen3-8B", "qwen"),
+            ("DeepSeek-R1", "deepseek"),
+            ("gpt-oss-20b", "gpt-oss")
+        ]
+        for (modelID, family) in families {
+            let resolved = resolver.resolve(
+                modelID: modelID,
+                explicitEnableThinking: nil,
+                explicitEffort: nil,
+                templatePolicy: nil,
+                messagesThinking: nil,
+                preset: nil,
+                modelDefault: nil
+            )
+            #expect(resolved.mode == "adaptive")
+            #expect(resolved.modeSource == "family_auto_detect")
+            #expect(resolved.autoDetectModelFamily == family)
+            #expect(resolved.continuityRehydrated == false)
+        }
+
+        let autoDetectedRequest = try? ChatRequestTranslator(requestIDGenerator: { "reasoning-auto-detect" })
+            .translate(
+                OpenAIChatCompletionsRequest(
+                    model: "Qwen3-8B",
+                    messages: [.init(role: "user", content: "Think carefully.")]
+                ),
+                modelHandle: "worker-text"
+            )
+        #expect(autoDetectedRequest?.workerRequest.execution.ext["melix.reasoning.auto_detect_model_family"] == "qwen")
+        #expect(autoDetectedRequest?.workerRequest.execution.reasoning.autoDetectModelFamily == "qwen")
+    }
+
+    @Test("reasoning suppressions have lowest precedence and only apply as fallback")
+    func reasoningSuppressionsHaveLowestPrecedenceAndOnlyApplyAsFallback() {
+        let resolver = ReasoningPolicyResolver()
+        let templatePolicy = ResolvedChatTemplatePolicy(
+            effectiveValues: ["enable_thinking": .bool(true)],
+            source: "request"
+        )
+
+        let templateResolved = resolver.resolve(
+            modelID: "plain-text-model",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: templatePolicy,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(templateResolved.mode == "enabled")
+        #expect(templateResolved.modeSource == "template")
+
+        let familyResolved = resolver.resolve(
+            modelID: "Qwen3-8B",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: nil,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(familyResolved.mode == "adaptive")
+        #expect(familyResolved.modeSource == "family_auto_detect")
+
+        let suppressed = resolver.resolve(
+            modelID: "plain-text-model",
+            explicitEnableThinking: nil,
+            explicitEffort: nil,
+            templatePolicy: nil,
+            messagesThinking: nil,
+            preset: nil,
+            modelDefault: nil,
+            suppressForStructuredOutput: true
+        )
+        #expect(suppressed.mode == "off")
+        #expect(suppressed.modeSource == "structured_output_suppression")
+    }
+
+    @Test("reasoning continuity store rejects blank inputs and defaults blank branches")
+    func reasoningContinuityStoreRejectsBlankInputsAndDefaultsBlankBranches() async {
+        let store = ReasoningContinuityStore()
+
+        #expect(
+            await store.record(sessionID: " ", branchID: "branch-main", requestID: "req", reasoningText: "hidden")
+                == nil
+        )
+        #expect(
+            await store.record(sessionID: "session", branchID: "branch-main", requestID: " ", reasoningText: "hidden")
+                == nil
+        )
+        #expect(
+            await store.record(sessionID: "session", branchID: "branch-main", requestID: "req", reasoningText: " ")
+                == nil
+        )
+
+        let record = await store.record(
+            sessionID: " session ",
+            branchID: " ",
+            requestID: " req ",
+            reasoningText: " hidden "
+        )
+        #expect(record?.sessionID == "session")
+        #expect(record?.branchID == "branch-main")
+        #expect(record?.requestID == "req")
+        #expect(record?.reasoningText == "hidden")
+        #expect(await store.latest(sessionID: " ", branchID: "branch-main") == nil)
+        #expect(await store.latest(sessionID: "session", branchID: " ")?.continuityKey == "session::branch-main::req")
+    }
+
+    @Test("reasoning continuity store bounds retained entries and hidden text size")
+    func reasoningContinuityStoreBoundsRetainedEntriesAndHiddenTextSize() async {
+        let store = ReasoningContinuityStore(maxEntries: 2, maxReasoningTextUTF8Bytes: 8)
+
+        _ = await store.record(
+            sessionID: "session-a",
+            branchID: "main",
+            requestID: "req-a",
+            reasoningText: "1234567890"
+        )
+        _ = await store.record(
+            sessionID: "session-b",
+            branchID: "main",
+            requestID: "req-b",
+            reasoningText: "abcdefghij"
+        )
+        _ = await store.record(
+            sessionID: "session-c",
+            branchID: "main",
+            requestID: "req-c",
+            reasoningText: "klmnopqrst"
+        )
+
+        #expect(await store.latest(sessionID: "session-a", branchID: "main") == nil)
+        #expect(await store.latest(sessionID: "session-b", branchID: "main")?.reasoningText == "abcdefgh")
+        #expect(await store.latest(sessionID: "session-c", branchID: "main")?.reasoningText == "klmnopqr")
+    }
+
+    @Test("reasoning continuity store updates existing branches and honors zero limits")
+    func reasoningContinuityStoreUpdatesExistingBranchesAndHonorsZeroLimits() async {
+        let updateStore = ReasoningContinuityStore(maxEntries: 1)
+
+        _ = await updateStore.record(
+            sessionID: "session-update",
+            branchID: "main",
+            requestID: "req-old",
+            reasoningText: "old hidden"
+        )
+        _ = await updateStore.record(
+            sessionID: "session-update",
+            branchID: "main",
+            requestID: "req-new",
+            reasoningText: "new hidden"
+        )
+
+        #expect(await updateStore.latest(sessionID: "session-update", branchID: "main")?.requestID == "req-new")
+
+        let zeroEntryStore = ReasoningContinuityStore(maxEntries: 0)
+        let evictedRecord = await zeroEntryStore.record(
+            sessionID: "session-zero-entry",
+            branchID: "main",
+            requestID: "req-zero-entry",
+            reasoningText: "hidden"
+        )
+        #expect(evictedRecord?.requestID == "req-zero-entry")
+        #expect(await zeroEntryStore.latest(sessionID: "session-zero-entry", branchID: "main") == nil)
+
+        let zeroByteStore = ReasoningContinuityStore(maxReasoningTextUTF8Bytes: 0)
+        let rejectedRecord = await zeroByteStore.record(
+            sessionID: "session-zero-byte",
+            branchID: "main",
+            requestID: "req-zero-byte",
+            reasoningText: "hidden"
+        )
+        #expect(rejectedRecord == nil)
+    }
+
     @Test("request contracts preserve message names across text endpoints")
     func requestContractsPreserveMessageNamesAcrossTextEndpoints() throws {
         let decoder = JSONDecoder()
@@ -409,6 +745,31 @@ struct TextEndpointContractTests {
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "off")
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "request")
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == nil)
+    }
+
+    @Test("chat template cache fingerprint stores hashes not raw kwargs JSON")
+    func chatTemplateCacheFingerprintStoresHashesNotRawKwargsJSON() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "chat-template-hash" })
+        let translated = try translator.translate(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Use template kwargs.")],
+                chatTemplateKwargs: .init(values: [
+                    "enable_thinking": .bool(true),
+                    "custom_flag": .string("enabled")
+                ])
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let effectiveJSON = try #require(
+            translated.workerRequest.execution.ext["melix.chat_template_kwargs.effective_json"]
+        )
+        let scopeHash = translated.workerRequest.execution.scope.chatTemplateKwargsHash
+
+        #expect(scopeHash != effectiveJSON)
+        #expect(scopeHash.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil)
+        #expect(translated.workerRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] == scopeHash)
     }
 
     @Test("responses input supports both text and message-array codable forms")

@@ -2837,8 +2837,11 @@ public actor ControlPlaneService {
         let sourceKind = model.settings.ext["melix.source_kind"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if sourceKind == "hf_repo" || sourceKind == "hub_repo" {
+        if ["hf_repo", "hub_repo", "hf_cache_snapshot"].contains(sourceKind) {
             return sourceKind
+        }
+        if ["local_path", "local_mlx_directory", "managed_local"].contains(sourceKind) {
+            return nil
         }
         let explicitRepoID = model.settings.ext["melix.hf_repo_id"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -4062,12 +4062,13 @@ struct ControlPlaneServiceTests {
             )
         )
 
-        let response = try await service.execute(makeRunBenchRequest())
+        let response = try await service.execute(makeRunBenchRequest(modelID: "melix-dev-text"))
         let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
         let snapshot = try await service.execute(makeMetricsRequest())
 
         #expect(response.ok)
         #expect(lastRequest.suites == ["smoke", "latency"])
+        #expect(lastRequest.parameters["require_live_model"] == nil)
         #expect(response.ops.reportPath == reportPath)
         #expect(response.ops.reportMarkdown.contains("Melix Bench"))
         #expect(response.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
@@ -4525,6 +4526,50 @@ struct ControlPlaneServiceTests {
         #expect(lastBenchRequest.parameters["require_live_model"] == "true")
         #expect(lastBenchRequest.parameters["live_model_source"] == "hub_repo")
         #expect(lastBenchRequest.sourceRepo == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+    }
+
+    @Test("execute does not tag local catalog benchmark targets as live model evidence")
+    func executeDoesNotTagLocalCatalogBenchmarkTargetsAsLiveModelEvidence() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-local-catalog-report.md").path
+        try "# Local Catalog Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        var localModel = ModelCatalog.devTextModel()
+        localModel.modelID = "mlx-community/local-cache-model"
+        localModel.settings.ext["melix.source_kind"] = "local_path"
+        localModel.settings.ext["melix.model_path"] = "/tmp/melix/local-cache-model"
+        localModel.settings.ext["melix.task_kind"] = "text-generation"
+
+        let catalog = ModelCatalog(seedModels: [localModel])
+        _ = await catalog.loadModel(id: "mlx-community/local-cache-model", dispatchHandle: "local-cache::loaded")
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-local-catalog", reportPath: reportPath))
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(
+                modelID: "mlx-community/local-cache-model",
+                suites: ["smoke"],
+                contextLengths: [256],
+                generationLength: 8,
+                batchSizes: [1],
+                repeats: 1,
+                cacheProfile: "cold",
+                reasoningMode: "disabled",
+                structuredOutputMode: "plain_text"
+            )
+        )
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastBenchRequest.parameters["require_live_model"] == nil)
+        #expect(lastBenchRequest.parameters["live_model_source"] == nil)
+        #expect(lastBenchRequest.sourceRepo == "/tmp/melix/local-cache-model")
     }
 
     @Test("execute imports a direct Hugging Face benchmark target and routes gemma4 to the VLM benchmark path")

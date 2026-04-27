@@ -231,7 +231,10 @@ struct AppMainBootstrapTests {
             bootstrapFactory: { _ in bootstrap },
             presentationMode: .dockAndTray
         )
-        try await waitForBootstrapCondition("expected dock and tray launch handshake to complete") {
+        try await waitForBootstrapCondition(
+            "expected dock and tray launch handshake to complete",
+            timeout: .seconds(5)
+        ) {
             await client.handshakeCount == 1
         }
 

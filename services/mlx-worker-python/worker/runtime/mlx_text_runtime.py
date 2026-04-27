@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
 
@@ -17,6 +18,7 @@ class RuntimeUnavailableError(RuntimeError):
 @dataclass
 class RuntimeTokenEvent:
     text: str
+    raw_text: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     prompt_tps: float | None = None
@@ -264,6 +266,7 @@ class AutoMLXBackend:
                 continue
             yield RuntimeTokenEvent(
                 text=text,
+                raw_text=getattr(response, "raw_text", None),
                 prompt_tokens=getattr(response, "prompt_tokens", None),
                 completion_tokens=getattr(response, "generation_tokens", None),
                 prompt_tps=getattr(response, "prompt_tps", None),
@@ -274,20 +277,46 @@ class AutoMLXBackend:
 
 
 class MLXTextRuntime:
-    def __init__(self, backend: Any | None = None) -> None:
+    def __init__(self, backend: Any | None = None, executor: MLXRuntimeExecutor | None = None) -> None:
         self._backend = backend or AutoMLXBackend()
+        self._executor = executor
 
     @property
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "unknown-runtime")
 
     def load_model(self, model_spec):
-        return self._backend.load_model(model_spec)
+        if self._executor is None:
+            return self._backend.load_model(model_spec)
+        return self._executor.run(lambda: self._backend.load_model(model_spec))
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
 
     def render_prompt(
+        self,
+        messages,
+        loaded_model: Any | None = None,
+        template_kwargs: dict[str, Any] | None = None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> str:
+        if self._executor is not None:
+            return self._executor.run(
+                lambda: self._render_prompt(
+                    messages,
+                    loaded_model=loaded_model,
+                    template_kwargs=template_kwargs,
+                    execution_ext=execution_ext,
+                )
+            )
+        return self._render_prompt(
+            messages,
+            loaded_model=loaded_model,
+            template_kwargs=template_kwargs,
+            execution_ext=execution_ext,
+        )
+
+    def _render_prompt(
         self,
         messages,
         loaded_model: Any | None = None,
@@ -333,8 +362,19 @@ class MLXTextRuntime:
         execution_ext: dict[str, str] | None = None,
     ):
         _ = execution_ext
-        for item in self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event):
-            if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
-                yield item
-            else:
-                yield RuntimeTokenEvent(text=str(item))
+        if self._executor is None:
+            item_iterable = self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+        else:
+            item_iterable = self._executor.iterate(
+                lambda: self._backend.generate_tokens(loaded_model, prompt, sampling, cancel_event)
+            )
+        try:
+            for item in item_iterable:
+                if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)):
+                    yield item
+                else:
+                    yield RuntimeTokenEvent(text=str(item))
+        finally:
+            close = getattr(item_iterable, "close", None)
+            if callable(close):
+                close()

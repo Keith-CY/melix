@@ -230,6 +230,11 @@ message CacheScope {
   string reasoning_mode = 7;
   string multimodal_adapter_hash = 8;
   string scope_id = 9;
+  string reasoning_effort = 10;
+  string tool_parser_mode = 11;
+  string structured_output_mode = 12;
+  string chat_template_kwargs_hash = 13;
+  bool reasoning_continuity_present = 14;
 }
 
 message CacheKey {
@@ -271,6 +276,11 @@ message ReasoningConfig {
   bool enabled = 1;
   string parser = 2;
   bool separate_stream = 3;
+  string mode = 4;
+  string mode_source = 5;
+  string effort = 6;
+  string auto_detect_model_family = 7;
+  bool continuity_rehydrated = 8;
 }
 
 message ToolDefinition {
