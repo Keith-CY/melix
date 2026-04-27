@@ -1,13 +1,30 @@
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
+from threading import Event, get_ident
+import time
 
 from worker.grpc_server import WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+class ThreadRecordingTokenizer:
+    def __init__(self) -> None:
+        self.thread_ids: list[int] = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        _ = messages
+        _ = kwargs
+        self.thread_ids.append(get_ident())
+        return "<warmup-prompt>"
 
 
 class FakeBackend:
     runtime_name = "fake-mlx"
+
+    def __init__(self) -> None:
+        self.generated_prompts: list[str] = []
 
     def load_model(self, model_spec):
         return {"model_id": model_spec.model_id}
@@ -15,10 +32,74 @@ class FakeBackend:
     def estimate_resident_bytes(self, model_spec):
         return 1024
 
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        self.generated_prompts.append(str(prompt))
+        yield "warm"
+
+
+class WarmupFailingBackend(FakeBackend):
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        raise RuntimeError("warmup exploded")
+        yield "unreachable"
+
+
+class ThreadRecordingWarmupBackend(FakeBackend):
+    def __init__(self, tokenizer: ThreadRecordingTokenizer) -> None:
+        super().__init__()
+        self._tokenizer = tokenizer
+        self.generation_thread_ids: list[int] = []
+
+    def load_model(self, model_spec):
+        return {
+            "model_id": model_spec.model_id,
+            "tokenizer": self._tokenizer,
+        }
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        if cancel_event.is_set():
+            return
+        self.generation_thread_ids.append(get_ident())
+        yield "warm"
+
+
+class CancelAwareWarmupBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_seen_on_close = False
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        try:
+            yield "warm"
+            deadline = time.perf_counter() + 1.0
+            while not cancel_event.is_set():
+                if time.perf_counter() >= deadline:
+                    raise RuntimeError(
+                        "CancelAwareWarmupBackend: cancel_event not set within 1 s"
+                    )
+                time.sleep(0.001)
+        finally:
+            self.cancel_seen_on_close = cancel_event.is_set()
+
 
 def build_runtime_service() -> WorkerRuntimeService:
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
     registry = WorkerRegistry(
-        runtime=MLXTextRuntime(backend=FakeBackend()),
+        runtime=MLXTextRuntime(backend=FakeBackend(), executor=executor),
+        mlx_executor=executor,
         model_catalog=WorkerModelCatalog(),
     )
     return WorkerRuntimeService(registry)
@@ -62,6 +143,253 @@ def test_load_model_returns_handle_and_lists_model() -> None:
     )
 
     assert listed.model_handles == [response.model_handle]
+
+
+def test_warmup_model_runs_loaded_text_model_and_reports_executor_stats() -> None:
+    service = build_runtime_service()
+    load_response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    response = service.WarmupModel(
+        runtime_pb2.WarmupModelRequest(
+            model_handle=load_response.model_handle,
+            synthetic_messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Warm up the runtime.")],
+                )
+            ],
+        ),
+        context=None,
+    )
+    stats = service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+
+    assert response.ok is True
+    assert response.warmup_ms >= 0
+    assert stats.generation_stream_owner_mode == "executor_owned"
+    assert stats.worker_thread_init_latency_ms >= 0.0
+    assert stats.stream_sync_fallback_count == 0
+
+
+def test_warmup_model_renders_prompt_and_generates_on_executor_thread() -> None:
+    tokenizer = ThreadRecordingTokenizer()
+    backend = ThreadRecordingWarmupBackend(tokenizer)
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend, executor=executor),
+            mlx_executor=executor,
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    main_thread_id = get_ident()
+    try:
+        load_response = service.LoadModel(
+            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+            context=None,
+        )
+        response = service.WarmupModel(
+            runtime_pb2.WarmupModelRequest(model_handle=load_response.model_handle),
+            context=None,
+        )
+        executor_thread_id = executor.run(get_ident)
+    finally:
+        executor.shutdown()
+
+    assert response.ok is True
+    assert tokenizer.thread_ids == [executor_thread_id]
+    assert backend.generation_thread_ids == [executor_thread_id]
+    assert executor_thread_id != main_thread_id
+
+
+def test_thread_recording_warmup_backend_stops_immediately_when_cancelled() -> None:
+    tokenizer = ThreadRecordingTokenizer()
+    backend = ThreadRecordingWarmupBackend(tokenizer)
+    cancel_event = Event()
+    cancel_event.set()
+
+    generated = list(
+        backend.generate_tokens(
+            loaded_model=backend.load_model(WorkerModelCatalog.dev_text_model()),
+            prompt="<warmup-prompt>",
+            sampling=None,
+            cancel_event=cancel_event,
+        )
+    )
+
+    assert generated == []
+    assert backend.generation_thread_ids == []
+
+
+def test_warmup_model_closes_generation_after_the_first_token() -> None:
+    backend = CancelAwareWarmupBackend()
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend, executor=executor),
+            mlx_executor=executor,
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    try:
+        response = service.LoadModel(
+            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+            context=None,
+        )
+        warmup = service.WarmupModel(
+            runtime_pb2.WarmupModelRequest(model_handle=response.model_handle),
+            context=None,
+        )
+    finally:
+        executor.shutdown()
+
+    assert warmup.ok is True
+    assert backend.cancel_seen_on_close is True
+
+
+def test_load_model_warmup_after_load_runs_synthetic_generation() -> None:
+    backend = FakeBackend()
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=backend),
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            warmup_after_load=True,
+        ),
+        context=None,
+    )
+
+    assert response.ok is True
+    assert backend.generated_prompts
+
+
+def test_load_model_warmup_after_load_rejects_non_generation_runtime_and_unloads_handle() -> None:
+    service = build_runtime_service()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_embedding_model(),
+            warmup_after_load=True,
+        ),
+        context=None,
+    )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "unimplemented"
+    assert listed.model_handles == []
+
+
+def test_load_model_warmup_after_load_reports_warmup_failures_and_unloads_handle() -> None:
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=WarmupFailingBackend()),
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            warmup_after_load=True,
+        ),
+        context=None,
+    )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "warmup_failed"
+    assert listed.model_handles == []
+
+
+def test_load_model_warmup_after_load_rejects_missing_warmup_result_and_unloads_handle(monkeypatch) -> None:
+    service = build_runtime_service()
+    monkeypatch.setattr(
+        service._registry,
+        "warmup_model",
+        lambda handle, synthetic_messages=None: None,
+    )
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            warmup_after_load=True,
+        ),
+        context=None,
+    )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "warmup_failed"
+    assert "returned None" in response.error.message
+    assert listed.model_handles == []
+
+
+def test_warmup_model_rejects_unknown_model_handle() -> None:
+    service = build_runtime_service()
+
+    response = service.WarmupModel(
+        runtime_pb2.WarmupModelRequest(model_handle="missing-model::1"),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "not_found"
+
+
+def test_warmup_model_rejects_loaded_non_generation_runtime() -> None:
+    service = build_runtime_service()
+    load_response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_embedding_model()),
+        context=None,
+    )
+
+    response = service.WarmupModel(
+        runtime_pb2.WarmupModelRequest(model_handle=load_response.model_handle),
+        context=None,
+    )
+
+    assert load_response.ok is True
+    assert response.ok is False
+    assert response.error.code == "unimplemented"
+
+
+def test_warmup_model_reports_generation_failures() -> None:
+    service = WorkerRuntimeService(
+        WorkerRegistry(
+            runtime=MLXTextRuntime(backend=WarmupFailingBackend()),
+            model_catalog=WorkerModelCatalog(),
+        )
+    )
+    load_response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+
+    response = service.WarmupModel(
+        runtime_pb2.WarmupModelRequest(model_handle=load_response.model_handle),
+        context=None,
+    )
+
+    assert load_response.ok is True
+    assert response.ok is False
+    assert response.error.code == "warmup_failed"
 
 
 def test_load_model_returns_residency_contract_and_loaded_model_summaries() -> None:

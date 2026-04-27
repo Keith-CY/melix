@@ -7,6 +7,13 @@ import MelixWorkerProtocol
 
 @Suite("Request Coordinator", .serialized)
 struct RequestCoordinatorTests {
+    @Test("python worker stream owner mode uses sentinel for unknown values")
+    func pythonWorkerStreamOwnerModeUsesSentinelForUnknownValues() {
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("") == -1)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("future_mode") == -1)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("executor_owned") == 1)
+    }
+
     @Test("empty model identifiers are rejected before dispatch")
     func emptyModelIdentifiersAreRejectedBeforeDispatch() async throws {
         let coordinator = RequestCoordinator(
@@ -140,6 +147,40 @@ struct RequestCoordinatorTests {
             return delta.text == "resumed"
         })
         #expect(await workerClient.abortedRequestIDs.isEmpty)
+        #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
+    }
+
+    @Test("resume synthesizes disconnect bookkeeping when a request has no active consumers")
+    func resumeSynthesizesDisconnectBookkeepingWhenARequestHasNoActiveConsumers() async throws {
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: BlockingWorkerClient()),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.1
+            )
+        )
+
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-detach",
+            modelID: "test-model"
+        )
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "req-detach")
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "missing")
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-resume-race",
+            modelID: "test-model"
+        )
+
+        let resumedExecution = try await coordinator.resumeChatCompletion(requestID: "req-resume-race")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(resumedExecution.requestID == "req-resume-race")
+        #expect(resumedExecution.modelID == "test-model")
         #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
         #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
     }
@@ -758,6 +799,9 @@ struct RequestCoordinatorTests {
             response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 2048
             response.stats.l1HitRate = 0.5
+            response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
+            response.stats.workerThreadInitLatencyMs = 4
+            response.stats.streamSyncFallbackCount = 2
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -807,6 +851,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
+        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
+        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
     }
 
     @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
