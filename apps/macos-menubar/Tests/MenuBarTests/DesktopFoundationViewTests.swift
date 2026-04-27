@@ -3483,24 +3483,113 @@ struct DesktopFoundationViewTests {
 
         #expect(blocks == [
             .paragraph("Intro **bold** and _italic_ with `code`."),
-            .unorderedList(["one", "two"]),
-            .orderedList(["first", "second"]),
+            .unorderedList([
+                DesktopChatMarkdownListItem(text: "one"),
+                DesktopChatMarkdownListItem(text: "two"),
+            ]),
+            .orderedList(start: 1, items: [
+                DesktopChatMarkdownListItem(text: "first"),
+                DesktopChatMarkdownListItem(text: "second"),
+            ]),
             .codeBlock(language: "swift", code: "let value = 1"),
-            .table(header: ["Metric", "Value"], rows: [["TTFT", "12 ms"]]),
+            .table(
+                header: ["Metric", "Value"],
+                alignments: [.none, .trailing],
+                rows: [["TTFT", "12 ms"]]
+            ),
+        ])
+    }
+
+    @Test("chat markdown parser builds AST backed blocks")
+    func chatMarkdownParserBuildsASTBackedBlocks() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        # Result
+
+        > quoted **answer**
+
+        - parent
+          - child
+
+        3. first
+           1. child
+
+        ---
+
+        ![diagram alt](https://example.com/diagram.png)
+
+        | Name | Alignment | Note |
+        | :--- | ---: | :---: |
+        | Alpha \\| Beta | Right | Center |
+        """)
+
+        #expect(blocks == [
+            .heading(level: 1, text: "Result"),
+            .blockQuote([
+                .paragraph("quoted **answer**"),
+            ]),
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "parent",
+                    children: [
+                        .unorderedList([
+                            DesktopChatMarkdownListItem(text: "child"),
+                        ]),
+                    ]
+                ),
+            ]),
+            .orderedList(
+                start: 3,
+                items: [
+                    DesktopChatMarkdownListItem(
+                        text: "first",
+                        children: [
+                            .orderedList(
+                                start: 1,
+                                items: [
+                                    DesktopChatMarkdownListItem(text: "child"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+            .thematicBreak,
+            .paragraph("diagram alt"),
+            .table(
+                header: ["Name", "Alignment", "Note"],
+                alignments: [.leading, .trailing, .center],
+                rows: [["Alpha | Beta", "Right", "Center"]]
+            ),
         ])
     }
 
     @Test("chat markdown inline formatter removes markdown markers while preserving readable text")
     func chatMarkdownInlineFormatterRemovesMarkers() {
         let attributed = DesktopChatMarkdownInlineFormatter.attributedString(
-            from: "**bold** and _italic_ and `code`"
+            from: "**bold** and _italic_ and `code` and ~~strike~~"
         )
         let linked = DesktopChatMarkdownInlineFormatter.attributedString(
             from: "[Melix](https://example.com)"
         )
+        let image = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "![Diagram](https://example.com/diagram.png)"
+        )
+        let imageTitle = DesktopChatMarkdownInlineFormatter.attributedString(
+            from: "![](https://example.com/diagram.png \"Diagram title\")"
+        )
+        let lineBreaks = DesktopChatMarkdownInlineFormatter.attributedString(
+            fromSanitized: "soft\nbreak and hard  \nbreak"
+        )
+        let inlineHTML = DesktopChatMarkdownInlineFormatter.attributedString(
+            fromSanitized: "Hello <span>ignored</span>"
+        )
 
-        #expect(String(attributed.characters) == "bold and italic and code")
+        #expect(String(attributed.characters) == "bold and italic and code and strike")
         #expect(String(linked.characters) == "Melix")
+        #expect(String(image.characters) == "Diagram")
+        #expect(String(imageTitle.characters) == "Diagram title")
+        #expect(String(lineBreaks.characters) == "soft break and hard\nbreak")
+        #expect(String(inlineHTML.characters) == "Hello ignored")
         #expect(linked.runs.allSatisfy { $0.link == nil })
     }
 
@@ -3524,6 +3613,37 @@ struct DesktopFoundationViewTests {
         | --- | --- |
         | TTFT |
         | TPS | 20 |
+        """))
+
+        #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat markdown body view hosts rich AST backed block branches")
+    @MainActor
+    func chatMarkdownBodyViewHostsRichASTBackedBlockBranches() {
+        let view = hostView(DesktopChatMarkdownBodyView(rawText: """
+        # Heading
+        ## Subheading
+        ### Minor
+
+        > quoted
+
+        ---
+
+        - parent
+          - child
+
+        3. first
+           1. child
+
+        ```
+        blank language
+        ```
+
+        | Left | Center | Right |
+        | :--- | :---: | ---: |
+        | A | B | C |
+        | Long | Row | Extra | Trimmed |
         """))
 
         #expect(view.subviews.isEmpty == false)
@@ -3569,6 +3689,63 @@ struct DesktopFoundationViewTests {
                 code: "<b>keep as code</b>\n[keep](javascript:alert(1))"
             ),
         ])
+    }
+
+    @Test("chat markdown renderer preserves inline source edge cases")
+    func chatMarkdownRendererPreservesInlineSourceEdgeCases() {
+        let softBreak = DesktopChatMarkdownRenderer.blocks(from: "soft\nbreak")
+        let hardBreak = DesktopChatMarkdownRenderer.blocks(from: "hard  \nbreak")
+        let strikeLinkAndTitleImage = DesktopChatMarkdownRenderer.blocks(from: """
+        ~~gone~~ [label](https://example.com) ![](https://example.com/image.png "fallback")
+        """)
+        let unclosedFence = DesktopChatMarkdownRenderer.blocks(from: """
+        ```swift
+        let value = 2
+        """)
+
+        #expect(softBreak == [.paragraph("soft break")])
+        #expect(hardBreak == [.paragraph("hard\nbreak")])
+        #expect(strikeLinkAndTitleImage == [.paragraph("~~gone~~ label fallback")])
+        #expect(unclosedFence == [.codeBlock(language: "swift", code: "let value = 2")])
+    }
+
+    @Test("chat markdown renderer caches parsed blocks and evicts old entries")
+    func chatMarkdownRendererCachesParsedBlocksAndEvictsOldEntries() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 2)
+
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let first = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let second = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "B")
+        _ = DesktopChatMarkdownRenderer.blocks(from: "C")
+        let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.blocks(from: "A")
+        let fourth = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(first.parseMissCount == 1)
+        #expect(second.parseHitCount == 1)
+        #expect(third.evictionCount == 1)
+        #expect(fourth.parseMissCount == 4)
+        #expect(fourth.latestParseDurationMS >= 0)
+    }
+
+    @Test("chat markdown renderer caches inline attributed strings and evicts old entries")
+    func chatMarkdownRendererCachesInlineAttributedStringsAndEvictsOldEntries() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 1)
+
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**A**")
+        let first = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**A**")
+        let second = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**B**")
+        let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(first.inlineMissCount == 1)
+        #expect(second.inlineHitCount == 1)
+        #expect(third.evictionCount == 1)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
     }
 
     @Test("chat session sidebar renders the empty state when no chat sessions exist")

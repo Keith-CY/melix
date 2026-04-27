@@ -16,17 +16,39 @@ latest exchange in view without requiring manual scrolling.
 - The pending row is presentation state only: it is replaced by the first
   assistant token or final assistant text, and it is removed after failures or
   empty completions.
-- Assistant and reasoning rows render sanitized Markdown for inline emphasis,
-  inline code, lists, fenced code blocks, and simple pipe tables.
+- Assistant and reasoning rows render sanitized Markdown through an AST-backed
+  renderer. Supported blocks include paragraphs, headings, nested ordered and
+  unordered lists, block quotes, fenced and indented code blocks, tables with
+  column alignment, and thematic breaks. Supported inline constructs include
+  emphasis, strong emphasis, inline code, strikethrough, and readable link or
+  image labels.
 - The transcript auto-scrolls to the newest row when pending status, streamed
   content, or completed assistant output extends the conversation.
 - User, tool, and error rows remain literal plain text so prompts, logs, and
   diagnostics are not reformatted.
 
+## Rendering Architecture
+
+- Chat Markdown parsing uses the `swift-markdown` AST rather than a hand-written
+  line scanner. A block visitor converts parsed Markdown into small view models,
+  and a separate inline visitor builds safe `AttributedString` values for SwiftUI
+  text rendering.
+- The renderer keeps Markdown as presentation state only. The chat transcript,
+  persisted session history, exports, and runtime messages continue to store the
+  raw model output.
+- Parsed block output and inline attributed strings are cached after
+  sanitization. The cache is lock-protected, bounded, and reports internal hit,
+  miss, eviction, and latest parse-duration counters for tests and local metrics.
+- Code fence contents are preserved after sanitization, with the closing-fence
+  parser newline normalized to match the previous display behavior.
+
 ## Safety And Persistence
 
-- Rich output is sanitized with `RichOutputSanitizer` before Markdown parsing.
-- Unsafe links and active HTML are never rendered as rich content.
+- Rich output is sanitized with `RichOutputSanitizer` before Markdown parsing or
+  inline formatting.
+- Unsafe links and active HTML are never rendered as rich content. Links render
+  as readable label text without active navigation attributes, and images render
+  safe alternate text only; remote image loading is not performed.
 - Empty pending assistant rows are excluded from persisted chat session state.
 - Stored transcript text remains the raw model text; Markdown rendering is
   view-only.
@@ -35,7 +57,16 @@ latest exchange in view without requiring manual scrolling.
 
 - Runtime tests cover pending row creation, in-place final assistant replacement,
   stream failure cleanup, and empty completion cleanup.
-- View tests cover Markdown block parsing, inline Markdown formatting, row-kind
-  scoping, and sanitizer integration.
+- View tests cover Markdown block parsing, nested lists, block quotes, headings,
+  thematic breaks, aligned tables, escaped table pipes, image-alt fallback, safe
+  link-label rendering, row-kind scoping, sanitizer integration, and cache hit,
+  miss, eviction, and repeated-render behavior.
 - Manual UI verification should use the Chat surface with a delayed model
   response to confirm the pending indicator appears and then clears.
+
+## Metrics
+
+- Chat Markdown parse cache metrics: parse hit count, parse miss count, eviction
+  count, and latest parse duration in milliseconds.
+- Runtime hot-path metrics: N/A. The change is scoped to local UI rendering and
+  does not alter model execution or HTTP serving paths.
