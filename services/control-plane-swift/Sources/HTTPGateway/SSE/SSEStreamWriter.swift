@@ -67,11 +67,13 @@ public struct SSEStreamWriter: Sendable {
             let disconnectNotifier = DisconnectNotifier(callback: onDisconnect)
             let keepaliveTask = keepaliveTask(continuation: continuation)
             let task = Task {
+                var emittedDataFrame = false
                 do {
                     for try await event in stream {
                         if !options.includeUsage, case .usageDelta = event.payload {
                             continue
                         }
+                        emittedDataFrame = true
                         continuation.yield(
                             encode(
                                 event: event,
@@ -83,9 +85,13 @@ public struct SSEStreamWriter: Sendable {
                         )
                     }
                 } catch {
+                    emittedDataFrame = true
                     continuation.yield(errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription))
                 }
 
+                if !emittedDataFrame {
+                    continuation.yield(emptyCompletionFrame(requestID: requestID, modelID: modelID, shape: shape))
+                }
                 keepaliveTask?.cancel()
                 continuation.yield(doneFrame())
                 continuation.finish()
@@ -627,6 +633,28 @@ public struct SSEStreamWriter: Sendable {
                 "code": code,
                 "message": message,
             ]
+        )
+    }
+
+    private func emptyCompletionFrame(
+        requestID: String,
+        modelID: String,
+        shape: StreamShape
+    ) -> Data {
+        var completed = Melix_Worker_V1_Completed()
+        completed.finishReason = "stop"
+
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.completed = completed
+
+        return encode(
+            event: event,
+            requestID: requestID,
+            modelID: modelID,
+            shape: shape,
+            toolParser: nil
         )
     }
 
