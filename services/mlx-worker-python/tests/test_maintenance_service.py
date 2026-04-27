@@ -49,7 +49,7 @@ from worker.productization.benchmark_schemas import (
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.engine.maintenance_core import MaintenanceCore
+from worker.engine.maintenance_core import BenchSample, MaintenanceCore
 from worker.engine import maintenance_core as maintenance_core_module
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
@@ -5005,6 +5005,85 @@ def test_run_bench_matrix_supports_vlm_task_families(tmp_path: Path) -> None:
     assert len(response.summary_rows) == 1
     assert response.summary_rows[0].task_kind == "image-text-to-text"
     assert response.summary_rows[0].ttft_mean_ms > 0
+
+
+def test_run_bench_matrix_preserves_vlm_request_probe_fields(tmp_path: Path) -> None:
+    image_path = tmp_path / "doc-image-1.txt"
+    image_path.write_text("benchmark vision sample", encoding="utf-8")
+
+    class LocalImageBenchmarkFetcher(FakeBenchmarkHFDatasetFetcher):
+        def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
+            dataset = params.get("dataset", "")
+            if dataset == "huggingface/documentation-images":
+                if endpoint == "rows":
+                    return {"rows": [{"row": {"image": {"src": str(image_path)}}}]}
+                return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+            return super().__call__(endpoint, params)
+
+    registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
+    core = MaintenanceCore(
+        registry,
+        jobs_root=tmp_path / "model-ops",
+        benchmark_suite_catalog=BenchmarkSuiteCatalog(
+            hf_dataset_fetcher=LocalImageBenchmarkFetcher()
+        ),
+    )
+    loaded = registry.load_model(WorkerModelCatalog.dev_vlm_model())
+    service = WorkerMaintenanceService(registry, jobs_root=tmp_path / "model-ops")
+    service._core = core
+
+    def fake_measure_vlm_bench_sample(**kwargs) -> BenchSample:
+        _ = kwargs
+        return BenchSample(
+            ttft_ms=12.3,
+            total_latency_ms=45.6,
+            completion_tokens=2,
+            prompt_tokens=11,
+            request_latency_ms=45.6,
+            prefill_tokens_per_second=88.8,
+            decode_tokens_per_second=99.9,
+            peak_memory_bytes=1234.0,
+            prompt_render_ms=7.5,
+            prefill_ms=12.3,
+            decode_ms=33.3,
+            first_token_index=1,
+            runtime_kind="vlm",
+        )
+
+    core._measure_vlm_bench_sample = fake_measure_vlm_bench_sample  # type: ignore[method-assign]
+
+    response = service.RunBenchMatrix(
+        maintenance_pb2.RunBenchMatrixRequest(
+            model_handle=loaded.handle,
+            task_kind="image-text-to-text",
+            source_repo="unsloth/gemma-4-E4B-it-MLX-8bit",
+            suite_ids=["smoke"],
+            context_lengths=[512],
+            generation_lengths=[64],
+            batch_sizes=[1],
+            cache_profiles=["cold"],
+            reasoning_modes=["default"],
+            structured_output_modes=["plain_text"],
+            concurrency_levels=[1],
+            repeats=1,
+            requests=1,
+        ),
+        context=None,
+    )
+
+    run_dir = tmp_path / "model-ops" / "bench" / "matrix-runs" / response.job.job_id
+    request_rows = [
+        json.loads(line)
+        for line in (run_dir / "bench-matrix-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert len(request_rows) == 1
+    assert request_rows[0]["prompt_render_ms"] == 7.5
+    assert request_rows[0]["prefill_ms"] == 12.3
+    assert request_rows[0]["decode_ms"] == 33.3
+    assert request_rows[0]["first_token_index"] == 1
+    assert request_rows[0]["runtime_kind"] == "vlm"
 
 
 def test_run_bench_persists_completed_queue_state(tmp_path: Path) -> None:
