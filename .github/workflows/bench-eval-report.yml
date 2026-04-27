@@ -87,6 +87,7 @@ jobs:
               print_runtime_logs
               exit 1
             fi
+            source "$MELIX_RUNTIME_DIR/env.sh"
             trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
 
             swift run melix bench run \
@@ -178,6 +179,7 @@ jobs:
               print_runtime_logs
               exit 1
             fi
+            source "$MELIX_RUNTIME_DIR/env.sh"
             trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
 
             swift run melix bench run \
