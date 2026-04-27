@@ -17,6 +17,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix remote-server test"))
         #expect(MelixCLIParser.usageText.contains("melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL)"))
         #expect(MelixCLIParser.usageText.contains("melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL)"))
+        #expect(MelixCLIParser.usageText.contains("melix eval prompt create"))
 
         let add = try MelixCLIParser.parse([
             "remote-server", "add",
@@ -70,8 +71,22 @@ struct MelixCLIParserTests {
             "--remote-model", "gemini-2.5-flash",
             "--source-jsonl", "/Users/ChenYu/Downloads/top200_final.jsonl",
             "--scoring-mode", "event_extraction_weighted_f1",
+            "--eval-prompt-id", "event-prod",
+            "--eval-prompt-revision", "rev-1",
             "--sample-size", "3",
             "--json",
+        ])
+        let promptCreate = try MelixCLIParser.parse([
+            "eval", "prompt", "create",
+            "--prompt-id", "event-prod",
+            "--title", "Event Prod",
+            "--system-prompt-file", "/tmp/event-prompt.txt",
+            "--json",
+        ])
+        let promptFreeze = try MelixCLIParser.parse([
+            "eval", "prompt", "freeze",
+            "--prompt-id", "event-prod",
+            "--revision-id", "rev-1",
         ])
 
         guard case .remoteServerAdd(let addOptions) = add else {
@@ -100,6 +115,14 @@ struct MelixCLIParserTests {
         }
         guard case .evalRun(let evalOptions) = eval else {
             Issue.record("Expected remote eval command")
+            return
+        }
+        guard case .evalPromptCreate(let promptCreateOptions) = promptCreate else {
+            Issue.record("Expected prompt create command")
+            return
+        }
+        guard case .evalPromptFreeze(let promptFreezeOptions) = promptFreeze else {
+            Issue.record("Expected prompt freeze command")
             return
         }
 
@@ -145,8 +168,17 @@ struct MelixCLIParserTests {
         #expect(evalOptions.suites == ["event_extraction"])
         #expect(evalOptions.source == .localJSONL(path: "/Users/ChenYu/Downloads/top200_final.jsonl"))
         #expect(evalOptions.profile.scoringMode == "event_extraction_weighted_f1")
+        #expect(evalOptions.evalPromptID == "event-prod")
+        #expect(evalOptions.evalPromptRevisionID == "rev-1")
         #expect(evalOptions.sampleSize == 3)
         #expect(evalOptions.json)
+
+        #expect(promptCreateOptions.promptID == "event-prod")
+        #expect(promptCreateOptions.title == "Event Prod")
+        #expect(promptCreateOptions.systemPromptFile == "/tmp/event-prompt.txt")
+        #expect(promptCreateOptions.json)
+        #expect(promptFreezeOptions.promptID == "event-prod")
+        #expect(promptFreezeOptions.revisionID == "rev-1")
 
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse([
@@ -167,6 +199,47 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse(["remote-server", "unknown"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "create", "--prompt-id", "missing-title"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "show"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "eval", "prompt", "create",
+                "--title", "Missing ID",
+                "--system-prompt-file", "/tmp/prompt.txt",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "eval", "prompt", "create",
+                "--prompt-id", "missing-file",
+                "--title", "Missing File",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "update"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "eval", "prompt", "update",
+                "--prompt-id", "missing-file",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "freeze"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "archive"])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse(["eval", "prompt", "unknown"])
         }
     }
 
@@ -481,7 +554,13 @@ struct MelixCLIParserTests {
             (.benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)), "bench.matrix.export-summary-csv"),
             (.benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)), "bench.matrix.export-requests-csv"),
             (.evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .localCSV(path: "/tmp/eval.csv"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)), "eval.run"),
-            (.evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), json: true)), "eval.run"),
+            (.evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), evalPromptID: "event-prod", evalPromptRevisionID: "rev-1", json: true)), "eval.run"),
+            (.evalPromptList(.init(json: true)), "eval.prompt.list"),
+            (.evalPromptShow(.init(promptID: "event-prod", revisionID: "rev-1", json: true)), "eval.prompt.show"),
+            (.evalPromptCreate(.init(promptID: "event-prod", title: "Event Prod", systemPromptFile: "/tmp/prompt.txt", json: true)), "eval.prompt.create"),
+            (.evalPromptUpdate(.init(promptID: "event-prod", systemPromptFile: "/tmp/prompt.txt", json: true)), "eval.prompt.update"),
+            (.evalPromptFreeze(.init(promptID: "event-prod", revisionID: "rev-1", json: true)), "eval.prompt.freeze"),
+            (.evalPromptArchive(.init(promptID: "event-prod", json: true)), "eval.prompt.archive"),
             (.evalCompare(.init(modelID: "base", targetModelIDs: ["target"], suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, json: true)), "eval.compare"),
             (.evalList(.init(json: true)), "eval.list"),
             (.evalCompareExportSummaryCSV(.init(jobID: "compare-1", outputPath: "/tmp/compare.csv", json: true)), "eval.compare.export-summary-csv"),
@@ -535,7 +614,13 @@ struct MelixCLIParserTests {
             .benchMatrixExportSummaryCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix.csv", json: true)),
             .benchMatrixExportRequestsCSV(.init(jobID: "matrix-1", outputPath: "/tmp/matrix-requests.csv", json: true)),
             .evalRun(.init(modelID: "model", suites: ["mmlu"], datasetID: "mmlu.dev.v1", sampleSize: 4, source: .huggingFaceDataset(datasetPath: "org/ds", datasetName: "name", datasetRevision: "rev", split: "test"), fieldMapping: .init(systemPath: "system", inputTextPath: "input", targetPath: "target", sampleIDPath: "id"), profile: .init(profileType: "final_result", resultKind: "text", extractionMode: "heuristic_final", threshold: 0.75, outputSchemaJSON: "{\"type\":\"string\"}", ignoredPaths: ["meta"]), parameters: ["batch_factor": "1"], json: true)),
-            .evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), json: true)),
+            .evalRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", suites: ["event_extraction"], datasetID: "top200", sampleSize: 3, source: .localJSONL(path: "/tmp/top200.jsonl"), fieldMapping: .init(inputTextPath: "dialogue", targetPath: "events", sampleIDPath: "dialogue_id"), profile: .init(scoringMode: "event_extraction_weighted_f1"), evalPromptID: "event-prod", evalPromptRevisionID: "rev-1", json: true)),
+            .evalPromptList(.init(json: true)),
+            .evalPromptShow(.init(promptID: "event-prod", revisionID: "rev-1", json: true)),
+            .evalPromptCreate(.init(promptID: "event-prod", title: "Event Prod", systemPromptFile: "/tmp/prompt.txt", json: true)),
+            .evalPromptUpdate(.init(promptID: "event-prod", systemPromptFile: "/tmp/prompt.txt", json: true)),
+            .evalPromptFreeze(.init(promptID: "event-prod", revisionID: "rev-1", json: true)),
+            .evalPromptArchive(.init(promptID: "event-prod", json: true)),
             .evalExportSummaryCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval.csv", json: true)),
             .evalExportSamplesCSV(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.csv", json: true)),
             .evalExportSamplesJSONL(.init(jobID: "eval-1", outputPath: "/tmp/eval-samples.jsonl", json: true)),

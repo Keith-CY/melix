@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
@@ -17,6 +18,8 @@ FIELD_WEIGHTS = {
     "location": 0.10,
     "action": 0.35,
 }
+EVENT_EXTRACTION_PROMPT_ID = "builtin.event-extraction.baseline"
+EVENT_EXTRACTION_PROMPT_REVISION_ID = "baseline.v1"
 
 EVENT_EXTRACTION_SYSTEM_PROMPT = """Extract established events and future plans from a dialogue.
 
@@ -35,6 +38,41 @@ Rules:
 
 
 @dataclass(frozen=True)
+class EventExtractionPromptSpec:
+    prompt_id: str
+    revision_id: str
+    system_prompt: str
+    content_hash: str
+    title: str = "Built-in Event Extraction Baseline"
+    examples: tuple[dict[str, object], ...] = ()
+
+
+def default_event_extraction_prompt_spec() -> EventExtractionPromptSpec:
+    return EventExtractionPromptSpec(
+        prompt_id=EVENT_EXTRACTION_PROMPT_ID,
+        revision_id=EVENT_EXTRACTION_PROMPT_REVISION_ID,
+        system_prompt=EVENT_EXTRACTION_SYSTEM_PROMPT,
+        content_hash=event_prompt_content_hash(EVENT_EXTRACTION_SYSTEM_PROMPT, []),
+    )
+
+
+def event_prompt_content_hash(system_prompt: str, examples: Sequence[dict[str, object]]) -> str:
+    payload = {
+        "examples": list(examples),
+        "scoring_mode": "event_extraction_weighted_f1",
+        "system_prompt": system_prompt,
+        "task_kind": "event_extraction",
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+@dataclass(frozen=True)
 class RemoteEventExtractionTarget:
     provider_kind: str
     base_url: str
@@ -43,29 +81,38 @@ class RemoteEventExtractionTarget:
     timeout_seconds: int = 60
 
 
-def make_event_extraction_client(target: RemoteEventExtractionTarget):
+def make_event_extraction_client(
+    target: RemoteEventExtractionTarget,
+    prompt_spec: EventExtractionPromptSpec | None = None,
+):
+    resolved_prompt = prompt_spec or default_event_extraction_prompt_spec()
     provider_kind = target.provider_kind.strip()
     if provider_kind == "openai-compatible":
-        return OpenAICompatibleEventExtractionClient(target)
+        return OpenAICompatibleEventExtractionClient(target, resolved_prompt)
     if provider_kind == "gemini-generative-language":
-        return GeminiGenerativeLanguageEventExtractionClient(target)
+        return GeminiGenerativeLanguageEventExtractionClient(target, resolved_prompt)
     raise ValueError(f"unsupported remote provider kind: {provider_kind}")
 
 
 class OpenAICompatibleEventExtractionClient:
-    def __init__(self, target: RemoteEventExtractionTarget) -> None:
+    def __init__(
+        self,
+        target: RemoteEventExtractionTarget,
+        prompt_spec: EventExtractionPromptSpec | None = None,
+    ) -> None:
         provider_kind = target.provider_kind.strip()
         if provider_kind != "openai-compatible":
             raise ValueError(f"unsupported remote provider kind: {provider_kind}")
         self._target = target
+        self._prompt = prompt_spec or default_event_extraction_prompt_spec()
 
     def extract_events(self, dialogue: list[str]) -> tuple[list[dict[str, object]], str]:
+        messages = [{"role": "system", "content": self._prompt.system_prompt}]
+        messages.extend(_openai_example_messages(self._prompt.examples))
+        messages.append({"role": "user", "content": "\n".join(dialogue)})
         payload = {
             "model": self._target.model_id,
-            "messages": [
-                {"role": "system", "content": EVENT_EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": "\n".join(dialogue)},
-            ],
+            "messages": messages,
             "stream": False,
             "temperature": 0,
         }
@@ -105,23 +152,30 @@ class OpenAICompatibleEventExtractionClient:
 
 
 class GeminiGenerativeLanguageEventExtractionClient:
-    def __init__(self, target: RemoteEventExtractionTarget) -> None:
+    def __init__(
+        self,
+        target: RemoteEventExtractionTarget,
+        prompt_spec: EventExtractionPromptSpec | None = None,
+    ) -> None:
         provider_kind = target.provider_kind.strip()
         if provider_kind != "gemini-generative-language":
             raise ValueError(f"unsupported remote provider kind: {provider_kind}")
         self._target = target
+        self._prompt = prompt_spec or default_event_extraction_prompt_spec()
 
     def extract_events(self, dialogue: list[str]) -> tuple[list[dict[str, object]], str]:
+        contents = _gemini_example_contents(self._prompt.examples)
+        contents.append(
+            {
+                "role": "user",
+                "parts": [{"text": "\n".join(dialogue)}],
+            }
+        )
         payload = {
             "systemInstruction": {
-                "parts": [{"text": EVENT_EXTRACTION_SYSTEM_PROMPT}],
+                "parts": [{"text": self._prompt.system_prompt}],
             },
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": "\n".join(dialogue)}],
-                }
-            ],
+            "contents": contents,
             "generationConfig": {
                 "temperature": 0,
             },
@@ -172,6 +226,29 @@ def extract_events_from_response_text(response_text: str) -> list[dict[str, obje
             raise ValueError("each event must be a JSON object")
         parsed_events.append(event)
     return parsed_events
+
+
+def prompt_snapshot_payload(prompt_spec: EventExtractionPromptSpec) -> dict[str, object]:
+    return {
+        "prompt_id": prompt_spec.prompt_id,
+        "prompt_revision_id": prompt_spec.revision_id,
+        "prompt_content_hash": prompt_spec.content_hash,
+        "title": prompt_spec.title,
+        "task_kind": "event_extraction",
+        "scoring_mode": "event_extraction_weighted_f1",
+        "system_prompt": prompt_spec.system_prompt,
+        "examples": list(prompt_spec.examples),
+        "prompt_example_dialogue_ids": prompt_example_dialogue_ids(prompt_spec),
+    }
+
+
+def prompt_example_dialogue_ids(prompt_spec: EventExtractionPromptSpec) -> list[str]:
+    ids: list[str] = []
+    for example in prompt_spec.examples:
+        dialogue_id = str(example.get("dialogue_id") or "").strip()
+        if dialogue_id:
+            ids.append(dialogue_id)
+    return ids
 
 
 def normalize_event_fields(payload: dict[str, object]) -> dict[str, object]:
@@ -552,6 +629,50 @@ def _gemini_model_path(model_id: str) -> str:
     trimmed = model_id.strip()
     path = trimmed if trimmed.startswith("models/") else f"models/{trimmed}"
     return "/".join(quote(part, safe="") for part in path.split("/"))
+
+
+def _openai_example_messages(
+    examples: Sequence[dict[str, object]],
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for example in examples:
+        messages.append({"role": "user", "content": _example_dialogue_text(example)})
+        messages.append({"role": "assistant", "content": _example_response_text(example)})
+    return messages
+
+
+def _gemini_example_contents(
+    examples: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    contents: list[dict[str, object]] = []
+    for example in examples:
+        contents.append(
+            {
+                "role": "user",
+                "parts": [{"text": _example_dialogue_text(example)}],
+            }
+        )
+        contents.append(
+            {
+                "role": "model",
+                "parts": [{"text": _example_response_text(example)}],
+            }
+        )
+    return contents
+
+
+def _example_dialogue_text(example: dict[str, object]) -> str:
+    return "\n".join(_normalize_dialogue_lines(example.get("dialogue")))
+
+
+def _example_response_text(example: dict[str, object]) -> str:
+    events = example.get("events")
+    normalized_events: list[dict[str, object]] = []
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict):
+                normalized_events.append({field_name: event.get(field_name) for field_name in FIELD_NAMES})
+    return json.dumps({"events": normalized_events}, ensure_ascii=False, separators=(",", ":"))
 
 
 def _parse_response_json(response_text: str) -> dict[str, object]:

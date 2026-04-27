@@ -9,6 +9,7 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.engine import evaluation_core
 from worker.productization import event_extraction as event_extraction_module
 from worker.productization.event_extraction import (
+    EventExtractionPromptSpec,
     GeminiGenerativeLanguageEventExtractionClient,
     OpenAICompatibleEventExtractionClient,
     build_event_digest,
@@ -242,7 +243,13 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
         timeout_seconds = 30
         rate_limit_per_minute = 0
 
-    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target: FakeClient(target))
+    captured = {}
+
+    def fake_client_factory(target, prompt_spec=None):
+        captured["prompt_spec"] = prompt_spec
+        return FakeClient(target)
+
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", fake_client_factory)
 
     core = EvaluationCore(jobs_root=tmp_path / "evals")
     run = core.run_local_suite(
@@ -256,6 +263,12 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
             "event_source_jsonl": str(source),
             "remote_server_id": "sub2api",
             "remote_model_id": "gemini-2.5-flash",
+            "eval_prompt_id": "event-prod",
+            "eval_prompt_revision_id": "rev-1",
+            "eval_prompt_content_hash": "sha256:prompt",
+            "eval_prompt_title": "Event Prod",
+            "eval_prompt_system_prompt": "Extract only events from this dialogue.",
+            "eval_prompt_examples_json": "[]",
         },
         remote_target=FakeTarget(),
     )
@@ -265,8 +278,16 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     assert run.result.primary_score_value == 1.0
     assert run.job.parameters["remote_server_id"] == "sub2api"
     assert "sk-secret" not in run.job.parameters.values()
+    assert "eval_prompt_system_prompt" not in run.job.parameters
+    assert run.job.parameters["prompt_id"] == "event-prod"
+    assert run.job.parameters["prompt_revision_id"] == "rev-1"
+    assert run.job.parameters["prompt_content_hash"] == "sha256:prompt"
+    assert captured["prompt_spec"].system_prompt == "Extract only events from this dialogue."
     assert (output_dir / "predictions" / "gemini-2.5-flash.jsonl").is_file()
     assert (output_dir / "reports" / "gemini-2.5-flash" / "event_eval_summary.json").is_file()
+    prompt_snapshot = json.loads((output_dir / "prompt_snapshot.json").read_text(encoding="utf-8"))
+    assert prompt_snapshot["prompt_id"] == "event-prod"
+    assert prompt_snapshot["system_prompt"] == "Extract only events from this dialogue."
 
 
 def test_evaluation_core_event_extraction_records_client_and_normalization_failures(
@@ -309,7 +330,7 @@ def test_evaluation_core_event_extraction_records_client_and_normalization_failu
         timeout_seconds = 30
         rate_limit_per_minute = 0
 
-    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target: FakeClient(target))
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target, prompt_spec=None: FakeClient(target))
 
     run = EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
         model_id="remote/model",
@@ -387,6 +408,116 @@ def test_evaluation_core_event_extraction_validates_source_target_and_rows(tmp_p
             assert expected in str(exc)
         else:  # pragma: no cover - assertion guard
             raise AssertionError("expected row validation")
+
+
+def test_evaluation_core_event_extraction_rejects_prompt_example_overlap(tmp_path: Path) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["A: tomorrow"],
+                "events": [{"actor": ["A"], "time": ["tomorrow"], "location": None, "action": ["plan"], "digest": ""}],
+            }
+        ],
+    )
+
+    class FakeTarget:
+        provider_kind = "openai-compatible"
+        base_url = "https://sub2api.example/v1"
+        api_key = "sk-secret"
+        model_id = "remote-model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 0
+
+    try:
+        EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
+            model_id="remote-model",
+            suite_id="event_extraction",
+            dataset_root=tmp_path,
+            sample_size=1,
+            scoring_mode="event_extraction_weighted_f1",
+            parameters={
+                "event_source_jsonl": str(source),
+                "eval_prompt_id": "event-prod",
+                "eval_prompt_revision_id": "rev-1",
+                "eval_prompt_system_prompt": "Use examples.",
+                "eval_prompt_examples_json": json.dumps(
+                    [
+                        {
+                            "dialogue_id": "dlg-1",
+                            "dialogue": ["example"],
+                            "events": [],
+                        }
+                    ]
+                ),
+            },
+            remote_target=FakeTarget(),
+        )
+    except ValueError as exc:
+        assert str(exc) == "event extraction prompt examples overlap evaluation rows: dlg-1"
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected prompt example overlap validation")
+
+
+def test_evaluation_core_event_extraction_prompt_spec_validates_examples_and_derives_hash() -> None:
+    spec = EvaluationCore._event_extraction_prompt_spec(
+        {
+            "eval_prompt_id": "event-prod",
+            "eval_prompt_revision_id": "rev-2",
+            "eval_prompt_title": "Event Prod",
+            "eval_prompt_system_prompt": "Extract frozen events.",
+            "eval_prompt_examples_json": json.dumps(
+                [
+                    {
+                        "dialogue_id": "example-1",
+                        "dialogue": ["A: 明天开会"],
+                        "events": [
+                            {
+                                "actor": ["A"],
+                                "time": ["明天"],
+                                "location": None,
+                                "action": ["开会"],
+                            }
+                        ],
+                    }
+                ]
+            ),
+        }
+    )
+
+    assert spec.prompt_id == "event-prod"
+    assert spec.revision_id == "rev-2"
+    assert spec.title == "Event Prod"
+    assert spec.content_hash.startswith("sha256:")
+    assert spec.examples[0]["dialogue_id"] == "example-1"
+
+    invalid_cases = [
+        (
+            {"eval_prompt_system_prompt": "Prompt", "eval_prompt_examples_json": "not json"},
+            "eval_prompt_examples_json must be valid JSON",
+        ),
+        (
+            {"eval_prompt_system_prompt": "Prompt", "eval_prompt_examples_json": "{}"},
+            "eval_prompt_examples_json must be a JSON array",
+        ),
+        (
+            {"eval_prompt_system_prompt": "Prompt", "eval_prompt_examples_json": "[1]"},
+            "eval prompt example 0 must be a JSON object",
+        ),
+        (
+            {"eval_prompt_system_prompt": "Prompt", "eval_prompt_examples_json": '[{"dialogue":[]}]'},
+            "eval prompt example 0 is missing dialogue_id",
+        ),
+    ]
+    for parameters, expected in invalid_cases:
+        try:
+            EvaluationCore._event_extraction_prompt_spec(parameters)
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError("expected prompt example validation")
 
 
 def test_event_extraction_client_factory_supports_openai_and_gemini() -> None:
@@ -519,6 +650,72 @@ def test_openai_event_extraction_posts_chat_completions_and_parses_response(monk
     assert captured["body"]["messages"][0]["role"] == "system"
     assert captured["body"]["messages"][1] == {"role": "user", "content": "A: 明天我开会"}
     assert captured["body"]["temperature"] == 0
+
+
+def test_event_extraction_clients_use_selected_prompt_and_examples(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": '{"events":[]}'}}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", fake_urlopen)
+
+    prompt = EventExtractionPromptSpec(
+        prompt_id="event-prod",
+        revision_id="rev-1",
+        title="Event Prod",
+        system_prompt="Use the frozen production prompt.",
+        content_hash="sha256:prompt",
+        examples=(
+            {
+                "dialogue_id": "example-1",
+                "dialogue": ["A: tomorrow we meet"],
+                "events": [
+                    {
+                        "actor": ["we"],
+                        "time": ["tomorrow"],
+                        "location": None,
+                        "action": ["meet"],
+                        "digest": "ignored",
+                    }
+                ],
+            },
+        ),
+    )
+    client = OpenAICompatibleEventExtractionClient(
+        RemoteEventExtractionTarget(
+            provider_kind="openai-compatible",
+            base_url="https://sub2api.example/v1",
+            api_key="sk-secret",
+            model_id="kimi-2.6",
+        ),
+        prompt,
+    )
+
+    events, _ = client.extract_events(["A: current dialogue has no gold answer"])
+
+    assert events == []
+    assert captured["body"]["messages"] == [
+        {"role": "system", "content": "Use the frozen production prompt."},
+        {"role": "user", "content": "A: tomorrow we meet"},
+        {
+            "role": "assistant",
+            "content": '{"events":[{"actor":["we"],"time":["tomorrow"],"location":null,"action":["meet"]}]}',
+        },
+        {"role": "user", "content": "A: current dialogue has no gold answer"},
+    ]
+    assert "digest" not in json.dumps(captured["body"], ensure_ascii=False)
 
 
 def test_remote_event_extraction_http_clients_map_request_failures(monkeypatch) -> None:
@@ -685,7 +882,27 @@ def test_gemini_event_extraction_posts_generate_content_and_parses_response(monk
             api_key="AIza-secret",
             model_id="gemini-2.5-flash",
             timeout_seconds=45,
-        )
+        ),
+        EventExtractionPromptSpec(
+            prompt_id="event-gemini",
+            revision_id="rev-1",
+            system_prompt="Gemini selected frozen prompt.",
+            content_hash="sha256:gemini",
+            examples=(
+                {
+                    "dialogue_id": "example-gemini",
+                    "dialogue": ["A: 后天复盘"],
+                    "events": [
+                        {
+                            "actor": ["A"],
+                            "time": ["后天"],
+                            "location": None,
+                            "action": ["复盘"],
+                        }
+                    ],
+                },
+            ),
+        ),
     )
 
     events, raw_text = client.extract_events(["A: 明天我开会"])
@@ -699,8 +916,17 @@ def test_gemini_event_extraction_posts_generate_content_and_parses_response(monk
     assert "Authorization" not in captured["headers"]
     assert captured["timeout"] == 45
     assert captured["body"]["generationConfig"]["temperature"] == 0
-    assert captured["body"]["systemInstruction"]["parts"][0]["text"].startswith("Extract established events")
+    assert captured["body"]["systemInstruction"]["parts"][0]["text"] == "Gemini selected frozen prompt."
     assert captured["body"]["contents"] == [
+        {"role": "user", "parts": [{"text": "A: 后天复盘"}]},
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "text": '{"events":[{"actor":["A"],"time":["后天"],"location":null,"action":["复盘"]}]}'
+                }
+            ],
+        },
         {"role": "user", "parts": [{"text": "A: 明天我开会"}]}
     ]
 

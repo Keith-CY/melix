@@ -374,6 +374,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let fieldMapping: ControlPlaneEvaluationRequest.FieldMapping
     public let profile: ControlPlaneEvaluationRequest.Profile
     public let parameters: [String: String]
+    public let evalPromptID: String
+    public let evalPromptRevisionID: String
     public let json: Bool
 
     public init(
@@ -388,6 +390,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         fieldMapping: ControlPlaneEvaluationRequest.FieldMapping = .init(),
         profile: ControlPlaneEvaluationRequest.Profile = .init(),
         parameters: [String: String] = [:],
+        evalPromptID: String = "",
+        evalPromptRevisionID: String = "",
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -401,6 +405,76 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.fieldMapping = fieldMapping
         self.profile = profile
         self.parameters = parameters
+        self.evalPromptID = evalPromptID
+        self.evalPromptRevisionID = evalPromptRevisionID
+        self.json = json
+    }
+}
+
+public struct EvalPromptListOptions: Equatable, Sendable {
+    public let json: Bool
+
+    public init(json: Bool = false) {
+        self.json = json
+    }
+}
+
+public struct EvalPromptShowOptions: Equatable, Sendable {
+    public let promptID: String
+    public let revisionID: String
+    public let json: Bool
+
+    public init(promptID: String, revisionID: String = "", json: Bool = false) {
+        self.promptID = promptID
+        self.revisionID = revisionID
+        self.json = json
+    }
+}
+
+public struct EvalPromptCreateOptions: Equatable, Sendable {
+    public let promptID: String
+    public let title: String
+    public let systemPromptFile: String
+    public let json: Bool
+
+    public init(promptID: String, title: String, systemPromptFile: String, json: Bool = false) {
+        self.promptID = promptID
+        self.title = title
+        self.systemPromptFile = systemPromptFile
+        self.json = json
+    }
+}
+
+public struct EvalPromptUpdateOptions: Equatable, Sendable {
+    public let promptID: String
+    public let systemPromptFile: String
+    public let json: Bool
+
+    public init(promptID: String, systemPromptFile: String, json: Bool = false) {
+        self.promptID = promptID
+        self.systemPromptFile = systemPromptFile
+        self.json = json
+    }
+}
+
+public struct EvalPromptFreezeOptions: Equatable, Sendable {
+    public let promptID: String
+    public let revisionID: String
+    public let json: Bool
+
+    public init(promptID: String, revisionID: String = "", json: Bool = false) {
+        self.promptID = promptID
+        self.revisionID = revisionID
+        self.json = json
+    }
+}
+
+public struct EvalPromptArchiveOptions: Equatable, Sendable {
+    public let promptID: String
+    public let json: Bool
+
+    public init(promptID: String, json: Bool = false) {
+        self.promptID = promptID
         self.json = json
     }
 }
@@ -1113,6 +1187,12 @@ public enum MelixCLICommand: Equatable, Sendable {
     case benchMatrixExportSummaryCSV(BenchExportCSVOptions)
     case benchMatrixExportRequestsCSV(BenchExportCSVOptions)
     case evalRun(EvalRunOptions)
+    case evalPromptList(EvalPromptListOptions)
+    case evalPromptShow(EvalPromptShowOptions)
+    case evalPromptCreate(EvalPromptCreateOptions)
+    case evalPromptUpdate(EvalPromptUpdateOptions)
+    case evalPromptFreeze(EvalPromptFreezeOptions)
+    case evalPromptArchive(EvalPromptArchiveOptions)
     case evalCompare(EvalCompareOptions)
     case evalList(EvalListOptions)
     case evalCompareExportSummaryCSV(EvalExportOptions)
@@ -1266,7 +1346,13 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval prompt list [--json]
+      melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
+      melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
+      melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
+      melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
+      melix eval prompt archive --prompt-id ID [--json]
       melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
@@ -2472,9 +2558,13 @@ public enum MelixCLIParser {
                     fieldMapping: sourceConfiguration.fieldMapping,
                     profile: sourceConfiguration.profile,
                     parameters: parseEvalParameters(values),
+                    evalPromptID: values.single["--eval-prompt-id"] ?? "",
+                    evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
+        case "prompt":
+            return try parseEvalPrompt(Array(arguments.dropFirst()))
         case "compare":
             return try parseEvalCompare(Array(arguments.dropFirst()))
         case "list":
@@ -2497,6 +2587,78 @@ public enum MelixCLIParser {
                 multiValueOptions: ["--suite", "--target-model-id"]
             )
             return .evalExportSamplesJSONL(try parseEvalExportOptions(values, command: "melix eval export-samples-jsonl"))
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseEvalPrompt(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        switch action {
+        case "list":
+            return .evalPromptList(.init(json: values.flags.contains("--json")))
+        case "show":
+            guard let promptID = values.single["--prompt-id"], promptID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--prompt-id is required for melix eval prompt show.")
+            }
+            return .evalPromptShow(
+                .init(
+                    promptID: promptID,
+                    revisionID: values.single["--revision-id"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "create":
+            guard let promptID = values.single["--prompt-id"], promptID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--prompt-id is required for melix eval prompt create.")
+            }
+            guard let title = values.single["--title"], title.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--title is required for melix eval prompt create.")
+            }
+            guard let systemPromptFile = values.single["--system-prompt-file"], systemPromptFile.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--system-prompt-file is required for melix eval prompt create.")
+            }
+            return .evalPromptCreate(
+                .init(
+                    promptID: promptID,
+                    title: title,
+                    systemPromptFile: systemPromptFile,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "update":
+            guard let promptID = values.single["--prompt-id"], promptID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--prompt-id is required for melix eval prompt update.")
+            }
+            guard let systemPromptFile = values.single["--system-prompt-file"], systemPromptFile.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--system-prompt-file is required for melix eval prompt update.")
+            }
+            return .evalPromptUpdate(
+                .init(
+                    promptID: promptID,
+                    systemPromptFile: systemPromptFile,
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "freeze":
+            guard let promptID = values.single["--prompt-id"], promptID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--prompt-id is required for melix eval prompt freeze.")
+            }
+            return .evalPromptFreeze(
+                .init(
+                    promptID: promptID,
+                    revisionID: values.single["--revision-id"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "archive":
+            guard let promptID = values.single["--prompt-id"], promptID.isEmpty == false else {
+                throw MelixCLIError.missingRequired("--prompt-id is required for melix eval prompt archive.")
+            }
+            return .evalPromptArchive(.init(promptID: promptID, json: values.flags.contains("--json")))
         default:
             throw MelixCLIError.usage(usageText)
         }
@@ -3932,6 +4094,48 @@ public actor MelixCLIRunner {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
             return renderEvaluationRuns(results)
+        case .evalPromptList(let options):
+            let prompts = try evaluationPromptStore().list()
+            if options.json {
+                return try prettyJSON(prompts)
+            }
+            return renderEvaluationPrompts(prompts)
+        case .evalPromptShow(let options):
+            let snapshot = try evaluationPromptSnapshot(promptID: options.promptID, revisionID: options.revisionID)
+            if options.json {
+                return try prettyJSON(snapshot)
+            }
+            return renderEvaluationPromptSnapshot(snapshot)
+        case .evalPromptCreate(let options):
+            let systemPrompt = try String(contentsOfFile: options.systemPromptFile, encoding: .utf8)
+            let prompt = try evaluationPromptStore().create(
+                promptID: options.promptID,
+                title: options.title,
+                systemPrompt: systemPrompt
+            )
+            if options.json {
+                return try prettyJSON(prompt)
+            }
+            return renderEvaluationPrompts([prompt])
+        case .evalPromptUpdate(let options):
+            let systemPrompt = try String(contentsOfFile: options.systemPromptFile, encoding: .utf8)
+            let prompt = try evaluationPromptStore().update(promptID: options.promptID, systemPrompt: systemPrompt)
+            if options.json {
+                return try prettyJSON(prompt)
+            }
+            return renderEvaluationPrompts([prompt])
+        case .evalPromptFreeze(let options):
+            let prompt = try evaluationPromptStore().freeze(promptID: options.promptID, revisionID: options.revisionID)
+            if options.json {
+                return try prettyJSON(prompt)
+            }
+            return renderEvaluationPrompts([prompt])
+        case .evalPromptArchive(let options):
+            let prompt = try evaluationPromptStore().archive(promptID: options.promptID)
+            if options.json {
+                return try prettyJSON(prompt)
+            }
+            return "Archived evaluation prompt \(prompt.id).\n"
         case .evalCompare(let options):
             let results = try await runEvaluationCompare(options)
             if options.json {
@@ -4467,6 +4671,25 @@ public actor MelixCLIRunner {
         RemoteServerAPIKeyStore(melixHome: MelixHome(environment: environment))
     }
 
+    private func evaluationPromptStore() -> EvaluationPromptStore {
+        EvaluationPromptStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func evaluationPromptSnapshot(promptID: String, revisionID: String) throws -> EvaluationPromptSnapshot {
+        let prompt = try evaluationPromptStore().get(id: promptID)
+        guard let prompt else {
+            throw MelixCLIError.runtime("Evaluation prompt \(promptID) was not found.")
+        }
+        let normalizedRevisionID = revisionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let revision = normalizedRevisionID.isEmpty
+            ? prompt.latestRevision
+            : prompt.revisions.first { $0.revisionID == normalizedRevisionID }
+        guard let revision else {
+            throw MelixCLIError.runtime("Evaluation prompt \(prompt.id) revision \(normalizedRevisionID) was not found.")
+        }
+        return EvaluationPromptSnapshot(prompt: prompt, revision: revision)
+    }
+
     private func remoteChatTarget(
         remoteServerID: String,
         remoteModelID: String
@@ -4956,6 +5179,40 @@ public actor MelixCLIRunner {
             "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.healthStatus)\t\(server.apiKeyHint)"
         }
         return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key"] + rows).joined(separator: "\n") + "\n"
+    }
+
+    private func renderEvaluationPrompts(_ prompts: [EvaluationPrompt]) -> String {
+        guard prompts.isEmpty == false else {
+            return "No evaluation prompts configured.\n"
+        }
+        let rows = prompts.map { prompt in
+            let latest = prompt.latestRevision
+            return [
+                prompt.id,
+                prompt.title,
+                prompt.taskKind,
+                prompt.scoringMode,
+                prompt.latestRevisionID,
+                latest?.status.rawValue ?? "",
+                latest?.contentHash ?? "",
+                prompt.readOnly ? "read-only" : (prompt.archived ? "archived" : "editable"),
+            ].joined(separator: "\t")
+        }
+        return ([
+            "prompt_id\ttitle\ttask_kind\tscoring_mode\tlatest_revision\tstatus\tcontent_hash\tstate",
+        ] + rows).joined(separator: "\n") + "\n"
+    }
+
+    private func renderEvaluationPromptSnapshot(_ snapshot: EvaluationPromptSnapshot) -> String {
+        [
+            "prompt_id=\(snapshot.promptID)",
+            "title=\(snapshot.title)",
+            "revision_id=\(snapshot.revisionID)",
+            "status=\(snapshot.status.rawValue)",
+            "content_hash=\(snapshot.contentHash)",
+            "system_prompt:",
+            snapshot.systemPrompt,
+        ].joined(separator: "\n") + "\n"
     }
 
     private func makeModelSummaryPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
@@ -5824,6 +6081,25 @@ public actor MelixCLIRunner {
         var collected: [ControlPlaneEvaluationResult] = []
         for suiteID in suites {
             let usesCustomSource = options.source.kind != .builtinPackage
+            var parameters = options.parameters
+            let usesEventPrompt = suiteID == "event_extraction"
+                || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
+                || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+                || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if usesEventPrompt {
+                guard suiteID == "event_extraction"
+                    || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
+                    || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+                else {
+                    throw MelixCLIError.runtime("Evaluation prompts are only supported for event_extraction_weighted_f1.")
+                }
+                parameters.merge(
+                    try evaluationPromptParameters(
+                        promptID: options.evalPromptID,
+                        revisionID: options.evalPromptRevisionID
+                    )
+                ) { _, new in new }
+            }
             let remoteTarget = options.remoteServerID.isEmpty
                 ? nil
                 : try remoteEvaluationTarget(
@@ -5841,12 +6117,28 @@ public actor MelixCLIRunner {
                 source: options.source,
                 fieldMapping: options.fieldMapping,
                 profile: options.profile,
-                parameters: options.parameters,
+                parameters: parameters,
                 remoteTarget: remoteTarget
             )
             collected.append(try await client.runEvaluation(request))
         }
         return collected
+    }
+
+    private func evaluationPromptParameters(promptID: String, revisionID: String) throws -> [String: String] {
+        let snapshot = try evaluationPromptStore().resolveForRun(promptID: promptID, revisionID: revisionID)
+        return [
+            "prompt_id": snapshot.promptID,
+            "prompt_revision_id": snapshot.revisionID,
+            "prompt_content_hash": snapshot.contentHash,
+            "prompt_title": snapshot.title,
+            "eval_prompt_id": snapshot.promptID,
+            "eval_prompt_revision_id": snapshot.revisionID,
+            "eval_prompt_content_hash": snapshot.contentHash,
+            "eval_prompt_title": snapshot.title,
+            "eval_prompt_system_prompt": snapshot.systemPrompt,
+            "eval_prompt_examples_json": try EvaluationPromptStore.examplesJSONString(snapshot.examples),
+        ]
     }
 
     private func exportEvaluationArtifact(

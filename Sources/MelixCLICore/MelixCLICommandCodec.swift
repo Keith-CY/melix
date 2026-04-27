@@ -116,6 +116,18 @@ public enum MelixCLICommandCodec {
             return "bench.matrix.export-requests-csv"
         case .evalRun:
             return "eval.run"
+        case .evalPromptList:
+            return "eval.prompt.list"
+        case .evalPromptShow:
+            return "eval.prompt.show"
+        case .evalPromptCreate:
+            return "eval.prompt.create"
+        case .evalPromptUpdate:
+            return "eval.prompt.update"
+        case .evalPromptFreeze:
+            return "eval.prompt.freeze"
+        case .evalPromptArchive:
+            return "eval.prompt.archive"
         case .evalCompare:
             return "eval.compare"
         case .evalList:
@@ -417,6 +429,36 @@ public enum MelixCLICommandCodec {
                 into: &arguments
             )
             appendEvalParameters(options.parameters, into: &arguments)
+            appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
+            appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            json = options.json
+        case .evalPromptList(let options):
+            arguments = ["eval", "prompt", "list"]
+            json = options.json
+        case .evalPromptShow(let options):
+            arguments = ["eval", "prompt", "show"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--revision-id", value: options.revisionID, into: &arguments)
+            json = options.json
+        case .evalPromptCreate(let options):
+            arguments = ["eval", "prompt", "create"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--title", value: options.title, into: &arguments)
+            appendOption("--system-prompt-file", value: options.systemPromptFile, into: &arguments)
+            json = options.json
+        case .evalPromptUpdate(let options):
+            arguments = ["eval", "prompt", "update"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--system-prompt-file", value: options.systemPromptFile, into: &arguments)
+            json = options.json
+        case .evalPromptFreeze(let options):
+            arguments = ["eval", "prompt", "freeze"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--revision-id", value: options.revisionID, into: &arguments)
+            json = options.json
+        case .evalPromptArchive(let options):
+            arguments = ["eval", "prompt", "archive"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
             json = options.json
         case .evalExportSummaryCSV(let options):
             arguments = ["eval", "export-summary-csv"]

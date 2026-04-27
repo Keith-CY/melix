@@ -304,6 +304,229 @@ struct RuntimeViewModelTests {
         #expect(try NullRemoteServerStore().list().isEmpty)
     }
 
+    @Test("evaluation prompt drafts save freeze and create new draft revisions")
+    @MainActor
+    func evaluationPromptDraftsSaveFreezeAndCreateNewDraftRevisions() throws {
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: store
+        )
+
+        #expect(viewModel.evaluationPrompts.map(\.id).contains(EvaluationPromptStore.builtInBaselinePromptID))
+        #expect(viewModel.isEvaluationPromptDraftEditable == false)
+
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = "event-prod"
+        viewModel.evaluationPromptTitleDraft = "Event Production"
+        viewModel.evaluationPromptSystemPromptDraft = "Extract production events."
+        viewModel.saveEvaluationPromptDraft()
+
+        #expect(store.createdPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptID == "event-prod")
+        #expect(viewModel.canFreezeSelectedEvaluationPrompt)
+
+        viewModel.freezeSelectedEvaluationPrompt()
+
+        #expect(store.frozenPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptRevision?.status == .frozen)
+        #expect(viewModel.isEvaluationPromptDraftEditable == false)
+
+        viewModel.prepareEvaluationPromptDraftFromSelection()
+        #expect(viewModel.isEvaluationPromptDraftEditable)
+
+        viewModel.evaluationPromptSystemPromptDraft = "Extract production events with stricter JSON."
+        viewModel.saveEvaluationPromptDraft()
+
+        #expect(store.updatedPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptRevision?.revisionID == "rev-2")
+        #expect(viewModel.selectedEvaluationPromptRevision?.status == .draft)
+    }
+
+    @Test("event extraction evaluation sends the selected frozen prompt snapshot")
+    @MainActor
+    func eventExtractionEvaluationSendsSelectedFrozenPromptSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let store = FakeEvaluationPromptStore()
+        _ = try store.create(
+            promptID: "event-prod",
+            title: "Event Production",
+            systemPrompt: "Extract only events from the current dialogue."
+        )
+        _ = try store.freeze(promptID: "event-prod", revisionID: "")
+        let viewModel = RuntimeViewModel(
+            client: client,
+            evaluationPromptStore: store
+        )
+
+        await viewModel.start()
+        viewModel.selectEvaluationPrompt(id: "event-prod")
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/tmp/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.suiteID == "event_extraction")
+        #expect(request.parameters["eval_prompt_id"] == "event-prod")
+        #expect(request.parameters["eval_prompt_revision_id"] == "rev-1")
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Extract only events from the current dialogue.")
+        #expect(request.parameters["eval_prompt_examples_json"] == "[]")
+    }
+
+    @Test("evaluation prompt guard rails surface local errors")
+    @MainActor
+    func evaluationPromptGuardRailsSurfaceLocalErrors() throws {
+        let listFailingStore = FakeEvaluationPromptStore()
+        listFailingStore.listError = .list
+        let listFailingViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: listFailingStore
+        )
+        #expect(listFailingViewModel.lastError?.contains("Evaluation prompt load failed") == true)
+
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: store
+        )
+
+        viewModel.selectedEvaluationPromptID = ""
+        #expect(viewModel.selectedEvaluationPromptSummaryText == "New draft prompt")
+        #expect(viewModel.isEvaluationPromptDraftEditable)
+
+        viewModel.freezeSelectedEvaluationPrompt()
+        #expect(viewModel.lastError == "Save the evaluation prompt draft before freezing it.")
+
+        viewModel.selectEvaluationPrompt(id: EvaluationPromptStore.builtInBaselinePromptID)
+        viewModel.prepareEvaluationPromptDraftFromSelection()
+        #expect(viewModel.lastError == "The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+
+        viewModel.evaluationPromptIDDraft = EvaluationPromptStore.builtInBaselinePromptID
+        viewModel.evaluationPromptTitleDraft = "Baseline"
+        viewModel.evaluationPromptSystemPromptDraft = "Cannot save baseline."
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError == "The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+
+        _ = try store.create(
+            promptID: "event-prod",
+            title: "Event Production",
+            systemPrompt: "Extract production events."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-prod")
+        viewModel.evaluationPromptIDDraft = "event-renamed"
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.evaluationPromptIDDraft == "event-prod")
+        #expect(viewModel.lastError == "Evaluation prompt ID cannot be changed after creation. Use New Prompt to create another prompt.")
+
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = ""
+        viewModel.evaluationPromptTitleDraft = ""
+        viewModel.evaluationPromptSystemPromptDraft = ""
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError == "Evaluation prompt requires id, title, and system prompt.")
+
+        store.createError = .create
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = "event-create-error"
+        viewModel.evaluationPromptTitleDraft = "Event Create Error"
+        viewModel.evaluationPromptSystemPromptDraft = "Create fails."
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError?.contains("Evaluation prompt save failed") == true)
+        store.createError = nil
+
+        _ = try store.create(
+            promptID: "event-freeze-error",
+            title: "Event Freeze Error",
+            systemPrompt: "Freeze fails."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-freeze-error")
+        store.freezeError = .freeze
+        viewModel.freezeSelectedEvaluationPrompt()
+        #expect(viewModel.lastError?.contains("Evaluation prompt freeze failed") == true)
+        store.freezeError = nil
+
+        _ = try store.create(
+            promptID: "event-archive",
+            title: "Event Archive",
+            systemPrompt: "Archive succeeds."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-archive")
+        viewModel.archiveSelectedEvaluationPrompt()
+        #expect(store.archivedPromptIDs.contains("event-archive"))
+
+        _ = try store.create(
+            promptID: "event-archive-error",
+            title: "Event Archive Error",
+            systemPrompt: "Archive fails."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-archive-error")
+        store.archiveError = .archive
+        viewModel.archiveSelectedEvaluationPrompt()
+        #expect(viewModel.lastError?.contains("Evaluation prompt archive failed") == true)
+    }
+
+    @Test("event extraction prompt run guard rails surface local errors")
+    @MainActor
+    func eventExtractionPromptRunGuardRailsSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            evaluationPromptStore: store
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction", "mmlu"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Event extraction prompts require selecting only the Event Extraction suite.")
+
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Event extraction prompts are available for standard Evaluation runs.")
+
+        store.resolveError = .resolve
+        viewModel.selectedEvaluationMode = .standard
+        viewModel.selectedEvaluationCompareTargetModelIDs = []
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/tmp/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("resolve") == true)
+    }
+
     @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
     @MainActor
     func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {

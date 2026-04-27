@@ -1506,6 +1506,7 @@ public final class RuntimeViewModel {
     public private(set) var benchmarkMatrixContextChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
     public private(set) var benchmarkMatrixThroughputChartPoints: [RuntimeBenchmarkMatrixChartPointState] = []
     public private(set) var lastBenchmarkMatrixExport: RuntimeBenchmarkMatrixExportState?
+    public private(set) var evaluationPrompts: [EvaluationPrompt] = []
     public private(set) var evaluationHistory: [RuntimeEvaluationHistoryEntryState] = []
     public private(set) var evaluationMetricCards: [RuntimeEvaluationMetricCardState] = []
     public private(set) var evaluationSamplePreview: [RuntimeEvaluationSamplePreviewState] = []
@@ -1633,6 +1634,10 @@ public final class RuntimeViewModel {
     public var evaluationThreshold = "1.0"
     public var evaluationOutputSchemaJSON = ""
     public var evaluationIgnoredPaths = ""
+    public var selectedEvaluationPromptID = EvaluationPromptStore.builtInBaselinePromptID
+    public var evaluationPromptIDDraft = "event-extraction-custom"
+    public var evaluationPromptTitleDraft = "Event Extraction Prompt"
+    public var evaluationPromptSystemPromptDraft = EvaluationPromptStore.builtInBaselineSystemPrompt
     public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
     public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
@@ -1712,6 +1717,7 @@ public final class RuntimeViewModel {
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let remoteServerStore: any RemoteServerStoring
+    private let evaluationPromptStore: any EvaluationPromptStoring
     private let huggingFaceTokenStore: any HuggingFaceTokenStoring
     private let productInstallStateProvider: any ProductInstallStateProviding
     private var subscriptionTask: Task<Void, Never>?
@@ -1734,6 +1740,8 @@ public final class RuntimeViewModel {
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
     private var remoteServerPersistFailures = 0.0
+    private var evaluationPromptPersistFailures = 0.0
+    private var evaluationPromptEditingFrozenRevisionAsDraft = false
     private var lastAppliedGatewaySessionID = ""
     private var lastAppliedGatewayPrimaryKey = ""
     private var gatewayApplyTask: Task<Void, Never>?
@@ -1915,6 +1923,14 @@ public final class RuntimeViewModel {
             defaultSampleSize: 4,
             defaultBatchFactor: 1
         ),
+        RuntimeEvaluationSuiteOptionState(
+            id: "event_extraction",
+            title: "Event Extraction",
+            datasetID: "event_extraction.jsonl",
+            scoreLabel: "Weighted F1",
+            defaultSampleSize: 200,
+            defaultBatchFactor: 1
+        ),
     ]
     private static let chatPresentationFlushInterval: Duration = .milliseconds(24)
     private static let chatPresentationCharactersPerFlush = 8
@@ -1927,6 +1943,7 @@ public final class RuntimeViewModel {
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
+        evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
         huggingFaceTokenStore: any HuggingFaceTokenStoring = NullHuggingFaceTokenStore(),
         productInstallStateProvider: any ProductInstallStateProviding = FilesystemProductInstallStateProvider()
     ) {
@@ -1937,9 +1954,11 @@ public final class RuntimeViewModel {
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
         self.remoteServerStore = remoteServerStore
+        self.evaluationPromptStore = evaluationPromptStore
         self.huggingFaceTokenStore = huggingFaceTokenStore
         self.productInstallStateProvider = productInstallStateProvider
         reloadRemoteServers()
+        reloadEvaluationPrompts()
         reloadHuggingFaceTokenHint()
     }
 
@@ -2124,6 +2143,206 @@ public final class RuntimeViewModel {
         remoteServerAPIKeyDraft = ""
         remoteServerTimeoutSecondsDraft = server.timeoutSeconds
         remoteServerRateLimitPerMinuteDraft = server.rateLimitPerMinute
+    }
+
+    public var selectedEvaluationPrompt: EvaluationPrompt? {
+        evaluationPrompts.first { $0.id == selectedEvaluationPromptID }
+    }
+
+    public var selectedEvaluationPromptRevision: EvaluationPromptRevision? {
+        selectedEvaluationPrompt?.latestRevision
+    }
+
+    public var selectedEvaluationPromptSummaryText: String {
+        guard let prompt = selectedEvaluationPrompt,
+              let revision = prompt.latestRevision
+        else {
+            return "New draft prompt"
+        }
+        let status = revision.status.rawValue.capitalized
+        let shortHash = String(revision.contentHash.suffix(12))
+        return "\(prompt.title) • \(revision.revisionID) • \(status) • \(shortHash)"
+    }
+
+    public var isEvaluationPromptIDEditable: Bool {
+        selectedEvaluationPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isEvaluationPromptDraftEditable: Bool {
+        guard let prompt = selectedEvaluationPrompt else {
+            return true
+        }
+        guard prompt.readOnly == false else {
+            return false
+        }
+        return prompt.latestRevision?.status == .draft || evaluationPromptEditingFrozenRevisionAsDraft
+    }
+
+    public var canFreezeSelectedEvaluationPrompt: Bool {
+        guard let prompt = selectedEvaluationPrompt,
+              prompt.readOnly == false,
+              prompt.latestRevision?.status == .draft
+        else {
+            return false
+        }
+        return true
+    }
+
+    public func reloadEvaluationPrompts() {
+        do {
+            let prompts = try evaluationPromptStore.list(includeArchived: false)
+            evaluationPrompts = prompts
+            if selectedEvaluationPromptID.isEmpty
+                || prompts.contains(where: { $0.id == selectedEvaluationPromptID }) == false
+            {
+                selectedEvaluationPromptID = prompts.first(where: { $0.id == EvaluationPromptStore.builtInBaselinePromptID })?.id
+                    ?? prompts.first?.id
+                    ?? ""
+            }
+            if let selected = prompts.first(where: { $0.id == selectedEvaluationPromptID }) {
+                applyEvaluationPromptDraft(from: selected)
+            }
+        } catch {
+            evaluationPromptPersistFailures += 1
+            recordLocalError("Evaluation prompt load failed: \(error)")
+        }
+    }
+
+    public func selectEvaluationPrompt(id: String) {
+        selectedEvaluationPromptID = id
+        evaluationPromptEditingFrozenRevisionAsDraft = false
+        if let prompt = evaluationPrompts.first(where: { $0.id == id }) {
+            applyEvaluationPromptDraft(from: prompt)
+        }
+        notifyStateChanged()
+    }
+
+    public func prepareNewEvaluationPromptDraft() {
+        selectedEvaluationPromptID = ""
+        evaluationPromptIDDraft = "event-extraction-custom"
+        evaluationPromptTitleDraft = "Event Extraction Prompt"
+        evaluationPromptSystemPromptDraft = EvaluationPromptStore.builtInBaselineSystemPrompt
+        evaluationPromptEditingFrozenRevisionAsDraft = false
+        notifyStateChanged()
+    }
+
+    public func prepareEvaluationPromptDraftFromSelection() {
+        guard let prompt = selectedEvaluationPrompt,
+              prompt.readOnly == false
+        else {
+            recordLocalError("The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+            notifyStateChanged()
+            return
+        }
+        evaluationPromptEditingFrozenRevisionAsDraft = prompt.latestRevision?.status == .frozen
+        applyEvaluationPromptDraft(from: prompt)
+        notifyStateChanged()
+    }
+
+    public func saveEvaluationPromptDraft() {
+        let id = evaluationPromptIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = evaluationPromptTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let systemPrompt = evaluationPromptSystemPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedID = selectedEvaluationPromptID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if selectedID.isEmpty == false, id != selectedID {
+            evaluationPromptIDDraft = selectedID
+            recordLocalError("Evaluation prompt ID cannot be changed after creation. Use New Prompt to create another prompt.")
+            notifyStateChanged()
+            return
+        }
+        guard id.isEmpty == false,
+              title.isEmpty == false,
+              systemPrompt.isEmpty == false
+        else {
+            recordLocalError("Evaluation prompt requires id, title, and system prompt.")
+            notifyStateChanged()
+            return
+        }
+        if selectedEvaluationPrompt?.readOnly == true {
+            recordLocalError("The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+            notifyStateChanged()
+            return
+        }
+
+        do {
+            let saved = selectedID.isEmpty
+                ? try evaluationPromptStore.create(promptID: id, title: title, systemPrompt: systemPrompt)
+                : try evaluationPromptStore.update(promptID: id, systemPrompt: systemPrompt)
+            evaluationPromptEditingFrozenRevisionAsDraft = false
+            selectedEvaluationPromptID = saved.id
+            evaluationPrompts = try evaluationPromptStore.list(includeArchived: false)
+            applyEvaluationPromptDraft(from: saved)
+            notifyStateChanged()
+        } catch {
+            evaluationPromptPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "evaluation_prompt.persist_failures",
+                    valueMs: evaluationPromptPersistFailures
+                )
+            }
+            recordLocalError("Evaluation prompt save failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func freezeSelectedEvaluationPrompt() {
+        let promptID = selectedEvaluationPromptID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard promptID.isEmpty == false else {
+            recordLocalError("Save the evaluation prompt draft before freezing it.")
+            notifyStateChanged()
+            return
+        }
+        do {
+            let frozen = try evaluationPromptStore.freeze(promptID: promptID, revisionID: "")
+            evaluationPromptEditingFrozenRevisionAsDraft = false
+            selectedEvaluationPromptID = frozen.id
+            evaluationPrompts = try evaluationPromptStore.list(includeArchived: false)
+            applyEvaluationPromptDraft(from: frozen)
+            notifyStateChanged()
+        } catch {
+            evaluationPromptPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "evaluation_prompt.persist_failures",
+                    valueMs: evaluationPromptPersistFailures
+                )
+            }
+            recordLocalError("Evaluation prompt freeze failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    public func archiveSelectedEvaluationPrompt() {
+        let promptID = selectedEvaluationPromptID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard promptID.isEmpty == false else {
+            return
+        }
+        do {
+            _ = try evaluationPromptStore.archive(promptID: promptID)
+            evaluationPrompts = try evaluationPromptStore.list(includeArchived: false)
+            selectedEvaluationPromptID = evaluationPrompts.first?.id ?? ""
+            if let first = evaluationPrompts.first {
+                applyEvaluationPromptDraft(from: first)
+            }
+            notifyStateChanged()
+        } catch {
+            evaluationPromptPersistFailures += 1
+            Task {
+                await metrics.record(
+                    name: "evaluation_prompt.persist_failures",
+                    valueMs: evaluationPromptPersistFailures
+                )
+            }
+            recordLocalError("Evaluation prompt archive failed: \(error)")
+            notifyStateChanged()
+        }
+    }
+
+    private func applyEvaluationPromptDraft(from prompt: EvaluationPrompt) {
+        evaluationPromptIDDraft = prompt.id
+        evaluationPromptTitleDraft = prompt.title
+        evaluationPromptSystemPromptDraft = prompt.latestRevision?.systemPrompt ?? ""
     }
 
     public func selectToolSection(_ section: DesktopToolSection) {
@@ -5789,9 +6008,31 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        let usesEvaluationPrompt = shouldUseEvaluationPrompt(suites: suites)
+        if usesEvaluationPrompt, suites.contains(where: { $0 != "event_extraction" }) {
+            recordLocalError("Event extraction prompts require selecting only the Event Extraction suite.")
+            notifyStateChanged()
+            return
+        }
+        if selectedEvaluationMode == .compare, usesEvaluationPrompt {
+            recordLocalError("Event extraction prompts are available for standard Evaluation runs.")
+            notifyStateChanged()
+            return
+        }
 
         if let sourceValidationError = validateEvaluationSourceConfiguration() {
             recordLocalError(sourceValidationError)
+            notifyStateChanged()
+            return
+        }
+
+        let evaluationPromptSnapshot: EvaluationPromptSnapshot?
+        do {
+            evaluationPromptSnapshot = usesEvaluationPrompt
+                ? try evaluationPromptStore.resolveForRun(promptID: selectedEvaluationPromptID, revisionID: "")
+                : nil
+        } catch {
+            recordLocalError(String(describing: error))
             notifyStateChanged()
             return
         }
@@ -5809,8 +6050,11 @@ public final class RuntimeViewModel {
                             datasetID: "",
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
                             parameters: evaluationParameters(
-                                compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil
+                                compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil,
+                                promptSnapshot: nil
                             ),
+                            evalPromptID: evaluationPromptSnapshot?.promptID ?? "",
+                            evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? "",
                             json: true
                         )
                     )
@@ -5839,7 +6083,7 @@ public final class RuntimeViewModel {
                             targetModelIDs: compareTargetModelIDs,
                             suites: suites,
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs)
+                            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs, promptSnapshot: nil)
                         )
                     )
                 } else {
@@ -5849,7 +6093,9 @@ public final class RuntimeViewModel {
                             hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
                             suites: suites,
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                            parameters: evaluationParameters(compareTargetModelIDs: nil)
+                            parameters: evaluationParameters(compareTargetModelIDs: nil, promptSnapshot: nil),
+                            evalPromptID: evaluationPromptSnapshot?.promptID ?? "",
+                            evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? ""
                         )
                     )
                 }
@@ -5860,7 +6106,8 @@ public final class RuntimeViewModel {
                             suiteID: suiteID,
                             modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
                             hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
-                            compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil
+                            compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil,
+                            promptSnapshot: evaluationPromptSnapshot
                         )
                     )
                 }
@@ -7184,7 +7431,10 @@ public final class RuntimeViewModel {
         return parameters
     }
 
-    private func evaluationParameters(compareTargetModelIDs: [String]?) -> [String: String] {
+    private func evaluationParameters(
+        compareTargetModelIDs: [String]?,
+        promptSnapshot: EvaluationPromptSnapshot?
+    ) -> [String: String] {
         var parameters: [String: String] = [:]
         let batchFactor = evaluationBatchFactor.trimmingCharacters(in: .whitespacesAndNewlines)
         if batchFactor.isEmpty == false {
@@ -7210,7 +7460,31 @@ public final class RuntimeViewModel {
             parameters["compare_mode"] = "base_vs_targets"
             parameters["compare_target_model_ids"] = compareTargetModelIDs.joined(separator: ",")
         }
+        if let promptSnapshot {
+            parameters.merge(evaluationPromptParameters(from: promptSnapshot)) { _, new in new }
+        }
         return parameters
+    }
+
+    private func shouldUseEvaluationPrompt(suites: [String]) -> Bool {
+        suites.contains("event_extraction")
+            || normalizedEvaluationScoringMode() == EvaluationPromptStore.eventExtractionScoringMode
+    }
+
+    private func evaluationPromptParameters(from snapshot: EvaluationPromptSnapshot) -> [String: String] {
+        let examplesJSON = (try? EvaluationPromptStore.examplesJSONString(snapshot.examples)) ?? "[]"
+        return [
+            "prompt_id": snapshot.promptID,
+            "prompt_revision_id": snapshot.revisionID,
+            "prompt_content_hash": snapshot.contentHash,
+            "prompt_title": snapshot.title,
+            "eval_prompt_id": snapshot.promptID,
+            "eval_prompt_revision_id": snapshot.revisionID,
+            "eval_prompt_content_hash": snapshot.contentHash,
+            "eval_prompt_title": snapshot.title,
+            "eval_prompt_system_prompt": snapshot.systemPrompt,
+            "eval_prompt_examples_json": examplesJSON,
+        ]
     }
 
     private func validateEvaluationSourceConfiguration() -> String? {
@@ -7243,7 +7517,8 @@ public final class RuntimeViewModel {
         suiteID: String,
         modelID: String,
         hfRepoID: String,
-        compareTargetModelIDs: [String]?
+        compareTargetModelIDs: [String]?,
+        promptSnapshot: EvaluationPromptSnapshot?
     ) -> ControlPlaneEvaluationRequest {
         let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
         return ControlPlaneEvaluationRequest(
@@ -7272,7 +7547,7 @@ public final class RuntimeViewModel {
                 outputSchemaJSON: evaluationOutputSchemaJSON.trimmingCharacters(in: .whitespacesAndNewlines),
                 ignoredPaths: normalizedEvaluationIgnoredPaths()
             ),
-            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs)
+            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs, promptSnapshot: promptSnapshot)
         )
     }
 

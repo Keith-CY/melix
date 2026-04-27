@@ -13,6 +13,7 @@ public struct MelixHome: Equatable, Sendable {
     public let secretsDirectoryURL: URL
     public let operatorSessionFileURL: URL
     public let remoteServersFileURL: URL
+    public let evaluationPromptsFileURL: URL
     public let serverSessionAPIKeysFileURL: URL
     public let remoteServerAPIKeysFileURL: URL
     public let huggingFaceTokenFileURL: URL
@@ -24,6 +25,7 @@ public struct MelixHome: Equatable, Sendable {
         self.secretsDirectoryURL = rootURL.appendingPathComponent("secrets", isDirectory: true)
         self.operatorSessionFileURL = stateDirectoryURL.appendingPathComponent("operator-session.json")
         self.remoteServersFileURL = stateDirectoryURL.appendingPathComponent("remote-servers.json")
+        self.evaluationPromptsFileURL = stateDirectoryURL.appendingPathComponent("evaluation-prompts.json")
         self.serverSessionAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("server-session-api-keys.json")
         self.remoteServerAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("remote-server-api-keys.json")
         self.huggingFaceTokenFileURL = secretsDirectoryURL.appendingPathComponent("huggingface-token.json")

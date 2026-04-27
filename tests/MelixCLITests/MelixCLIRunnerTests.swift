@@ -2231,6 +2231,132 @@ struct MelixCLIRunnerTests {
         }
     }
 
+    @Test("evaluation prompt commands persist drafts freeze revisions and feed eval run")
+    func evaluationPromptCommandsPersistDraftsFreezeRevisionsAndFeedEvalRun() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-eval-prompts-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        let promptFile = temporaryRoot.appendingPathComponent("prompt.txt")
+        try "Extract only scheduled events.".write(to: promptFile, atomically: true, encoding: .utf8)
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-prompt-1",
+                suiteID: "event_extraction",
+                datasetID: "top200",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        let listOutput = try await runner.run(.evalPromptList(.init()))
+        #expect(listOutput.contains(EvaluationPromptStore.builtInBaselinePromptID))
+        #expect(listOutput.contains("read-only"))
+
+        let createOutput = try await runner.run(
+            .evalPromptCreate(
+                .init(
+                    promptID: "event-prod",
+                    title: "Event Prod",
+                    systemPromptFile: promptFile.path,
+                    json: true
+                )
+            )
+        )
+        let created = try #require(parseJSONObject(createOutput))
+        #expect(created["id"] as? String == "event-prod")
+        #expect(created["latest_revision_id"] as? String == "rev-1")
+
+        let listJSONOutput = try await runner.run(.evalPromptList(.init(json: true)))
+        let listedPrompts = try #require(parseJSONArray(listJSONOutput))
+        #expect(listedPrompts.contains { (($0 as? [String: Any])?["id"] as? String) == "event-prod" })
+
+        await #expect(throws: MelixCLIError.runtime("Evaluation prompt event-prod revision rev-1 is not frozen.")) {
+            _ = try await runner.run(
+                .evalRun(
+                    .init(
+                        modelID: "melix-dev-text",
+                        suites: ["event_extraction"],
+                        source: .localJSONL(path: "/tmp/top200.jsonl"),
+                        profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                        evalPromptID: "event-prod"
+                    )
+                )
+            )
+        }
+
+        await #expect(throws: MelixCLIError.runtime("Evaluation prompt missing-prompt was not found.")) {
+            _ = try await runner.run(.evalPromptShow(.init(promptID: "missing-prompt")))
+        }
+
+        try "Extract established events and future plans.".write(to: promptFile, atomically: true, encoding: .utf8)
+        let updateOutput = try await runner.run(.evalPromptUpdate(.init(promptID: "event-prod", systemPromptFile: promptFile.path, json: true)))
+        let updated = try #require(parseJSONObject(updateOutput))
+        #expect(updated["latest_revision_id"] as? String == "rev-1")
+
+        let freezeOutput = try await runner.run(.evalPromptFreeze(.init(promptID: "event-prod", json: true)))
+        let frozen = try #require(parseJSONObject(freezeOutput))
+        let revisions = try #require(frozen["revisions"] as? [[String: Any]])
+        #expect(revisions.first?["status"] as? String == "frozen")
+
+        await #expect(throws: MelixCLIError.runtime("Evaluation prompt event-prod revision missing-rev was not found.")) {
+            _ = try await runner.run(.evalPromptShow(.init(promptID: "event-prod", revisionID: "missing-rev")))
+        }
+
+        let showOutput = try await runner.run(.evalPromptShow(.init(promptID: "event-prod")))
+        #expect(showOutput.contains("prompt_id=event-prod"))
+        #expect(showOutput.contains("system_prompt:"))
+
+        let showJSONOutput = try await runner.run(.evalPromptShow(.init(promptID: "event-prod", json: true)))
+        let showJSON = try #require(parseJSONObject(showJSONOutput))
+        #expect(showJSON["prompt_id"] as? String == "event-prod")
+
+        let textCreateOutput = try await runner.run(
+            .evalPromptCreate(.init(promptID: "event-text", title: "Event Text", systemPromptFile: promptFile.path))
+        )
+        #expect(textCreateOutput.contains("event-text"))
+        try "Text prompt update.".write(to: promptFile, atomically: true, encoding: .utf8)
+        let textUpdateOutput = try await runner.run(
+            .evalPromptUpdate(.init(promptID: "event-text", systemPromptFile: promptFile.path))
+        )
+        #expect(textUpdateOutput.contains("event-text"))
+        let textFreezeOutput = try await runner.run(.evalPromptFreeze(.init(promptID: "event-text")))
+        #expect(textFreezeOutput.contains("frozen"))
+        let textArchiveJSONOutput = try await runner.run(.evalPromptArchive(.init(promptID: "event-text", json: true)))
+        let archivedTextPrompt = try #require(parseJSONObject(textArchiveJSONOutput))
+        #expect(archivedTextPrompt["archived"] as? Bool == true)
+
+        _ = try await runner.run(
+            .evalRun(
+                .init(
+                    modelID: "melix-dev-text",
+                    suites: ["event_extraction"],
+                    datasetID: "top200",
+                    sampleSize: 3,
+                    source: .localJSONL(path: "/tmp/top200.jsonl"),
+                    profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                    evalPromptID: "event-prod",
+                    json: true
+                )
+            )
+        )
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.parameters["prompt_id"] == "event-prod")
+        #expect(request.parameters["prompt_revision_id"] == "rev-1")
+        #expect(request.parameters["prompt_content_hash"]?.hasPrefix("sha256:") == true)
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Extract established events and future plans.")
+        #expect(request.parameters["eval_prompt_examples_json"] == "[]")
+
+        let archiveOutput = try await runner.run(.evalPromptArchive(.init(promptID: "event-prod")))
+        #expect(archiveOutput == "Archived evaluation prompt event-prod.\n")
+    }
+
     @Test("chat run surfaces stream failures as runtime errors")
     func chatRunSurfacesStreamFailuresAsRuntimeErrors() async throws {
         let client = StubControlPlaneXPCClient()

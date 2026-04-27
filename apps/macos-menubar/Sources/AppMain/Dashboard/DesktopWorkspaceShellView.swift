@@ -4088,6 +4088,104 @@ struct DesktopDiagnosticsToolSectionView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Evaluation Prompt")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Evaluation Prompt",
+                            selection: Binding(
+                                get: { viewModel.selectedEvaluationPromptID },
+                                set: { viewModel.selectEvaluationPrompt(id: $0) }
+                            )
+                        ) {
+                            ForEach(viewModel.evaluationPrompts, id: \.id) { prompt in
+                                Text(prompt.title).tag(prompt.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(viewModel.selectedEvaluationPromptSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
+                        HStack(spacing: 10) {
+                            Button {
+                                viewModel.prepareNewEvaluationPromptDraft()
+                            } label: {
+                                Label("New Prompt", systemImage: "plus")
+                            }
+
+                            Button {
+                                viewModel.prepareEvaluationPromptDraftFromSelection()
+                            } label: {
+                                Label("Edit Draft", systemImage: "square.and.pencil")
+                            }
+                            .disabled(viewModel.selectedEvaluationPrompt?.readOnly ?? true)
+
+                            Button {
+                                viewModel.saveEvaluationPromptDraft()
+                            } label: {
+                                Label("Save Draft", systemImage: "tray.and.arrow.down")
+                            }
+                            .disabled(viewModel.isEvaluationPromptDraftEditable == false)
+
+                            Button {
+                                viewModel.freezeSelectedEvaluationPrompt()
+                            } label: {
+                                Label("Freeze Revision", systemImage: "snowflake")
+                            }
+                            .disabled(viewModel.canFreezeSelectedEvaluationPrompt == false)
+                        }
+                        .buttonStyle(.bordered)
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Prompt ID",
+                                text: Binding(
+                                    get: { viewModel.evaluationPromptIDDraft },
+                                    set: { viewModel.evaluationPromptIDDraft = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(viewModel.isEvaluationPromptIDEditable == false)
+
+                            TextField(
+                                "Prompt Title",
+                                text: Binding(
+                                    get: { viewModel.evaluationPromptTitleDraft },
+                                    set: { viewModel.evaluationPromptTitleDraft = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(
+                                viewModel.isEvaluationPromptIDEditable == false
+                                    || viewModel.isEvaluationPromptDraftEditable == false
+                            )
+                        }
+
+                        TextEditor(
+                            text: Binding(
+                                get: { viewModel.evaluationPromptSystemPromptDraft },
+                                set: { viewModel.evaluationPromptSystemPromptDraft = $0 }
+                            )
+                        )
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 140)
+                        .padding(8)
+                        .background(
+                            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .disabled(viewModel.isEvaluationPromptDraftEditable == false)
+                    }
+
+                    Divider()
+
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Dataset Source")
                             .font(.caption.weight(.semibold))

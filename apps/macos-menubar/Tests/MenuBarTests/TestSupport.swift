@@ -76,6 +76,183 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     }
 }
 
+final class FakeEvaluationPromptStore: EvaluationPromptStoring, @unchecked Sendable {
+    enum StoreError: Error, Equatable {
+        case list
+        case create
+        case update
+        case freeze
+        case archive
+        case resolve
+    }
+
+    private(set) var createdPrompts: [(id: String, title: String, systemPrompt: String)] = []
+    private(set) var updatedPrompts: [(id: String, systemPrompt: String)] = []
+    private(set) var frozenPrompts: [(id: String, revisionID: String)] = []
+    private(set) var archivedPromptIDs: [String] = []
+    var prompts: [EvaluationPrompt]
+    var listError: StoreError?
+    var createError: StoreError?
+    var updateError: StoreError?
+    var freezeError: StoreError?
+    var archiveError: StoreError?
+    var resolveError: StoreError?
+
+    init(prompts: [EvaluationPrompt] = [EvaluationPromptStore.builtInBaselinePrompt]) {
+        self.prompts = prompts
+    }
+
+    func list(includeArchived: Bool) throws -> [EvaluationPrompt] {
+        if let listError {
+            throw listError
+        }
+        return prompts
+            .filter { includeArchived || $0.archived == false }
+            .sorted { $0.id < $1.id }
+    }
+
+    @discardableResult
+    func create(promptID: String, title: String, systemPrompt: String) throws -> EvaluationPrompt {
+        if let createError {
+            throw createError
+        }
+        createdPrompts.append((id: promptID, title: title, systemPrompt: systemPrompt))
+        let prompt = Self.makePrompt(
+            id: promptID,
+            title: title,
+            revisionID: "rev-1",
+            status: .draft,
+            systemPrompt: systemPrompt
+        )
+        prompts.removeAll { $0.id == promptID }
+        prompts.append(prompt)
+        return prompt
+    }
+
+    @discardableResult
+    func update(promptID: String, systemPrompt: String) throws -> EvaluationPrompt {
+        if let updateError {
+            throw updateError
+        }
+        updatedPrompts.append((id: promptID, systemPrompt: systemPrompt))
+        let existing = prompts.first { $0.id == promptID }
+        let nextRevisionID: String
+        let nextStatus: EvaluationPromptRevisionStatus
+        if existing?.latestRevision?.status == .draft {
+            nextRevisionID = existing?.latestRevisionID ?? "rev-1"
+            nextStatus = .draft
+        } else {
+            nextRevisionID = "rev-\((existing?.revisions.count ?? 0) + 1)"
+            nextStatus = .draft
+        }
+        let prompt = Self.makePrompt(
+            id: promptID,
+            title: existing?.title ?? promptID,
+            revisionID: nextRevisionID,
+            status: nextStatus,
+            systemPrompt: systemPrompt,
+            existingRevisions: existing?.revisions ?? []
+        )
+        prompts.removeAll { $0.id == promptID }
+        prompts.append(prompt)
+        return prompt
+    }
+
+    @discardableResult
+    func freeze(promptID: String, revisionID: String) throws -> EvaluationPrompt {
+        if let freezeError {
+            throw freezeError
+        }
+        frozenPrompts.append((id: promptID, revisionID: revisionID))
+        let existing = prompts.first { $0.id == promptID } ?? EvaluationPromptStore.builtInBaselinePrompt
+        let selectedRevisionID = revisionID.isEmpty ? existing.latestRevisionID : revisionID
+        let systemPrompt = existing.latestRevision?.systemPrompt ?? EvaluationPromptStore.builtInBaselineSystemPrompt
+        let prompt = Self.makePrompt(
+            id: existing.id,
+            title: existing.title,
+            revisionID: selectedRevisionID,
+            status: .frozen,
+            systemPrompt: systemPrompt,
+            existingRevisions: existing.revisions
+        )
+        prompts.removeAll { $0.id == promptID }
+        prompts.append(prompt)
+        return prompt
+    }
+
+    @discardableResult
+    func archive(promptID: String) throws -> EvaluationPrompt {
+        if let archiveError {
+            throw archiveError
+        }
+        archivedPromptIDs.append(promptID)
+        let existing = prompts.first { $0.id == promptID } ?? EvaluationPromptStore.builtInBaselinePrompt
+        let archived = EvaluationPrompt(
+            id: existing.id,
+            title: existing.title,
+            taskKind: existing.taskKind,
+            scoringMode: existing.scoringMode,
+            latestRevisionID: existing.latestRevisionID,
+            archived: true,
+            readOnly: existing.readOnly,
+            revisions: existing.revisions,
+            createdAt: existing.createdAt,
+            updatedAt: Date()
+        )
+        prompts.removeAll { $0.id == promptID }
+        prompts.append(archived)
+        return archived
+    }
+
+    func resolveForRun(promptID: String, revisionID: String) throws -> EvaluationPromptSnapshot {
+        if let resolveError {
+            throw resolveError
+        }
+        let requestedID = promptID.isEmpty ? EvaluationPromptStore.builtInBaselinePromptID : promptID
+        let prompt = prompts.first { $0.id == requestedID } ?? EvaluationPromptStore.builtInBaselinePrompt
+        let revision = revisionID.isEmpty
+            ? prompt.latestRevision
+            : prompt.revisions.first { $0.revisionID == revisionID }
+        guard let revision else {
+            throw StoreError.resolve
+        }
+        guard prompt.archived == false, revision.status == .frozen else {
+            throw StoreError.resolve
+        }
+        return EvaluationPromptSnapshot(prompt: prompt, revision: revision)
+    }
+
+    private static func makePrompt(
+        id: String,
+        title: String,
+        revisionID: String,
+        status: EvaluationPromptRevisionStatus,
+        systemPrompt: String,
+        existingRevisions: [EvaluationPromptRevision] = []
+    ) -> EvaluationPrompt {
+        let now = Date()
+        let revision = EvaluationPromptRevision(
+            revisionID: revisionID,
+            status: status,
+            systemPrompt: systemPrompt,
+            contentHash: EvaluationPromptStore.contentHash(systemPrompt: systemPrompt),
+            createdAt: now,
+            updatedAt: now
+        )
+        var revisions = existingRevisions
+        revisions.removeAll { $0.revisionID == revisionID }
+        revisions.append(revision)
+        return EvaluationPrompt(
+            id: id,
+            title: title,
+            latestRevisionID: revisionID,
+            revisions: revisions,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+}
+
 actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     struct ScheduledChatEvent: Equatable, Sendable {
         let delay: Duration

@@ -40,10 +40,15 @@ from worker.productization.evaluation_final_result import (
     score_final_result,
 )
 from worker.productization.event_extraction import (
+    EventExtractionPromptSpec,
     RemoteEventExtractionTarget,
+    default_event_extraction_prompt_spec,
     evaluate_event_extraction,
+    event_prompt_content_hash,
     make_event_extraction_client,
     normalize_event_fields,
+    prompt_example_dialogue_ids,
+    prompt_snapshot_payload,
 )
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
@@ -535,10 +540,26 @@ class EvaluationCore:
         gold_subset_path = output_root / "gold_subset.jsonl"
         summary_path = reports_dir / "event_eval_summary.json"
         details_path = reports_dir / "event_eval_details.jsonl"
+        prompt_snapshot_path = output_root / "prompt_snapshot.json"
 
         rows = self._read_event_extraction_rows(Path(source_jsonl), sample_size=sample_size)
         gold_subset_path.write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        prompt_spec = self._event_extraction_prompt_spec(parameters)
+        overlapping_examples = sorted(
+            set(prompt_example_dialogue_ids(prompt_spec))
+            & {str(row.get("dialogue_id") or "").strip() for row in rows}
+        )
+        if overlapping_examples:
+            raise ValueError(
+                "event extraction prompt examples overlap evaluation rows: "
+                + ", ".join(overlapping_examples)
+            )
+        prompt_snapshot = prompt_snapshot_payload(prompt_spec)
+        prompt_snapshot_path.write_text(
+            json.dumps(prompt_snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
@@ -549,7 +570,8 @@ class EvaluationCore:
                 api_key=str(getattr(remote_target, "api_key", "")),
                 model_id=remote_model_id,
                 timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
-            )
+            ),
+            prompt_spec=prompt_spec,
         )
         rate_limit_per_minute = int(getattr(remote_target, "rate_limit_per_minute", 0) or 0)
         min_interval_seconds = 60.0 / rate_limit_per_minute if rate_limit_per_minute > 0 else 0.0
@@ -634,12 +656,19 @@ class EvaluationCore:
         job_parameters = dict(parameters)
         job_parameters.pop("api_key", None)
         job_parameters.pop("remote_api_key", None)
+        job_parameters.pop("eval_prompt_system_prompt", None)
+        job_parameters.pop("eval_prompt_examples_json", None)
         job_parameters["dataset_root"] = str(Path(source_jsonl).resolve())
         job_parameters["event_source_jsonl"] = str(Path(source_jsonl).resolve())
         job_parameters["prediction_jsonl"] = str(prediction_path)
         job_parameters["failure_jsonl"] = str(failure_path)
         job_parameters["event_eval_summary"] = str(summary_path)
         job_parameters["event_eval_details"] = str(details_path)
+        job_parameters["prompt_snapshot"] = str(prompt_snapshot_path)
+        job_parameters["prompt_id"] = prompt_spec.prompt_id
+        job_parameters["prompt_revision_id"] = prompt_spec.revision_id
+        job_parameters["prompt_content_hash"] = prompt_spec.content_hash
+        job_parameters["prompt_example_dialogue_ids"] = ",".join(prompt_example_dialogue_ids(prompt_spec))
         job_parameters["effective_scoring_mode"] = "event_extraction_weighted_f1"
         job_parameters["scoring_mode"] = "event_extraction_weighted_f1"
         job_parameters.setdefault("remote_model_id", remote_model_id)
@@ -1113,6 +1142,46 @@ class EvaluationCore:
         if not rows:
             raise ValueError(f"event extraction source JSONL is empty: {path}")
         return rows
+
+    @staticmethod
+    def _event_extraction_prompt_spec(parameters: dict[str, str]) -> EventExtractionPromptSpec:
+        system_prompt = str(parameters.get("eval_prompt_system_prompt") or "").strip()
+        if not system_prompt:
+            return default_event_extraction_prompt_spec()
+
+        examples_json = str(parameters.get("eval_prompt_examples_json") or "[]").strip() or "[]"
+        try:
+            parsed_examples = json.loads(examples_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"eval_prompt_examples_json must be valid JSON: {exc}") from exc
+        if not isinstance(parsed_examples, list):
+            raise ValueError("eval_prompt_examples_json must be a JSON array")
+        examples: list[dict[str, object]] = []
+        for index, example in enumerate(parsed_examples):
+            if not isinstance(example, dict):
+                raise ValueError(f"eval prompt example {index} must be a JSON object")
+            dialogue_id = str(example.get("dialogue_id") or "").strip()
+            if not dialogue_id:
+                raise ValueError(f"eval prompt example {index} is missing dialogue_id")
+            examples.append(example)
+
+        prompt_id = str(parameters.get("eval_prompt_id") or parameters.get("prompt_id") or "").strip()
+        revision_id = str(
+            parameters.get("eval_prompt_revision_id") or parameters.get("prompt_revision_id") or ""
+        ).strip()
+        content_hash = str(
+            parameters.get("eval_prompt_content_hash") or parameters.get("prompt_content_hash") or ""
+        ).strip()
+        if not content_hash:
+            content_hash = event_prompt_content_hash(system_prompt, examples)
+        return EventExtractionPromptSpec(
+            prompt_id=prompt_id or "custom.event-extraction.prompt",
+            revision_id=revision_id or "unknown",
+            title=str(parameters.get("eval_prompt_title") or parameters.get("prompt_title") or "").strip(),
+            system_prompt=system_prompt,
+            examples=tuple(examples),
+            content_hash=content_hash,
+        )
 
     @staticmethod
     def _dialogue_lines(value: object) -> list[str]:

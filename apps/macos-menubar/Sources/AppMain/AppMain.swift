@@ -392,6 +392,7 @@ public final class MelixMenuBarBootstrap {
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
         remoteServerStore: (any RemoteServerStoring)? = nil,
+        evaluationPromptStore: (any EvaluationPromptStoring)? = nil,
         huggingFaceTokenStore: (any HuggingFaceTokenStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
@@ -429,6 +430,7 @@ public final class MelixMenuBarBootstrap {
         )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
         let resolvedRemoteServerStore = remoteServerStore ?? RemoteServerStore(melixHome: melixHome)
+        let resolvedEvaluationPromptStore = evaluationPromptStore ?? EvaluationPromptStore(melixHome: melixHome)
         let resolvedHuggingFaceTokenStore = huggingFaceTokenStore ?? HuggingFaceTokenStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
@@ -438,6 +440,7 @@ public final class MelixMenuBarBootstrap {
             operatorCommandRunner: resolvedOperatorCommandRunner,
             serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore,
             remoteServerStore: resolvedRemoteServerStore,
+            evaluationPromptStore: resolvedEvaluationPromptStore,
             huggingFaceTokenStore: resolvedHuggingFaceTokenStore
         )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
@@ -514,6 +517,7 @@ public final class MelixMenuBarBootstrap {
             cliWorkflowRunner: cliWorkflowRunner,
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
             remoteServerStore: RemoteServerStore(melixHome: melixHome),
+            evaluationPromptStore: EvaluationPromptStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )
     }
