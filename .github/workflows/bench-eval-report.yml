@@ -24,6 +24,7 @@ jobs:
 
     env:
       MELIX_BENCH_EVAL_CI_MODEL_ID: melix-dev-text
+      MELIX_BENCH_EVAL_CI_BACKEND_MODE: deterministic
 
     steps:
       - name: Checkout base
@@ -65,6 +66,13 @@ jobs:
             export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
             export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
             export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then
+              export MELIX_SWIFT_MLX_METALLIB_PATH="$repo_dir/.runtime/swift-mlx-placeholder/mlx.metallib"
+              mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
+              touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
+            fi
 
             make bootstrap
             bash scripts/dev_up.sh
@@ -138,6 +146,13 @@ jobs:
             export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
             export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
             export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then
+              export MELIX_SWIFT_MLX_METALLIB_PATH="$repo_dir/.runtime/swift-mlx-placeholder/mlx.metallib"
+              mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
+              touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
+            fi
 
             make bootstrap
             bash scripts/dev_up.sh

@@ -551,7 +551,9 @@ ready-for-review events.
 The workflow:
 
 - checks out the base SHA and PR head SHA on the same macOS runner
-- runs the same real benchmark, matrix, and evaluation suite for both revisions
+- runs the same benchmark, matrix, and evaluation smoke suite for both revisions
+- defaults the CI runtime to the deterministic text backend so PR reports do not depend on a
+  runner-local model checkout or Swift MLX metallib cache
 - isolates each run with a separate `MELIX_HOME`, `.runtime` tree, model-ops root, and HTTP port
 - uploads base, head, and report artifacts
 - updates one sticky pull-request comment marked with

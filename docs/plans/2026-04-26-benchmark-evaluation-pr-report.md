@@ -31,6 +31,9 @@ and CI rendering identical:
   rendering logic.
 - `.github/workflows/bench-eval-report.yml` runs both revisions, writes export bundles, renders the
   report, uploads artifacts, and updates the sticky comment.
+- The PR workflow defaults to deterministic text execution so hosted macOS reports do not depend on
+  a runner-local model checkout or Swift MLX metallib cache. Real Swift MLX report runs still require
+  an explicit matching `MELIX_SWIFT_MLX_METALLIB_PATH` and model path.
 
 ## Probe Semantics
 
