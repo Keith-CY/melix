@@ -675,7 +675,7 @@ def _collect_prefill_memory_guard_evidence(repo_root: Path) -> dict[str, Any]:
     stack = LiveMelixStack(
         repo_root,
         environment_overrides={
-            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "40960",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
         },
     )

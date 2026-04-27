@@ -335,8 +335,8 @@ def test_collect_runtime_core_evidence_reports_multimodel_and_guard_signals(
         "wait_for_metrics",
         lambda *args, **kwargs: {
             "swift_text.prefill_guard_last_prompt_tokens": 16.0,
-            "swift_text.prefill_guard_last_required_bytes": 81920.0,
-            "swift_text.prefill_guard_last_budget_bytes": 65536.0,
+            "swift_text.prefill_guard_last_required_bytes": 49152.0,
+            "swift_text.prefill_guard_last_budget_bytes": 40960.0,
         },
     )
 
@@ -352,9 +352,9 @@ def test_collect_runtime_core_evidence_reports_multimodel_and_guard_signals(
     assert report["prefill_memory_guard_rejection_count"] == 1.0
     assert report["prefill_memory_guard_success_rate"] == 100.0
     assert report["prefill_memory_guard_last_prompt_tokens"] == 16.0
-    assert report["prefill_memory_guard_last_required_bytes"] == 81920.0
-    assert report["prefill_memory_guard_last_budget_bytes"] == 65536.0
-    assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES"] == "65536"
+    assert report["prefill_memory_guard_last_required_bytes"] == 49152.0
+    assert report["prefill_memory_guard_last_budget_bytes"] == 40960.0
+    assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES"] == "40960"
     assert FakeStack.environments[1]["MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES"] == "16384"
 
 
@@ -480,8 +480,8 @@ def test_collect_prefill_memory_guard_evidence_raises_when_probe_does_not_reject
         "wait_for_metrics",
         lambda *args, **kwargs: {
             "swift_text.prefill_guard_last_prompt_tokens": 16.0,
-            "swift_text.prefill_guard_last_required_bytes": 81920.0,
-            "swift_text.prefill_guard_last_budget_bytes": 65536.0,
+            "swift_text.prefill_guard_last_required_bytes": 49152.0,
+            "swift_text.prefill_guard_last_budget_bytes": 40960.0,
         },
     )
 
