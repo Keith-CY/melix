@@ -4528,6 +4528,58 @@ struct ControlPlaneServiceTests {
         #expect(lastBenchRequest.sourceRepo == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
     }
 
+    @Test("execute does not require live-model evidence for local-path benchmark targets")
+    func executeDoesNotRequireLiveModelEvidenceForLocalPathBenchmarkTargets() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-local-path-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let localModelID = "melix-dev-qwen-local"
+        let localModelPath = "/tmp/melix-local-model"
+        let manifestJSON = try makeRegistrySnapshotManifestJSON(
+            models: [
+                [
+                    "model_id": localModelID,
+                    "model_path": localModelPath,
+                    "model_kind": "text",
+                    "quant_profile_id": "local",
+                    "max_context": 32768,
+                    "ext": [
+                        "melix.source_kind": "local_path",
+                        "melix.model_path": localModelPath,
+                        "melix.source_repo": localModelPath,
+                        "melix.task_kind": "text-generation",
+                    ],
+                ],
+            ]
+        )
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = manifestJSON
+                return event
+            }(),
+        ])
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-local-path", reportPath: reportPath))
+
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: []),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedChatWorkerClient(events: []),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeRunBenchRequest(modelID: localModelID))
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastBenchRequest.sourceRepo == localModelPath)
+        #expect(lastBenchRequest.parameters["require_live_model"] == nil)
+    }
+
     @Test("execute does not tag local catalog benchmark targets as live model evidence")
     func executeDoesNotTagLocalCatalogBenchmarkTargetsAsLiveModelEvidence() async throws {
         let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-local-catalog-report.md").path
@@ -4570,6 +4622,40 @@ struct ControlPlaneServiceTests {
         #expect(lastBenchRequest.parameters["require_live_model"] == nil)
         #expect(lastBenchRequest.parameters["live_model_source"] == nil)
         #expect(lastBenchRequest.sourceRepo == "/tmp/melix/local-cache-model")
+    }
+
+    @Test("execute allows deterministic runtime evidence override for dev benchmark targets")
+    func executeAllowsDeterministicRuntimeEvidenceOverrideForDevBenchmarkTargets() async throws {
+        let reportPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("melix-bench-dev-override-report.md").path
+        try "# Melix Bench\n".write(toFile: reportPath, atomically: true, encoding: .utf8)
+
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setBenchEvents(makeBenchmarkLifecycleEvents(jobID: "bench-dev-override", reportPath: reportPath))
+
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.source_repo"] = "mlx-community/Qwen3-dev-fixture"
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchRequest(
+                modelID: "melix-dev-text",
+                parameters: ["allow_deterministic_runtime": "true"]
+            )
+        )
+        let lastBenchRequest = try #require(await modelOpsClient.lastBenchRequest)
+
+        #expect(response.ok)
+        #expect(lastBenchRequest.sourceRepo == "mlx-community/Qwen3-dev-fixture")
+        #expect(lastBenchRequest.parameters["allow_deterministic_runtime"] == "true")
+        #expect(lastBenchRequest.parameters["require_live_model"] == nil)
     }
 
     @Test("execute imports a direct Hugging Face benchmark target and routes gemma4 to the VLM benchmark path")
@@ -4621,7 +4707,10 @@ struct ControlPlaneServiceTests {
         )
 
         let response = try await service.execute(
-            makeRunBenchRequest(hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit")
+            makeRunBenchRequest(
+                hfRepoID: "unsloth/gemma-4-E4B-it-MLX-8bit",
+                parameters: ["allow_deterministic_runtime": "true"]
+            )
         )
         let lastCardRequest = try #require(await modelOpsClient.lastHubModelCardRequest)
         let lastLoadRequest = try #require(await pythonRuntimeClient.lastLoadModelRequest)
@@ -4637,6 +4726,7 @@ struct ControlPlaneServiceTests {
         #expect(lastLoadRequest.model.ext["vision_family_id"] == "gemma4-v1")
         #expect(lastBenchRequest.taskKind == "text-generation")
         #expect(lastBenchRequest.sourceRepo == "unsloth/gemma-4-E4B-it-MLX-8bit")
+        #expect(lastBenchRequest.parameters["allow_deterministic_runtime"] == "true")
         #expect(lastBenchRequest.parameters["require_live_model"] == "true")
         #expect(lastBenchRequest.parameters["live_model_source"] == "hf_repo")
         #expect(response.ops.benchmarkJob.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
@@ -8632,7 +8722,8 @@ struct ControlPlaneServiceTests {
         repeats: UInt32 = 3,
         cacheProfile: String = "partial_prefix",
         reasoningMode: String = "enabled",
-        structuredOutputMode: String = "json_schema"
+        structuredOutputMode: String = "json_schema",
+        parameters: [String: String] = [:]
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-ops-bench"
@@ -8649,6 +8740,7 @@ struct ControlPlaneServiceTests {
         request.ops.runBench.cacheProfile = cacheProfile
         request.ops.runBench.reasoningMode = reasoningMode
         request.ops.runBench.structuredOutputMode = structuredOutputMode
+        request.ops.runBench.parameters = parameters
         return request
     }
 

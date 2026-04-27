@@ -1,0 +1,308 @@
+name: bench-eval-report
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: bench-eval-report-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    env:
+      MELIX_BENCH_EVAL_CI_MODEL_ID: ${{ vars.MELIX_BENCH_EVAL_CI_MODEL_ID || 'melix-dev-text' }}
+      MELIX_BENCH_EVAL_CI_MODEL_PATH: ${{ vars.MELIX_BENCH_EVAL_CI_MODEL_PATH || vars.MELIX_BENCH_EVAL_CI_MODEL_ID || 'melix-dev-text' }}
+      MELIX_BENCH_EVAL_CI_BACKEND_MODE: ${{ vars.MELIX_BENCH_EVAL_CI_BACKEND_MODE || 'deterministic' }}
+
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Checkout head
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Run base suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_suite() {
+            local label="$1"
+            local repo_dir="$2"
+            local http_port="$3"
+            local artifact_dir="$GITHUB_WORKSPACE/artifacts/$label"
+
+            mkdir -p "$artifact_dir"
+            cd "$repo_dir"
+
+            export MELIX_SERVICE_INSTANCE_NAME="bench-eval-$label"
+            export MELIX_HTTP_PORT="$http_port"
+            export MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-$label"
+            export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
+            export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
+            export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_DEV_TEXT_MODEL_PATH="$MELIX_BENCH_EVAL_CI_MODEL_PATH"
+            export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then
+              export MELIX_SWIFT_MLX_METALLIB_PATH="$repo_dir/.runtime/swift-mlx-placeholder/mlx.metallib"
+              mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
+              touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
+            fi
+            print_runtime_logs() {
+              for log_path in "$MELIX_RUNTIME_DIR"/*.log; do
+                [[ -f "$log_path" ]] || continue
+                printf '\n===== %s =====\n' "$log_path"
+                tail -n 200 "$log_path"
+              done
+            }
+
+            make bootstrap
+            make swift-build-integration-prereqs
+            if ! bash scripts/dev_up.sh --prefer-built; then
+              print_runtime_logs
+              exit 1
+            fi
+            source "$MELIX_RUNTIME_DIR/env.sh"
+            trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
+
+            swift run melix bench run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite smoke \
+              --context-length 1024 \
+              --generation-length 64 \
+              --batch-size 1 \
+              --repeats 1 \
+              --sample-size 2 \
+              --batch-factor 1 \
+              --json > "$artifact_dir/bench-run.json"
+
+            swift run melix bench matrix run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite smoke \
+              --context-length 1024 \
+              --generation-length 64 \
+              --batch-size 1 \
+              --cache-profile cold \
+              --reasoning-mode disabled \
+              --structured-output-mode plain_text \
+              --concurrency 1 \
+              --repeats 1 \
+              --requests 2 \
+              --json > "$artifact_dir/bench-matrix-run.json"
+
+            swift run melix eval run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite mmlu \
+              --dataset-id mmlu.dev.v1 \
+              --sample-size 2 \
+              --batch-factor 1 \
+              --few-shot 0 \
+              --seed 9 \
+              --scoring-mode multiple_choice_accuracy \
+              --json > "$artifact_dir/eval-run.json"
+
+            PYTHONPATH="$repo_dir:$repo_dir/services/mlx-worker-python" \
+              uv run --project "$repo_dir/services/mlx-worker-python" \
+              python - "$MELIX_MODEL_OPS_JOBS_ROOT" "$artifact_dir/benchmark-evaluation-export.json" <<'PY'
+          import sys
+          from pathlib import Path
+          from worker.productization.benchmark_export import write_export_bundle
+
+          write_export_bundle(Path(sys.argv[1]), Path(sys.argv[2]))
+          PY
+          }
+
+          run_suite base "$GITHUB_WORKSPACE/base" 12434
+
+      - name: Run head suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_suite() {
+            local label="$1"
+            local repo_dir="$2"
+            local http_port="$3"
+            local artifact_dir="$GITHUB_WORKSPACE/artifacts/$label"
+
+            mkdir -p "$artifact_dir"
+            cd "$repo_dir"
+
+            export MELIX_SERVICE_INSTANCE_NAME="bench-eval-$label"
+            export MELIX_HTTP_PORT="$http_port"
+            export MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-$label"
+            export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
+            export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
+            export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_DEV_TEXT_MODEL_PATH="$MELIX_BENCH_EVAL_CI_MODEL_PATH"
+            export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
+            if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then
+              export MELIX_SWIFT_MLX_METALLIB_PATH="$repo_dir/.runtime/swift-mlx-placeholder/mlx.metallib"
+              mkdir -p "$(dirname "$MELIX_SWIFT_MLX_METALLIB_PATH")"
+              touch "$MELIX_SWIFT_MLX_METALLIB_PATH"
+            fi
+            print_runtime_logs() {
+              for log_path in "$MELIX_RUNTIME_DIR"/*.log; do
+                [[ -f "$log_path" ]] || continue
+                printf '\n===== %s =====\n' "$log_path"
+                tail -n 200 "$log_path"
+              done
+            }
+
+            make bootstrap
+            make swift-build-integration-prereqs
+            if ! bash scripts/dev_up.sh --prefer-built; then
+              print_runtime_logs
+              exit 1
+            fi
+            source "$MELIX_RUNTIME_DIR/env.sh"
+            trap 'cd "$repo_dir"; MELIX_RUNTIME_DIR="$repo_dir/.runtime/sidecars/bench-eval-'"$label"'" bash scripts/dev_down.sh || true' RETURN
+
+            swift run melix bench run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite smoke \
+              --context-length 1024 \
+              --generation-length 64 \
+              --batch-size 1 \
+              --repeats 1 \
+              --sample-size 2 \
+              --batch-factor 1 \
+              --json > "$artifact_dir/bench-run.json"
+
+            swift run melix bench matrix run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite smoke \
+              --context-length 1024 \
+              --generation-length 64 \
+              --batch-size 1 \
+              --cache-profile cold \
+              --reasoning-mode disabled \
+              --structured-output-mode plain_text \
+              --concurrency 1 \
+              --repeats 1 \
+              --requests 2 \
+              --json > "$artifact_dir/bench-matrix-run.json"
+
+            swift run melix eval run \
+              --model-id "$MELIX_BENCH_EVAL_CI_MODEL_ID" \
+              --suite mmlu \
+              --dataset-id mmlu.dev.v1 \
+              --sample-size 2 \
+              --batch-factor 1 \
+              --few-shot 0 \
+              --seed 9 \
+              --scoring-mode multiple_choice_accuracy \
+              --json > "$artifact_dir/eval-run.json"
+
+            PYTHONPATH="$repo_dir:$repo_dir/services/mlx-worker-python" \
+              uv run --project "$repo_dir/services/mlx-worker-python" \
+              python - "$MELIX_MODEL_OPS_JOBS_ROOT" "$artifact_dir/benchmark-evaluation-export.json" <<'PY'
+          import sys
+          from pathlib import Path
+          from worker.productization.benchmark_export import write_export_bundle
+
+          write_export_bundle(Path(sys.argv[1]), Path(sys.argv[2]))
+          PY
+          }
+
+          run_suite head "$GITHUB_WORKSPACE/head" 12435
+
+      - name: Generate report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/report
+          PYTHONPATH="$GITHUB_WORKSPACE/head:$GITHUB_WORKSPACE/head/services/mlx-worker-python" \
+            uv run --project "$GITHUB_WORKSPACE/head/services/mlx-worker-python" \
+            python "$GITHUB_WORKSPACE/head/scripts/benchmark_evaluation_report.py" \
+              --baseline "$GITHUB_WORKSPACE/artifacts/base/benchmark-evaluation-export.json" \
+              --candidate "$GITHUB_WORKSPACE/artifacts/head/benchmark-evaluation-export.json" \
+              --format terminal \
+              --output-dir "$GITHUB_WORKSPACE/artifacts/report" | tee artifacts/report/report.txt
+          PYTHONPATH="$GITHUB_WORKSPACE/head:$GITHUB_WORKSPACE/head/services/mlx-worker-python" \
+            uv run --project "$GITHUB_WORKSPACE/head/services/mlx-worker-python" \
+            python "$GITHUB_WORKSPACE/head/scripts/benchmark_evaluation_report.py" \
+              --baseline "$GITHUB_WORKSPACE/artifacts/base/benchmark-evaluation-export.json" \
+              --candidate "$GITHUB_WORKSPACE/artifacts/head/benchmark-evaluation-export.json" \
+              --format markdown \
+              --sticky-comment > artifacts/report/pr-comment.md
+
+      - name: Upload report artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-eval-report
+          path: |
+            artifacts/base
+            artifacts/head
+            artifacts/report
+
+      - name: Update PR comment
+        if: github.event_name == 'pull_request' && (success() || failure())
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- melix-benchmark-evaluation-report -->';
+            let body;
+            try {
+              body = fs.readFileSync('artifacts/report/pr-comment.md', 'utf8');
+            } catch (error) {
+              body = [
+                marker,
+                '# Melix Benchmark/Evaluation Report',
+                '',
+                'Report generation did not complete. See the workflow logs and uploaded artifacts for the failing phase.',
+              ].join('\n');
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }

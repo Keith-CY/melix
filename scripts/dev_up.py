@@ -309,7 +309,14 @@ def resolve_configured_mlx_metallib() -> Path | None:
     return metallib_path
 
 
+def swift_text_backend_requires_mlx_metallib(backend_mode: str) -> bool:
+    return backend_mode.strip().lower() != "deterministic"
+
+
 def prepare_swift_worker_launch_cwd(layout: RuntimeLayout, repo_root: Path) -> Path:
+    if not swift_text_backend_requires_mlx_metallib(layout.swift_text_worker_backend_mode):
+        return repo_root
+
     metallib_path = resolve_configured_mlx_metallib()
     if metallib_path is None:
         metallib_path = resolve_local_mlx_metallib(repo_root, uv_cache_dir=layout.uv_cache_dir)

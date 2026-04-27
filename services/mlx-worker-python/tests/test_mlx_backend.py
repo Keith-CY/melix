@@ -169,7 +169,7 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
             "sampler": sampler,
         }
         yield FakeGenerationResponse(text="Hel", prompt_tokens=12, generation_tokens=1)
-        yield FakeGenerationResponse(
+        tail = FakeGenerationResponse(
             text="lo",
             prompt_tokens=12,
             generation_tokens=2,
@@ -178,6 +178,12 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
             generation_tps=123.0,
             peak_memory=1.5,
         )
+        tail.speculative_acceptance_rate = 0.8
+        tail.speculative_rejected_tokens = 3
+        tail.speculative_draft_model_configured = True
+        tail.dflash_enabled = True
+        tail.dflash_rollback_count = 2
+        yield tail
 
     backend = AutoMLXBackend(
         load_fn=fake_load,
@@ -217,6 +223,11 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].prompt_tokens == 12
     assert chunks[-1].completion_tokens == 2
     assert chunks[-1].generation_tps == 123.0
+    assert chunks[-1].speculative_acceptance_rate == 0.8
+    assert chunks[-1].speculative_rejected_tokens == 3
+    assert chunks[-1].speculative_draft_model_configured is True
+    assert chunks[-1].dflash_enabled is True
+    assert chunks[-1].dflash_rollback_count == 2
 
 
 def test_text_runtime_load_and_generation_run_on_mlx_executor_thread() -> None:

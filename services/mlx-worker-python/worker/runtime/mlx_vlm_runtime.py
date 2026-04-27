@@ -476,6 +476,15 @@ class MLXVLMRuntime:
         loaded_model,
         prepared_request: PreparedVisionRequest,
     ) -> None:
+        """Call plan() when generate_tokens() did not follow render_prompt().
+
+        The signature guard deduplicates the normal render_prompt/generate_tokens
+        sequence for one prepared request. If shared-runtime tests reuse identical
+        multimodal_hash_hex and model metadata for different requests, the second
+        request can inherit the previous probe's cache counts; production request
+        hashes should include real prompt and media identity, so the edge case is
+        metrics-only and does not affect generated data.
+        """
         signature = self._fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
             return

@@ -1404,6 +1404,70 @@ def test_vlm_runtime_reuses_cache_for_identical_multimodal_requests() -> None:
     assert cache_stats.snapshot.hot_prefixes[0].scope.model_id == "melix-dev-vlm"
 
 
+def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Describe the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"direct deterministic fast path",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                    ),
+                ),
+            ],
+        )
+    ]
+    prepared = resolve_vision_family_config(loaded_model).shape_request(prepare_vision_request(messages))
+
+    events = list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+    probe = runtime.last_probe_snapshot()
+
+    assert events[-1].text.startswith("Image content:")
+    assert probe.image_feature_cache_hits == 0
+    assert probe.image_feature_cache_misses == 1
+    assert probe.multimodal_decode_mode == "native_quantized"
+    assert probe.quantized_load_mode == "native_quantized"
+
+
+def test_vlm_runtime_fast_path_signature_uses_nested_runtime_metadata() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    loaded_model["metadata"] = {
+        "vision_family_id": "paligemma-v1",
+        "vision_prompt_profile_id": "paligemma-caption-v1",
+        "vision_tokenization_mode": "prefix",
+        "ignored": "not-part-of-signature",
+    }
+    prepared = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"signature metadata image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    signature = runtime._fast_path_probe_signature(loaded_model, prepared)
+
+    assert "paligemma-v1" in signature[2]
+    assert "paligemma-caption-v1" in signature[2]
+    assert "ignored" not in signature[2]
+
+
 def test_cache_service_reports_vlm_cache_state_after_generation() -> None:
     runtime_service, inference_service, _ = build_services()
     cache_service = WorkerCacheService(inference_service._registry)

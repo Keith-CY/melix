@@ -306,6 +306,14 @@ class EvaluationStore:
             "code_failure_detail",
             "category_label",
             "subject_label",
+            "sample_render_ms",
+            "inference_ms",
+            "extraction_ms",
+            "validation_ms",
+            "scoring_ms",
+            "raw_response_chars",
+            "extracted_result_chars",
+            "failure_stage",
         ]
         rows = [",".join(header)]
         for sample in samples:
@@ -336,6 +344,14 @@ class EvaluationStore:
                         EvaluationStore._csv_field(sample.code_failure_detail),
                         EvaluationStore._csv_field(sample.category_label),
                         EvaluationStore._csv_field(sample.subject_label),
+                        EvaluationStore._csv_field(str(sample.sample_render_ms)),
+                        EvaluationStore._csv_field(str(sample.inference_ms)),
+                        EvaluationStore._csv_field(str(sample.extraction_ms)),
+                        EvaluationStore._csv_field(str(sample.validation_ms)),
+                        EvaluationStore._csv_field(str(sample.scoring_ms)),
+                        EvaluationStore._csv_field(str(sample.raw_response_chars)),
+                        EvaluationStore._csv_field(str(sample.extracted_result_chars)),
+                        EvaluationStore._csv_field(sample.failure_stage),
                     ]
                 )
             )

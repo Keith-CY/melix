@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 from threading import Event
 import time
-from typing import Any, Iterator
+from typing import Any, Iterator, NoReturn
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
@@ -70,6 +70,39 @@ class BenchSample:
     multi_image_scatter_mode: str = "none"
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
+    dataset_materialize_ms: float = 0.0
+    prompt_render_ms: float = 0.0
+    warmup_ms: float = 0.0
+    prefill_ms: float = 0.0
+    decode_ms: float = 0.0
+    first_token_index: int = 0
+    cache_hit: bool = False
+    runtime_kind: str = ""
+    error_stage: str = ""
+    speculative_acceptance_rate: float = 0.0
+    speculative_rollback_rate: float = 0.0
+    speculative_accepted_tokens: int = 0
+    speculative_rejected_tokens: int = 0
+    speculative_fallback_count: int = 0
+    speculative_num_draft_tokens: int = 0
+    speculative_draft_model_configured: bool = False
+    speculative_draft_propose_ms: float = 0.0
+    speculative_target_verify_ms: float = 0.0
+    dflash_enabled: bool = False
+    dflash_block_size: int = 0
+    dflash_rollback_count: int = 0
+    dflash_target_hidden_layers: int = 0
+
+
+_BENCHMARK_ERROR_STAGES = {
+    "dataset_materialize",
+    "prompt_render",
+    "warmup",
+    "prefill",
+    "decode",
+    "runtime",
+    "validation",
+}
 
 
 @dataclass(frozen=True)
@@ -1093,12 +1126,14 @@ class MaintenanceCore:
                 yield maintenance_pb2.RunBenchEvent(
                     progress=maintenance_pb2.BenchProgress(suite=suite, pct=pct)
                 )
+                dataset_started_at = time.perf_counter()
                 resolved_suite = self._benchmark_suite_catalog.resolve_suite(
                     suite,
                     jobs_root=self._jobs_root,
                     parameters=parameters,
                     task_kind=task_kind,
                 )
+                dataset_materialize_ms = round((time.perf_counter() - dataset_started_at) * 1_000.0, 2)
                 suite_metadata[resolved_suite.suite_id] = resolved_suite.metadata()
                 if task_kind == "text-generation":
                     suite_metrics, suite_context_rows, suite_batch_rows, suite_request_latencies = self._measure_text_bench_metrics(
@@ -1108,6 +1143,7 @@ class MaintenanceCore:
                         job_id=job.job_id,
                         source_repo=request.source_repo,
                         task_kind=task_kind,
+                        dataset_materialize_ms=dataset_materialize_ms,
                     )
                     text_context_rows.extend(suite_context_rows)
                     text_batch_rows.extend(suite_batch_rows)
@@ -1318,6 +1354,8 @@ class MaintenanceCore:
         loaded_model = None
         try:
             lazy_model_handle, loaded_model = self._resolve_benchmark_loaded_model(request.model_handle)
+            runtime_evidence = self._runtime_evidence_for_loaded_model(loaded_model)
+            matrix_parameters = {**queue_parameters, **runtime_evidence}
             task_kind = self._resolved_benchmark_matrix_task_kind(
                 request=request,
                 loaded_model=loaded_model,
@@ -1334,12 +1372,14 @@ class MaintenanceCore:
             request_rows = []
             cell_counter = 0
             for suite_id in suite_ids:
+                dataset_started_at = time.perf_counter()
                 resolved_suite = self._benchmark_suite_catalog.resolve_suite(
                     suite_id,
                     jobs_root=self._jobs_root,
                     parameters={},
                     task_kind=task_kind,
                 )
+                dataset_materialize_ms = round((time.perf_counter() - dataset_started_at) * 1_000.0, 2)
                 cases = list(resolved_suite.cases)
                 for context_length in context_lengths:
                     for generation_length in generation_lengths:
@@ -1348,6 +1388,7 @@ class MaintenanceCore:
                                 for reasoning_mode in reasoning_modes:
                                     for structured_output_mode in structured_output_modes:
                                         for concurrency_level in concurrency_levels:
+                                            cell_started_at = time.perf_counter()
                                             cell_counter += 1
                                             cell_id = f"cell-{cell_counter}"
                                             row_count = self._benchmark_matrix_request_count(
@@ -1402,6 +1443,30 @@ class MaintenanceCore:
                                                         status="completed",
                                                         error_code="",
                                                         created_at_unix_ms=created_at_unix_ms,
+                                                        dataset_materialize_ms=dataset_materialize_ms,
+                                                        prompt_render_ms=sample.prompt_render_ms,
+                                                        warmup_ms=sample.warmup_ms,
+                                                        prefill_ms=sample.prefill_ms,
+                                                        decode_ms=sample.decode_ms,
+                                                        tokens_in=sample.prompt_tokens,
+                                                        tokens_out=sample.completion_tokens,
+                                                        first_token_index=sample.first_token_index,
+                                                        cache_hit=sample.cache_hit,
+                                                        runtime_kind=sample.runtime_kind,
+                                                        error_stage=sample.error_stage,
+                                                        speculative_acceptance_rate=sample.speculative_acceptance_rate,
+                                                        speculative_rollback_rate=sample.speculative_rollback_rate,
+                                                        speculative_accepted_tokens=sample.speculative_accepted_tokens,
+                                                        speculative_rejected_tokens=sample.speculative_rejected_tokens,
+                                                        speculative_fallback_count=sample.speculative_fallback_count,
+                                                        speculative_num_draft_tokens=sample.speculative_num_draft_tokens,
+                                                        speculative_draft_model_configured=sample.speculative_draft_model_configured,
+                                                        speculative_draft_propose_ms=sample.speculative_draft_propose_ms,
+                                                        speculative_target_verify_ms=sample.speculative_target_verify_ms,
+                                                        dflash_enabled=sample.dflash_enabled,
+                                                        dflash_block_size=sample.dflash_block_size,
+                                                        dflash_rollback_count=sample.dflash_rollback_count,
+                                                        dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
                                                     )
                                                 except Exception as exc:
                                                     row = build_benchmark_matrix_request_row(
@@ -1427,6 +1492,9 @@ class MaintenanceCore:
                                                         status="failed",
                                                         error_code=getattr(exc, "code", "runtime_error"),
                                                         created_at_unix_ms=created_at_unix_ms,
+                                                        dataset_materialize_ms=dataset_materialize_ms,
+                                                        runtime_kind=getattr(loaded_model, "runtime_kind", ""),
+                                                        error_stage=self._benchmark_error_stage(exc),
                                                     )
                                                 cell_rows.append(row)
                                                 request_rows.append(row)
@@ -1489,6 +1557,13 @@ class MaintenanceCore:
                                                     peak_memory_bytes_max=int(max(peak_memory_values, default=0.0)),
                                                     queue_wait_mean_ms=self._mean(queue_wait_values),
                                                     queue_wait_p95_ms=self._percentile(queue_wait_values, 95.0),
+                                                    cell_wall_ms=round((time.perf_counter() - cell_started_at) * 1_000.0, 2),
+                                                    completed_count=len(completed_rows),
+                                                    failed_count=len(cell_rows) - len(completed_rows),
+                                                    ttft_p50_ms=self._percentile(ttft_values, 50.0),
+                                                    ttft_p95_ms=self._percentile(ttft_values, 95.0),
+                                                    request_latency_p50_ms=self._percentile(request_latencies, 50.0),
+                                                    request_latency_p95_ms=self._percentile(request_latencies, 95.0),
                                                     created_at_unix_ms=queued_at,
                                                 )
                                             )
@@ -1504,6 +1579,7 @@ class MaintenanceCore:
                 output_dir=str(output_dir),
                 created_at_unix_ms=queued_at,
                 updated_at_unix_ms=completed_at,
+                parameters=matrix_parameters,
             )
             if self._benchmark_store is None:
                 self._benchmark_store = BenchmarkStore()
@@ -2132,58 +2208,87 @@ class MaintenanceCore:
         reasoning_mode: str,
         structured_output_mode: str,
     ) -> BenchSample:
-        parameters = {"max_output_tokens": str(generation_length)}
-        if task_kind == "text-generation":
-            prompt = ""
-            if case is not None:
-                prompt = getattr(case, "prompt", "") or ""
-            prompt = prompt or suite.title
-            return self._measure_text_bench_sample(
-                loaded_model=loaded_model,
-                suite=suite,
-                prompt=prompt,
-                parameters=parameters,
-                context_length=context_length,
-                repeat_index=repeat_index,
-                batch_size=batch_size,
-                cache_profile=cache_profile,
-                reasoning_mode=reasoning_mode,
-                structured_output_mode=structured_output_mode,
-            )
-        if task_kind in {"image-to-text", "image-text-to-text"}:
-            if case is None:
-                raise ModelOperationError(
-                    code="benchmark_failed",
-                    message="Benchmark matrix suite did not provide a VLM case.",
+        error_stage = "validation"
+        try:
+            parameters = {"max_output_tokens": str(generation_length)}
+            if task_kind == "text-generation":
+                prompt = ""
+                if case is not None:
+                    prompt = getattr(case, "prompt", "") or ""
+                prompt = prompt or suite.title
+                error_stage = "prompt_render"
+                return self._measure_text_bench_sample(
+                    loaded_model=loaded_model,
+                    suite=suite,
+                    prompt=prompt,
+                    parameters=parameters,
+                    context_length=context_length,
+                    repeat_index=repeat_index,
+                    batch_size=batch_size,
+                    cache_profile=cache_profile,
+                    reasoning_mode=reasoning_mode,
+                    structured_output_mode=structured_output_mode,
                 )
-            sample = self._measure_vlm_bench_sample(
-                loaded_model=loaded_model,
-                suite=suite,
-                case=case,
-                parameters=parameters,
-            )
-            request_latency_ms = sample.request_latency_ms or sample.total_latency_ms
-            decode_tokens_per_second = sample.decode_tokens_per_second
-            if decode_tokens_per_second <= 0.0:
-                decode_tokens_per_second = round(
-                    sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
-                    2,
+            if task_kind in {"image-to-text", "image-text-to-text"}:
+                error_stage = "dataset_materialize"
+                if case is None:
+                    raise ModelOperationError(
+                        code="benchmark_failed",
+                        message="Benchmark matrix suite did not provide a VLM case.",
+                    )
+                error_stage = "prompt_render"
+                sample = self._measure_vlm_bench_sample(
+                    loaded_model=loaded_model,
+                    suite=suite,
+                    case=case,
+                    parameters=parameters,
                 )
-            return BenchSample(
-                ttft_ms=sample.ttft_ms,
-                total_latency_ms=sample.total_latency_ms,
-                completion_tokens=sample.completion_tokens,
-                prompt_tokens=sample.prompt_tokens,
-                request_latency_ms=request_latency_ms,
-                prefill_tokens_per_second=sample.prefill_tokens_per_second,
-                decode_tokens_per_second=decode_tokens_per_second,
-                peak_memory_bytes=sample.peak_memory_bytes,
+                request_latency_ms = sample.request_latency_ms or sample.total_latency_ms
+                decode_tokens_per_second = sample.decode_tokens_per_second
+                if decode_tokens_per_second <= 0.0:
+                    decode_tokens_per_second = round(
+                        sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
+                        2,
+                    )
+                return BenchSample(
+                    ttft_ms=sample.ttft_ms,
+                    total_latency_ms=sample.total_latency_ms,
+                    completion_tokens=sample.completion_tokens,
+                    prompt_tokens=sample.prompt_tokens,
+                    request_latency_ms=request_latency_ms,
+                    prefill_tokens_per_second=sample.prefill_tokens_per_second,
+                    decode_tokens_per_second=decode_tokens_per_second,
+                    peak_memory_bytes=sample.peak_memory_bytes,
+                    dataset_materialize_ms=sample.dataset_materialize_ms,
+                    prompt_render_ms=sample.prompt_render_ms,
+                    warmup_ms=sample.warmup_ms,
+                    prefill_ms=sample.prefill_ms,
+                    decode_ms=sample.decode_ms,
+                    first_token_index=sample.first_token_index,
+                    cache_hit=sample.cache_hit,
+                    runtime_kind=sample.runtime_kind,
+                    error_stage=sample.error_stage,
+                    speculative_acceptance_rate=sample.speculative_acceptance_rate,
+                    speculative_rollback_rate=sample.speculative_rollback_rate,
+                    speculative_accepted_tokens=sample.speculative_accepted_tokens,
+                    speculative_rejected_tokens=sample.speculative_rejected_tokens,
+                    speculative_fallback_count=sample.speculative_fallback_count,
+                    speculative_num_draft_tokens=sample.speculative_num_draft_tokens,
+                    speculative_draft_model_configured=sample.speculative_draft_model_configured,
+                    speculative_draft_propose_ms=sample.speculative_draft_propose_ms,
+                    speculative_target_verify_ms=sample.speculative_target_verify_ms,
+                    dflash_enabled=sample.dflash_enabled,
+                    dflash_block_size=sample.dflash_block_size,
+                    dflash_rollback_count=sample.dflash_rollback_count,
+                    dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
+                )
+            raise ModelOperationError(
+                code="unsupported_task_family",
+                message=f"Unsupported benchmark matrix task kind: {task_kind}",
+                details={"task_kind": task_kind},
             )
-        raise ModelOperationError(
-            code="unsupported_task_family",
-            message=f"Unsupported benchmark matrix task kind: {task_kind}",
-            details={"task_kind": task_kind},
-        )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, error_stage)
 
     def _measure_text_bench_metrics(
         self,
@@ -2194,6 +2299,7 @@ class MaintenanceCore:
         job_id: str,
         source_repo: str,
         task_kind: str,
+        dataset_materialize_ms: float = 0.0,
     ) -> tuple[list[BenchMetricSpec], list[dict[str, object]], list[dict[str, object]], list[float]]:
         from worker.productization.benchmark_schemas import build_serving_benchmark_context_row
 
@@ -2226,6 +2332,7 @@ class MaintenanceCore:
                         cache_profile=cache_profile,
                         reasoning_mode=reasoning_mode,
                         structured_output_mode=structured_output_mode,
+                        dataset_materialize_ms=dataset_materialize_ms,
                     )
                     samples.append(sample)
                     request_latencies.append(sample.request_latency_ms)
@@ -2249,7 +2356,31 @@ class MaintenanceCore:
                             cache_profile=cache_profile,
                             reasoning_mode=reasoning_mode,
                             structured_output_mode=structured_output_mode,
-                            ).to_dict()
+                            dataset_materialize_ms=dataset_materialize_ms,
+                            prompt_render_ms=sample.prompt_render_ms,
+                            warmup_ms=sample.warmup_ms,
+                            prefill_ms=sample.prefill_ms,
+                            decode_ms=sample.decode_ms,
+                            tokens_in=sample.prompt_tokens,
+                            tokens_out=sample.completion_tokens,
+                            first_token_index=sample.first_token_index,
+                            cache_hit=sample.cache_hit,
+                            runtime_kind=sample.runtime_kind,
+                            error_stage=sample.error_stage,
+                            speculative_acceptance_rate=sample.speculative_acceptance_rate,
+                            speculative_rollback_rate=sample.speculative_rollback_rate,
+                            speculative_accepted_tokens=sample.speculative_accepted_tokens,
+                            speculative_rejected_tokens=sample.speculative_rejected_tokens,
+                            speculative_fallback_count=sample.speculative_fallback_count,
+                            speculative_num_draft_tokens=sample.speculative_num_draft_tokens,
+                            speculative_draft_model_configured=sample.speculative_draft_model_configured,
+                            speculative_draft_propose_ms=sample.speculative_draft_propose_ms,
+                            speculative_target_verify_ms=sample.speculative_target_verify_ms,
+                            dflash_enabled=sample.dflash_enabled,
+                            dflash_block_size=sample.dflash_block_size,
+                            dflash_rollback_count=sample.dflash_rollback_count,
+                            dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
+                        ).to_dict()
                     )
                     for batch_size in batch_sizes:
                         if batch_size != 1:
@@ -2337,6 +2468,7 @@ class MaintenanceCore:
         cache_profile: str,
         reasoning_mode: str,
         structured_output_mode: str,
+        dataset_materialize_ms: float = 0.0,
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         shaped_prompt = self._shape_benchmark_prompt(prompt, context_length=context_length)
@@ -2348,34 +2480,54 @@ class MaintenanceCore:
             reasoning_mode=reasoning_mode,
             structured_output_mode=structured_output_mode,
         )
+        warmup_ms = 0.0
+        cache_hit = False
         if cache_profile == "warm":
-            self._benchmark_warmup_text_request(
-                loaded_model=loaded_model,
-                prompt=shaped_prompt,
-                execution_ext=execution_ext,
-                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
-            )
+            warmup_started_at = time.perf_counter()
+            try:
+                self._benchmark_warmup_text_request(
+                    loaded_model=loaded_model,
+                    prompt=shaped_prompt,
+                    execution_ext=execution_ext,
+                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::warmup",
+                )
+            except Exception as exc:
+                self._raise_benchmark_error_with_stage(exc, "warmup")
+            warmup_ms = round((time.perf_counter() - warmup_started_at) * 1_000.0, 2)
+            cache_hit = True
         elif cache_profile == "partial_prefix":
             partial_prefix = shaped_prompt[: max(1, len(shaped_prompt) // 2)]
-            self._benchmark_warmup_text_request(
-                loaded_model=loaded_model,
-                prompt=partial_prefix,
-                execution_ext=execution_ext,
-                request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
-            )
+            warmup_started_at = time.perf_counter()
+            try:
+                self._benchmark_warmup_text_request(
+                    loaded_model=loaded_model,
+                    prompt=partial_prefix,
+                    execution_ext=execution_ext,
+                    request_id=f"{self._benchmark_request_id(loaded_model=loaded_model, suite_id=suite.suite_id, prompt=shaped_prompt, context_length=context_length, repeat_index=repeat_index, batch_size=batch_size, cache_profile=cache_profile)}::partial_prefix",
+                )
+            except Exception as exc:
+                self._raise_benchmark_error_with_stage(exc, "warmup")
+            warmup_ms = round((time.perf_counter() - warmup_started_at) * 1_000.0, 2)
+            cache_hit = True
         elif cache_profile != "cold":
             raise ModelOperationError(
                 code="invalid_argument",
                 message=f"Unsupported cache profile: {cache_profile}",
-                details={"cache_profile": cache_profile},
+                details={"cache_profile": cache_profile, "error_stage": "validation"},
             )
 
         messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=shaped_prompt)])]
-        rendered_prompt = runtime.render_prompt(
-            messages,
-            loaded_model=loaded_model.runtime_model,
-            execution_ext=execution_ext,
-        )
+        prompt_render_ms = 0.0
+        render_started_at = time.perf_counter()
+        try:
+            rendered_prompt = runtime.render_prompt(
+                messages,
+                loaded_model=loaded_model.runtime_model,
+                execution_ext=execution_ext,
+            )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prompt_render")
+        prompt_render_ms = round((time.perf_counter() - render_started_at) * 1_000.0, 2)
         rendered_prompt = self._annotated_text_benchmark_input(
             rendered_prompt,
             context_length=context_length,
@@ -2394,15 +2546,29 @@ class MaintenanceCore:
             request_id=request_id,
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
+        first_token_at: float | None = None
         try:
             started_at = time.perf_counter()
-            first_token_at: float | None = None
             last_token_at: float | None = None
+            first_token_index = 0
             completion_tokens = 0
             prompt_tokens = 0
             prompt_tps = 0.0
             generation_tps = 0.0
             peak_memory = 0.0
+            speculative_acceptance_rate = 0.0
+            speculative_rollback_rate = 0.0
+            speculative_accepted_tokens = 0
+            speculative_rejected_tokens = 0
+            speculative_fallback_count = 0
+            speculative_num_draft_tokens = 0
+            speculative_draft_model_configured = False
+            speculative_draft_propose_ms = 0.0
+            speculative_target_verify_ms = 0.0
+            dflash_enabled = False
+            dflash_block_size = 0
+            dflash_rollback_count = 0
+            dflash_target_hidden_layers = 0
             sampling = common_pb2.SamplingConfig(
                 temperature=0.0,
                 top_p=1.0,
@@ -2422,13 +2588,81 @@ class MaintenanceCore:
                 now = time.perf_counter()
                 if first_token_at is None:
                     first_token_at = now
+                    first_token_index = completion_tokens + 1
                 last_token_at = now
                 completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
                 prompt_tokens = int(getattr(runtime_event, "prompt_tokens", 0) or prompt_tokens)
                 prompt_tps = float(getattr(runtime_event, "prompt_tps", 0.0) or prompt_tps)
                 generation_tps = float(getattr(runtime_event, "generation_tps", 0.0) or generation_tps)
                 peak_memory = float(getattr(runtime_event, "peak_memory", 0.0) or peak_memory)
+                speculative_acceptance_rate = self._runtime_event_float_probe(
+                    runtime_event,
+                    "speculative_acceptance_rate",
+                    speculative_acceptance_rate,
+                )
+                speculative_rollback_rate = self._runtime_event_float_probe(
+                    runtime_event,
+                    "speculative_rollback_rate",
+                    speculative_rollback_rate,
+                )
+                speculative_accepted_tokens = self._runtime_event_int_probe(
+                    runtime_event,
+                    "speculative_accepted_tokens",
+                    speculative_accepted_tokens,
+                )
+                speculative_rejected_tokens = self._runtime_event_int_probe(
+                    runtime_event,
+                    "speculative_rejected_tokens",
+                    speculative_rejected_tokens,
+                )
+                speculative_fallback_count = self._runtime_event_int_probe(
+                    runtime_event,
+                    "speculative_fallback_count",
+                    speculative_fallback_count,
+                )
+                speculative_num_draft_tokens = self._runtime_event_int_probe(
+                    runtime_event,
+                    "speculative_num_draft_tokens",
+                    speculative_num_draft_tokens,
+                )
+                speculative_draft_model_configured = self._runtime_event_bool_probe(
+                    runtime_event,
+                    "speculative_draft_model_configured",
+                    speculative_draft_model_configured,
+                )
+                speculative_draft_propose_ms = self._runtime_event_float_probe(
+                    runtime_event,
+                    "speculative_draft_propose_ms",
+                    speculative_draft_propose_ms,
+                )
+                speculative_target_verify_ms = self._runtime_event_float_probe(
+                    runtime_event,
+                    "speculative_target_verify_ms",
+                    speculative_target_verify_ms,
+                )
+                dflash_enabled = self._runtime_event_bool_probe(
+                    runtime_event,
+                    "dflash_enabled",
+                    dflash_enabled,
+                )
+                dflash_block_size = self._runtime_event_int_probe(
+                    runtime_event,
+                    "dflash_block_size",
+                    dflash_block_size,
+                )
+                dflash_rollback_count = self._runtime_event_int_probe(
+                    runtime_event,
+                    "dflash_rollback_count",
+                    dflash_rollback_count,
+                )
+                dflash_target_hidden_layers = self._runtime_event_int_probe(
+                    runtime_event,
+                    "dflash_target_hidden_layers",
+                    dflash_target_hidden_layers,
+                )
             finished_at = time.perf_counter()
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prefill" if first_token_at is None else "decode")
         finally:
             self._registry.finish_request(request_id)
 
@@ -2451,7 +2685,74 @@ class MaintenanceCore:
             prefill_tokens_per_second=round(prompt_tps, 2),
             decode_tokens_per_second=round(generation_tps, 2),
             peak_memory_bytes=round(peak_memory, 2),
+            dataset_materialize_ms=dataset_materialize_ms,
+            prompt_render_ms=prompt_render_ms,
+            warmup_ms=warmup_ms,
+            prefill_ms=ttft_ms,
+            decode_ms=round(max(request_latency_ms - ttft_ms, 0.0), 2),
+            first_token_index=first_token_index,
+            cache_hit=cache_hit,
+            runtime_kind=getattr(loaded_model, "runtime_kind", ""),
+            speculative_acceptance_rate=round(speculative_acceptance_rate, 4),
+            speculative_rollback_rate=round(speculative_rollback_rate, 4),
+            speculative_accepted_tokens=speculative_accepted_tokens,
+            speculative_rejected_tokens=speculative_rejected_tokens,
+            speculative_fallback_count=speculative_fallback_count,
+            speculative_num_draft_tokens=speculative_num_draft_tokens,
+            speculative_draft_model_configured=speculative_draft_model_configured,
+            speculative_draft_propose_ms=round(speculative_draft_propose_ms, 2),
+            speculative_target_verify_ms=round(speculative_target_verify_ms, 2),
+            dflash_enabled=dflash_enabled,
+            dflash_block_size=dflash_block_size,
+            dflash_rollback_count=dflash_rollback_count,
+            dflash_target_hidden_layers=dflash_target_hidden_layers,
         )
+
+    @staticmethod
+    def _benchmark_error_stage(exc: Exception, default_stage: str = "runtime") -> str:
+        stage = getattr(exc, "error_stage", "") or getattr(exc, "details", {}).get("error_stage", "")
+        normalized = str(stage).strip()
+        if normalized in _BENCHMARK_ERROR_STAGES:
+            return normalized
+        return default_stage
+
+    @staticmethod
+    def _raise_benchmark_error_with_stage(exc: Exception, error_stage: str) -> NoReturn:
+        stage = error_stage if error_stage in _BENCHMARK_ERROR_STAGES else "runtime"
+        if not getattr(exc, "error_stage", ""):
+            setattr(exc, "error_stage", stage)
+        if isinstance(exc, ModelOperationError):
+            exc.details.setdefault("error_stage", stage)
+        raise exc
+
+    @staticmethod
+    def _runtime_event_float_probe(runtime_event: object, field_name: str, current: float) -> float:
+        value = getattr(runtime_event, field_name, None)
+        if value is None:
+            return current
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return current
+
+    @staticmethod
+    def _runtime_event_int_probe(runtime_event: object, field_name: str, current: int) -> int:
+        value = getattr(runtime_event, field_name, None)
+        if value is None:
+            return current
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return current
+
+    @staticmethod
+    def _runtime_event_bool_probe(runtime_event: object, field_name: str, current: bool) -> bool:
+        value = getattr(runtime_event, field_name, None)
+        if value is None:
+            return current
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @staticmethod
     def _annotated_text_benchmark_input(
@@ -2557,20 +2858,27 @@ class MaintenanceCore:
         if case.prompt:
             parts.insert(0, common_pb2.MessagePart(text=case.prompt))
         messages = [common_pb2.ChatMessage(role="user", parts=parts)]
-        prepared = runtime.render_prompt(
-            messages,
-            loaded_model=loaded_model.runtime_model,
-            execution_ext={},
-        )
+        prompt_render_ms = 0.0
+        render_started_at = time.perf_counter()
+        try:
+            prepared = runtime.render_prompt(
+                messages,
+                loaded_model=loaded_model.runtime_model,
+                execution_ext={},
+            )
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prompt_render")
+        prompt_render_ms = round((time.perf_counter() - render_started_at) * 1_000.0, 2)
         request_id = f"bench-{loaded_model.handle}-{suite.suite_id}-{abs(hash((case.prompt, case.image_uris)))}"
         cancel_event = self._registry.start_request(
             request_id=request_id,
             runtime_kind=loaded_model.runtime_kind,
         ).cancel_event
+        first_token_at: float | None = None
         try:
             started_at = time.perf_counter()
-            first_token_at: float | None = None
             last_token_at: float | None = None
+            first_token_index = 0
             completion_tokens = 0
             sampling = common_pb2.SamplingConfig(
                 temperature=0.0,
@@ -2591,14 +2899,19 @@ class MaintenanceCore:
                 now = time.perf_counter()
                 if first_token_at is None:
                     first_token_at = now
+                    first_token_index = completion_tokens + 1
                 last_token_at = now
                 completion_tokens = int(getattr(runtime_event, "completion_tokens", 0) or (completion_tokens + 1))
             finished_at = time.perf_counter()
+        except Exception as exc:
+            self._raise_benchmark_error_with_stage(exc, "prefill" if first_token_at is None else "decode")
         finally:
             self._registry.finish_request(request_id)
 
         first_token_time = first_token_at or finished_at
         completed_at = last_token_at or finished_at
+        ttft_ms = round((first_token_time - started_at) * 1_000.0, 2)
+        total_latency_ms = round((completed_at - started_at) * 1_000.0, 2)
         probe = runtime.last_probe_snapshot() if hasattr(runtime, "last_probe_snapshot") else None
         if probe is None:
             logger.debug(
@@ -2606,9 +2919,15 @@ class MaintenanceCore:
                 "using not-reported sentinel values."
             )
         return BenchSample(
-            ttft_ms=round((first_token_time - started_at) * 1_000.0, 2),
-            total_latency_ms=round((completed_at - started_at) * 1_000.0, 2),
+            ttft_ms=ttft_ms,
+            total_latency_ms=total_latency_ms,
             completion_tokens=completion_tokens,
+            request_latency_ms=total_latency_ms,
+            prompt_render_ms=prompt_render_ms,
+            prefill_ms=ttft_ms,
+            decode_ms=round(max(total_latency_ms - ttft_ms, 0.0), 2),
+            first_token_index=first_token_index,
+            runtime_kind=getattr(loaded_model, "runtime_kind", ""),
             image_feature_cache_hits=int(
                 (getattr(probe, "image_feature_cache_hits", 0) or 0)
                 if probe is not None
@@ -3137,6 +3456,30 @@ class MaintenanceCore:
             cache_profile=cache_profile,
             reasoning_mode=reasoning_mode,
             structured_output_mode=structured_output_mode,
+            dataset_materialize_ms=sample.dataset_materialize_ms,
+            prompt_render_ms=sample.prompt_render_ms,
+            warmup_ms=sample.warmup_ms,
+            prefill_ms=sample.prefill_ms,
+            decode_ms=sample.decode_ms,
+            tokens_in=sample.prompt_tokens,
+            tokens_out=sample.completion_tokens,
+            first_token_index=sample.first_token_index,
+            cache_hit=sample.cache_hit,
+            runtime_kind=sample.runtime_kind,
+            error_stage=sample.error_stage,
+            speculative_acceptance_rate=sample.speculative_acceptance_rate,
+            speculative_rollback_rate=sample.speculative_rollback_rate,
+            speculative_accepted_tokens=sample.speculative_accepted_tokens,
+            speculative_rejected_tokens=sample.speculative_rejected_tokens,
+            speculative_fallback_count=sample.speculative_fallback_count,
+            speculative_num_draft_tokens=sample.speculative_num_draft_tokens,
+            speculative_draft_model_configured=sample.speculative_draft_model_configured,
+            speculative_draft_propose_ms=sample.speculative_draft_propose_ms,
+            speculative_target_verify_ms=sample.speculative_target_verify_ms,
+            dflash_enabled=sample.dflash_enabled,
+            dflash_block_size=sample.dflash_block_size,
+            dflash_rollback_count=sample.dflash_rollback_count,
+            dflash_target_hidden_layers=sample.dflash_target_hidden_layers,
         ).to_dict()
 
     def _image_metrics_for_suite(

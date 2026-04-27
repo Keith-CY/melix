@@ -90,6 +90,7 @@ class DeterministicVLMRuntime:
         self._cache_lookups = 0
         self._cache_hits = 0
         self._fast_path_controller = MultimodalFastPathController()
+        self._last_fast_path_signature: tuple[str, ...] | None = None
 
     def load_model(self, model_spec):
         family_config = resolve_vision_family_config(dict(model_spec.ext))
@@ -121,26 +122,12 @@ class DeterministicVLMRuntime:
             loaded_model,
             execution_ext=execution_ext,
         )
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared)
-        self._last_probe = VisionProbeSnapshot(
-            preprocess_latency_ms=prepared.preprocess_latency_ms,
-            preprocess_input_bytes=prepared.preprocess_input_bytes,
-            preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
-            first_token_latency_ms=0.0,
-            video_effective_frame_count=prepared.effective_video_frame_count,
-            video_requested_frame_budget=prepared.requested_video_frame_budget,
-            video_window_ms=prepared.effective_video_window_ms,
+        self._record_fast_path_probe(loaded_model, prepared)
+        self._last_probe = replace(
+            self._last_probe,
             cache_identity=cache_identity,
             cache_scope_id=scope_id,
             cache_hit=cache_identity in self._cache_entries,
-            image_feature_cache_hits=fast_path.image_feature_cache_hits,
-            image_feature_cache_misses=fast_path.image_feature_cache_misses,
-            multimodal_decode_mode=fast_path.multimodal_decode_mode,
-            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
-            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
-            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
-            quantized_load_mode=fast_path.quantized_load_mode,
-            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
         )
         return prepared
 
@@ -169,6 +156,7 @@ class DeterministicVLMRuntime:
             loaded_model,
             execution_ext=execution_ext,
         )
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
         if cache_hit:
@@ -276,6 +264,7 @@ class DeterministicVLMRuntime:
         cancel_event: Event,
         execution_ext: dict[str, str] | None = None,
     ):
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
         response = self._response_text(prepared_request)
         cache_identity, scope_id = self._cache_identity(
             prepared_request,
@@ -348,6 +337,98 @@ class DeterministicVLMRuntime:
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
+
+    def _ensure_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> None:
+        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
+        if self._last_fast_path_signature == signature:
+            return
+        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+
+    def _record_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        *,
+        signature: tuple[str, ...] | None = None,
+    ) -> None:
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        self._last_fast_path_signature = signature or self._fast_path_probe_signature(
+            loaded_model,
+            prepared_request,
+        )
+        self._last_probe = VisionProbeSnapshot(
+            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
+            cache_identity="",
+            cache_scope_id="",
+            cache_hit=False,
+            image_feature_cache_hits=fast_path.image_feature_cache_hits,
+            image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            multimodal_decode_mode=fast_path.multimodal_decode_mode,
+            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
+            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
+            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            quantized_load_mode=fast_path.quantized_load_mode,
+            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+        )
+
+    @staticmethod
+    def _fast_path_probe_signature(
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[str, ...]:
+        metadata: dict[str, str] = {}
+        if isinstance(loaded_model, dict):
+            for key in (
+                "melix.vlm.execution_mode",
+                "vision_family_id",
+                "vision_prompt_profile_id",
+                "vision_tokenization_mode",
+                "vision_max_images_per_prompt",
+                "melix.multimodal_adapter_hash",
+                "multimodal_adapter_hash",
+            ):
+                value = loaded_model.get(key)
+                if isinstance(value, str) and value.strip():
+                    metadata[key] = value.strip()
+            nested_metadata = loaded_model.get("metadata", {})
+            if isinstance(nested_metadata, dict):
+                for key, value in nested_metadata.items():
+                    if key in {
+                        "melix.vlm.execution_mode",
+                        "vision_family_id",
+                        "vision_prompt_profile_id",
+                        "vision_tokenization_mode",
+                        "vision_max_images_per_prompt",
+                        "melix.multimodal_adapter_hash",
+                        "multimodal_adapter_hash",
+                    }:
+                        normalized = str(value).strip()
+                        if normalized:
+                            metadata[str(key)] = normalized
+        metadata_items = tuple(sorted(metadata.items()))
+        top_level_items: tuple[tuple[str, str], ...] = ()
+        if isinstance(loaded_model, dict):
+            top_level_items = tuple(
+                sorted(
+                    (key, str(loaded_model.get(key, "")))
+                    for key in ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
+                )
+            )
+        return (
+            prepared_request.multimodal_hash_hex,
+            repr(top_level_items),
+            repr(metadata_items),
+        )
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
