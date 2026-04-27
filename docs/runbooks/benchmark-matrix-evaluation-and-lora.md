@@ -554,6 +554,8 @@ The workflow:
 - runs the same benchmark, matrix, and evaluation smoke suite for both revisions
 - defaults the CI runtime to the deterministic text backend so PR reports do not depend on a
   runner-local model checkout or Swift MLX metallib cache
+- pins the deterministic dev-text model path to a slash-free logical value so legacy base-SHA
+  control planes do not require live-model evidence for the seed dev model
 - prebuilds the Swift worker and control plane before startup so worker readiness waits measure
   process readiness instead of cold Swift compilation
 - isolates each run with a separate `MELIX_HOME`, `.runtime` tree, model-ops root, and HTTP port

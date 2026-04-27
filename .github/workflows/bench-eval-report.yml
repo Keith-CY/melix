@@ -24,6 +24,7 @@ jobs:
 
     env:
       MELIX_BENCH_EVAL_CI_MODEL_ID: melix-dev-text
+      MELIX_BENCH_EVAL_CI_MODEL_PATH: melix-dev-text
       MELIX_BENCH_EVAL_CI_BACKEND_MODE: deterministic
 
     steps:
@@ -66,6 +67,7 @@ jobs:
             export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
             export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
             export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_DEV_TEXT_MODEL_PATH="$MELIX_BENCH_EVAL_CI_MODEL_PATH"
             export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
             export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
             if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then
@@ -158,6 +160,7 @@ jobs:
             export MELIX_HOME="$repo_dir/.runtime/home-bench-eval-$label"
             export MELIX_MODEL_OPS_JOBS_ROOT="$repo_dir/.runtime/jobs/model-ops-$label"
             export MELIX_EVALUATION_JOBS_ROOT="$MELIX_MODEL_OPS_JOBS_ROOT/evaluation"
+            export MELIX_DEV_TEXT_MODEL_PATH="$MELIX_BENCH_EVAL_CI_MODEL_PATH"
             export MELIX_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
             export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="$MELIX_BENCH_EVAL_CI_BACKEND_MODE"
             if [[ "$MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE" == "deterministic" ]]; then

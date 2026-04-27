@@ -34,6 +34,8 @@ and CI rendering identical:
 - The PR workflow defaults to deterministic text execution so hosted macOS reports do not depend on
   a runner-local model checkout or Swift MLX metallib cache. Real Swift MLX report runs still require
   an explicit matching `MELIX_SWIFT_MLX_METALLIB_PATH` and model path.
+- In deterministic CI mode the workflow pins `MELIX_DEV_TEXT_MODEL_PATH` to a slash-free logical
+  path so legacy base-SHA control planes do not require live-model evidence for the seed dev model.
 - The workflow prebuilds Swift runtime products before startup so readiness waits are not consumed
   by cold Swift compilation on hosted runners.
 
