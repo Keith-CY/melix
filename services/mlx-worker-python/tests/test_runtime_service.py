@@ -270,7 +270,7 @@ def test_load_model_warmup_after_load_runs_synthetic_generation() -> None:
     assert backend.generated_prompts
 
 
-def test_load_model_warmup_after_load_rejects_non_generation_runtime() -> None:
+def test_load_model_warmup_after_load_rejects_non_generation_runtime_and_unloads_handle() -> None:
     service = build_runtime_service()
 
     response = service.LoadModel(
@@ -280,12 +280,17 @@ def test_load_model_warmup_after_load_rejects_non_generation_runtime() -> None:
         ),
         context=None,
     )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
 
     assert response.ok is False
     assert response.error.code == "unimplemented"
+    assert listed.model_handles == []
 
 
-def test_load_model_warmup_after_load_reports_warmup_failures() -> None:
+def test_load_model_warmup_after_load_reports_warmup_failures_and_unloads_handle() -> None:
     service = WorkerRuntimeService(
         WorkerRegistry(
             runtime=MLXTextRuntime(backend=WarmupFailingBackend()),
@@ -300,12 +305,17 @@ def test_load_model_warmup_after_load_reports_warmup_failures() -> None:
         ),
         context=None,
     )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
 
     assert response.ok is False
     assert response.error.code == "warmup_failed"
+    assert listed.model_handles == []
 
 
-def test_load_model_warmup_after_load_rejects_missing_warmup_result(monkeypatch) -> None:
+def test_load_model_warmup_after_load_rejects_missing_warmup_result_and_unloads_handle(monkeypatch) -> None:
     service = build_runtime_service()
     monkeypatch.setattr(
         service._registry,
@@ -320,10 +330,15 @@ def test_load_model_warmup_after_load_rejects_missing_warmup_result(monkeypatch)
         ),
         context=None,
     )
+    listed = service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    )
 
     assert response.ok is False
     assert response.error.code == "warmup_failed"
     assert "returned None" in response.error.message
+    assert listed.model_handles == []
 
 
 def test_warmup_model_rejects_unknown_model_handle() -> None:
