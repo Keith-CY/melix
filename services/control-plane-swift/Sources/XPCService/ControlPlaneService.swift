@@ -925,9 +925,9 @@ public actor ControlPlaneService {
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
-        if requiresLiveModelEvidence(for: benchmarkModel, explicitHFRepoID: requestedHFRepoID) {
+        if let liveModelSource = liveModelEvidenceSource(for: benchmarkModel, explicitHFRepoID: requestedHFRepoID) {
             workerRequest.parameters["require_live_model"] = "true"
-            workerRequest.parameters["live_model_source"] = requestedHFRepoID.isEmpty ? "model_catalog" : "hf_repo"
+            workerRequest.parameters["live_model_source"] = liveModelSource
         }
         workerRequest.contextLengths = normalizedContextLengths
         workerRequest.generationLength = command.generationLength
@@ -1241,9 +1241,9 @@ public actor ControlPlaneService {
         workerRequest.scoringMode = command.scoringMode
         workerRequest.codeExecPolicy = command.codeExecPolicy
         workerRequest.parameters = command.parameters
-        if requiresLiveModelEvidence(for: evaluationModel, explicitHFRepoID: requestedHFRepoID) {
+        if let liveModelSource = liveModelEvidenceSource(for: evaluationModel, explicitHFRepoID: requestedHFRepoID) {
             workerRequest.parameters["require_live_model"] = "true"
-            workerRequest.parameters["live_model_source"] = requestedHFRepoID.isEmpty ? "model_catalog" : "hf_repo"
+            workerRequest.parameters["live_model_source"] = liveModelSource
         }
         workerRequest.taskKind = taskKind
         workerRequest.sourceRepo = benchmarkSourceRepo(for: evaluationModel)
@@ -2827,30 +2827,30 @@ public actor ControlPlaneService {
         return ""
     }
 
-    private func requiresLiveModelEvidence(
+    private func liveModelEvidenceSource(
         for model: Melix_Controlplane_V1_ModelSummary,
         explicitHFRepoID: String
-    ) -> Bool {
+    ) -> String? {
         if !explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return true
-        }
-        let explicitRepoID = model.settings.ext["melix.hf_repo_id"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if explicitRepoID?.contains("/") == true {
-            return true
-        }
-        let sourceRepo = model.settings.ext["melix.source_repo"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if sourceRepo?.contains("/") == true {
-            return true
+            return "hf_repo"
         }
         let sourceKind = model.settings.ext["melix.source_kind"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if sourceKind == "hf_repo" || sourceKind == "hub_repo" {
-            return true
+            return sourceKind
         }
-        return model.modelID.contains("/")
+        let explicitRepoID = model.settings.ext["melix.hf_repo_id"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if explicitRepoID?.contains("/") == true {
+            return "model_catalog"
+        }
+        let sourceRepo = model.settings.ext["melix.source_repo"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if sourceRepo?.contains("/") == true {
+            return "model_catalog"
+        }
+        return model.modelID.contains("/") ? "model_catalog" : nil
     }
 
     private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {
