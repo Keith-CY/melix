@@ -38,7 +38,8 @@ let package = Package(
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
             ],
-            path: "Tests/MenuBarTests"
+            path: "Tests/MenuBarTests",
+            exclude: ["Fixtures"]
         ),
     ]
 )

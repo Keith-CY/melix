@@ -22,6 +22,13 @@ latest exchange in view without requiring manual scrolling.
   column alignment, and thematic breaks. Supported inline constructs include
   emphasis, strong emphasis, inline code, strikethrough, and readable link or
   image labels.
+- Code blocks present a compact language badge, a copy control, and lightweight
+  syntax coloring for common local development snippets. The copy control writes
+  only the fenced code text and does not mutate transcript state.
+- Tables are horizontally scrollable when content is wider than the chat column.
+  Column sizing remains content-aware within bounded minimum and maximum widths,
+  and very long cell text is line-limited with tail truncation so one cell cannot
+  consume the whole transcript row.
 - The transcript auto-scrolls to the newest row when pending status, streamed
   content, or completed assistant output extends the conversation.
 - User, tool, and error rows remain literal plain text so prompts, logs, and
@@ -41,6 +48,15 @@ latest exchange in view without requiring manual scrolling.
   miss, eviction, and latest parse-duration counters for tests and local metrics.
 - Code fence contents are preserved after sanitization, with the closing-fence
   parser newline normalized to match the previous display behavior.
+- Streaming and long-response rendering use a chunked render plan. Stable
+  Markdown block chunks are parsed and cached independently, while the trailing
+  in-progress chunk is reparsed as tokens arrive. Very long transcripts render
+  chunks through a lazy stack so off-screen Markdown blocks do not require eager
+  view construction.
+- The renderer exposes local performance probes for 5 KB, 50 KB, and 200 KB
+  Markdown samples. The probes report first-parse duration, cached-parse
+  duration, block count, chunk count, cache hits, cache misses, and eviction
+  counts.
 
 ## Safety And Persistence
 
@@ -61,6 +77,12 @@ latest exchange in view without requiring manual scrolling.
   thematic breaks, aligned tables, escaped table pipes, image-alt fallback, safe
   link-label rendering, row-kind scoping, sanitizer integration, and cache hit,
   miss, eviction, and repeated-render behavior.
+- Fixture snapshot tests cover representative rich Markdown transcripts,
+  including code blocks, tables, nested lists, quotes, and unsafe content.
+- Focused tests cover code-block syntax highlighting, language badge
+  normalization, copy behavior, table column sizing and truncation policy,
+  streaming chunk reuse, lazy render-plan thresholds, and 5 KB / 50 KB / 200 KB
+  parse benchmark reporting.
 - Manual UI verification should use the Chat surface with a delayed model
   response to confirm the pending indicator appears and then clears.
 
@@ -68,5 +90,8 @@ latest exchange in view without requiring manual scrolling.
 
 - Chat Markdown parse cache metrics: parse hit count, parse miss count, eviction
   count, and latest parse duration in milliseconds.
+- Chat Markdown streaming metrics: chunk count, stable chunk reuse count, first
+  parse duration, cached parse duration, and per-sample parse durations for 5 KB,
+  50 KB, and 200 KB local benchmark samples.
 - Runtime hot-path metrics: N/A. The change is scoped to local UI rendering and
   does not alter model execution or HTTP serving paths.

@@ -1,5 +1,6 @@
 import Foundation
 import Markdown
+import AppKit
 import SwiftUI
 import MelixControlPlaneCore
 
@@ -7,15 +8,24 @@ enum DesktopChatMarkdownLayoutMetrics {
     static let blockSpacing: CGFloat = MelixDesignTokens.Spacing.sm
     static let listRowSpacing: CGFloat = 4
     static let codeBlockPadding: CGFloat = MelixDesignTokens.Spacing.md
+    static let codeBlockHeaderSpacing: CGFloat = MelixDesignTokens.Spacing.sm
     static let codeBlockLineSpacing: CGFloat = 3
     static let codeBlockBackgroundOpacity: Double = 0.03
     static let codeBlockBorderOpacity: Double = 0.05
+    static let codeBlockBadgeBackgroundOpacity: Double = 0.055
     static let tableSurfaceBackgroundOpacity: Double = 0.018
     static let tableHeaderBackgroundOpacity: Double = 0.035
     static let tableRowSeparatorOpacity: Double = 0.04
     static let tableColumnSeparatorOpacity: Double = 0.035
     static let tableCellHorizontalPadding: CGFloat = MelixDesignTokens.Spacing.sm
     static let tableCellVerticalPadding: CGFloat = 6
+    static let tableColumnMinWidth: CGFloat = 88
+    static let tableColumnMaxWidth: CGFloat = 260
+    static let tableCellMaximumLineCount: Int = 4
+    static let tableCellTruncationCharacterCount: Int = 96
+    static let lazyRenderBlockThreshold: Int = 96
+    static let lazyRenderCharacterThreshold: Int = 24_000
+    static let renderChunkTargetCharacterCount: Int = 2_000
 }
 
 enum DesktopChatMarkdownTableAlignment: Equatable, Sendable {
@@ -51,8 +61,76 @@ struct DesktopChatMarkdownCacheStats: Equatable, Sendable {
     let parseMissCount: Int
     let inlineHitCount: Int
     let inlineMissCount: Int
+    let chunkHitCount: Int
+    let chunkMissCount: Int
+    let stableChunkReuseCount: Int
     let evictionCount: Int
     let latestParseDurationMS: Double
+}
+
+enum DesktopChatMarkdownRenderPlanMode: Equatable, Sendable {
+    case complete
+    case streaming
+}
+
+struct DesktopChatMarkdownRenderChunk: Equatable, Sendable {
+    let source: String
+    let blocks: [DesktopChatMarkdownBlock]
+    let isStable: Bool
+}
+
+struct DesktopChatMarkdownRenderPlan: Equatable, Sendable {
+    let chunks: [DesktopChatMarkdownRenderChunk]
+    let usesLazyRendering: Bool
+
+    var blocks: [DesktopChatMarkdownBlock] {
+        chunks.flatMap(\.blocks)
+    }
+}
+
+struct DesktopChatMarkdownCodeBlockPresentation: Equatable, Sendable {
+    let languageBadge: String
+    let copyAccessibilityLabel: String
+    let highlightedCode: AttributedString
+
+    init(language: String, code: String) {
+        self.languageBadge = DesktopChatMarkdownCodeLanguage.badge(for: language)
+        self.copyAccessibilityLabel = "Copy code"
+        self.highlightedCode = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: code,
+            language: language
+        )
+    }
+}
+
+enum DesktopChatMarkdownCodeBlockClipboard {
+    static func copy(_ code: String, to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(code, forType: .string)
+    }
+}
+
+struct DesktopChatMarkdownTableLayout: Equatable, Sendable {
+    let columnWidths: [CGFloat]
+
+    init(header: [String], rows: [[String]]) {
+        let columnCount = max(header.count, rows.map(\.count).max() ?? 0, 1)
+        self.columnWidths = (0..<columnCount).map { column in
+            let cells = [header[safe: column] ?? ""] + rows.map { $0[safe: column] ?? "" }
+            let longest = cells.map(\.count).max() ?? 0
+            let rawWidth = CGFloat(longest * 7) + (DesktopChatMarkdownLayoutMetrics.tableCellHorizontalPadding * 2)
+            return min(
+                max(rawWidth, DesktopChatMarkdownLayoutMetrics.tableColumnMinWidth),
+                DesktopChatMarkdownLayoutMetrics.tableColumnMaxWidth
+            )
+        }
+    }
+
+    func lineLimit(for text: String) -> Int? {
+        text.count > DesktopChatMarkdownLayoutMetrics.tableCellTruncationCharacterCount
+            ? DesktopChatMarkdownLayoutMetrics.tableCellMaximumLineCount
+            : nil
+    }
 }
 
 enum DesktopChatMarkdownInlineFormatter {
@@ -62,6 +140,159 @@ enum DesktopChatMarkdownInlineFormatter {
 
     static func attributedString(fromSanitized text: String) -> AttributedString {
         DesktopChatMarkdownRenderer.cachedInlineAttributedString(fromSanitized: text)
+    }
+}
+
+enum DesktopChatMarkdownCodeLanguage {
+    static func badge(for language: String) -> String {
+        let normalized = language
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch normalized {
+        case "swift":
+            return "Swift"
+        case "json":
+            return "JSON"
+        case "js", "javascript":
+            return "JavaScript"
+        case "ts", "typescript":
+            return "TypeScript"
+        case "sh", "shell", "bash", "zsh":
+            return "Shell"
+        case "py", "python":
+            return "Python"
+        case "diff", "patch":
+            return "Diff"
+        case "":
+            return "Plain Text"
+        default:
+            return normalized.uppercased()
+        }
+    }
+}
+
+enum DesktopChatMarkdownCodeSyntaxHighlighter {
+    private static let swiftKeywords: Set<String> = [
+        "actor", "as", "async", "await", "case", "catch", "class", "else",
+        "enum", "false", "for", "func", "guard", "if", "import", "in",
+        "let", "nil", "private", "public", "return", "static", "struct",
+        "switch", "throw", "throws", "true", "try", "var", "while",
+    ]
+
+    private static let shellKeywords: Set<String> = [
+        "awk", "bun", "cd", "curl", "echo", "export", "git", "grep",
+        "make", "mkdir", "rg", "sed", "swift", "xcrun",
+    ]
+
+    static func attributedString(code: String, language: String) -> AttributedString {
+        let normalized = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "json" {
+            return highlightedJSON(code)
+        }
+        if ["sh", "shell", "bash", "zsh"].contains(normalized) {
+            return highlightedWords(code, keywords: shellKeywords)
+        }
+        if ["swift", "js", "javascript", "ts", "typescript", "py", "python"].contains(normalized) {
+            return highlightedWords(code, keywords: swiftKeywords)
+        }
+        if ["diff", "patch"].contains(normalized) {
+            return highlightedDiff(code)
+        }
+        return AttributedString(code)
+    }
+
+    private static func highlightedJSON(_ code: String) -> AttributedString {
+        build(code) { token in
+            if token.hasPrefix("\"") {
+                return .teal
+            }
+            if ["true", "false", "null"].contains(token) || token.first?.isNumber == true {
+                return .purple
+            }
+            return nil
+        }
+    }
+
+    private static func highlightedWords(
+        _ code: String,
+        keywords: Set<String>
+    ) -> AttributedString {
+        build(code) { token in
+            if token.hasPrefix("//") || token.hasPrefix("#") {
+                return .secondary
+            }
+            if token.hasPrefix("\"") || token.hasPrefix("'") {
+                return .teal
+            }
+            if keywords.contains(token) {
+                return .purple
+            }
+            if token.first?.isNumber == true {
+                return .orange
+            }
+            return nil
+        }
+    }
+
+    private static func highlightedDiff(_ code: String) -> AttributedString {
+        var result = AttributedString()
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for (index, lineText) in lines.enumerated() {
+            var segment = AttributedString(lineText)
+            if lineText.hasPrefix("+") {
+                segment.foregroundColor = .green
+            } else if lineText.hasPrefix("-") {
+                segment.foregroundColor = .red
+            } else if lineText.hasPrefix("@@") {
+                segment.foregroundColor = .purple
+            }
+            result += segment
+            if index < lines.count - 1 {
+                result += AttributedString("\n")
+            }
+        }
+        return result
+    }
+
+    private static func build(
+        _ code: String,
+        colorForToken: (String) -> Color?
+    ) -> AttributedString {
+        var result = AttributedString()
+        var current = ""
+        var currentIsToken: Bool?
+
+        func appendCurrent() {
+            guard current.isEmpty == false else {
+                return
+            }
+            var segment = AttributedString(current)
+            if currentIsToken == true, let color = colorForToken(current) {
+                segment.foregroundColor = color
+            }
+            result += segment
+            current = ""
+        }
+
+        for scalar in code.unicodeScalars {
+            let character = Character(scalar)
+            let isToken = CharacterSet.alphanumerics.contains(scalar)
+                || scalar == "_"
+                || scalar == "\""
+                || scalar == "'"
+                || scalar == "/"
+                || scalar == "#"
+            if currentIsToken == nil {
+                currentIsToken = isToken
+            } else if currentIsToken != isToken {
+                appendCurrent()
+                currentIsToken = isToken
+            }
+            current.append(character)
+        }
+        appendCurrent()
+
+        return result
     }
 }
 
@@ -82,6 +313,36 @@ enum DesktopChatMarkdownRenderer {
         return cache.blocks(for: sanitized) {
             parseBlocks(fromSanitized: sanitized)
         }
+    }
+
+    static func renderPlan(
+        from rawText: String,
+        mode: DesktopChatMarkdownRenderPlanMode = .complete
+    ) -> DesktopChatMarkdownRenderPlan {
+        let sanitized = RichOutputSanitizer.sanitized(rawText)
+        let sourceChunks = DesktopChatMarkdownChunker.chunks(from: sanitized, mode: mode)
+        let renderChunks = sourceChunks.map { sourceChunk in
+            let blocks = cache.chunkBlocks(
+                for: sourceChunk.source,
+                isStable: sourceChunk.isStable
+            ) {
+                parseBlocks(fromSanitized: sourceChunk.source)
+            }
+            return DesktopChatMarkdownRenderChunk(
+                source: sourceChunk.source,
+                blocks: blocks,
+                isStable: sourceChunk.isStable
+            )
+        }
+        let blockCount = renderChunks.reduce(0) { count, chunk in
+            count + chunk.blocks.count
+        }
+        return DesktopChatMarkdownRenderPlan(
+            chunks: renderChunks,
+            usesLazyRendering: renderChunks.count > 1
+                || blockCount >= DesktopChatMarkdownLayoutMetrics.lazyRenderBlockThreshold
+                || sanitized.count >= DesktopChatMarkdownLayoutMetrics.lazyRenderCharacterThreshold
+        )
     }
 
     static func cachedInlineAttributedString(fromSanitized text: String) -> AttributedString {
@@ -106,17 +367,155 @@ enum DesktopChatMarkdownRenderer {
     }
 }
 
+private struct DesktopChatMarkdownSourceChunk: Equatable, Sendable {
+    let source: String
+    let isStable: Bool
+}
+
+struct DesktopChatMarkdownPerformanceReport: Equatable, Sendable {
+    let samples: [DesktopChatMarkdownPerformanceSample]
+}
+
+struct DesktopChatMarkdownPerformanceSample: Equatable, Sendable {
+    let targetByteCount: Int
+    let blockCount: Int
+    let chunkCount: Int
+    let firstParseDurationMS: Double
+    let cachedParseDurationMS: Double
+    let cacheHitDelta: Int
+    let cacheMissDelta: Int
+    let evictionDelta: Int
+}
+
+enum DesktopChatMarkdownPerformanceProbe {
+    static func measure(sampleSizes: [Int]) -> DesktopChatMarkdownPerformanceReport {
+        let samples = sampleSizes.map { targetSize in
+            let source = makeSampleMarkdown(targetByteCount: targetSize)
+            let before = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+            let firstStartedAt = Date()
+            let firstPlan = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+            let firstDuration = Date().timeIntervalSince(firstStartedAt) * 1000
+            let afterFirst = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+            let cachedStartedAt = Date()
+            _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+            let cachedDuration = Date().timeIntervalSince(cachedStartedAt) * 1000
+            let afterCached = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+            return DesktopChatMarkdownPerformanceSample(
+                targetByteCount: targetSize,
+                blockCount: firstPlan.blocks.count,
+                chunkCount: firstPlan.chunks.count,
+                firstParseDurationMS: max(0, firstDuration),
+                cachedParseDurationMS: max(0, cachedDuration),
+                cacheHitDelta: afterCached.chunkHitCount - afterFirst.chunkHitCount,
+                cacheMissDelta: afterFirst.chunkMissCount - before.chunkMissCount,
+                evictionDelta: afterCached.evictionCount - before.evictionCount
+            )
+        }
+        return DesktopChatMarkdownPerformanceReport(samples: samples)
+    }
+
+    private static func makeSampleMarkdown(targetByteCount: Int) -> String {
+        let section = """
+        ## Benchmark Section
+
+        A paragraph with **strong text**, _emphasis_, `inline code`, and a readable [label](https://example.com).
+
+        - Alpha item
+          - Nested beta item
+        - Gamma item
+
+        ```swift
+        let value = 42
+        print(value)
+        ```
+
+        | Metric | Value | Note |
+        | :--- | ---: | :---: |
+        | TTFT | 12 ms | cached |
+        | TPS | 41 | steady |
+
+        """
+        var text = ""
+        while text.utf8.count < targetByteCount {
+            text += section
+        }
+        return text
+    }
+}
+
+private enum DesktopChatMarkdownChunker {
+    static func chunks(
+        from sanitized: String,
+        mode: DesktopChatMarkdownRenderPlanMode
+    ) -> [DesktopChatMarkdownSourceChunk] {
+        guard sanitized.count > DesktopChatMarkdownLayoutMetrics.renderChunkTargetCharacterCount else {
+            return [
+                DesktopChatMarkdownSourceChunk(source: sanitized, isStable: mode == .complete),
+            ]
+        }
+
+        var chunks: [DesktopChatMarkdownSourceChunk] = []
+        var current = ""
+        var insideFence = false
+        let lines = sanitized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                insideFence.toggle()
+            }
+
+            if current.isEmpty == false {
+                current += "\n"
+            }
+            current += line
+
+            let isLastLine = index == lines.count - 1
+            if insideFence == false,
+               current.count >= DesktopChatMarkdownLayoutMetrics.renderChunkTargetCharacterCount,
+               trimmed.isEmpty,
+               isLastLine == false {
+                chunks.append(DesktopChatMarkdownSourceChunk(source: current, isStable: true))
+                current = ""
+            }
+        }
+
+        if current.isEmpty == false || chunks.isEmpty {
+            chunks.append(
+                DesktopChatMarkdownSourceChunk(
+                    source: current,
+                    isStable: mode == .complete
+                )
+            )
+        }
+
+        if mode == .streaming, let last = chunks.indices.last {
+            chunks[last] = DesktopChatMarkdownSourceChunk(source: chunks[last].source, isStable: false)
+        }
+
+        return chunks
+    }
+}
+
 private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
     private let lock = NSLock()
     private var capacity: Int
     private var parsedBlocks: [String: [DesktopChatMarkdownBlock]]
     private var parsedBlockOrder: [String]
+    private var parsedChunkBlocks: [String: [DesktopChatMarkdownBlock]]
+    private var parsedChunkBlockOrder: [String]
     private var inlineAttributedStrings: [String: AttributedString]
     private var inlineAttributedStringOrder: [String]
     private var parseHitCount: Int
     private var parseMissCount: Int
     private var inlineHitCount: Int
     private var inlineMissCount: Int
+    private var chunkHitCount: Int
+    private var chunkMissCount: Int
+    private var stableChunkReuseCount: Int
     private var evictionCount: Int
     private var latestParseDurationMS: Double
 
@@ -124,12 +523,17 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         self.capacity = max(1, capacity)
         self.parsedBlocks = [:]
         self.parsedBlockOrder = []
+        self.parsedChunkBlocks = [:]
+        self.parsedChunkBlockOrder = []
         self.inlineAttributedStrings = [:]
         self.inlineAttributedStringOrder = []
         self.parseHitCount = 0
         self.parseMissCount = 0
         self.inlineHitCount = 0
         self.inlineMissCount = 0
+        self.chunkHitCount = 0
+        self.chunkMissCount = 0
+        self.stableChunkReuseCount = 0
         self.evictionCount = 0
         self.latestParseDurationMS = 0
     }
@@ -157,6 +561,40 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         parsedBlocks[key] = rendered
         touch(key, in: &parsedBlockOrder)
         evictIfNeeded()
+        lock.unlock()
+
+        return rendered
+    }
+
+    func chunkBlocks(
+        for key: String,
+        isStable: Bool,
+        build: () -> [DesktopChatMarkdownBlock]
+    ) -> [DesktopChatMarkdownBlock] {
+        if isStable {
+            lock.lock()
+            if let cached = parsedChunkBlocks[key] {
+                chunkHitCount += 1
+                stableChunkReuseCount += 1
+                touch(key, in: &parsedChunkBlockOrder)
+                lock.unlock()
+                return cached
+            }
+            lock.unlock()
+        }
+
+        let startedAt = Date()
+        let rendered = build()
+        let duration = max(0, Date().timeIntervalSince(startedAt) * 1000)
+
+        lock.lock()
+        chunkMissCount += 1
+        latestParseDurationMS = duration
+        if isStable {
+            parsedChunkBlocks[key] = rendered
+            touch(key, in: &parsedChunkBlockOrder)
+            evictIfNeeded()
+        }
         lock.unlock()
 
         return rendered
@@ -192,12 +630,17 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         self.capacity = max(1, capacity)
         parsedBlocks.removeAll()
         parsedBlockOrder.removeAll()
+        parsedChunkBlocks.removeAll()
+        parsedChunkBlockOrder.removeAll()
         inlineAttributedStrings.removeAll()
         inlineAttributedStringOrder.removeAll()
         parseHitCount = 0
         parseMissCount = 0
         inlineHitCount = 0
         inlineMissCount = 0
+        chunkHitCount = 0
+        chunkMissCount = 0
+        stableChunkReuseCount = 0
         evictionCount = 0
         latestParseDurationMS = 0
         lock.unlock()
@@ -210,6 +653,9 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
             parseMissCount: parseMissCount,
             inlineHitCount: inlineHitCount,
             inlineMissCount: inlineMissCount,
+            chunkHitCount: chunkHitCount,
+            chunkMissCount: chunkMissCount,
+            stableChunkReuseCount: stableChunkReuseCount,
             evictionCount: evictionCount,
             latestParseDurationMS: latestParseDurationMS
         )
@@ -226,6 +672,12 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         while parsedBlockOrder.count > capacity, let key = parsedBlockOrder.first {
             parsedBlockOrder.removeFirst()
             parsedBlocks.removeValue(forKey: key)
+            evictionCount += 1
+        }
+
+        while parsedChunkBlockOrder.count > capacity, let key = parsedChunkBlockOrder.first {
+            parsedChunkBlockOrder.removeFirst()
+            parsedChunkBlocks.removeValue(forKey: key)
             evictionCount += 1
         }
 
@@ -534,14 +986,30 @@ private extension DesktopChatMarkdownTableAlignment {
 struct DesktopChatMarkdownBodyView: View {
     let rawText: String
 
-    private var blocks: [DesktopChatMarkdownBlock] {
-        DesktopChatMarkdownRenderer.blocks(from: rawText)
+    private var renderPlan: DesktopChatMarkdownRenderPlan {
+        DesktopChatMarkdownRenderer.renderPlan(from: rawText, mode: .streaming)
     }
 
     var body: some View {
-        DesktopChatMarkdownBlocksView(blocks: blocks)
+        DesktopChatMarkdownRenderPlanView(plan: renderPlan)
             .frame(maxWidth: .infinity, alignment: .leading)
             .textSelection(.enabled)
+    }
+}
+
+private struct DesktopChatMarkdownRenderPlanView: View {
+    let plan: DesktopChatMarkdownRenderPlan
+
+    var body: some View {
+        if plan.usesLazyRendering {
+            LazyVStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.blockSpacing) {
+                ForEach(Array(plan.chunks.enumerated()), id: \.offset) { _, chunk in
+                    DesktopChatMarkdownBlocksView(blocks: chunk.blocks)
+                }
+            }
+        } else {
+            DesktopChatMarkdownBlocksView(blocks: plan.blocks)
+        }
     }
 }
 
@@ -587,18 +1055,25 @@ private struct DesktopChatMarkdownBlocksView: View {
     private func headingView(level: Int, text: String) -> some View {
         SwiftUI.Text(DesktopChatMarkdownInlineFormatter.attributedString(fromSanitized: text))
             .font(headingFont(level: level))
-            .lineSpacing(2)
-            .padding(.top, level == 1 ? MelixDesignTokens.Spacing.xs : 0)
+            .foregroundStyle(level == 1 ? .primary : .secondary)
+            .lineSpacing(3)
+            .padding(.top, headingTopPadding(level: level))
+            .padding(.bottom, level == 1 ? 1 : 0)
     }
 
     private func blockQuoteView(_ children: [DesktopChatMarkdownBlock]) -> some View {
         HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.sm) {
             Rectangle()
-                .fill(Color.secondary.opacity(0.28))
+                .fill(Color.accentColor.opacity(0.35))
                 .frame(width: 3)
             DesktopChatMarkdownBlocksView(blocks: children)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, MelixDesignTokens.Spacing.xs)
+        .padding(.horizontal, MelixDesignTokens.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                .fill(Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.tableSurfaceBackgroundOpacity))
+        )
     }
 
     private func unorderedListView(_ items: [DesktopChatMarkdownListItem]) -> some View {
@@ -624,11 +1099,11 @@ private struct DesktopChatMarkdownBlocksView: View {
         marker: String,
         item: DesktopChatMarkdownListItem
     ) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.sm) {
             SwiftUI.Text(marker)
                 .font(.body.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 18, alignment: .trailing)
+                .frame(minWidth: 22, alignment: .trailing)
             VStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.listRowSpacing) {
                 if item.text.isEmpty == false {
                     SwiftUI.Text(DesktopChatMarkdownInlineFormatter.attributedString(fromSanitized: item.text))
@@ -638,22 +1113,43 @@ private struct DesktopChatMarkdownBlocksView: View {
                 if item.children.isEmpty == false {
                     DesktopChatMarkdownBlocksView(blocks: item.children)
                         .padding(.top, 1)
+                        .padding(.leading, MelixDesignTokens.Spacing.xs)
                 }
             }
         }
     }
 
     private func codeBlockView(language: String, code: String) -> some View {
-        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
-            if language.isEmpty == false {
-                SwiftUI.Text(language)
-                    .font(.caption2.monospaced())
+        let presentation = DesktopChatMarkdownCodeBlockPresentation(language: language, code: code)
+        return VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            HStack(spacing: DesktopChatMarkdownLayoutMetrics.codeBlockHeaderSpacing) {
+                SwiftUI.Text(presentation.languageBadge)
+                    .font(.caption2.monospaced().weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, MelixDesignTokens.Spacing.xs)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.codeBlockBadgeBackgroundOpacity))
+                    )
+                Spacer(minLength: MelixDesignTokens.Spacing.sm)
+                Button {
+                    DesktopChatMarkdownCodeBlockClipboard.copy(code)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .imageScale(.small)
+                }
+                .buttonStyle(.borderless)
+                .help(presentation.copyAccessibilityLabel)
+                .accessibilityLabel(presentation.copyAccessibilityLabel)
             }
-            SwiftUI.Text(code.isEmpty ? " " : code)
-                .font(.caption.monospaced())
-                .lineSpacing(DesktopChatMarkdownLayoutMetrics.codeBlockLineSpacing)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: true) {
+                SwiftUI.Text(code.isEmpty ? AttributedString(" ") : presentation.highlightedCode)
+                    .font(.caption.monospaced())
+                    .lineSpacing(DesktopChatMarkdownLayoutMetrics.codeBlockLineSpacing)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(DesktopChatMarkdownLayoutMetrics.codeBlockPadding)
         .background(
@@ -676,48 +1172,58 @@ private struct DesktopChatMarkdownBlocksView: View {
     ) -> some View {
         let columnCount = max(header.count, rows.map(\.count).max() ?? 0, 1)
         let normalizedAlignments = DesktopChatMarkdownTableAlignment.normalized(alignments, count: columnCount)
-        return Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-            GridRow {
-                ForEach(0..<columnCount, id: \.self) { column in
-                    tableCellView(
-                        text: header[safe: column] ?? "",
-                        alignment: normalizedAlignments[column],
-                        isHeader: true,
-                        showsTrailingSeparator: column < columnCount - 1,
-                        showsBottomSeparator: true
-                    )
-                }
-            }
-            ForEach(rows.indices, id: \.self) { rowIndex in
+        let layout = DesktopChatMarkdownTableLayout(header: header, rows: rows)
+        return ScrollView(.horizontal, showsIndicators: true) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
-                    let row = normalizedTableRow(rows[rowIndex], columnCount: columnCount)
                     ForEach(0..<columnCount, id: \.self) { column in
                         tableCellView(
-                            text: row[column],
+                            text: header[safe: column] ?? "",
+                            width: layout.columnWidths[column],
+                            lineLimit: layout.lineLimit(for: header[safe: column] ?? ""),
                             alignment: normalizedAlignments[column],
-                            isHeader: false,
+                            isHeader: true,
                             showsTrailingSeparator: column < columnCount - 1,
-                            showsBottomSeparator: rowIndex < rows.count - 1
+                            showsBottomSeparator: true
                         )
                     }
                 }
+                ForEach(rows.indices, id: \.self) { rowIndex in
+                    GridRow {
+                        let row = normalizedTableRow(rows[rowIndex], columnCount: columnCount)
+                        ForEach(0..<columnCount, id: \.self) { column in
+                            tableCellView(
+                                text: row[column],
+                                width: layout.columnWidths[column],
+                                lineLimit: layout.lineLimit(for: row[column]),
+                                alignment: normalizedAlignments[column],
+                                isHeader: false,
+                                showsTrailingSeparator: column < columnCount - 1,
+                                showsBottomSeparator: rowIndex < rows.count - 1
+                            )
+                        }
+                    }
+                }
             }
+            .fixedSize(horizontal: true, vertical: false)
+            .background(
+                RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                    .fill(Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.tableSurfaceBackgroundOpacity))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                    .stroke(
+                        Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.codeBlockBorderOpacity),
+                        lineWidth: 1
+                    )
+            )
         }
-        .background(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
-                .fill(Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.tableSurfaceBackgroundOpacity))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
-                .stroke(
-                    Color.primary.opacity(DesktopChatMarkdownLayoutMetrics.codeBlockBorderOpacity),
-                    lineWidth: 1
-                )
-        )
     }
 
     private func tableCellView(
         text: String,
+        width: CGFloat,
+        lineLimit: Int?,
         alignment: DesktopChatMarkdownTableAlignment,
         isHeader: Bool,
         showsTrailingSeparator: Bool,
@@ -731,9 +1237,11 @@ private struct DesktopChatMarkdownBlocksView: View {
             SwiftUI.Text(DesktopChatMarkdownInlineFormatter.attributedString(fromSanitized: text))
                 .font(isHeader ? .caption.weight(.semibold) : .caption)
                 .multilineTextAlignment(alignment.textAlignment)
+                .lineLimit(lineLimit)
+                .truncationMode(.tail)
                 .padding(.horizontal, DesktopChatMarkdownLayoutMetrics.tableCellHorizontalPadding)
                 .padding(.vertical, DesktopChatMarkdownLayoutMetrics.tableCellVerticalPadding)
-                .frame(maxWidth: .infinity, alignment: alignment.frameAlignment)
+                .frame(width: width, alignment: alignment.frameAlignment)
         }
         .overlay(alignment: .bottom) {
             if showsBottomSeparator {
@@ -761,11 +1269,22 @@ private struct DesktopChatMarkdownBlocksView: View {
     private func headingFont(level: Int) -> Font {
         switch level {
         case 1:
-            return .headline
+            return .title3.weight(.semibold)
         case 2:
-            return .subheadline.weight(.semibold)
+            return .headline
         default:
-            return .caption.weight(.semibold)
+            return .subheadline.weight(.semibold)
+        }
+    }
+
+    private func headingTopPadding(level: Int) -> CGFloat {
+        switch level {
+        case 1:
+            return MelixDesignTokens.Spacing.sm
+        case 2:
+            return MelixDesignTokens.Spacing.xs
+        default:
+            return 0
         }
     }
 
