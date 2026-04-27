@@ -507,6 +507,7 @@ public actor RequestCoordinator {
     private let metricsStore: MetricsStore
     private let modelCatalog: ModelCatalog?
     private let sessionGraphStore: SessionGraphStore?
+    private let reasoningContinuityStore: ReasoningContinuityStore?
     private let cacheMetadataStore: CacheMetadataStore?
     private let now: @Sendable () -> Date
     private let lifecyclePolicy: ConnectionLifecyclePolicy
@@ -535,6 +536,7 @@ public actor RequestCoordinator {
         metricsStore: MetricsStore = MetricsStore(),
         modelCatalog: ModelCatalog? = nil,
         sessionGraphStore: SessionGraphStore? = nil,
+        reasoningContinuityStore: ReasoningContinuityStore? = ReasoningContinuityStore(),
         cacheMetadataStore: CacheMetadataStore? = nil,
         lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
         now: @escaping @Sendable () -> Date = Date.init
@@ -546,6 +548,7 @@ public actor RequestCoordinator {
         self.metricsStore = metricsStore
         self.modelCatalog = modelCatalog
         self.sessionGraphStore = sessionGraphStore
+        self.reasoningContinuityStore = reasoningContinuityStore
         self.cacheMetadataStore = cacheMetadataStore
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
@@ -856,6 +859,19 @@ public actor RequestCoordinator {
                                 await metricsStore.increment("http.reasoning_delta_count")
                             case .toolCallDelta:
                                 await metricsStore.increment("http.tool_delta_count")
+                            case .completed(let completed):
+                                await self.preserveReasoningContinuity(
+                                    requestIdentity: request.workerRequest.execution.id,
+                                    completed: completed
+                                )
+                                for (metricName, rawValue) in completed.parserMetrics {
+                                    if let value = Double(rawValue) {
+                                        await metricsStore.set(
+                                            value,
+                                            forKey: "http.parser.\(metricName)"
+                                        )
+                                    }
+                                }
                             default:
                                 break
                             }
@@ -1184,6 +1200,30 @@ public actor RequestCoordinator {
         )
     }
 
+    private func preserveReasoningContinuity(
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
+        completed: Melix_Worker_V1_Completed
+    ) async {
+        guard
+            let reasoningContinuityStore,
+            !requestIdentity.sessionID.isEmpty,
+            !requestIdentity.requestID.isEmpty,
+            !completed.reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        let branchID = requestIdentity.branchID.isEmpty ? "branch-main" : requestIdentity.branchID
+        if await reasoningContinuityStore.record(
+            sessionID: requestIdentity.sessionID,
+            branchID: branchID,
+            requestID: requestIdentity.requestID,
+            reasoningText: completed.reasoningText
+        ) != nil {
+            await metricsStore.increment("http.reasoning_continuity_preserved_count")
+        }
+    }
+
     private func hydrateSnapshotCreated(
         requestIdentity: Melix_Worker_V1_RequestIdentity,
         requestID: String,
@@ -1256,11 +1296,95 @@ public actor RequestCoordinator {
             }
         }
 
+        workerRequest = await reasoningContinuityRehydratedRequest(workerRequest)
+
         return TranslatedChatRequest(
             requestID: translatedRequest.requestID,
             modelID: translatedRequest.modelID,
             workerRequest: workerRequest,
             stream: translatedRequest.stream
+        )
+    }
+
+    private func reasoningContinuityRehydratedRequest(
+        _ request: Melix_Worker_V1_GenerateRequest
+    ) async -> Melix_Worker_V1_GenerateRequest {
+        guard
+            let reasoningContinuityStore,
+            !request.execution.id.sessionID.isEmpty
+        else {
+            return request
+        }
+
+        let branchID = request.execution.id.branchID.isEmpty
+            ? "branch-main"
+            : request.execution.id.branchID
+        guard
+            let record = await reasoningContinuityStore.latest(
+                sessionID: request.execution.id.sessionID,
+                branchID: branchID
+            ),
+            record.requestID != request.execution.id.requestID
+        else {
+            return request
+        }
+
+        var updated = request
+        updated.execution.reasoning.continuityRehydrated = true
+        updated.execution.scope.reasoningContinuityPresent = true
+        updated.execution.ext["melix.reasoning.continuity_rehydrated"] = "true"
+        updated.execution.ext["melix.reasoning.continuity_key"] = record.continuityKey
+        updated.execution.ext["melix.reasoning.continuity_request_id"] = record.requestID
+        updated.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] = "true"
+        let mergedTemplateKwargs = chatTemplateKwargsJSON(
+            merging: updated.execution.ext["melix.chat_template_kwargs.effective_json"],
+            continuityRecord: record
+        )
+        if mergedTemplateKwargs.hadParseFailure {
+            await metricsStore.increment("http.reasoning_continuity_template_kwargs_parse_failure_count")
+        }
+        let updatedTemplateKwargsJSON = mergedTemplateKwargs.json
+        let updatedTemplateKwargsHash = cacheScopeHash(updatedTemplateKwargsJSON)
+        updated.execution.ext["melix.chat_template_kwargs.effective_json"] = updatedTemplateKwargsJSON
+        updated.execution.scope.chatTemplateKwargsHash = updatedTemplateKwargsHash
+        updated.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] = updatedTemplateKwargsHash
+
+        await metricsStore.increment("http.reasoning_continuity_rehydrated_count")
+        return updated
+    }
+
+    private struct ChatTemplateKwargsMergeResult {
+        let json: String
+        let hadParseFailure: Bool
+    }
+
+    private func chatTemplateKwargsJSON(
+        merging rawJSON: String?,
+        continuityRecord: ReasoningContinuityRecord
+    ) -> ChatTemplateKwargsMergeResult {
+        var object: [String: Any] = [:]
+        var hadParseFailure = false
+        if let rawJSON,
+           !rawJSON.isEmpty {
+            if let data = rawJSON.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                object = parsed
+            } else {
+                hadParseFailure = true
+            }
+        }
+        object["melix_reasoning_continuity"] = [
+            "present": true,
+            "continuity_key": continuityRecord.continuityKey,
+            "source_request_id": continuityRecord.requestID,
+        ]
+        // The object contains only parsed JSON plus Bool/String continuity
+        // markers; invalid raw JSON already fell back to an empty object.
+        precondition(JSONSerialization.isValidJSONObject(object))
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return ChatTemplateKwargsMergeResult(
+            json: String(decoding: data, as: UTF8.self),
+            hadParseFailure: hadParseFailure
         )
     }
 

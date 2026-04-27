@@ -18,6 +18,7 @@ class RuntimeUnavailableError(RuntimeError):
 @dataclass
 class RuntimeTokenEvent:
     text: str
+    raw_text: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     prompt_tps: float | None = None
@@ -265,6 +266,7 @@ class AutoMLXBackend:
                 continue
             yield RuntimeTokenEvent(
                 text=text,
+                raw_text=getattr(response, "raw_text", None),
                 prompt_tokens=getattr(response, "prompt_tokens", None),
                 completion_tokens=getattr(response, "generation_tokens", None),
                 prompt_tps=getattr(response, "prompt_tps", None),

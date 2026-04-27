@@ -1078,6 +1078,16 @@ public struct Melix_Worker_V1_CacheScope: Sendable {
 
   public var scopeID: String = String()
 
+  public var reasoningEffort: String = String()
+
+  public var toolParserMode: String = String()
+
+  public var structuredOutputMode: String = String()
+
+  public var chatTemplateKwargsHash: String = String()
+
+  public var reasoningContinuityPresent: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1099,43 +1109,54 @@ public struct Melix_Worker_V1_CacheKey: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_PrefixRef: Sendable {
+public struct Melix_Worker_V1_PrefixRef: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var prefixID: String = String()
+  public var prefixID: String {
+    get {_storage._prefixID}
+    set {_uniqueStorage()._prefixID = newValue}
+  }
 
   public var cacheKey: Melix_Worker_V1_CacheKey {
-    get {_cacheKey ?? Melix_Worker_V1_CacheKey()}
-    set {_cacheKey = newValue}
+    get {_storage._cacheKey ?? Melix_Worker_V1_CacheKey()}
+    set {_uniqueStorage()._cacheKey = newValue}
   }
   /// Returns true if `cacheKey` has been explicitly set.
-  public var hasCacheKey: Bool {self._cacheKey != nil}
+  public var hasCacheKey: Bool {_storage._cacheKey != nil}
   /// Clears the value of `cacheKey`. Subsequent reads from it will return its default value.
-  public mutating func clearCacheKey() {self._cacheKey = nil}
+  public mutating func clearCacheKey() {_uniqueStorage()._cacheKey = nil}
 
   public var scope: Melix_Worker_V1_CacheScope {
-    get {_scope ?? Melix_Worker_V1_CacheScope()}
-    set {_scope = newValue}
+    get {_storage._scope ?? Melix_Worker_V1_CacheScope()}
+    set {_uniqueStorage()._scope = newValue}
   }
   /// Returns true if `scope` has been explicitly set.
-  public var hasScope: Bool {self._scope != nil}
+  public var hasScope: Bool {_storage._scope != nil}
   /// Clears the value of `scope`. Subsequent reads from it will return its default value.
-  public mutating func clearScope() {self._scope = nil}
+  public mutating func clearScope() {_uniqueStorage()._scope = nil}
 
-  public var tokenLength: UInt32 = 0
+  public var tokenLength: UInt32 {
+    get {_storage._tokenLength}
+    set {_uniqueStorage()._tokenLength = newValue}
+  }
 
-  public var pinned: Bool = false
+  public var pinned: Bool {
+    get {_storage._pinned}
+    set {_uniqueStorage()._pinned = newValue}
+  }
 
-  public var tier: String = String()
+  public var tier: String {
+    get {_storage._tier}
+    set {_uniqueStorage()._tier = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _cacheKey: Melix_Worker_V1_CacheKey? = nil
-  fileprivate var _scope: Melix_Worker_V1_CacheScope? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public struct Melix_Worker_V1_SnapshotRef: Sendable {
@@ -1196,6 +1217,16 @@ public struct Melix_Worker_V1_ReasoningConfig: Sendable {
   public var parser: String = String()
 
   public var separateStream: Bool = false
+
+  public var mode: String = String()
+
+  public var modeSource: String = String()
+
+  public var effort: String = String()
+
+  public var autoDetectModelFamily: String = String()
+
+  public var continuityRehydrated: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2548,7 +2579,7 @@ extension Melix_Worker_V1_Capability: SwiftProtobuf.Message, SwiftProtobuf._Mess
 
 extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheScope"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}prompt_template_hash\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}multimodal_adapter_hash\0\u{3}scope_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}prompt_template_hash\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}multimodal_adapter_hash\0\u{3}scope_id\0\u{3}reasoning_effort\0\u{3}tool_parser_mode\0\u{3}structured_output_mode\0\u{3}chat_template_kwargs_hash\0\u{3}reasoning_continuity_present\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2565,6 +2596,11 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 7: try { try decoder.decodeSingularStringField(value: &self.reasoningMode) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.multimodalAdapterHash) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.reasoningEffort) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.toolParserMode) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.structuredOutputMode) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.chatTemplateKwargsHash) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self.reasoningContinuityPresent) }()
       default: break
       }
     }
@@ -2598,6 +2634,21 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if !self.scopeID.isEmpty {
       try visitor.visitSingularStringField(value: self.scopeID, fieldNumber: 9)
     }
+    if !self.reasoningEffort.isEmpty {
+      try visitor.visitSingularStringField(value: self.reasoningEffort, fieldNumber: 10)
+    }
+    if !self.toolParserMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolParserMode, fieldNumber: 11)
+    }
+    if !self.structuredOutputMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.structuredOutputMode, fieldNumber: 12)
+    }
+    if !self.chatTemplateKwargsHash.isEmpty {
+      try visitor.visitSingularStringField(value: self.chatTemplateKwargsHash, fieldNumber: 13)
+    }
+    if self.reasoningContinuityPresent != false {
+      try visitor.visitSingularBoolField(value: self.reasoningContinuityPresent, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2611,6 +2662,11 @@ extension Melix_Worker_V1_CacheScope: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.reasoningMode != rhs.reasoningMode {return false}
     if lhs.multimodalAdapterHash != rhs.multimodalAdapterHash {return false}
     if lhs.scopeID != rhs.scopeID {return false}
+    if lhs.reasoningEffort != rhs.reasoningEffort {return false}
+    if lhs.toolParserMode != rhs.toolParserMode {return false}
+    if lhs.structuredOutputMode != rhs.structuredOutputMode {return false}
+    if lhs.chatTemplateKwargsHash != rhs.chatTemplateKwargsHash {return false}
+    if lhs.reasoningContinuityPresent != rhs.reasoningContinuityPresent {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2660,56 +2716,102 @@ extension Melix_Worker_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf._Messa
   public static let protoMessageName: String = _protobuf_package + ".PrefixRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0\u{3}cache_key\0\u{1}scope\0\u{3}token_length\0\u{1}pinned\0\u{1}tier\0")
 
+  fileprivate class _StorageClass {
+    var _prefixID: String = String()
+    var _cacheKey: Melix_Worker_V1_CacheKey? = nil
+    var _scope: Melix_Worker_V1_CacheScope? = nil
+    var _tokenLength: UInt32 = 0
+    var _pinned: Bool = false
+    var _tier: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _prefixID = source._prefixID
+      _cacheKey = source._cacheKey
+      _scope = source._scope
+      _tokenLength = source._tokenLength
+      _pinned = source._pinned
+      _tier = source._tier
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.prefixID) }()
-      case 2: try { try decoder.decodeSingularMessageField(value: &self._cacheKey) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._scope) }()
-      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.tokenLength) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.tier) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._prefixID) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._cacheKey) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._scope) }()
+        case 4: try { try decoder.decodeSingularUInt32Field(value: &_storage._tokenLength) }()
+        case 5: try { try decoder.decodeSingularBoolField(value: &_storage._pinned) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._tier) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.prefixID.isEmpty {
-      try visitor.visitSingularStringField(value: self.prefixID, fieldNumber: 1)
-    }
-    try { if let v = self._cacheKey {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    } }()
-    try { if let v = self._scope {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    } }()
-    if self.tokenLength != 0 {
-      try visitor.visitSingularUInt32Field(value: self.tokenLength, fieldNumber: 4)
-    }
-    if self.pinned != false {
-      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 5)
-    }
-    if !self.tier.isEmpty {
-      try visitor.visitSingularStringField(value: self.tier, fieldNumber: 6)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._prefixID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._prefixID, fieldNumber: 1)
+      }
+      try { if let v = _storage._cacheKey {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      try { if let v = _storage._scope {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      if _storage._tokenLength != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._tokenLength, fieldNumber: 4)
+      }
+      if _storage._pinned != false {
+        try visitor.visitSingularBoolField(value: _storage._pinned, fieldNumber: 5)
+      }
+      if !_storage._tier.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._tier, fieldNumber: 6)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_PrefixRef, rhs: Melix_Worker_V1_PrefixRef) -> Bool {
-    if lhs.prefixID != rhs.prefixID {return false}
-    if lhs._cacheKey != rhs._cacheKey {return false}
-    if lhs._scope != rhs._scope {return false}
-    if lhs.tokenLength != rhs.tokenLength {return false}
-    if lhs.pinned != rhs.pinned {return false}
-    if lhs.tier != rhs.tier {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._prefixID != rhs_storage._prefixID {return false}
+        if _storage._cacheKey != rhs_storage._cacheKey {return false}
+        if _storage._scope != rhs_storage._scope {return false}
+        if _storage._tokenLength != rhs_storage._tokenLength {return false}
+        if _storage._pinned != rhs_storage._pinned {return false}
+        if _storage._tier != rhs_storage._tier {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2837,7 +2939,7 @@ extension Melix_Worker_V1_SamplingConfig: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Worker_V1_ReasoningConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ReasoningConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0\u{1}parser\0\u{3}separate_stream\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0\u{1}parser\0\u{3}separate_stream\0\u{1}mode\0\u{3}mode_source\0\u{1}effort\0\u{3}auto_detect_model_family\0\u{3}continuity_rehydrated\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2848,6 +2950,11 @@ extension Melix_Worker_V1_ReasoningConfig: SwiftProtobuf.Message, SwiftProtobuf.
       case 1: try { try decoder.decodeSingularBoolField(value: &self.enabled) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.parser) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.separateStream) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.mode) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.modeSource) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.effort) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.autoDetectModelFamily) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.continuityRehydrated) }()
       default: break
       }
     }
@@ -2863,6 +2970,21 @@ extension Melix_Worker_V1_ReasoningConfig: SwiftProtobuf.Message, SwiftProtobuf.
     if self.separateStream != false {
       try visitor.visitSingularBoolField(value: self.separateStream, fieldNumber: 3)
     }
+    if !self.mode.isEmpty {
+      try visitor.visitSingularStringField(value: self.mode, fieldNumber: 4)
+    }
+    if !self.modeSource.isEmpty {
+      try visitor.visitSingularStringField(value: self.modeSource, fieldNumber: 5)
+    }
+    if !self.effort.isEmpty {
+      try visitor.visitSingularStringField(value: self.effort, fieldNumber: 6)
+    }
+    if !self.autoDetectModelFamily.isEmpty {
+      try visitor.visitSingularStringField(value: self.autoDetectModelFamily, fieldNumber: 7)
+    }
+    if self.continuityRehydrated != false {
+      try visitor.visitSingularBoolField(value: self.continuityRehydrated, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2870,6 +2992,11 @@ extension Melix_Worker_V1_ReasoningConfig: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.enabled != rhs.enabled {return false}
     if lhs.parser != rhs.parser {return false}
     if lhs.separateStream != rhs.separateStream {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.modeSource != rhs.modeSource {return false}
+    if lhs.effort != rhs.effort {return false}
+    if lhs.autoDetectModelFamily != rhs.autoDetectModelFamily {return false}
+    if lhs.continuityRehydrated != rhs.continuityRehydrated {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
