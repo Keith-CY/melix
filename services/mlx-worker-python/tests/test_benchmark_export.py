@@ -715,10 +715,104 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     summary_csv = build_benchmark_matrix_summary_csv(bundle)
     requests_csv = build_benchmark_matrix_requests_csv(bundle)
 
-    assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_csv.splitlines()[0]
-    assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in requests_csv.splitlines()[0]
-    assert "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,111" in summary_csv
-    assert "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,111" in requests_csv
+    summary_lines = summary_csv.splitlines()
+    request_lines = requests_csv.splitlines()
+    assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_lines[0]
+    assert "cell_wall_ms,completed_count,failed_count" in summary_lines[0]
+    assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in request_lines[0]
+    assert "dataset_materialize_ms,prompt_render_ms,warmup_ms" in request_lines[0]
+    assert summary_lines[1].startswith(
+        "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,"
+    )
+    assert summary_lines[1].endswith("111")
+    assert request_lines[1].startswith(
+        "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,"
+    )
+    assert request_lines[1].endswith("111")
+
+
+def test_export_csv_preserves_probe_columns() -> None:
+    bundle = {
+        "benchmark_context_rows": [
+            {
+                "job_id": "bench-1",
+                "model_id": "model-a",
+                "task_kind": "text-generation",
+                "source_repo": "repo/a",
+                "suite": "smoke",
+                "context_length": 32,
+                "generation_length": 8,
+                "batch_size": 1,
+                "repeat_index": 0,
+                "prefill_tokens_per_second": 24.45,
+                "decode_tokens_per_second": 47.08,
+                "ttft_ms": 24.45,
+                "request_latency_ms": 64.0,
+                "peak_memory_bytes": 2048.0,
+                "speedup_vs_batch_1": 1.0,
+                "cache_profile": "warm",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "dataset_materialize_ms": 2.0,
+                "prompt_render_ms": 1.0,
+                "warmup_ms": 4.0,
+                "prefill_ms": 24.45,
+                "decode_ms": 39.55,
+                "tokens_in": 32,
+                "tokens_out": 8,
+                "first_token_index": 1,
+                "cache_hit": True,
+                "runtime_kind": "text",
+                "error_stage": "",
+            }
+        ],
+        "benchmark_matrix_summary_rows": [
+            {
+                "job_id": "matrix-1",
+                "task_kind": "text-generation",
+                "source_repo": "repo/a",
+                "model_id": "model-a",
+                "suite_id": "smoke",
+                "context_length": 32,
+                "generation_length": 8,
+                "batch_size": 1,
+                "cache_profile": "warm",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "concurrency_level": 1,
+                "repeats": 1,
+                "requests": 2,
+                "duration_seconds": 0,
+                "ttft_mean_ms": 24.45,
+                "ttft_std_ms": 0.2,
+                "request_latency_mean_ms": 64.0,
+                "request_latency_std_ms": 0.4,
+                "prefill_tokens_per_second_mean": 24.45,
+                "decode_tokens_per_second_mean": 47.08,
+                "throughput_requests_per_second": 2.0,
+                "throughput_tokens_per_second": 94.16,
+                "success_rate": 1.0,
+                "peak_memory_bytes_max": 2048,
+                "queue_wait_mean_ms": 0.0,
+                "queue_wait_p95_ms": 0.0,
+                "cell_wall_ms": 128.0,
+                "completed_count": 2,
+                "failed_count": 0,
+                "ttft_p50_ms": 24.45,
+                "ttft_p95_ms": 24.7,
+                "request_latency_p50_ms": 64.0,
+                "request_latency_p95_ms": 64.4,
+                "created_at_unix_ms": 111,
+            }
+        ],
+    }
+
+    context_header = build_benchmark_context_csv(bundle).splitlines()[0]
+    matrix_header = build_benchmark_matrix_summary_csv(bundle).splitlines()[0]
+
+    assert "dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms" in context_header
+    assert "tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage" in context_header
+    assert "cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms" in matrix_header
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:

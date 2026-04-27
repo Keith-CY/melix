@@ -352,6 +352,27 @@ class EvaluationCore:
             f"eval.{suite_id}.scored_sample_count": float(scored_sample_count),
             f"eval.{suite_id}.failure_count": float(failure_count),
             f"eval.{suite_id}.duration_seconds": duration_seconds,
+            f"eval.{suite_id}.sample_render_ms_mean": self._sample_probe_mean(
+                sample_records, "sample_render_ms"
+            ),
+            f"eval.{suite_id}.inference_ms_mean": self._sample_probe_mean(
+                sample_records, "inference_ms"
+            ),
+            f"eval.{suite_id}.extraction_ms_mean": self._sample_probe_mean(
+                sample_records, "extraction_ms"
+            ),
+            f"eval.{suite_id}.validation_ms_mean": self._sample_probe_mean(
+                sample_records, "validation_ms"
+            ),
+            f"eval.{suite_id}.scoring_ms_mean": self._sample_probe_mean(
+                sample_records, "scoring_ms"
+            ),
+            f"eval.{suite_id}.raw_response_chars_mean": self._sample_probe_mean(
+                sample_records, "raw_response_chars"
+            ),
+            f"eval.{suite_id}.extracted_result_chars_mean": self._sample_probe_mean(
+                sample_records, "extracted_result_chars"
+            ),
         }
         result_units = {
             f"eval.{suite_id}.typed_score_mean": "ratio",
@@ -363,6 +384,13 @@ class EvaluationCore:
             f"eval.{suite_id}.scored_sample_count": "count",
             f"eval.{suite_id}.failure_count": "count",
             f"eval.{suite_id}.duration_seconds": "s",
+            f"eval.{suite_id}.sample_render_ms_mean": "ms",
+            f"eval.{suite_id}.inference_ms_mean": "ms",
+            f"eval.{suite_id}.extraction_ms_mean": "ms",
+            f"eval.{suite_id}.validation_ms_mean": "ms",
+            f"eval.{suite_id}.scoring_ms_mean": "ms",
+            f"eval.{suite_id}.raw_response_chars_mean": "chars",
+            f"eval.{suite_id}.extracted_result_chars_mean": "chars",
         }
         if suite_id in _CODE_EVAL_SUITES:
             code_exec_pass_count = sum(
@@ -987,6 +1015,13 @@ class EvaluationCore:
             return float(default_value)
 
     @staticmethod
+    def _sample_probe_mean(samples: tuple[EvaluationSample, ...], field_name: str) -> float:
+        values = [float(getattr(sample, field_name, 0.0) or 0.0) for sample in samples]
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 4)
+
+    @staticmethod
     def _profile_from_manifest(
         manifest: dict[str, object],
         *,
@@ -1093,6 +1128,8 @@ class EvaluationCore:
         )
         started_at = time.perf_counter()
         raw_response = ""
+        sample_render_ms = 0.0
+        inference_ms = 0.0
         code_language = ""
         code_entry_point = ""
         code_compile_status = ""
@@ -1103,7 +1140,7 @@ class EvaluationCore:
         code_tests_total = 0
         code_failure_detail = ""
         if loaded_model is not None:
-            raw_response = EvaluationCore._execute_live_prompt(
+            raw_response, sample_render_ms, inference_ms = EvaluationCore._execute_live_prompt(
                 registry=self._registry,
                 loaded_model=loaded_model,
                 messages=EvaluationCore._evaluation_messages(
@@ -1129,10 +1166,12 @@ class EvaluationCore:
                 seed=seed,
             )
         else:
+            inference_started_at = time.perf_counter()
             if task_kind in _MULTIMODAL_TASK_KINDS:
                 raw_response = ""
             else:
                 raw_response = EvaluationCore._deterministic_answer(input_text)
+            inference_ms = round((time.perf_counter() - inference_started_at) * 1_000.0, 4)
         duration_s = round(time.perf_counter() - started_at, 6)
         if loaded_model is None and task_kind in _MULTIMODAL_TASK_KINDS:
             return build_evaluation_sample_record(
@@ -1153,14 +1192,24 @@ class EvaluationCore:
                 task_kind=task_kind,
                 input_modalities=input_modalities,
                 media_references=media_references,
+                sample_render_ms=sample_render_ms,
+                inference_ms=inference_ms,
+                raw_response_chars=len(raw_response),
+                extracted_result_chars=0,
+                failure_stage="inference",
             )
         extracted_result = ""
         extraction_status = ""
         typed_score = 0.0
         validation_status = "not_validated"
         failure_reason = ""
+        extraction_ms = 0.0
+        validation_ms = 0.0
+        scoring_ms = 0.0
         if scoring_mode == "pass_at_1":
+            extraction_started_at = time.perf_counter()
             extracted_result, parse_status = extract_candidate_code(raw_response)
+            extraction_ms = round((time.perf_counter() - extraction_started_at) * 1_000.0, 4)
             extraction_status = "extracted" if extracted_result.strip() else (parse_status or "empty_prediction")
             failure_reason = "" if extraction_status == "extracted" else parse_status
             if extraction_status == "extracted":
@@ -1170,6 +1219,7 @@ class EvaluationCore:
                         f"Code evaluation sample {sample.get('id', index)} is missing test_code"
                     )
                 code_entry_point = self._sample_entry_point(sample, job_parameters)
+                validation_started_at = time.perf_counter()
                 code_result = run_python_code_evaluation(
                     candidate_code=extracted_result,
                     entry_point=code_entry_point,
@@ -1179,6 +1229,8 @@ class EvaluationCore:
                         1,
                     ),
                 )
+                validation_ms = round((time.perf_counter() - validation_started_at) * 1_000.0, 4)
+                scoring_ms = validation_ms
                 code_language = "python"
                 code_compile_status = code_result.compile_status
                 code_runtime_status = code_result.runtime_status
@@ -1191,39 +1243,55 @@ class EvaluationCore:
                 typed_score = 1.0 if code_result.passed else 0.0
                 failure_reason = code_result.failure_detail if not code_result.passed else ""
         elif scoring_mode in {"multiple_choice_accuracy", "exact_match"}:
+            extraction_started_at = time.perf_counter()
             extracted_result, parse_status = EvaluationCore._parse_prediction(
                 suite_id=suite_id,
                 raw_response=raw_response,
                 expected=target,
             )
+            extraction_ms = round((time.perf_counter() - extraction_started_at) * 1_000.0, 4)
             extraction_status = "extracted" if extracted_result.strip() else (parse_status or "empty_prediction")
             failure_reason = "" if extraction_status == "extracted" else parse_status
             if extraction_status == "extracted":
                 validation_status = "validated"
+                scoring_started_at = time.perf_counter()
                 typed_score = 1.0 if EvaluationCore._score_prediction(
                     sample=sample,
                     expected=target,
                     predicted=extracted_result,
                     scoring_mode=scoring_mode,
                 ) else 0.0
+                scoring_ms = round((time.perf_counter() - scoring_started_at) * 1_000.0, 4)
+                validation_ms = scoring_ms
         else:
+            extraction_started_at = time.perf_counter()
             extraction = extract_final_result(
                 raw_response=raw_response,
                 result_kind=profile.result_kind,
                 extraction_mode=profile.extraction_mode,
             )
+            extraction_ms = round((time.perf_counter() - extraction_started_at) * 1_000.0, 4)
             extracted_result = extraction.extracted_result
             extraction_status = extraction.extraction_status
             failure_reason = extraction.failure_reason
             if extraction.extraction_status == "extracted":
+                scoring_started_at = time.perf_counter()
                 scoring = score_final_result(
                     extracted_result=extracted_result,
                     target=target,
                     profile=profile,
                 )
+                scoring_ms = round((time.perf_counter() - scoring_started_at) * 1_000.0, 4)
+                validation_ms = scoring_ms
                 typed_score = scoring.typed_score
                 validation_status = scoring.validation_status
                 failure_reason = scoring.failure_reason
+        failure_stage = EvaluationCore._evaluation_failure_stage(
+            extraction_status=extraction_status,
+            validation_status=validation_status,
+            typed_score=typed_score,
+            threshold=profile.threshold,
+        )
         return build_evaluation_sample_record(
             job_id=job_id,
             suite_id=suite_id,
@@ -1253,6 +1321,14 @@ class EvaluationCore:
             code_failure_detail=code_failure_detail,
             category_label=EvaluationCore._sample_label(sample, "category"),
             subject_label=EvaluationCore._sample_label(sample, "subject"),
+            sample_render_ms=sample_render_ms,
+            inference_ms=inference_ms,
+            extraction_ms=extraction_ms,
+            validation_ms=validation_ms,
+            scoring_ms=scoring_ms,
+            raw_response_chars=len(raw_response),
+            extracted_result_chars=len(extracted_result),
+            failure_stage=failure_stage,
         )
 
     @staticmethod
@@ -1274,6 +1350,22 @@ class EvaluationCore:
         if request_label:
             return f"eval:{job_id}:{suite_id}:{request_label}:{sample_id}"
         return f"eval:{job_id}:{suite_id}:{sample_id}"
+
+    @staticmethod
+    def _evaluation_failure_stage(
+        *,
+        extraction_status: str,
+        validation_status: str,
+        typed_score: float,
+        threshold: float,
+    ) -> str:
+        if extraction_status != "extracted":
+            return "extraction"
+        if validation_status != "validated":
+            return "validation"
+        if threshold > 0.0 and typed_score < threshold:
+            return "scoring"
+        return ""
 
     @staticmethod
     def _deterministic_answer(prompt: str) -> str:
@@ -1298,16 +1390,18 @@ class EvaluationCore:
         result_kind: str = "text",
         request_id: str,
         seed: int,
-    ) -> str:
+    ) -> tuple[str, float, float]:
         runtime = registry.runtime_for_loaded_model(loaded_model)
         state = registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         chunks: list[str] = []
         try:
+            render_started_at = time.perf_counter()
             rendered_prompt = runtime.render_prompt(
                 messages,
                 loaded_model=loaded_model.runtime_model,
                 execution_ext={},
             )
+            sample_render_ms = round((time.perf_counter() - render_started_at) * 1_000.0, 4)
             sampling = common_pb2.SamplingConfig(
                 temperature=0.0,
                 top_p=1.0,
@@ -1318,6 +1412,7 @@ class EvaluationCore:
                     result_kind=result_kind,
                 ),
             )
+            inference_started_at = time.perf_counter()
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 rendered_prompt,
@@ -1328,11 +1423,12 @@ class EvaluationCore:
                 text = getattr(runtime_event, "text", "")
                 if text:
                     chunks.append(str(text))
+            inference_ms = round((time.perf_counter() - inference_started_at) * 1_000.0, 4)
         finally:
             if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
                 registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
             registry.finish_request(request_id)
-        return "".join(chunks).strip()
+        return "".join(chunks).strip(), sample_render_ms, inference_ms
 
     @staticmethod
     def _evaluation_messages(

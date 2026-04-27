@@ -13,6 +13,24 @@ from worker.productization.benchmark_schemas import (
 )
 
 
+def _default_speculative_dflash_fields() -> dict[str, object]:
+    return {
+        "speculative_acceptance_rate": 0.0,
+        "speculative_rollback_rate": 0.0,
+        "speculative_accepted_tokens": 0,
+        "speculative_rejected_tokens": 0,
+        "speculative_fallback_count": 0,
+        "speculative_num_draft_tokens": 0,
+        "speculative_draft_model_configured": False,
+        "speculative_draft_propose_ms": 0.0,
+        "speculative_target_verify_ms": 0.0,
+        "dflash_enabled": False,
+        "dflash_block_size": 0,
+        "dflash_rollback_count": 0,
+        "dflash_target_hidden_layers": 0,
+    }
+
+
 def test_build_serving_benchmark_job_preserves_identity_and_parameters() -> None:
     job = build_serving_benchmark_job(
         job_id="bench-123",
@@ -122,6 +140,18 @@ def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields
         "cache_profile": "partial_prefix",
         "reasoning_mode": "step-by-step",
         "structured_output_mode": "json",
+        "dataset_materialize_ms": 0.0,
+        "prompt_render_ms": 0.0,
+        "warmup_ms": 0.0,
+        "prefill_ms": 0.0,
+        "decode_ms": 0.0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "first_token_index": 0,
+        "cache_hit": False,
+        "runtime_kind": "",
+        "error_stage": "",
+        **_default_speculative_dflash_fields(),
     }
     assert batch_row == {
         "schema_version": "melix.serving_benchmark_batch_row.v1",
@@ -143,7 +173,135 @@ def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields
         "cache_profile": "partial_prefix",
         "reasoning_mode": "step-by-step",
         "structured_output_mode": "json",
+        "dataset_materialize_ms": 0.0,
+        "prompt_render_ms": 0.0,
+        "warmup_ms": 0.0,
+        "prefill_ms": 0.0,
+        "decode_ms": 0.0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "first_token_index": 0,
+        "cache_hit": False,
+        "runtime_kind": "",
+        "error_stage": "",
+        **_default_speculative_dflash_fields(),
     }
+
+
+def test_benchmark_rows_preserve_phase_probe_fields() -> None:
+    context_row = build_serving_benchmark_context_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite="smoke",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=2,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="partial_prefix",
+        reasoning_mode="step-by-step",
+        structured_output_mode="json",
+        dataset_materialize_ms=3.4,
+        prompt_render_ms=1.2,
+        warmup_ms=4.5,
+        prefill_ms=11.2,
+        decode_ms=31.6,
+        tokens_in=64,
+        tokens_out=16,
+        first_token_index=1,
+        cache_hit=True,
+        runtime_kind="text",
+        error_stage="",
+        speculative_acceptance_rate=0.8,
+        speculative_rollback_rate=0.2,
+        speculative_accepted_tokens=12,
+        speculative_rejected_tokens=3,
+        speculative_fallback_count=1,
+        speculative_num_draft_tokens=4,
+        speculative_draft_model_configured=True,
+        speculative_draft_propose_ms=6.7,
+        speculative_target_verify_ms=8.9,
+        dflash_enabled=True,
+        dflash_block_size=16,
+        dflash_rollback_count=2,
+        dflash_target_hidden_layers=12,
+    ).to_dict()
+    request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-1",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=0,
+        ttft_ms=24.45,
+        request_latency_ms=88.4,
+        prefill_tokens_per_second=1400.0,
+        decode_tokens_per_second=58.2,
+        queue_wait_ms=5.1,
+        peak_memory_bytes=2_147_483_648,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=101,
+        dataset_materialize_ms=2.0,
+        prompt_render_ms=1.5,
+        warmup_ms=0.0,
+        prefill_ms=24.45,
+        decode_ms=63.95,
+        tokens_in=1024,
+        tokens_out=128,
+        first_token_index=1,
+        cache_hit=False,
+        runtime_kind="text",
+        error_stage="",
+        speculative_acceptance_rate=0.7,
+        speculative_rollback_rate=0.3,
+        speculative_accepted_tokens=16,
+        speculative_rejected_tokens=4,
+        speculative_fallback_count=0,
+        speculative_num_draft_tokens=5,
+        speculative_draft_model_configured=True,
+        speculative_draft_propose_ms=7.8,
+        speculative_target_verify_ms=9.1,
+        dflash_enabled=True,
+        dflash_block_size=8,
+        dflash_rollback_count=1,
+        dflash_target_hidden_layers=10,
+    ).to_dict()
+
+    assert context_row["dataset_materialize_ms"] == 3.4
+    assert context_row["prompt_render_ms"] == 1.2
+    assert context_row["warmup_ms"] == 4.5
+    assert context_row["prefill_ms"] == 11.2
+    assert context_row["decode_ms"] == 31.6
+    assert context_row["tokens_in"] == 64
+    assert context_row["tokens_out"] == 16
+    assert context_row["first_token_index"] == 1
+    assert context_row["cache_hit"] is True
+    assert context_row["runtime_kind"] == "text"
+    assert context_row["error_stage"] == ""
+    assert context_row["speculative_acceptance_rate"] == 0.8
+    assert context_row["speculative_accepted_tokens"] == 12
+    assert context_row["speculative_draft_model_configured"] is True
+    assert context_row["dflash_enabled"] is True
+    assert context_row["dflash_block_size"] == 16
+    assert request_row["prompt_render_ms"] == 1.5
+    assert request_row["tokens_out"] == 128
+    assert request_row["speculative_rejected_tokens"] == 4
+    assert request_row["dflash_rollback_count"] == 1
 
 
 def test_build_serving_benchmark_results_groups_metrics_by_suite() -> None:
@@ -216,6 +374,13 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         peak_memory_bytes_max=2_147_483_648,
         queue_wait_mean_ms=5.1,
         queue_wait_p95_ms=9.2,
+        cell_wall_ms=353.6,
+        completed_count=4,
+        failed_count=0,
+        ttft_p50_ms=24.45,
+        ttft_p95_ms=25.0,
+        request_latency_p50_ms=88.4,
+        request_latency_p95_ms=90.0,
         created_at_unix_ms=101,
     )
     request_row = build_benchmark_matrix_request_row(
@@ -255,6 +420,7 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         "output_dir": "/tmp/melix/bench/matrix-runs/bench-matrix-1",
         "created_at_unix_ms": 101,
         "updated_at_unix_ms": 202,
+        "parameters": {},
     }
     assert summary_row.to_dict() == {
         "job_id": "bench-matrix-1",
@@ -284,6 +450,13 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         "peak_memory_bytes_max": 2_147_483_648,
         "queue_wait_mean_ms": 5.1,
         "queue_wait_p95_ms": 9.2,
+        "cell_wall_ms": 353.6,
+        "completed_count": 4,
+        "failed_count": 0,
+        "ttft_p50_ms": 24.45,
+        "ttft_p95_ms": 25.0,
+        "request_latency_p50_ms": 88.4,
+        "request_latency_p95_ms": 90.0,
         "created_at_unix_ms": 101,
     }
     assert request_row.to_dict() == {
@@ -308,6 +481,18 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         "peak_memory_bytes": 2_147_483_648,
         "status": "completed",
         "error_code": "",
+        "dataset_materialize_ms": 0.0,
+        "prompt_render_ms": 0.0,
+        "warmup_ms": 0.0,
+        "prefill_ms": 0.0,
+        "decode_ms": 0.0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "first_token_index": 0,
+        "cache_hit": False,
+        "runtime_kind": "",
+        "error_stage": "",
+        **_default_speculative_dflash_fields(),
         "created_at_unix_ms": 101,
     }
 

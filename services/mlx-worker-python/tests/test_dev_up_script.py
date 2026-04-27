@@ -80,7 +80,7 @@ def make_layout(dev_up, tmp_path: Path):
         python_worker_metrics_path=tmp_path / "runtime/python-metrics.json",
         http_port="11434",
         python_backend_mode="deterministic",
-        swift_text_worker_backend_mode="deterministic",
+        swift_text_worker_backend_mode="swift",
         uv_cache_dir=tmp_path / "uv-cache",
         swift_home=tmp_path / "swift-home",
         clang_module_cache_path=tmp_path / "module-cache",
@@ -371,6 +371,28 @@ def test_prepare_swift_worker_launch_cwd_rejects_incompatible_auto_discovered_me
     assert "0.31.1" in message
     assert str(incompatible_metallib_path.resolve()) in message
     assert "MELIX_SWIFT_MLX_METALLIB_PATH" in message
+
+
+def test_prepare_swift_worker_launch_cwd_skips_metallib_for_deterministic_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.29.1")
+    layout = replace(
+        make_layout(dev_up, repo_root),
+        swift_text_worker_backend_mode="deterministic",
+        uv_cache_dir=repo_root / ".uv-cache",
+    )
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/bad", "0.31.1")
+    monkeypatch.setattr(dev_up.Path, "home", lambda: tmp_path / "empty-home")
+
+    launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, repo_root)
+
+    assert launch_cwd == repo_root
+    assert not (layout.runtime_dir / "swift-text-worker-cwd" / "default.metallib").exists()
 
 
 def test_prepare_swift_worker_launch_cwd_prefers_configured_metallib(

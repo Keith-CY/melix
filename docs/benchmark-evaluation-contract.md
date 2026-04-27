@@ -158,6 +158,46 @@ Every completed `bench run` must persist:
 - task-aware summary metrics
 - exportable CSV rows
 
+### Performance Probe Fields
+
+Benchmark context-sweep and batch-sweep rows must preserve these additive diagnostic probe fields
+when the runner can observe them:
+
+- `dataset_materialize_ms`
+- `prompt_render_ms`
+- `warmup_ms`
+- `prefill_ms`
+- `decode_ms`
+- `tokens_in`
+- `tokens_out`
+- `first_token_index`
+- `cache_hit`
+- `runtime_kind`
+- `error_stage`
+- `speculative_acceptance_rate`
+- `speculative_rollback_rate`
+- `speculative_accepted_tokens`
+- `speculative_rejected_tokens`
+- `speculative_fallback_count`
+- `speculative_num_draft_tokens`
+- `speculative_draft_model_configured`
+- `speculative_draft_propose_ms`
+- `speculative_target_verify_ms`
+- `dflash_enabled`
+- `dflash_block_size`
+- `dflash_rollback_count`
+- `dflash_target_hidden_layers`
+
+The fields are phase-localization aids. Missing or zero values do not invalidate older persisted
+artifacts, but new runners should populate them so operators can distinguish dataset
+materialization, prompt rendering, prefill, decode, runtime-cache, speculative decode, DFlash, and
+failure-stage regressions.
+
+Swift export decoders may default missing additive numeric and boolean probes to `0` or `false`
+when reading legacy artifacts. Consumers must treat those defaults as compatibility sentinels
+unless the producing runner version is known to emit the probe field; they are not proof that the
+phase completed in zero milliseconds or that a boolean probe was explicitly observed as false.
+
 ### Summary Metrics
 
 The summary metric set is:
@@ -294,6 +334,10 @@ The canonical normalized matrix request shape is:
 - `requests: int`
 - `duration_seconds: int`
 
+Persisted matrix job records must include the additive `parameters` map. Live-runtime runs should
+copy runtime evidence into that map using the `runtime_*` keys listed in the report contract so the
+PR report can expose target/runtime mismatches alongside numeric deltas.
+
 ### Matrix Summary Outputs
 
 Each completed matrix cell must persist one summary row with:
@@ -325,6 +369,13 @@ Each completed matrix cell must persist one summary row with:
 - `peak_memory_bytes_max`
 - `queue_wait_mean_ms`
 - `queue_wait_p95_ms`
+- `cell_wall_ms`
+- `completed_count`
+- `failed_count`
+- `ttft_p50_ms`
+- `ttft_p95_ms`
+- `request_latency_p50_ms`
+- `request_latency_p95_ms`
 - `created_at_unix_ms`
 
 ### Matrix Request-Level Outputs
@@ -352,6 +403,30 @@ Each completed matrix request row must persist:
 - `peak_memory_bytes`
 - `status`
 - `error_code`
+- `dataset_materialize_ms`
+- `prompt_render_ms`
+- `warmup_ms`
+- `prefill_ms`
+- `decode_ms`
+- `tokens_in`
+- `tokens_out`
+- `first_token_index`
+- `cache_hit`
+- `runtime_kind`
+- `error_stage`
+- `speculative_acceptance_rate`
+- `speculative_rollback_rate`
+- `speculative_accepted_tokens`
+- `speculative_rejected_tokens`
+- `speculative_fallback_count`
+- `speculative_num_draft_tokens`
+- `speculative_draft_model_configured`
+- `speculative_draft_propose_ms`
+- `speculative_target_verify_ms`
+- `dflash_enabled`
+- `dflash_block_size`
+- `dflash_rollback_count`
+- `dflash_target_hidden_layers`
 - `created_at_unix_ms`
 
 ### Matrix Export Formats
@@ -759,9 +834,21 @@ Each sample-level row must include:
 - `code_failure_detail`
 - `category_label`
 - `subject_label`
+- `sample_render_ms`
+- `inference_ms`
+- `extraction_ms`
+- `validation_ms`
+- `scoring_ms`
+- `raw_response_chars`
+- `extracted_result_chars`
+- `failure_stage`
 
 Summary rows report extraction and validation counts. Sample rows report the extracted result,
 typed score, and failure reason for operator-visible debugging.
+
+Evaluation probe fields localize failures by evaluation phase: sample rendering, inference,
+extraction, validation, scoring, and final failure classification. Character-count fields are
+debugging aids for response truncation and extraction behavior.
 
 For executable-code suites, these additional fields are required evidence rather than optional
 metadata. Melix v1 must preserve compile, runtime, timeout, and test outcomes through persistence,
@@ -820,8 +907,62 @@ export, and compare workflows.
 - `code_failure_detail`
 - `category_label`
 - `subject_label`
+- `sample_render_ms`
+- `inference_ms`
+- `extraction_ms`
+- `validation_ms`
+- `scoring_ms`
+- `raw_response_chars`
+- `extracted_result_chars`
+- `failure_stage`
 
 `eval export-samples-jsonl` must emit the same sample-level fields as line-delimited JSON objects.
+
+## Benchmark And Evaluation Report Contract
+
+Melix provides a local and CI report over exported benchmark/evaluation bundles.
+
+The report command is:
+
+```bash
+python scripts/benchmark_evaluation_report.py \
+  --baseline <baseline-export-or-directory> \
+  --candidate <candidate-export-or-directory> \
+  --format terminal|markdown|json
+```
+
+The report accepts either a bundle file or a directory containing `benchmark-evaluation-export.json`
+or `export-bundle.json`.
+
+The report aggregates summary metrics plus additive benchmark request probes, matrix request probes,
+evaluation sample timing probes, failure-stage counts, and runtime metadata rows from persisted job
+parameters.
+
+Report semantics:
+
+- lower is better for latency, duration, memory, byte, queue-wait, warmup, prefill, decode,
+  failure-count, failed-count, speculative rollback, rejected-token, speculative fallback, draft
+  proposal, target verification, and DFlash rollback metrics
+- higher is better for throughput, success-rate, accuracy, typed-score, pass-rate, and win-count
+  metrics, plus speculative acceptance and accepted-token metrics
+- runtime metadata from job parameters is rendered as metadata rows; matching values are `ok`, and
+  differing non-numeric values are `not_comparable`
+- advisory status values are `ok`, `warning`, `missing`, and `not_comparable`
+- regression warnings do not fail CI; malformed report inputs are the only non-zero report-script
+  exit path
+
+The PR workflow must run base SHA and PR head on the same macOS runner with isolated `MELIX_HOME`,
+runtime directories, model-ops roots, and HTTP ports. The default CI report runtime is
+deterministic so reports remain comparable on hosted runners without a runner-local model checkout
+or Swift MLX metallib cache. In deterministic mode the workflow also pins `MELIX_DEV_TEXT_MODEL_PATH`
+to a slash-free logical path so legacy base-SHA control planes do not classify the seed dev model as
+a remote repository that requires live-model evidence. The workflow prebuilds Swift runtime products
+before startup so worker readiness waits measure process readiness rather than cold compilation time.
+It uploads base, head, and report artifacts, then updates one sticky pull-request comment identified by:
+
+```html
+<!-- melix-benchmark-evaluation-report -->
+```
 
 `eval compare export-summary-csv` must emit one row per base-versus-target summary with these
 columns:

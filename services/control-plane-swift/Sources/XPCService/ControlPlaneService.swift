@@ -925,7 +925,12 @@ public actor ControlPlaneService {
         workerRequest.modelHandle = modelHandle
         workerRequest.suites = requestedSuites
         workerRequest.parameters = command.parameters
-        if requiresLiveModelEvidence(for: benchmarkModel, explicitHFRepoID: requestedHFRepoID) {
+        if requiresLiveModelEvidence(for: benchmarkModel, explicitHFRepoID: requestedHFRepoID),
+           !allowsDeterministicRuntimeEvidenceOverride(
+            for: benchmarkModel,
+            explicitHFRepoID: requestedHFRepoID,
+            parameters: workerRequest.parameters
+           ) {
             workerRequest.parameters["require_live_model"] = "true"
             workerRequest.parameters["live_model_source"] = requestedHFRepoID.isEmpty ? "model_catalog" : "hf_repo"
         }
@@ -2840,17 +2845,35 @@ public actor ControlPlaneService {
         if ["hf_repo", "hub_repo", "hf_cache_snapshot"].contains(sourceKind) {
             return true
         }
-        if ["local_path", "local_mlx_directory", "managed_local"].contains(sourceKind) {
+        if ["local_path", "local", "local_mlx_directory", "managed_local"].contains(sourceKind) {
             return false
         }
-        for key in ["melix.hf_repo_id", "melix.source_repo"] {
-            if let value = model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !value.isEmpty,
-               value.contains("/") {
-                return true
+        let sourceRepo = ["melix.hf_repo_id", "melix.source_repo"]
+            .lazy
+            .compactMap { key in
+                model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            .first { !$0.isEmpty } ?? ""
+        if sourceRepo.hasPrefix("/") || sourceRepo.hasPrefix("file://") {
+            return false
         }
-        return false
+        return sourceRepo.contains("/")
+    }
+
+    private func allowsDeterministicRuntimeEvidenceOverride(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        explicitHFRepoID: String,
+        parameters: [String: String]
+    ) -> Bool {
+        guard explicitHFRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        guard parameters["allow_deterministic_runtime"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "true" else {
+            return false
+        }
+        return model.modelID.hasPrefix("melix-dev-")
     }
 
     private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {

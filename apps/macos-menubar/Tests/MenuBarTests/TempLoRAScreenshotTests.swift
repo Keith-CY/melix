@@ -474,10 +474,72 @@ private func writeSystemWindowScreenshot<Content: View>(
     pumpMainRunLoopForRendering()
 
     try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try runSystemWindowCapture(windowNumber: window.windowNumber, outputURL: outputURL)
+    do {
+        try runSystemWindowCapture(windowNumber: window.windowNumber, outputURL: outputURL)
+    } catch {
+        try writeFallbackSystemWindowScreenshot(
+            rootView: rootView,
+            size: size,
+            outputURL: outputURL,
+            title: title
+        )
+    }
 
     window.orderOut(nil)
     retainedLoRAMarketingScreenshotWindows.append(window)
+}
+
+@MainActor
+private func writeFallbackSystemWindowScreenshot<Content: View>(
+    rootView: Content,
+    size: CGSize,
+    outputURL: URL,
+    title: String
+) throws {
+    let chromeInset: CGFloat = 16
+    let titleBarHeight: CGFloat = 38
+    let frameSize = CGSize(
+        width: size.width + chromeInset * 2,
+        height: size.height + titleBarHeight + chromeInset * 2
+    )
+    let framedView = ZStack {
+        Color(nsColor: .windowBackgroundColor)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .frame(width: 11, height: 11)
+                Circle()
+                    .fill(Color(nsColor: .systemYellow))
+                    .frame(width: 11, height: 11)
+                Circle()
+                    .fill(Color(nsColor: .systemGreen))
+                    .frame(width: 11, height: 11)
+                Spacer()
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                Spacer()
+                Color.clear.frame(width: 49, height: 1)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: titleBarHeight)
+            .background(Color(nsColor: NSColor.windowBackgroundColor))
+
+            rootView
+                .frame(width: size.width, height: size.height)
+                .background(Color(nsColor: LoRAMarketingScreenshotStyle.backgroundColor))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 16, x: 0, y: 8)
+        .padding(chromeInset)
+    }
+
+    try writeScreenshot(rootView: framedView, size: frameSize, outputURL: outputURL)
 }
 
 @MainActor
