@@ -89,6 +89,37 @@ def test_json_structured_output_strips_reasoning_prefix_before_first_json_delimi
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
+def test_bare_json_structured_output_mode_is_not_treated_as_json_only() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-bare-json-mode",
+        reasoning_enabled=False,
+        structured_output_mode="json",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text='<think>internal</think>{"answer":"done"}'))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ['{"answer":"done"}']
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+
+
+def test_plain_reasoning_disabled_request_suppresses_think_blocks_with_metric() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-reasoning-disabled",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<think>hidden</think>visible"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
+    assert completed.reasoning_text == ""
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+
+
 def test_truncated_tool_call_is_recoverable_and_not_public_content() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-truncated",

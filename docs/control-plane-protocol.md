@@ -486,7 +486,7 @@ message SnapshotRef {
 
 The control plane should expose logical cache identity and reference chains for inspection and scheduling. Payload data stays worker-side.
 
-Reasoning mode, effort, parser mode, structured-output mode, effective template kwargs, and reasoning-continuity presence are cache compatibility inputs. A prefix generated under one of those settings must not be treated as equivalent to a prefix generated under a different setting unless an explicit downgrade policy says so.
+Reasoning mode, effort, parser mode, structured-output mode, effective template kwargs, and reasoning-continuity presence are cache compatibility inputs. Hash fields such as `chat_template_kwargs_hash` and the legacy `melix.cache.fingerprint.chat_template_kwargs` mirror store the lowercase SHA-256 hex digest of the canonical JSON input, or an empty string when the input is absent. A prefix generated under one of those settings must not be treated as equivalent to a prefix generated under a different setting unless an explicit downgrade policy says so.
 
 ## Structured Text Streaming
 
@@ -505,6 +505,7 @@ The resolved execution metadata includes:
 
 - `melix.reasoning.mode`
 - `melix.reasoning.mode_source`
+- `melix.reasoning.source` as a compatibility alias for `melix.reasoning.mode_source`
 - `melix.reasoning.effort`
 - `melix.reasoning.auto_detect_model_family`
 - `melix.reasoning.continuity_rehydrated`

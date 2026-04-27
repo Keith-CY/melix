@@ -23,12 +23,24 @@ public struct ReasoningContinuityRecord: Sendable, Equatable {
 }
 
 public actor ReasoningContinuityStore {
-    // Latest wins per session/branch to keep continuity memory bounded. The
-    // store intentionally does not retain per-branch history beyond the most
-    // recent successful reasoning record.
-    private var latestByBranch: [String: ReasoningContinuityRecord] = [:]
+    public static let defaultMaxEntries = 10_000
+    public static let defaultMaxReasoningTextUTF8Bytes = 100 * 1024
 
-    public init() {}
+    // Latest wins per session/branch. The store intentionally does not retain
+    // per-branch history beyond the most recent successful reasoning record,
+    // and it caps total retained branches to bound hidden in-memory state.
+    private let maxEntries: Int
+    private let maxReasoningTextUTF8Bytes: Int
+    private var latestByBranch: [String: ReasoningContinuityRecord] = [:]
+    private var branchOrder: [String] = []
+
+    public init(
+        maxEntries: Int = ReasoningContinuityStore.defaultMaxEntries,
+        maxReasoningTextUTF8Bytes: Int = ReasoningContinuityStore.defaultMaxReasoningTextUTF8Bytes
+    ) {
+        self.maxEntries = max(0, maxEntries)
+        self.maxReasoningTextUTF8Bytes = max(0, maxReasoningTextUTF8Bytes)
+    }
 
     @discardableResult
     public func record(
@@ -49,6 +61,10 @@ public actor ReasoningContinuityStore {
         guard !trimmedReasoning.isEmpty else {
             return nil
         }
+        let boundedReasoning = boundedUTF8Prefix(trimmedReasoning, maxBytes: maxReasoningTextUTF8Bytes)
+        guard !boundedReasoning.isEmpty else {
+            return nil
+        }
 
         let normalizedBranchID = normalized(branchID) ?? "branch-main"
         let key = branchKey(sessionID: normalizedSessionID, branchID: normalizedBranchID)
@@ -57,9 +73,14 @@ public actor ReasoningContinuityStore {
             branchID: normalizedBranchID,
             requestID: normalizedRequestID,
             continuityKey: "\(key)::\(normalizedRequestID)",
-            reasoningText: trimmedReasoning
+            reasoningText: boundedReasoning
         )
+        if latestByBranch[key] != nil {
+            branchOrder.removeAll { $0 == key }
+        }
         latestByBranch[key] = record
+        branchOrder.append(key)
+        evictOverflow()
         return record
     }
 
@@ -81,5 +102,39 @@ public actor ReasoningContinuityStore {
 
     private func branchKey(sessionID: String, branchID: String) -> String {
         "\(sessionID)::\(branchID)"
+    }
+
+    private func evictOverflow() {
+        guard maxEntries > 0 else {
+            latestByBranch.removeAll()
+            branchOrder.removeAll()
+            return
+        }
+        while latestByBranch.count > maxEntries, let evictedKey = branchOrder.first {
+            branchOrder.removeFirst()
+            latestByBranch.removeValue(forKey: evictedKey)
+        }
+    }
+
+    private func boundedUTF8Prefix(_ value: String, maxBytes: Int) -> String {
+        guard maxBytes > 0 else {
+            return ""
+        }
+        guard value.utf8.count > maxBytes else {
+            return value
+        }
+
+        var byteCount = 0
+        var endIndex = value.startIndex
+        while endIndex < value.endIndex {
+            let nextIndex = value.index(after: endIndex)
+            let nextByteCount = value[endIndex..<nextIndex].utf8.count
+            if byteCount + nextByteCount > maxBytes {
+                break
+            }
+            byteCount += nextByteCount
+            endIndex = nextIndex
+        }
+        return String(value[..<endIndex])
     }
 }

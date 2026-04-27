@@ -24,6 +24,7 @@ For a reasoning-enabled request, inspect the worker `GenerateRequest.execution` 
 
 - `melix.reasoning.mode`
 - `melix.reasoning.mode_source`
+- `melix.reasoning.source`
 - `melix.reasoning.effort`
 - `melix.reasoning.auto_detect_model_family`
 - `melix.reasoning.continuity_rehydrated`
@@ -49,6 +50,9 @@ The worker stream assembler reports parser metrics on completed events:
 - `duplicate_tool_delta_count`
 - `reasoning_leak_count`
 - `malformed_tool_fragment_count`
+- `malformed_reasoning_count`
+- `non_monotonic_stream_count`
+- `suppressed_reasoning_count`
 
 Expected healthy values:
 
@@ -56,12 +60,15 @@ Expected healthy values:
 - repeated cumulative tool chunks keep `duplicate_tool_delta_count == 0`
 - structured JSON output keeps `reasoning_leak_count == 0`
 - truncated tool calls increment `malformed_tool_fragment_count` without failing the stream
+- truncated reasoning increments `malformed_reasoning_count` without exposing hidden text
+- non-monotonic adapter fragments increment `non_monotonic_stream_count`
+- reasoning-disabled requests with `<think>` blocks increment `suppressed_reasoning_count`
 
 ## JSON Structured Output Checks
 
 For JSON-only requests without explicit tools:
 
-1. Confirm `melix.structured_output.mode` is `json_object` or `json_schema`.
+1. Confirm `melix.structured_output.mode` is `json_object` or `json_schema`; bare `json` is not treated as JSON-only suppression.
 2. Confirm `melix.tool_parser.mode` is absent.
 3. Confirm `melix.tool_parser.suppressed_reason` is `structured_output_json_without_tools`.
 4. Confirm completed assistant text starts at the first JSON delimiter and has no reasoning preamble.

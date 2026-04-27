@@ -1302,38 +1302,56 @@ public actor RequestCoordinator {
         updated.execution.ext["melix.reasoning.continuity_key"] = record.continuityKey
         updated.execution.ext["melix.reasoning.continuity_request_id"] = record.requestID
         updated.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] = "true"
-        let updatedTemplateKwargsJSON = chatTemplateKwargsJSON(
+        let mergedTemplateKwargs = chatTemplateKwargsJSON(
             merging: updated.execution.ext["melix.chat_template_kwargs.effective_json"],
             continuityRecord: record
         )
+        if mergedTemplateKwargs.hadParseFailure {
+            await metricsStore.increment("http.reasoning_continuity_template_kwargs_parse_failure_count")
+        }
+        let updatedTemplateKwargsJSON = mergedTemplateKwargs.json
+        let updatedTemplateKwargsHash = cacheScopeHash(updatedTemplateKwargsJSON)
         updated.execution.ext["melix.chat_template_kwargs.effective_json"] = updatedTemplateKwargsJSON
-        updated.execution.scope.chatTemplateKwargsHash = updatedTemplateKwargsJSON
+        updated.execution.scope.chatTemplateKwargsHash = updatedTemplateKwargsHash
+        updated.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] = updatedTemplateKwargsHash
 
         await metricsStore.increment("http.reasoning_continuity_rehydrated_count")
         return updated
     }
 
+    private struct ChatTemplateKwargsMergeResult {
+        let json: String
+        let hadParseFailure: Bool
+    }
+
     private func chatTemplateKwargsJSON(
         merging rawJSON: String?,
         continuityRecord: ReasoningContinuityRecord
-    ) -> String {
+    ) -> ChatTemplateKwargsMergeResult {
         var object: [String: Any] = [:]
+        var hadParseFailure = false
         if let rawJSON,
-           let data = rawJSON.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            object = parsed
+           !rawJSON.isEmpty {
+            if let data = rawJSON.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                object = parsed
+            } else {
+                hadParseFailure = true
+            }
         }
         object["melix_reasoning_continuity"] = [
             "present": true,
             "continuity_key": continuityRecord.continuityKey,
             "source_request_id": continuityRecord.requestID,
         ]
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        else {
-            return "{\"melix_reasoning_continuity\":{\"present\":true}}"
-        }
-        return String(decoding: data, as: UTF8.self)
+        // The object contains only parsed JSON plus Bool/String continuity
+        // markers; invalid raw JSON already fell back to an empty object.
+        precondition(JSONSerialization.isValidJSONObject(object))
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return ChatTemplateKwargsMergeResult(
+            json: String(decoding: data, as: UTF8.self),
+            hadParseFailure: hadParseFailure
+        )
     }
 
     private func resolvedSchedulingPlan(

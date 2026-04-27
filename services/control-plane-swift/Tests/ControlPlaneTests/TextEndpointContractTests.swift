@@ -185,8 +185,7 @@ struct TextEndpointContractTests {
             templatePolicy: templatePolicy,
             messagesThinking: nil,
             preset: nil,
-            modelDefault: .init(type: "adaptive", budgetTokens: 321),
-            continuityAvailable: true
+            modelDefault: .init(type: "adaptive", budgetTokens: 321)
         )
         #expect(templateResolved.mode == "enabled")
         #expect(templateResolved.modeSource == "template")
@@ -201,8 +200,7 @@ struct TextEndpointContractTests {
             templatePolicy: templatePolicy,
             messagesThinking: nil,
             preset: .init(type: "enabled", budgetTokens: 512),
-            modelDefault: nil,
-            continuityAvailable: true
+            modelDefault: nil
         )
         #expect(explicitlyDisabled.mode == "off")
         #expect(explicitlyDisabled.modeSource == "request")
@@ -222,8 +220,7 @@ struct TextEndpointContractTests {
                 templatePolicy: nil,
                 messagesThinking: nil,
                 preset: nil,
-                modelDefault: nil,
-                continuityAvailable: true
+                modelDefault: nil
             )
             #expect(resolved.mode == "adaptive")
             #expect(resolved.modeSource == "family_auto_detect")
@@ -320,6 +317,73 @@ struct TextEndpointContractTests {
         #expect(record?.reasoningText == "hidden")
         #expect(await store.latest(sessionID: " ", branchID: "branch-main") == nil)
         #expect(await store.latest(sessionID: "session", branchID: " ")?.continuityKey == "session::branch-main::req")
+    }
+
+    @Test("reasoning continuity store bounds retained entries and hidden text size")
+    func reasoningContinuityStoreBoundsRetainedEntriesAndHiddenTextSize() async {
+        let store = ReasoningContinuityStore(maxEntries: 2, maxReasoningTextUTF8Bytes: 8)
+
+        _ = await store.record(
+            sessionID: "session-a",
+            branchID: "main",
+            requestID: "req-a",
+            reasoningText: "1234567890"
+        )
+        _ = await store.record(
+            sessionID: "session-b",
+            branchID: "main",
+            requestID: "req-b",
+            reasoningText: "abcdefghij"
+        )
+        _ = await store.record(
+            sessionID: "session-c",
+            branchID: "main",
+            requestID: "req-c",
+            reasoningText: "klmnopqrst"
+        )
+
+        #expect(await store.latest(sessionID: "session-a", branchID: "main") == nil)
+        #expect(await store.latest(sessionID: "session-b", branchID: "main")?.reasoningText == "abcdefgh")
+        #expect(await store.latest(sessionID: "session-c", branchID: "main")?.reasoningText == "klmnopqr")
+    }
+
+    @Test("reasoning continuity store updates existing branches and honors zero limits")
+    func reasoningContinuityStoreUpdatesExistingBranchesAndHonorsZeroLimits() async {
+        let updateStore = ReasoningContinuityStore(maxEntries: 1)
+
+        _ = await updateStore.record(
+            sessionID: "session-update",
+            branchID: "main",
+            requestID: "req-old",
+            reasoningText: "old hidden"
+        )
+        _ = await updateStore.record(
+            sessionID: "session-update",
+            branchID: "main",
+            requestID: "req-new",
+            reasoningText: "new hidden"
+        )
+
+        #expect(await updateStore.latest(sessionID: "session-update", branchID: "main")?.requestID == "req-new")
+
+        let zeroEntryStore = ReasoningContinuityStore(maxEntries: 0)
+        let evictedRecord = await zeroEntryStore.record(
+            sessionID: "session-zero-entry",
+            branchID: "main",
+            requestID: "req-zero-entry",
+            reasoningText: "hidden"
+        )
+        #expect(evictedRecord?.requestID == "req-zero-entry")
+        #expect(await zeroEntryStore.latest(sessionID: "session-zero-entry", branchID: "main") == nil)
+
+        let zeroByteStore = ReasoningContinuityStore(maxReasoningTextUTF8Bytes: 0)
+        let rejectedRecord = await zeroByteStore.record(
+            sessionID: "session-zero-byte",
+            branchID: "main",
+            requestID: "req-zero-byte",
+            reasoningText: "hidden"
+        )
+        #expect(rejectedRecord == nil)
     }
 
     @Test("request contracts preserve message names across text endpoints")
@@ -681,6 +745,31 @@ struct TextEndpointContractTests {
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.mode"] == "off")
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.reasoning.source"] == "request")
         #expect(requestOverrideTranslated.workerRequest.execution.ext["melix.messages.thinking.type"] == nil)
+    }
+
+    @Test("chat template cache fingerprint stores hashes not raw kwargs JSON")
+    func chatTemplateCacheFingerprintStoresHashesNotRawKwargsJSON() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "chat-template-hash" })
+        let translated = try translator.translate(
+            MelixMessagesRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Use template kwargs.")],
+                chatTemplateKwargs: .init(values: [
+                    "enable_thinking": .bool(true),
+                    "custom_flag": .string("enabled")
+                ])
+            ),
+            modelHandle: "worker-text"
+        )
+
+        let effectiveJSON = try #require(
+            translated.workerRequest.execution.ext["melix.chat_template_kwargs.effective_json"]
+        )
+        let scopeHash = translated.workerRequest.execution.scope.chatTemplateKwargsHash
+
+        #expect(scopeHash != effectiveJSON)
+        #expect(scopeHash.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil)
+        #expect(translated.workerRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] == scopeHash)
     }
 
     @Test("responses input supports both text and message-array codable forms")

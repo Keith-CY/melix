@@ -290,8 +290,7 @@ public struct TextRequestShaper: Sendable {
             messagesThinking: request.thinking,
             preset: preset?.thinking,
             modelDefault: modelThinkingPolicies[request.model],
-            suppressForStructuredOutput: structuredOutputSuppressesModelToolParser,
-            continuityAvailable: request.sessionID?.nilIfEmpty != nil
+            suppressForStructuredOutput: structuredOutputSuppressesModelToolParser
         )
         let resolvedToolParser: ToolParserSelection?
         let toolParserSuppressedReason: String?

@@ -50,8 +50,7 @@ public struct ReasoningPolicyResolver: Sendable {
         messagesThinking: MelixMessagesThinkingConfig?,
         preset: MelixMessagesThinkingConfig?,
         modelDefault: MelixMessagesThinkingConfig?,
-        suppressForStructuredOutput: Bool = false,
-        continuityAvailable _: Bool = false
+        suppressForStructuredOutput: Bool = false
     ) -> ResolvedReasoningPolicy {
         let fallback = preset ?? modelDefault
         let normalizedEffort = normalizedString(explicitEffort)

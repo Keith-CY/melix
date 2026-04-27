@@ -1759,7 +1759,8 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.scope.reasoningEffort = shapedRequest.reasoningEffort ?? ""
         generateRequest.execution.scope.toolParserMode = shapedRequest.toolParser?.mode.rawValue ?? ""
         generateRequest.execution.scope.structuredOutputMode = shapedRequest.structuredOutput?.mode.rawValue ?? ""
-        generateRequest.execution.scope.chatTemplateKwargsHash = shapedRequest.chatTemplate?.effectiveJSONString ?? ""
+        let chatTemplateKwargsHash = cacheScopeHash(shapedRequest.chatTemplate?.effectiveJSONString)
+        generateRequest.execution.scope.chatTemplateKwargsHash = chatTemplateKwargsHash
         generateRequest.execution.scope.reasoningContinuityPresent = shapedRequest.reasoningContinuityRehydrated
         // CacheScope is the canonical worker cache partition. The matching ext
         // keys are a compatibility mirror for older evidence/report readers.
@@ -1769,7 +1770,7 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext["melix.cache.fingerprint.structured_output_mode"] =
             shapedRequest.structuredOutput?.mode.rawValue ?? ""
         generateRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] =
-            shapedRequest.chatTemplate?.effectiveJSONString ?? ""
+            chatTemplateKwargsHash
         generateRequest.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] =
             shapedRequest.reasoningContinuityRehydrated ? "true" : "false"
         if !(shapedRequest.sessionID ?? "").isEmpty {

@@ -1081,11 +1081,80 @@ struct RequestCoordinatorTests {
         #expect(followupRequest.execution.ext["melix.reasoning.continuity_request_id"] == "req-continuity-parent")
         #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
         #expect(effectiveTemplate.contains("\"existing\":true"))
-        #expect(followupRequest.execution.scope.chatTemplateKwargsHash == effectiveTemplate)
+        let effectiveTemplateHash = followupRequest.execution.scope.chatTemplateKwargsHash
+        #expect(effectiveTemplateHash != effectiveTemplate)
+        #expect(effectiveTemplateHash.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil)
+        #expect(followupRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] == effectiveTemplateHash)
         #expect(!effectiveTemplate.contains("hidden chain should stay internal"))
         #expect(!extText.contains("hidden chain should stay internal"))
         #expect(metrics.values["http.reasoning_continuity_preserved_count", default: 0] == 1)
         #expect(metrics.values["http.reasoning_continuity_rehydrated_count", default: 0] == 1)
+    }
+
+    @Test("session reasoning continuity preserves markers when template kwargs JSON is invalid")
+    func sessionReasoningContinuityPreservesMarkersWhenTemplateKwargsJSONIsInvalid() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_550 })
+        let reasoningContinuityStore = ReasoningContinuityStore()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            reasoningContinuityStore: reasoningContinuityStore
+        )
+        _ = await reasoningContinuityStore.record(
+            sessionID: "session-continuity-invalid-template",
+            branchID: "branch-main",
+            requestID: "req-continuity-invalid-template-parent",
+            reasoningText: "hidden text must not leak"
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-invalid-template-followup",
+                sessionID: "session-continuity-invalid-template",
+                branchID: "branch-main",
+                executionExt: [
+                    "melix.chat_template_kwargs.effective_json": "{\"broken\""
+                ]
+            )
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-invalid-template-followup",
+            assistantText: "visible"
+        )
+        _ = try await collector.value
+
+        let effectiveTemplate = generatedRequest.execution.ext["melix.chat_template_kwargs.effective_json"] ?? ""
+        let metrics = await metricsStore.snapshot()
+
+        #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
+        #expect(effectiveTemplate.contains("req-continuity-invalid-template-parent"))
+        #expect(effectiveTemplate.contains("session-continuity-invalid-template::branch-main::req-continuity-invalid-template-parent"))
+        #expect(!effectiveTemplate.contains("hidden text must not leak"))
+        #expect(generatedRequest.execution.scope.chatTemplateKwargsHash.range(
+            of: #"^[0-9a-f]{64}$"#,
+            options: .regularExpression
+        ) != nil)
+        #expect(
+            metrics.values[
+                "http.reasoning_continuity_template_kwargs_parse_failure_count",
+                default: 0
+            ] == 1
+        )
     }
 
     @Test("session requests skip reasoning continuity when no hidden store is configured")

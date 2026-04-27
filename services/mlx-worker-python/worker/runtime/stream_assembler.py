@@ -70,6 +70,7 @@ class RequestStreamAssembler:
             "malformed_tool_fragment_count": 0,
             "malformed_reasoning_count": 0,
             "non_monotonic_stream_count": 0,
+            "suppressed_reasoning_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -103,7 +104,7 @@ class RequestStreamAssembler:
 
     @property
     def _is_json_structured_output(self) -> bool:
-        return self._structured_output_mode in {"json", "json_object", "json_schema"}
+        return self._structured_output_mode in {"json_object", "json_schema"}
 
     @property
     def _tool_parsing_enabled(self) -> bool:
@@ -122,6 +123,9 @@ class RequestStreamAssembler:
             len(self._raw_seen),
             len(raw),
         )
+        # Some adapters reset to a shorter raw fragment after a transport
+        # retry. Emit the full reset fragment as recoverable content and make
+        # the compatibility loss visible through metrics/logs.
         self._raw_seen += raw
         return raw
 
@@ -172,9 +176,13 @@ class RequestStreamAssembler:
                     break
                 body = self._buffer[len(self._THINK_OPEN) : close_index]
                 self._buffer = self._buffer[close_index + len(self._THINK_CLOSE) :]
+                # Parse reasoning tags even when reasoning is disabled so
+                # hidden preambles never fall through as public content.
                 if self._reasoning_enabled:
                     self._reasoning_parts.append(body)
                     deltas.append(AssemblyDelta(reasoning_text=body, raw_text=body))
+                else:
+                    self._metrics["suppressed_reasoning_count"] += 1
                 continue
 
             if tag == self._TOOL_OPEN:
