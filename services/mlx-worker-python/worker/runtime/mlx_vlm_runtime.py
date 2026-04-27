@@ -271,6 +271,7 @@ class MLXVLMRuntime:
         self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
         self._fast_path_controller = fast_path_controller or MultimodalFastPathController()
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_fast_path_signature: tuple[str, ...] | None = None
 
     @property
     def runtime_name(self) -> str:
@@ -324,27 +325,7 @@ class MLXVLMRuntime:
                     family_config=family_config,
                     started_at=started_at,
                 )
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared)
-        self._last_probe = VisionProbeSnapshot(
-            preprocess_latency_ms=prepared.preprocess_latency_ms,
-            preprocess_input_bytes=prepared.preprocess_input_bytes,
-            preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
-            first_token_latency_ms=0.0,
-            video_effective_frame_count=prepared.effective_video_frame_count,
-            video_requested_frame_budget=prepared.requested_video_frame_budget,
-            video_window_ms=prepared.effective_video_window_ms,
-            cache_identity="",
-            cache_scope_id="",
-            cache_hit=False,
-            image_feature_cache_hits=fast_path.image_feature_cache_hits,
-            image_feature_cache_misses=fast_path.image_feature_cache_misses,
-            multimodal_decode_mode=fast_path.multimodal_decode_mode,
-            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
-            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
-            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
-            quantized_load_mode=fast_path.quantized_load_mode,
-            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
-        )
+        self._record_fast_path_probe(loaded_model, prepared)
         return prepared
 
     def prompt_token_count(
@@ -369,6 +350,7 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
         self._backend._ensure_runtime()
         if cancel_event.is_set():
             return
@@ -448,6 +430,86 @@ class MLXVLMRuntime:
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
+
+    def _ensure_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> None:
+        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
+        if self._last_fast_path_signature == signature:
+            return
+        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+
+    def _record_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        *,
+        signature: tuple[str, ...] | None = None,
+    ) -> None:
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        self._last_fast_path_signature = signature or self._fast_path_probe_signature(
+            loaded_model,
+            prepared_request,
+        )
+        self._last_probe = VisionProbeSnapshot(
+            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
+            cache_identity="",
+            cache_scope_id="",
+            cache_hit=False,
+            image_feature_cache_hits=fast_path.image_feature_cache_hits,
+            image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            multimodal_decode_mode=fast_path.multimodal_decode_mode,
+            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
+            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
+            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            quantized_load_mode=fast_path.quantized_load_mode,
+            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+        )
+
+    @staticmethod
+    def _fast_path_probe_signature(
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[str, ...]:
+        metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+        metadata_items: tuple[tuple[str, str], ...] = ()
+        if isinstance(metadata, dict):
+            metadata_items = tuple(
+                sorted(
+                    (str(key), str(value))
+                    for key, value in metadata.items()
+                    if key in {
+                        "melix.vlm.execution_mode",
+                        "vision_family_id",
+                        "vision_prompt_profile_id",
+                        "vision_tokenization_mode",
+                        "vision_max_images_per_prompt",
+                        "melix.multimodal_adapter_hash",
+                        "multimodal_adapter_hash",
+                    }
+                )
+            )
+        top_level_items: tuple[tuple[str, str], ...] = ()
+        if isinstance(loaded_model, dict):
+            top_level_items = tuple(
+                sorted(
+                    (key, str(loaded_model.get(key, "")))
+                    for key in ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
+                )
+            )
+        return (
+            prepared_request.multimodal_hash_hex,
+            repr(top_level_items),
+            repr(metadata_items),
+        )
 
     @staticmethod
     def _materialize_media(

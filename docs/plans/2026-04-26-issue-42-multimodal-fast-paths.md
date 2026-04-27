@@ -46,6 +46,10 @@ Per-image feature reuse is keyed by:
 
 The key is per image, not per prompt. Multi-image turns can therefore partially
 reuse repeated images while recording misses for new images in the same request.
+Images without a populated SHA-256 are treated as non-cacheable misses to avoid
+false reuse between malformed or synthetic inputs. The in-process feature-key
+receipt cache is bounded and guarded by the runtime controller so concurrent
+probe planning cannot race on the LRU state.
 
 ## Fallback Contract
 
@@ -59,6 +63,10 @@ Fallbacks are expected, not exceptional, for unsupported cases:
   image-feature fast path.
 - `not_quantized` and `unsupported_quant_profile`: quantized-load admission did
   not apply.
+
+Native quantized-load admission is limited to explicitly supported profile ids
+for the pinned dependency. Unknown `q<N>`-style profile names remain conservative
+fallbacks until they are added to the supported profile set.
 
 ## Metrics And Evidence
 
@@ -78,11 +86,16 @@ Phase-6 evidence JSON preserves the string values. The live control-plane metric
 export remains limited to the existing numeric `RuntimeStats` bridge until a
 separate protocol change is explicitly accepted.
 
+Successful fast-path decisions keep empty fallback-reason strings to mean
+"no fallback". Missing VLM probes use the `not_reported` categorical value and
+`-1` per-sample cache counters; aggregate benchmark hit/miss metrics exclude
+those sentinel counts instead of letting them reduce totals.
+
 ## Implementation Slices
 
 1. Add fast-path unit coverage for mode selection, fallback receipts, repeated
-   image reuse, partial multi-image reuse, text-only turns, and quantized-load
-   admission.
+   image reuse, partial multi-image reuse, text-only turns, non-cacheable images,
+   bounded-cache eviction, and quantized-load admission.
 2. Add `worker.runtime.multimodal_fast_paths` and wire it into deterministic and
    `mlx-vlm` runtime probes.
 3. Extend VLM benchmark reporting with cache hit/miss counters and categorical

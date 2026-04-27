@@ -4,6 +4,7 @@ import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 import logging
+from threading import Lock
 from typing import Any
 
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
@@ -50,6 +51,7 @@ class MultimodalFastPathController:
     def __init__(self, *, max_image_feature_cache_entries: int = 1024) -> None:
         self._max_image_feature_cache_entries = max(max_image_feature_cache_entries, 1)
         self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, None] = OrderedDict()
+        self._image_feature_cache_lock = Lock()
 
     def plan(
         self,
@@ -85,18 +87,18 @@ class MultimodalFastPathController:
                 quantized_load_fallback_reason=quantized_fallback,
             )
 
-        if not family_id or not resolved_execution_mode:
-            logger.warning(
-                "VLM fast-path metadata is incomplete; family_id_present=%s execution_mode_present=%s",
-                bool(family_id),
-                bool(resolved_execution_mode),
-            )
-
         if execution_mode == "text_backed":
             return self._fallback_decision(
                 reason="text_backed_no_vision_weights",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback or "text_backed_no_vision_weights",
+            )
+
+        if not family_id or not resolved_execution_mode:
+            logger.warning(
+                "VLM fast-path metadata is incomplete; family_id_present=%s execution_mode_present=%s",
+                bool(family_id),
+                bool(resolved_execution_mode),
             )
 
         if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
@@ -115,22 +117,28 @@ class MultimodalFastPathController:
 
         hits = 0
         misses = 0
-        for image in prepared_request.images:
-            key = self._cache_key(
-                image=image,
-                family_id=family_id,
-                adapter_hash=_adapter_hash(metadata),
-                quant_profile_id=quant_profile_id,
-                metadata=metadata,
-            )
-            if key in self._image_feature_cache:
-                hits += 1
-                self._image_feature_cache.move_to_end(key)
-                continue
-            misses += 1
-            self._image_feature_cache[key] = None
-            while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
-                self._image_feature_cache.popitem(last=False)
+        with self._image_feature_cache_lock:
+            for image in prepared_request.images:
+                if not image.sha256_hex:
+                    misses += 1
+                    continue
+                key = self._cache_key(
+                    image=image,
+                    family_id=family_id,
+                    adapter_hash=_adapter_hash(metadata),
+                    quant_profile_id=quant_profile_id,
+                    metadata=metadata,
+                )
+                if key in self._image_feature_cache:
+                    hits += 1
+                    self._image_feature_cache.move_to_end(key)
+                    continue
+                misses += 1
+                self._image_feature_cache[key] = None
+                # If one request exceeds the bounded cache size, earlier images in that
+                # request can be evicted before the next request observes them.
+                while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
+                    self._image_feature_cache.popitem(last=False)
 
         if hits > 0:
             decode_mode = MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
@@ -204,9 +212,7 @@ class MultimodalFastPathController:
         if not quant_profile_id or quant_profile_id.lower() in {"none", "fp16", "float16"}:
             return MULTIMODAL_LOAD_FALLBACK, "not_quantized"
         normalized = quant_profile_id.lower()
-        is_quantized = normalized in _NATIVE_QUANTIZED_PROFILES or (
-            len(normalized) > 1 and normalized[0] == "q" and normalized[1].isdigit()
-        )
+        is_quantized = normalized in _NATIVE_QUANTIZED_PROFILES
         if not is_quantized:
             return MULTIMODAL_LOAD_FALLBACK, "unsupported_quant_profile"
         if execution_mode == "text_backed":
@@ -234,6 +240,7 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
             combined[key] = value.strip()
     metadata = loaded_model.get("metadata", {})
     if isinstance(metadata, dict):
+        # The nested runtime metadata is authoritative; top-level values are import-time copies.
         for key, value in metadata.items():
             normalized = str(value).strip()
             if normalized:

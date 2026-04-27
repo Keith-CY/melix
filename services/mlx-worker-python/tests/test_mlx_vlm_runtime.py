@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from threading import Event
 import time
@@ -180,6 +181,88 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
     assert probe.multi_image_scatter_mode == "none"
+
+
+def test_mlx_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(
+                config=SimpleNamespace(model_type="gemma4"),
+                vision_tower=object(),
+                embed_vision=object(),
+            ),
+            SimpleNamespace(image_processor=object()),
+        )
+
+    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+        _ = processor
+        _ = config
+        _ = num_images
+        _ = kwargs
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        yield SimpleNamespace(
+            text="A photo of a cat",
+            prompt_tokens=12,
+            generation_tokens=1,
+            prompt_tps=110.0,
+            generation_tps=24.0,
+            peak_memory=1.5,
+        )
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    image_bytes = b"direct-generate-image"
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=image_bytes,
+                source_kind="inline",
+                reference="inline:sample.jpg",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="sample.jpg",
+                sha256_hex=hashlib.sha256(image_bytes).hexdigest(),
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=1.0,
+        preprocess_input_bytes=len(image_bytes),
+        preprocess_peak_memory_bytes=len(image_bytes),
+        prompt_hash_hex="11" * 32,
+        multimodal_hash_hex="22" * 32,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=16),
+            Event(),
+        )
+    )
+
+    assert "".join(event.text for event in events) == "A photo of a cat"
+    probe = runtime.last_probe_snapshot()
+    assert probe.image_feature_cache_hits == 0
+    assert probe.image_feature_cache_misses == 1
+    assert probe.multimodal_decode_mode == "native_quantized"
 
 
 def test_mlx_vlm_runtime_records_temp_media_cleanup_failures_in_probe(tmp_path: Path) -> None:

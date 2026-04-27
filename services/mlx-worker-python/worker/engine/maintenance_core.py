@@ -2625,7 +2625,11 @@ class MaintenanceCore:
                 else "not_reported"
             ),
             multimodal_fallback_reason=str(
-                getattr(probe, "multimodal_fallback_reason", "not_reported") or "not_reported"
+                (
+                    getattr(probe, "multimodal_fallback_reason", "not_reported")
+                    if probe is not None
+                    else "not_reported"
+                )
             ),
             multimodal_decode_sync_mode=str(
                 getattr(probe, "multimodal_decode_sync_mode", "baseline")
@@ -2643,7 +2647,11 @@ class MaintenanceCore:
                 else "not_reported"
             ),
             quantized_load_fallback_reason=str(
-                getattr(probe, "quantized_load_fallback_reason", "not_reported") or "not_reported"
+                (
+                    getattr(probe, "quantized_load_fallback_reason", "not_reported")
+                    if probe is not None
+                    else "not_reported"
+                )
             ),
         )
 
@@ -2659,13 +2667,23 @@ class MaintenanceCore:
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.image_feature_cache_hits",
-                value=float(sum(sample.image_feature_cache_hits for sample in samples)),
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(sample.image_feature_cache_hits)
+                        for sample in samples
+                    )
+                ),
                 unit="count",
             ),
             BenchMetricSpec(
                 suite=suite_id,
                 name=f"bench.{suite_id}.image_feature_cache_misses",
-                value=float(sum(sample.image_feature_cache_misses for sample in samples)),
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(sample.image_feature_cache_misses)
+                        for sample in samples
+                    )
+                ),
                 unit="count",
             ),
             BenchMetricSpec(
@@ -2782,7 +2800,11 @@ class MaintenanceCore:
         distinct_values = set(values)
         if len(distinct_values) > 1:
             return MaintenanceCore._categorical_metric_code("mixed", mapping)
-        return MaintenanceCore._categorical_metric_code(values[-1], mapping)
+        return MaintenanceCore._categorical_metric_code(next(iter(distinct_values)), mapping)
+
+    @staticmethod
+    def _reported_cache_count(value: int) -> int:
+        return max(value, 0)
 
     def _measure_image_generation_bench_metrics(
         self,

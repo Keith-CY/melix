@@ -12,7 +12,8 @@ enum MenuBarTestEnvironment {
     }
 
     static var bootstrapConditionTimeout: Duration {
-        isHeadlessCI ? .seconds(10) : .seconds(2)
+        let environment = ProcessInfo.processInfo.environment
+        return environment["GITHUB_ACTIONS"] == "true" ? .seconds(10) : .seconds(2)
     }
 }
 

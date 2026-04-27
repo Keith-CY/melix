@@ -125,6 +125,11 @@ continues to use the existing numeric `RuntimeStats` bridge; adding string
 runtime-stat fields would require a separate protobuf change and is intentionally
 out of scope for the Issue 42 first stage.
 
+An empty fallback-reason string means the fast path succeeded without fallback.
+`not_reported` means no probe was available. Per-sample cache counters use `-1`
+for missing probes, but aggregate benchmark hit/miss metrics exclude those
+sentinel values so mixed probed/unprobed suites do not produce negative totals.
+
 For VLM benchmark suites with heterogeneous samples, categorical fast-path
 metrics report a distinct mixed code when more than one value is observed. For
 `bench.<suite>.multimodal_decode_mode`, the mixed code is `5.0`; homogeneous

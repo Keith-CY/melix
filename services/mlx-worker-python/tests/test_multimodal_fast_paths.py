@@ -14,7 +14,12 @@ from worker.runtime.multimodal_fast_paths import (
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 
 
-def _image(payload: bytes, *, filename: str = "sample.jpg") -> PreparedImageInput:
+def _image(
+    payload: bytes,
+    *,
+    filename: str = "sample.jpg",
+    sha256_hex: str | None = None,
+) -> PreparedImageInput:
     import hashlib
 
     return PreparedImageInput(
@@ -24,7 +29,7 @@ def _image(payload: bytes, *, filename: str = "sample.jpg") -> PreparedImageInpu
         mime_type="image/jpeg",
         format="jpg",
         filename=filename,
-        sha256_hex=hashlib.sha256(payload).hexdigest(),
+        sha256_hex=hashlib.sha256(payload).hexdigest() if sha256_hex is None else sha256_hex,
     )
 
 
@@ -113,6 +118,21 @@ def test_fast_path_falls_back_for_text_backed_image_models() -> None:
     assert decision.image_feature_cache_misses == 0
 
 
+def test_fast_path_does_not_warn_for_text_backed_models_without_family_metadata(caplog) -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(execution_mode="text_backed")
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    del metadata["vision_family_id"]
+
+    caplog.set_level(logging.WARNING, logger="worker.runtime.multimodal_fast_paths")
+    decision = controller.plan(loaded_model, _request([_image(b"image")]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "text_backed_no_vision_weights"
+    assert "VLM fast-path metadata is incomplete" not in caplog.text
+
+
 def test_fast_path_uses_baseline_for_text_only_turns() -> None:
     controller = MultimodalFastPathController()
 
@@ -183,6 +203,19 @@ def test_fast_path_rejects_non_quantized_q_prefixed_profile_names() -> None:
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
 
 
+def test_fast_path_rejects_unknown_digit_quant_profile_names() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(
+        _loaded_model(quant_profile_id="q16"),
+        _request([_image(b"image")]),
+    )
+
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
+    assert decision.quantized_load_fallback_reason == "unsupported_quant_profile"
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+
+
 def test_fast_path_evicts_oldest_image_feature_key_when_cache_is_full() -> None:
     controller = MultimodalFastPathController(max_image_feature_cache_entries=1)
     loaded_model = _loaded_model()
@@ -196,3 +229,31 @@ def test_fast_path_evicts_oldest_image_feature_key_when_cache_is_full() -> None:
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 1
+
+
+def test_fast_path_treats_images_without_sha_as_non_cacheable_misses() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+
+    first = controller.plan(loaded_model, _request([_image(b"first", sha256_hex="")]))
+    second = controller.plan(loaded_model, _request([_image(b"second", sha256_hex="")]))
+
+    assert first.image_feature_cache_hits == 0
+    assert first.image_feature_cache_misses == 1
+    assert second.image_feature_cache_hits == 0
+    assert second.image_feature_cache_misses == 1
+
+
+def test_fast_path_documents_within_request_eviction_when_request_exceeds_cache_size() -> None:
+    controller = MultimodalFastPathController(max_image_feature_cache_entries=1)
+    loaded_model = _loaded_model()
+    first_image = _image(b"first-image", filename="first.jpg")
+    second_image = _image(b"second-image", filename="second.jpg")
+
+    decision = controller.plan(loaded_model, _request([first_image, second_image]))
+    repeat_first = controller.plan(loaded_model, _request([first_image]))
+
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 2
+    assert repeat_first.image_feature_cache_hits == 0
+    assert repeat_first.image_feature_cache_misses == 1
