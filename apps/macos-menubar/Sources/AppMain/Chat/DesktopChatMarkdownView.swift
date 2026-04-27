@@ -459,13 +459,17 @@ private enum DesktopChatMarkdownChunker {
 
         var chunks: [DesktopChatMarkdownSourceChunk] = []
         var current = ""
-        var insideFence = false
+        var fence: MarkdownFence?
         let lines = sanitized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                insideFence.toggle()
+            if let activeFence = fence {
+                if activeFence.isClosingLine(trimmed) {
+                    fence = nil
+                }
+            } else if let openedFence = MarkdownFence(openingLine: trimmed) {
+                fence = openedFence
             }
 
             if current.isEmpty == false {
@@ -474,7 +478,7 @@ private enum DesktopChatMarkdownChunker {
             current += line
 
             let isLastLine = index == lines.count - 1
-            if insideFence == false,
+            if fence == nil,
                current.count >= DesktopChatMarkdownLayoutMetrics.renderChunkTargetCharacterCount,
                trimmed.isEmpty,
                isLastLine == false {
@@ -498,6 +502,35 @@ private enum DesktopChatMarkdownChunker {
 
         return chunks
     }
+
+    private struct MarkdownFence {
+        let character: Character
+        let length: Int
+
+        init?(openingLine: String) {
+            guard let first = openingLine.first, first == "`" || first == "~" else {
+                return nil
+            }
+            let runLength = openingLine.prefix { $0 == first }.count
+            guard runLength >= 3 else {
+                return nil
+            }
+            self.character = first
+            self.length = runLength
+        }
+
+        func isClosingLine(_ line: String) -> Bool {
+            guard line.first == character else {
+                return false
+            }
+            let runLength = line.prefix { $0 == character }.count
+            guard runLength >= length else {
+                return false
+            }
+            let remainder = line.dropFirst(runLength)
+            return remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 }
 
 private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
@@ -520,6 +553,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
     private var latestParseDurationMS: Double
 
     init(capacity: Int = 128) {
+        // Capacity is per sub-cache; parsed blocks, chunks, and inline strings are evicted independently.
         self.capacity = max(1, capacity)
         self.parsedBlocks = [:]
         self.parsedBlockOrder = []
@@ -613,10 +647,13 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
         }
         lock.unlock()
 
+        let startedAt = Date()
         let rendered = build()
+        let duration = max(0, Date().timeIntervalSince(startedAt) * 1000)
 
         lock.lock()
         inlineMissCount += 1
+        latestParseDurationMS = duration
         inlineAttributedStrings[key] = rendered
         touch(key, in: &inlineAttributedStringOrder)
         evictIfNeeded()
@@ -664,6 +701,7 @@ private final class DesktopChatMarkdownRenderCache: @unchecked Sendable {
     }
 
     private func touch(_ key: String, in order: inout [String]) {
+        // The default cache size is small, so linear promotion keeps LRU bookkeeping simple.
         order.removeAll { $0 == key }
         order.append(key)
     }
@@ -790,23 +828,13 @@ private struct DesktopChatMarkdownBlockVisitor: MarkupVisitor {
     }
 
     private mutating func listItem(from item: ListItem) -> DesktopChatMarkdownListItem {
-        var textParts: [String] = []
-        var childBlocks: [DesktopChatMarkdownBlock] = []
-
-        for child in item.children {
-            if let paragraph = child as? Paragraph {
-                let text = DesktopChatMarkdownInlineSourceRenderer.string(from: paragraph)
-                if text.isEmpty == false {
-                    textParts.append(text)
-                }
-            } else {
-                childBlocks.append(contentsOf: visit(child))
-            }
+        let childBlocks = item.children.flatMap { visit($0) }
+        guard case .paragraph(let text) = childBlocks.first else {
+            return DesktopChatMarkdownListItem(text: "", children: childBlocks)
         }
-
         return DesktopChatMarkdownListItem(
-            text: textParts.joined(separator: "\n"),
-            children: childBlocks
+            text: text,
+            children: Array(childBlocks.dropFirst())
         )
     }
 
@@ -835,7 +863,7 @@ private struct DesktopChatMarkdownInlineSourceRenderer: MarkupVisitor {
     }
 
     mutating func visitText(_ text: Markdown.Text) -> String {
-        text.string
+        escapedText(text.string)
     }
 
     mutating func visitSoftBreak(_ softBreak: SoftBreak) -> String {
@@ -847,7 +875,8 @@ private struct DesktopChatMarkdownInlineSourceRenderer: MarkupVisitor {
     }
 
     mutating func visitInlineCode(_ inlineCode: InlineCode) -> String {
-        "`\(inlineCode.code)`"
+        let delimiter = inlineCodeDelimiter(for: inlineCode.code)
+        return "\(delimiter)\(inlineCode.code)\(delimiter)"
     }
 
     mutating func visitStrong(_ strong: Strong) -> String {
@@ -876,6 +905,33 @@ private struct DesktopChatMarkdownInlineSourceRenderer: MarkupVisitor {
 
     mutating func visitInlineHTML(_ inlineHTML: InlineHTML) -> String {
         ""
+    }
+
+    private func escapedText(_ text: String) -> String {
+        let specialCharacters: Set<Character> = [
+            "\\", "`", "*", "_", "{", "}", "[", "]", "(", ")",
+            "#", "+", "-", ".", "!", "|", "~",
+        ]
+        return text.reduce(into: "") { result, character in
+            if specialCharacters.contains(character) {
+                result.append("\\")
+            }
+            result.append(character)
+        }
+    }
+
+    private func inlineCodeDelimiter(for code: String) -> String {
+        var longestRun = 0
+        var currentRun = 0
+        for character in code {
+            if character == "`" {
+                currentRun += 1
+                longestRun = max(longestRun, currentRun)
+            } else {
+                currentRun = 0
+            }
+        }
+        return String(repeating: "`", count: max(1, longestRun + 1))
     }
 }
 
@@ -1272,8 +1328,10 @@ private struct DesktopChatMarkdownBlocksView: View {
             return .title3.weight(.semibold)
         case 2:
             return .headline
+        case 3:
+            return .body.weight(.semibold)
         default:
-            return .subheadline.weight(.semibold)
+            return .body
         }
     }
 

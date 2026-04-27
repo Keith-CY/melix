@@ -3482,7 +3482,7 @@ struct DesktopFoundationViewTests {
         """)
 
         #expect(blocks == [
-            .paragraph("Intro **bold** and _italic_ with `code`."),
+            .paragraph("Intro **bold** and _italic_ with `code`\\."),
             .unorderedList([
                 DesktopChatMarkdownListItem(text: "one"),
                 DesktopChatMarkdownListItem(text: "two"),
@@ -3558,9 +3558,72 @@ struct DesktopFoundationViewTests {
             .table(
                 header: ["Name", "Alignment", "Note"],
                 alignments: [.leading, .trailing, .center],
-                rows: [["Alpha | Beta", "Right", "Center"]]
+                rows: [["Alpha \\| Beta", "Right", "Center"]]
             ),
         ])
+    }
+
+    @Test("chat markdown list items preserve loose child order")
+    func chatMarkdownListItemsPreserveLooseChildOrder() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: """
+        - intro
+
+          - nested
+
+          conclusion
+        """)
+
+        #expect(blocks == [
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "intro",
+                    children: [
+                        .unorderedList([
+                            DesktopChatMarkdownListItem(text: "nested"),
+                        ]),
+                        .paragraph("conclusion"),
+                    ]
+                ),
+            ]),
+        ])
+
+        let codeOnlyItem = DesktopChatMarkdownRenderer.blocks(from: """
+        -
+          ```swift
+          let value = 1
+          ```
+        """)
+
+        #expect(codeOnlyItem == [
+            .unorderedList([
+                DesktopChatMarkdownListItem(
+                    text: "",
+                    children: [
+                        .codeBlock(language: "swift", code: "let value = 1"),
+                    ]
+                ),
+            ]),
+        ])
+    }
+
+    @Test("chat markdown literal punctuation stays literal after inline parse")
+    func chatMarkdownLiteralPunctuationStaysLiteralAfterInlineParse() {
+        let blocks = DesktopChatMarkdownRenderer.blocks(from: "multiply: 2 * 3 or 4 * 5")
+
+        #expect(blocks == [.paragraph("multiply: 2 \\* 3 or 4 \\* 5")])
+
+        let text: String
+        if case .paragraph(let paragraphText) = blocks.first {
+            text = paragraphText
+        } else {
+            text = ""
+        }
+        let attributed = DesktopChatMarkdownInlineFormatter.attributedString(fromSanitized: text)
+        let inlineCodeWithBacktick = DesktopChatMarkdownRenderer.blocks(from: "``a ` b``")
+
+        #expect(String(attributed.characters) == "multiply: 2 * 3 or 4 * 5")
+        #expect(attributed.runs.allSatisfy { $0.inlinePresentationIntent == nil })
+        #expect(inlineCodeWithBacktick == [.paragraph("``a ` b``")])
     }
 
     @Test("chat markdown inline formatter removes markdown markers while preserving readable text")
@@ -3625,6 +3688,7 @@ struct DesktopFoundationViewTests {
         # Heading
         ## Subheading
         ### Minor
+        #### Body-sized
 
         > quoted
 
@@ -3772,6 +3836,55 @@ struct DesktopFoundationViewTests {
         DesktopChatMarkdownRenderer.resetCacheForTesting()
     }
 
+    @Test("chat markdown chunker keeps mismatched fence markers inside code")
+    func chatMarkdownChunkerKeepsMismatchedFenceMarkersInsideCode() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        let longCode = Array(repeating: "let value = 42", count: 180).joined(separator: "\n")
+        let source = """
+        ```swift
+        \(longCode)
+        ~~~not a closing fence~~~
+
+        \(longCode)
+        ```
+        """
+
+        let plan = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+
+        #expect(plan.chunks.count == 1)
+        #expect(plan.blocks == [
+            .codeBlock(
+                language: "swift",
+                code: "\(longCode)\n~~~not a closing fence~~~\n\n\(longCode)"
+            ),
+        ])
+
+        let longerFenceSource = """
+        ````swift
+        \(longCode)
+        ```
+
+        \(longCode)
+        ````
+        """
+        let longerFencePlan = DesktopChatMarkdownRenderer.renderPlan(from: longerFenceSource, mode: .complete)
+
+        #expect(longerFencePlan.chunks.count == 1)
+        #expect(longerFencePlan.blocks == [
+            .codeBlock(language: "swift", code: "\(longCode)\n```\n\n\(longCode)"),
+        ])
+
+        let shortFenceMarkerSource = String(repeating: "plain text\n", count: 220) + "\n``\n\ntrailing"
+        let shortFenceMarkerPlan = DesktopChatMarkdownRenderer.renderPlan(
+            from: shortFenceMarkerSource,
+            mode: .complete
+        )
+
+        #expect(shortFenceMarkerPlan.blocks.isEmpty == false)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
     @Test("chat markdown renderer evicts old chunk cache entries")
     func chatMarkdownRendererEvictsOldChunkCacheEntries() {
         DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 1)
@@ -3877,11 +3990,13 @@ struct DesktopFoundationViewTests {
         ```swift
         let value = 2
         """)
+        let pureHTML = DesktopChatMarkdownRenderer.blocks(from: "<br />")
 
         #expect(softBreak == [.paragraph("soft break")])
         #expect(hardBreak == [.paragraph("hard\nbreak")])
         #expect(strikeLinkAndTitleImage == [.paragraph("~~gone~~ label fallback")])
         #expect(unclosedFence == [.codeBlock(language: "swift", code: "let value = 2")])
+        #expect(pureHTML == [])
     }
 
     @Test("chat markdown renderer caches parsed blocks and evicts old entries")
@@ -3901,6 +4016,7 @@ struct DesktopFoundationViewTests {
         #expect(first.parseMissCount == 1)
         #expect(second.parseHitCount == 1)
         #expect(third.evictionCount == 1)
+        // Misses are cumulative since reset: A, B, C, then A again after eviction.
         #expect(fourth.parseMissCount == 4)
         #expect(fourth.latestParseDurationMS >= 0)
     }
@@ -3908,15 +4024,17 @@ struct DesktopFoundationViewTests {
     @Test("chat markdown renderer caches inline attributed strings and evicts old entries")
     func chatMarkdownRendererCachesInlineAttributedStringsAndEvictsOldEntries() {
         DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 1)
+        let firstSource = String(repeating: "**A** ", count: 512)
 
-        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**A**")
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: firstSource)
         let first = DesktopChatMarkdownRenderer.cacheStatsForTesting()
-        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**A**")
+        _ = DesktopChatMarkdownInlineFormatter.attributedString(from: firstSource)
         let second = DesktopChatMarkdownRenderer.cacheStatsForTesting()
         _ = DesktopChatMarkdownInlineFormatter.attributedString(from: "**B**")
         let third = DesktopChatMarkdownRenderer.cacheStatsForTesting()
 
         #expect(first.inlineMissCount == 1)
+        #expect(first.latestParseDurationMS > 0)
         #expect(second.inlineHitCount == 1)
         #expect(third.evictionCount == 1)
 

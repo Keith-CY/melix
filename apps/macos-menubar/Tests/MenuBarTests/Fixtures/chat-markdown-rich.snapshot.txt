@@ -1,6 +1,6 @@
 heading1: Release Notes
 quote:
-  paragraph: Stable renderer output for **assistant** rows.
+  paragraph: Stable renderer output for **assistant** rows\.
 unordered:
   - Parse Markdown through the AST
     unordered:
