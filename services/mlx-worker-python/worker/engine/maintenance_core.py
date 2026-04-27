@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 from threading import Event
 import time
-from typing import Any, Iterator
+from typing import Any, Iterator, NoReturn
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2
 
@@ -2484,6 +2484,7 @@ class MaintenanceCore:
             )
 
         messages = [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text=shaped_prompt)])]
+        prompt_render_ms = 0.0
         render_started_at = time.perf_counter()
         try:
             rendered_prompt = runtime.render_prompt(
@@ -2683,7 +2684,7 @@ class MaintenanceCore:
         return default_stage
 
     @staticmethod
-    def _raise_benchmark_error_with_stage(exc: Exception, error_stage: str) -> None:
+    def _raise_benchmark_error_with_stage(exc: Exception, error_stage: str) -> NoReturn:
         stage = error_stage if error_stage in _BENCHMARK_ERROR_STAGES else "runtime"
         if not getattr(exc, "error_stage", ""):
             setattr(exc, "error_stage", stage)
@@ -2820,6 +2821,7 @@ class MaintenanceCore:
         if case.prompt:
             parts.insert(0, common_pb2.MessagePart(text=case.prompt))
         messages = [common_pb2.ChatMessage(role="user", parts=parts)]
+        prompt_render_ms = 0.0
         render_started_at = time.perf_counter()
         try:
             prepared = runtime.render_prompt(

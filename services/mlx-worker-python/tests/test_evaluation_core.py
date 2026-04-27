@@ -72,6 +72,85 @@ class ModelAwareComparisonBackend:
         yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
 
 
+def test_evaluation_failure_stage_disables_score_threshold_when_zero() -> None:
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="validated",
+            typed_score=-0.1,
+            threshold=0.0,
+        )
+        == ""
+    )
+
+
+def test_evaluation_failure_stage_reports_validation_and_positive_threshold_scoring() -> None:
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="not_validated",
+            typed_score=1.0,
+            threshold=1.0,
+        )
+        == "validation"
+    )
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="validated",
+            typed_score=0.5,
+            threshold=1.0,
+        )
+        == "scoring"
+    )
+
+
+def test_multimodal_media_helpers_collect_nested_references(tmp_path: Path) -> None:
+    sample = {
+        "input": {
+            "image_uri": "input.png",
+            "image_uris": ["input-list.png"],
+            "media": [{"uri": "input-media.png"}],
+        },
+        "images": ["sample-list.png"],
+        "media": [{"image_uri": "sample-media.png"}],
+    }
+
+    references = EvaluationCore._media_references_for_sample(
+        task_kind="image-text-to-text",
+        dataset_root=tmp_path,
+        sample=sample,
+    )
+
+    assert references == (
+        str((tmp_path / "input.png").resolve()),
+        str((tmp_path / "input-list.png").resolve()),
+        str((tmp_path / "sample-list.png").resolve()),
+        str((tmp_path / "input-media.png").resolve()),
+        str((tmp_path / "sample-media.png").resolve()),
+    )
+    assert EvaluationCore._sample_declares_image_media(sample) is True
+    assert (
+        EvaluationCore._resolved_media_reference(
+            dataset_root=tmp_path,
+            value="https://example.test/image.png",
+        )
+        == "https://example.test/image.png"
+    )
+
+
+def test_evaluation_static_fallback_helpers_cover_non_default_branches() -> None:
+    assert EvaluationCore._deterministic_answer("7 - 2?") == "5"
+    assert EvaluationCore._input_modalities_for_sample(
+        task_kind="text-generation",
+        prompt="",
+        media_references=(),
+        manifest_input_modalities=(),
+    ) == ("text",)
+    assert EvaluationCore._target_text_for_sample({"target": {"answer": 4}}) == '{"answer":4}'
+    assert EvaluationCore._evaluation_max_output_tokens("{}", result_kind="json") == 256
+
+
 class FakeEvaluationRegistry:
     def __init__(
         self,

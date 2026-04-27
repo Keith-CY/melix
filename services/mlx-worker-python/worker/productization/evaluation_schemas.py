@@ -220,16 +220,8 @@ class EvaluationSample:
             "extraction_ms": self.extraction_ms,
             "validation_ms": self.validation_ms,
             "scoring_ms": self.scoring_ms,
-            "raw_response_chars": (
-                self.raw_response_chars
-                if self.raw_response_chars > 0
-                else len(self.raw_response)
-            ),
-            "extracted_result_chars": (
-                self.extracted_result_chars
-                if self.extracted_result_chars > 0
-                else len(self.extracted_result)
-            ),
+            "raw_response_chars": self.raw_response_chars,
+            "extracted_result_chars": self.extracted_result_chars,
             "failure_stage": self.failure_stage,
         }
         if self.category_label:
@@ -623,8 +615,8 @@ def build_evaluation_sample_record(
     extraction_ms: float = 0.0,
     validation_ms: float = 0.0,
     scoring_ms: float = 0.0,
-    raw_response_chars: int = 0,
-    extracted_result_chars: int = 0,
+    raw_response_chars: int | None = None,
+    extracted_result_chars: int | None = None,
     failure_stage: str = "",
 ) -> EvaluationSample:
     return EvaluationSample(
@@ -662,8 +654,14 @@ def build_evaluation_sample_record(
         extraction_ms=float(extraction_ms),
         validation_ms=float(validation_ms),
         scoring_ms=float(scoring_ms),
-        raw_response_chars=raw_response_chars,
-        extracted_result_chars=extracted_result_chars,
+        raw_response_chars=(
+            len(raw_response) if raw_response_chars is None else raw_response_chars
+        ),
+        extracted_result_chars=(
+            len(extracted_result)
+            if extracted_result_chars is None
+            else extracted_result_chars
+        ),
         failure_stage=failure_stage,
     )
 

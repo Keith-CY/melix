@@ -349,8 +349,8 @@ class EvaluationStore:
                         EvaluationStore._csv_field(str(sample.extraction_ms)),
                         EvaluationStore._csv_field(str(sample.validation_ms)),
                         EvaluationStore._csv_field(str(sample.scoring_ms)),
-                        EvaluationStore._csv_field(str(sample.raw_response_chars or len(sample.raw_response))),
-                        EvaluationStore._csv_field(str(sample.extracted_result_chars or len(sample.extracted_result))),
+                        EvaluationStore._csv_field(str(sample.raw_response_chars)),
+                        EvaluationStore._csv_field(str(sample.extracted_result_chars)),
                         EvaluationStore._csv_field(sample.failure_stage),
                     ]
                 )

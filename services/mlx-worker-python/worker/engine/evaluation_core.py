@@ -1194,7 +1194,7 @@ class EvaluationCore:
                 media_references=media_references,
                 sample_render_ms=sample_render_ms,
                 inference_ms=inference_ms,
-                raw_response_chars=0,
+                raw_response_chars=len(raw_response),
                 extracted_result_chars=0,
                 failure_stage="inference",
             )
@@ -1363,7 +1363,7 @@ class EvaluationCore:
             return "extraction"
         if validation_status != "validated":
             return "validation"
-        if typed_score < threshold:
+        if threshold > 0.0 and typed_score < threshold:
             return "scoring"
         return ""
 

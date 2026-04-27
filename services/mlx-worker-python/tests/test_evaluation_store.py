@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -151,6 +153,34 @@ def test_samples_csv_quotes_fields_with_commas_newlines_and_quotes() -> None:
     assert '"quoted ""response"""' in csv_payload
     assert '"text,image"' in csv_payload
     assert '"/tmp/a,1.png,/tmp/b""2"".png"' in csv_payload
+
+
+def test_samples_csv_preserves_explicit_zero_char_probes() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-local",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="Question?",
+        target="Answer",
+        raw_response="nonempty",
+        extracted_result="result",
+        typed_score=0.0,
+        time_s=0.01,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+        raw_response_chars=0,
+        extracted_result_chars=0,
+    )
+
+    csv_payload = EvaluationStore._samples_csv((sample,))
+    row = next(csv.DictReader(io.StringIO(csv_payload)))
+
+    assert row["raw_response_chars"] == "0"
+    assert row["extracted_result_chars"] == "0"
 
 
 def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -> None:

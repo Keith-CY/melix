@@ -2848,8 +2848,12 @@ public actor ControlPlaneService {
         if ["local_path", "local", "local_mlx_directory", "managed_local"].contains(sourceKind) {
             return false
         }
-        let sourceRepo = benchmarkSourceRepo(for: model)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceRepo = ["melix.hf_repo_id", "melix.source_repo"]
+            .lazy
+            .compactMap { key in
+                model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .first { !$0.isEmpty } ?? ""
         if sourceRepo.hasPrefix("/") || sourceRepo.hasPrefix("file://") {
             return false
         }

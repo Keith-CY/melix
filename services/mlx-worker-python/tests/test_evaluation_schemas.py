@@ -208,6 +208,33 @@ def test_build_evaluation_sample_record_preserves_probe_fields() -> None:
     assert payload["failure_stage"] == ""
 
 
+def test_build_evaluation_sample_record_preserves_explicit_zero_char_probes() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="1",
+        system="",
+        input_text="Question?",
+        target="Answer",
+        raw_response="non-empty raw response",
+        extracted_result="non-empty result",
+        typed_score=0.0,
+        time_s=0.0123,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+        raw_response_chars=0,
+        extracted_result_chars=0,
+    )
+
+    payload = sample.to_dict()
+
+    assert payload["raw_response_chars"] == 0
+    assert payload["extracted_result_chars"] == 0
+
+
 def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -> None:
     sample = build_evaluation_sample_record(
         job_id="eval-1",
