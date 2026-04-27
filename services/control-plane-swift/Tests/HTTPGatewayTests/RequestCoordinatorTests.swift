@@ -79,6 +79,26 @@ struct RequestCoordinatorTests {
         #expect(progress?.phase != .requestAborted)
     }
 
+    @Test("hub ignores stream registrations that arrive after termination")
+    func hubIgnoresStreamRegistrationsThatArriveAfterTermination() async throws {
+        let detachCounter = DetachCounter()
+        let hub = ResumableExecutionHub(
+            requestID: "req-pre-registration-termination",
+            modelID: "melix-dev-text",
+            bufferLimit: 8,
+            onLastConsumerDetached: {
+                await detachCounter.increment()
+            }
+        )
+
+        await hub.testingRegisterEventStreamAfterPreRegistrationTermination()
+        let lifecycleDetached = await hub.testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination()
+
+        #expect(await detachCounter.value == 1)
+        #expect(await hub.hasConsumers() == false)
+        #expect(lifecycleDetached)
+    }
+
     @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
     func disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -182,12 +202,10 @@ struct RequestCoordinatorTests {
         initialConsumer.cancel()
         _ = await initialConsumer.result
 
-        for _ in 0..<100 {
-            let metrics = await metricsStore.snapshot()
-            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
-                break
-            }
+        var disconnectMetrics = await metricsStore.snapshot()
+        for _ in 0..<100 where disconnectMetrics.values["http.stream_disconnect_count", default: 0] < 1 {
             try? await Task.sleep(nanoseconds: 10_000_000)
+            disconnectMetrics = await metricsStore.snapshot()
         }
 
         let terminalProgress = try #require(await waitForProgress(
@@ -202,6 +220,7 @@ struct RequestCoordinatorTests {
             metrics = await metricsStore.snapshot()
         }
 
+        #expect(disconnectMetrics.values["http.stream_disconnect_count", default: 0] == 1)
         do {
             _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
             Issue.record("Expected expired disconnect grace to reject resume.")
@@ -3082,6 +3101,14 @@ private actor PhaseAwareWorkerClient:
         response.ok = true
         response.modelHandle = "melix-dev-text::swift"
         return response
+    }
+}
+
+private actor DetachCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }
 
