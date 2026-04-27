@@ -2837,10 +2837,20 @@ public actor ControlPlaneService {
         let sourceKind = model.settings.ext["melix.source_kind"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        if sourceKind == "hf_repo" {
+        if ["hf_repo", "hub_repo", "hf_cache_snapshot"].contains(sourceKind) {
             return true
         }
-        return benchmarkSourceRepo(for: model).contains("/")
+        if ["local_path", "local_mlx_directory", "managed_local"].contains(sourceKind) {
+            return false
+        }
+        for key in ["melix.hf_repo_id", "melix.source_repo"] {
+            if let value = model.settings.ext[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty,
+               value.contains("/") {
+                return true
+            }
+        }
+        return false
     }
 
     private func benchmarkMetricsPrefix(for model: Melix_Controlplane_V1_ModelSummary) -> String {

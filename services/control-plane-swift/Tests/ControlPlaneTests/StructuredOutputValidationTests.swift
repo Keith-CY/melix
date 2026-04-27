@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MelixControlPlaneProtocol
 
 @testable import MelixControlPlaneCore
 
@@ -112,6 +113,66 @@ struct StructuredOutputValidationTests {
         #expect(translated.workerRequest.execution.ext["melix.structured_output.strict"] == "true")
         #expect(translated.workerRequest.execution.ext["melix.structured_output.schema_json"]?.contains("\"answer\"") == true)
         #expect(translated.workerRequest.execution.acceleration.prefillHint == "json-schema")
+    }
+
+    @Test("json only structured output suppresses model default tool parser when tools are absent")
+    func jsonOnlyStructuredOutputSuppressesModelDefaultToolParserWhenToolsAreAbsent() throws {
+        var settings = Melix_Controlplane_V1_ModelSettings()
+        settings.ext["tool_parser_mode"] = "qwen"
+        settings.ext["tool_parser_namespaces"] = "tools.text"
+        let modelToolParser = try #require(ToolParserSelection(modelSettings: settings))
+        let shaper = TextRequestShaper()
+
+        let request = NormalizedTextRequest(
+            endpoint: .responses,
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Return JSON only.")],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            sessionID: nil,
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil,
+            structuredOutput: StructuredOutputConfiguration(mode: .jsonObject)
+        )
+
+        let shaped = shaper.shape(request, modelToolParser: modelToolParser)
+        let translated = try ChatRequestTranslator(requestIDGenerator: { "json-tool-gate" })
+            .translate(request, modelHandle: "worker-text", modelToolParser: modelToolParser)
+
+        #expect(shaped.toolParser == nil)
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.mode"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.tool_parser.suppressed_reason"] == "structured_output_json_without_tools")
+    }
+
+    @Test("explicit tool parser survives json structured output gating")
+    func explicitToolParserSurvivesJSONStructuredOutputGating() throws {
+        let shaper = TextRequestShaper()
+        let request = NormalizedTextRequest(
+            endpoint: .responses,
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Return JSON and call a tool.")],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            sessionID: nil,
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil,
+            structuredOutput: StructuredOutputConfiguration(mode: .jsonObject),
+            toolParser: ToolParserSelection(mode: .qwen, namespaces: ["tools.text"], source: "request")
+        )
+
+        let shaped = shaper.shape(request)
+
+        #expect(shaped.toolParser?.mode == .qwen)
+        #expect(shaped.toolParser?.source == "request")
+        #expect(shaped.toolParser?.namespaces == ["tools.text"])
     }
 
     @Test("structured output validator enforces strict schema rules")

@@ -33,6 +33,7 @@ Use runbooks when you need executable procedures instead of narrative documentat
 - [`runbooks/phase-8-local-install.md`](runbooks/phase-8-local-install.md)
 - [`runbooks/homebrew-install.md`](runbooks/homebrew-install.md)
 - [`runbooks/platform-packaging-targets.md`](runbooks/platform-packaging-targets.md)
+- [`runbooks/structured-streaming-reasoning-continuity.md`](runbooks/structured-streaming-reasoning-continuity.md)
 - [`runbooks/phase-8-release-gates.md`](runbooks/phase-8-release-gates.md)
 - [`runbooks/phase-8-product-acceptance.md`](runbooks/phase-8-product-acceptance.md)
 

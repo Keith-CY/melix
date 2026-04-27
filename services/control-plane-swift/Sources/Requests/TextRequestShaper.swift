@@ -139,17 +139,12 @@ public struct TextRequestShaper: Sendable {
         let saveBoundarySnapshot: Bool?
     }
 
-    private struct ResolvedThinking: Sendable {
-        let config: MelixMessagesThinkingConfig?
-        let mode: String
-        let source: String
-    }
-
     private let presets: [String: PresetDefaults]
     private let workflows: [TextWorkflowKind: WorkflowDefaults]
     private let modelThinkingPolicies: [String: MelixMessagesThinkingConfig]
     private let toolParserRegistry: ToolParserRegistry
     private let chatTemplatePolicyRegistry: ChatTemplatePolicyRegistry
+    private let reasoningPolicyResolver: ReasoningPolicyResolver
 
     public init(
         presets: [String: (
@@ -203,7 +198,8 @@ public struct TextRequestShaper: Sendable {
             "melix-dev-text": .init(type: "adaptive", budgetTokens: 192),
         ],
         toolParserRegistry: ToolParserRegistry = ToolParserRegistry(),
-        chatTemplatePolicyRegistry: ChatTemplatePolicyRegistry = ChatTemplatePolicyRegistry()
+        chatTemplatePolicyRegistry: ChatTemplatePolicyRegistry = ChatTemplatePolicyRegistry(),
+        reasoningPolicyResolver: ReasoningPolicyResolver = ReasoningPolicyResolver()
     ) {
         self.presets = presets.mapValues { value in
             PresetDefaults(
@@ -229,6 +225,7 @@ public struct TextRequestShaper: Sendable {
         self.modelThinkingPolicies = modelThinkingPolicies
         self.toolParserRegistry = toolParserRegistry
         self.chatTemplatePolicyRegistry = chatTemplatePolicyRegistry
+        self.reasoningPolicyResolver = reasoningPolicyResolver
     }
 
     public func shape(
@@ -277,20 +274,37 @@ public struct TextRequestShaper: Sendable {
         let cachePolicy = workflow.cachePolicy
             ?? preset?.cachePolicy
             ?? (resolvedSessionID == nil ? nil : "session-reuse")
-        let resolvedThinking = resolveThinking(
-            requested: request.thinking,
-            preset: preset?.thinking,
-            modelPolicy: modelThinkingPolicies[request.model]
-        )
-        let resolvedToolParser = toolParserRegistry.resolve(
-            requested: request.toolParser,
-            modelDefault: modelToolParser,
-            mcpToolCatalog: mcpToolCatalog
-        )
         let resolvedChatTemplate = chatTemplatePolicyRegistry.resolve(
             requested: request.chatTemplate,
             modelPolicy: modelChatTemplatePolicy
         )
+        let structuredOutputSuppressesModelToolParser = shouldSuppressModelToolParser(
+            request: request,
+            mcpToolCatalog: mcpToolCatalog
+        )
+        let resolvedThinking = reasoningPolicyResolver.resolve(
+            modelID: request.model,
+            explicitEnableThinking: request.enableThinking,
+            explicitEffort: request.reasoningEffort,
+            templatePolicy: resolvedChatTemplate,
+            messagesThinking: request.thinking,
+            preset: preset?.thinking,
+            modelDefault: modelThinkingPolicies[request.model],
+            suppressForStructuredOutput: structuredOutputSuppressesModelToolParser
+        )
+        let resolvedToolParser: ToolParserSelection?
+        let toolParserSuppressedReason: String?
+        if structuredOutputSuppressesModelToolParser {
+            resolvedToolParser = nil
+            toolParserSuppressedReason = "structured_output_json_without_tools"
+        } else {
+            resolvedToolParser = toolParserRegistry.resolve(
+                requested: request.toolParser,
+                modelDefault: modelToolParser,
+                mcpToolCatalog: mcpToolCatalog
+            )
+            toolParserSuppressedReason = nil
+        }
         let partialMode = resolvePartialMode(
             messages: request.messages,
             chatTemplate: resolvedChatTemplate
@@ -332,9 +346,13 @@ public struct TextRequestShaper: Sendable {
             userID: request.userID?.nilIfEmpty,
             thinking: resolvedThinking.config,
             reasoningMode: resolvedThinking.mode,
-            reasoningSource: resolvedThinking.source,
+            reasoningSource: resolvedThinking.modeSource,
+            reasoningEffort: resolvedThinking.effort,
+            reasoningAutoDetectModelFamily: resolvedThinking.autoDetectModelFamily,
+            reasoningContinuityRehydrated: resolvedThinking.continuityRehydrated,
             structuredOutput: request.structuredOutput,
             toolParser: resolvedToolParser,
+            toolParserSuppressedReason: toolParserSuppressedReason,
             chatTemplate: resolvedChatTemplate,
             ocrPolicy: resolvedOCRPolicy,
             partialMode: partialMode.mode,
@@ -393,63 +411,18 @@ public struct TextRequestShaper: Sendable {
         )
     }
 
-    private func resolveThinking(
-        requested: MelixMessagesThinkingConfig?,
-        preset: MelixMessagesThinkingConfig?,
-        modelPolicy: MelixMessagesThinkingConfig?
-    ) -> ResolvedThinking {
-        let fallback = preset ?? modelPolicy
-
-        if let requested {
-            let normalizedType = requested.normalizedType
-            if normalizedType == "disabled" {
-                return ResolvedThinking(
-                    config: .init(type: "disabled"),
-                    mode: "off",
-                    source: "request"
-                )
-            }
-
-            let resolved = MelixMessagesThinkingConfig(
-                type: normalizedType,
-                budgetTokens: requested.budgetTokens ?? fallback?.budgetTokens
-            )
-            return ResolvedThinking(
-                config: resolved,
-                mode: resolved.reasoningMode,
-                source: "request"
-            )
+    private func shouldSuppressModelToolParser(
+        request: NormalizedTextRequest,
+        mcpToolCatalog: MCPToolCatalog
+    ) -> Bool {
+        guard request.toolParser == nil,
+              mcpToolCatalog.resolvedNamespaces.isEmpty,
+              let structuredOutput = request.structuredOutput,
+              structuredOutput.mode == .jsonObject || structuredOutput.mode == .jsonSchema
+        else {
+            return false
         }
-
-        if let preset {
-            let resolved = MelixMessagesThinkingConfig(
-                type: preset.normalizedType,
-                budgetTokens: preset.budgetTokens
-            )
-            return ResolvedThinking(
-                config: resolved.normalizedType == "disabled" ? .init(type: "disabled") : resolved,
-                mode: resolved.reasoningMode,
-                source: "preset"
-            )
-        }
-
-        if let modelPolicy {
-            let resolved = MelixMessagesThinkingConfig(
-                type: modelPolicy.normalizedType,
-                budgetTokens: modelPolicy.budgetTokens
-            )
-            return ResolvedThinking(
-                config: resolved.normalizedType == "disabled" ? .init(type: "disabled") : resolved,
-                mode: resolved.reasoningMode,
-                source: "model"
-            )
-        }
-
-        return ResolvedThinking(
-            config: nil,
-            mode: "off",
-            source: "none"
-        )
+        return true
     }
 }
 

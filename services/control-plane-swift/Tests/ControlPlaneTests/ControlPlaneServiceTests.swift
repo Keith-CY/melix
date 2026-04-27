@@ -4062,12 +4062,13 @@ struct ControlPlaneServiceTests {
             )
         )
 
-        let response = try await service.execute(makeRunBenchRequest())
+        let response = try await service.execute(makeRunBenchRequest(modelID: "melix-dev-text"))
         let lastRequest = try #require(await modelOpsClient.lastBenchRequest)
         let snapshot = try await service.execute(makeMetricsRequest())
 
         #expect(response.ok)
         #expect(lastRequest.suites == ["smoke", "latency"])
+        #expect(lastRequest.parameters["require_live_model"] == nil)
         #expect(response.ops.reportPath == reportPath)
         #expect(response.ops.reportMarkdown.contains("Melix Bench"))
         #expect(response.ops.metrics.values["bench.smoke.ttft_ms"] == 24.45)
