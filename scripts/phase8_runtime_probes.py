@@ -675,7 +675,7 @@ def _collect_prefill_memory_guard_evidence(repo_root: Path) -> dict[str, Any]:
     stack = LiveMelixStack(
         repo_root,
         environment_overrides={
-            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "16384",
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
         },
     )
@@ -775,7 +775,7 @@ def _run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, Any]:
                 messages=[
                     common_pb2.ChatMessage(
                         role="user",
-                        parts=[common_pb2.MessagePart(text="alpha")],
+                        parts=[common_pb2.MessagePart(text=" ".join(["alpha"] * 16))],
                     )
                 ],
                 return_decode_handle=True,

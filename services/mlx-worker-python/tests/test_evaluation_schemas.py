@@ -158,7 +158,54 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "code_tests_passed": 0,
         "code_tests_total": 0,
         "code_failure_detail": "",
+        "sample_render_ms": 0.0,
+        "inference_ms": 0.0,
+        "extraction_ms": 0.0,
+        "validation_ms": 0.0,
+        "scoring_ms": 0.0,
+        "raw_response_chars": 1,
+        "extracted_result_chars": 1,
+        "failure_stage": "",
     }
+
+
+def test_build_evaluation_sample_record_preserves_probe_fields() -> None:
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        system="Return only the final answer.",
+        input_text="2+2?",
+        target="4",
+        raw_response="Answer: 4",
+        extracted_result="4",
+        typed_score=1.0,
+        time_s=0.0123,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+        sample_render_ms=1.1,
+        inference_ms=9.2,
+        extraction_ms=0.3,
+        validation_ms=0.4,
+        scoring_ms=0.5,
+        raw_response_chars=9,
+        extracted_result_chars=1,
+        failure_stage="",
+    )
+
+    payload = sample.to_dict()
+
+    assert payload["sample_render_ms"] == 1.1
+    assert payload["inference_ms"] == 9.2
+    assert payload["extraction_ms"] == 0.3
+    assert payload["validation_ms"] == 0.4
+    assert payload["scoring_ms"] == 0.5
+    assert payload["raw_response_chars"] == 9
+    assert payload["extracted_result_chars"] == 1
+    assert payload["failure_stage"] == ""
 
 
 def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -> None:
@@ -214,6 +261,14 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "code_failure_detail": "",
         "category_label": "animals",
         "subject_label": "imagenette",
+        "sample_render_ms": 0.0,
+        "inference_ms": 0.0,
+        "extraction_ms": 0.0,
+        "validation_ms": 0.0,
+        "scoring_ms": 0.0,
+        "raw_response_chars": 11,
+        "extracted_result_chars": 3,
+        "failure_stage": "",
     }
 
 

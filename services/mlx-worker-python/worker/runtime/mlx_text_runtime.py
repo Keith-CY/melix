@@ -25,6 +25,19 @@ class RuntimeTokenEvent:
     generation_tps: float | None = None
     peak_memory: float | None = None
     finish_reason: str | None = None
+    speculative_acceptance_rate: float | None = None
+    speculative_rollback_rate: float | None = None
+    speculative_accepted_tokens: int | None = None
+    speculative_rejected_tokens: int | None = None
+    speculative_fallback_count: int | None = None
+    speculative_num_draft_tokens: int | None = None
+    speculative_draft_model_configured: bool | None = None
+    speculative_draft_propose_ms: float | None = None
+    speculative_target_verify_ms: float | None = None
+    dflash_enabled: bool | None = None
+    dflash_block_size: int | None = None
+    dflash_rollback_count: int | None = None
+    dflash_target_hidden_layers: int | None = None
 
 
 @dataclass
@@ -273,6 +286,23 @@ class AutoMLXBackend:
                 generation_tps=getattr(response, "generation_tps", None),
                 peak_memory=getattr(response, "peak_memory", None),
                 finish_reason=finish_reason,
+                speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
+                speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                speculative_draft_model_configured=getattr(
+                    response,
+                    "speculative_draft_model_configured",
+                    None,
+                ),
+                speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
+                speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
+                dflash_enabled=getattr(response, "dflash_enabled", None),
+                dflash_block_size=getattr(response, "dflash_block_size", None),
+                dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
+                dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
             )
 
 

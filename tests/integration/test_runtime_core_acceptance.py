@@ -70,7 +70,7 @@ def test_runtime_core_prefill_memory_guard_rejects_live_requests() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
         environment_overrides={
-            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "16384",
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "65536",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
         },
     )
@@ -87,8 +87,8 @@ def test_runtime_core_prefill_memory_guard_rejects_live_requests() -> None:
             "swift_text.prefill_memory_guard_rejection_count",
             minimum=1,
         )
-        assert metrics["swift_text.prefill_guard_last_budget_bytes"] == 16384
-        assert metrics["swift_text.prefill_guard_last_prompt_tokens"] >= 1
+        assert metrics["swift_text.prefill_guard_last_budget_bytes"] == 65536
+        assert metrics["swift_text.prefill_guard_last_prompt_tokens"] >= 16
         assert metrics["swift_text.prefill_guard_last_required_bytes"] > metrics["swift_text.prefill_guard_last_budget_bytes"]
     finally:
         stack.stop()
@@ -147,7 +147,7 @@ def run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, object]:
                 messages=[
                     common_pb2.ChatMessage(
                         role="user",
-                        parts=[common_pb2.MessagePart(text="alpha")],
+                        parts=[common_pb2.MessagePart(text=" ".join(["alpha"] * 16))],
                     )
                 ],
                 return_decode_handle=True,

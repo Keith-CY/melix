@@ -181,6 +181,11 @@ class RecordingBenchmarkBackend:
             prompt_tps=1.0,
             generation_tps=1.0,
             peak_memory=1_024.0,
+            speculative_acceptance_rate=0.75,
+            speculative_rejected_tokens=1,
+            speculative_draft_model_configured=True,
+            dflash_enabled=True,
+            dflash_rollback_count=1,
         )
 
 
@@ -4740,10 +4745,17 @@ def test_run_bench_matrix_returns_summary_rows_and_persists_matrix_artifacts(tmp
 
     assert job_payload["benchmark_mode"] == "matrix"
     assert job_payload["suite_ids"] == ["smoke"]
+    assert job_payload["parameters"]["runtime_kind"] == "text"
+    assert job_payload["parameters"]["runtime_model_id"] == "melix-dev-text"
     assert [row["context_length"] for row in summary_rows] == [256, 1024]
     assert len(request_rows) == 8
     assert {row["cell_id"] for row in request_rows} == {"cell-1", "cell-2"}
     assert all(row["status"] == "completed" for row in request_rows)
+    assert all(row["speculative_acceptance_rate"] == 0.75 for row in request_rows)
+    assert all(row["speculative_rejected_tokens"] == 1 for row in request_rows)
+    assert all(row["speculative_draft_model_configured"] is True for row in request_rows)
+    assert all(row["dflash_enabled"] is True for row in request_rows)
+    assert all(row["dflash_rollback_count"] == 1 for row in request_rows)
 
 
 def test_run_bench_matrix_rejects_invalid_load_budget(tmp_path: Path) -> None:

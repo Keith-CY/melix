@@ -177,6 +177,14 @@ class EvaluationSample:
     code_failure_detail: str
     category_label: str = ""
     subject_label: str = ""
+    sample_render_ms: float = 0.0
+    inference_ms: float = 0.0
+    extraction_ms: float = 0.0
+    validation_ms: float = 0.0
+    scoring_ms: float = 0.0
+    raw_response_chars: int = 0
+    extracted_result_chars: int = 0
+    failure_stage: str = ""
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -207,6 +215,22 @@ class EvaluationSample:
             "code_tests_passed": self.code_tests_passed,
             "code_tests_total": self.code_tests_total,
             "code_failure_detail": self.code_failure_detail,
+            "sample_render_ms": self.sample_render_ms,
+            "inference_ms": self.inference_ms,
+            "extraction_ms": self.extraction_ms,
+            "validation_ms": self.validation_ms,
+            "scoring_ms": self.scoring_ms,
+            "raw_response_chars": (
+                self.raw_response_chars
+                if self.raw_response_chars > 0
+                else len(self.raw_response)
+            ),
+            "extracted_result_chars": (
+                self.extracted_result_chars
+                if self.extracted_result_chars > 0
+                else len(self.extracted_result)
+            ),
+            "failure_stage": self.failure_stage,
         }
         if self.category_label:
             payload["category_label"] = self.category_label
@@ -594,6 +618,14 @@ def build_evaluation_sample_record(
     code_failure_detail: str = "",
     category_label: str = "",
     subject_label: str = "",
+    sample_render_ms: float = 0.0,
+    inference_ms: float = 0.0,
+    extraction_ms: float = 0.0,
+    validation_ms: float = 0.0,
+    scoring_ms: float = 0.0,
+    raw_response_chars: int = 0,
+    extracted_result_chars: int = 0,
+    failure_stage: str = "",
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -625,6 +657,14 @@ def build_evaluation_sample_record(
         code_failure_detail=code_failure_detail,
         category_label=category_label,
         subject_label=subject_label,
+        sample_render_ms=float(sample_render_ms),
+        inference_ms=float(inference_ms),
+        extraction_ms=float(extraction_ms),
+        validation_ms=float(validation_ms),
+        scoring_ms=float(scoring_ms),
+        raw_response_chars=raw_response_chars,
+        extracted_result_chars=extracted_result_chars,
+        failure_stage=failure_stage,
     )
 
 

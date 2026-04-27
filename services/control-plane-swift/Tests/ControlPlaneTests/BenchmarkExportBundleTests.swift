@@ -231,7 +231,7 @@ struct BenchmarkExportBundleTests {
         #expect(summaryCSV.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms"))
         #expect(sampleCSV.contains("job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"))
         #expect(emptyBundle.evaluationSummaryCSV() == "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,sample_size,primary_score_name,primary_score_value,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\n")
-        #expect(emptyBundle.evaluationSamplesCSV() == "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n")
+        #expect(emptyBundle.evaluationSamplesCSV().contains("sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"))
         #expect(emptyBundle.evaluationCompareSummaryCSV() == "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,duration_seconds\n")
         #expect(emptyBundle.evaluationCompareSamplesCSV() == "job_id,suite_id,dataset_id,sample_id,target_model_id,input_text,target,base_extracted_result,target_extracted_result,base_raw_response,target_raw_response,base_typed_score,target_typed_score,outcome,regression_kind,base_time_s,target_time_s,base_extraction_status,target_extraction_status,base_validation_status,target_validation_status,base_failure_reason,target_failure_reason,base_parse_status,target_parse_status,code_language,code_entry_point,base_code_compile_status,target_code_compile_status,base_code_runtime_status,target_code_runtime_status,base_code_timeout_status,target_code_timeout_status,base_code_test_status,target_code_test_status,base_code_tests_passed,target_code_tests_passed,base_code_tests_total,target_code_tests_total,base_code_failure_detail,target_code_failure_detail,category_label,subject_label\n")
     }
@@ -327,8 +327,62 @@ struct BenchmarkExportBundleTests {
         let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: emptyBenchmarkMatrixExportBundleJSON)
 
         #expect(bundle.benchmarkMatrixHistoryEntries() == [])
-        #expect(bundle.benchmarkMatrixSummaryCSV() == "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,created_at_unix_ms\n")
-        #expect(bundle.benchmarkMatrixRequestsCSV() == "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,created_at_unix_ms\n")
+        #expect(bundle.benchmarkMatrixSummaryCSV().contains("cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate"))
+    }
+
+    @Test("decodes additive probe fields in benchmark matrix and evaluation exports")
+    func decodesAdditiveProbeFieldsInBenchmarkMatrixAndEvaluationExports() throws {
+        let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: benchmarkEvaluationProbeBundleJSON)
+
+        let summary = try #require(bundle.benchmarkMatrixSummaryCSVRows().first)
+        let request = try #require(bundle.benchmarkMatrixRequestRows().first)
+        let sample = try #require(bundle.evaluationSampleRows().first)
+        let matrixJob = try #require(bundle.benchmarkMatrixJobs.first)
+
+        #expect(matrixJob.parameters["runtime_kind"] == "swift-text")
+        #expect(matrixJob.parameters["runtime_model_id"] == "target/live")
+        #expect(summary.cellWallMS == 456.7)
+        #expect(summary.completedCount == 3)
+        #expect(summary.failedCount == 1)
+        #expect(summary.ttftP50MS == 21.0)
+        #expect(summary.requestLatencyP95MS == 91.0)
+        #expect(request.datasetMaterializeMS == 1.1)
+        #expect(request.promptRenderMS == 2.2)
+        #expect(request.prefillMS == 4.4)
+        #expect(request.decodeMS == 5.5)
+        #expect(request.tokensIn == 128)
+        #expect(request.tokensOut == 32)
+        #expect(request.firstTokenIndex == 7)
+        #expect(request.cacheHit)
+        #expect(request.runtimeKind == "swift-text")
+        #expect(request.errorStage == "decode")
+        #expect(request.speculativeAcceptanceRate == 0.8)
+        #expect(request.speculativeRollbackRate == 0.2)
+        #expect(request.speculativeAcceptedTokens == 24)
+        #expect(request.speculativeRejectedTokens == 6)
+        #expect(request.speculativeFallbackCount == 1)
+        #expect(request.speculativeNumDraftTokens == 4)
+        #expect(request.speculativeDraftModelConfigured)
+        #expect(request.speculativeDraftProposeMS == 8.8)
+        #expect(request.speculativeTargetVerifyMS == 9.9)
+        #expect(request.dflashEnabled)
+        #expect(request.dflashBlockSize == 16)
+        #expect(request.dflashRollbackCount == 2)
+        #expect(request.dflashTargetHiddenLayers == 12)
+        #expect(sample.sampleRenderMS == 10.1)
+        #expect(sample.inferenceMS == 20.2)
+        #expect(sample.extractionMS == 30.3)
+        #expect(sample.validationMS == 40.4)
+        #expect(sample.scoringMS == 50.5)
+        #expect(sample.rawResponseChars == 11)
+        #expect(sample.extractedResultChars == 3)
+        #expect(sample.failureStage == "scoring")
+        #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12"))
+        #expect(bundle.evaluationSamplesCSV().contains("10.1,20.2,30.3,40.4,50.5,11,3,scoring"))
+        let sampleJSONL = try bundle.evaluationSamplesJSONL()
+        #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
     }
 }
 
@@ -1474,6 +1528,136 @@ private let benchmarkExportBundleImplicitTaskJSON = """
       ],
       "report_path": "/tmp/melix/bench/runs/bench-implicit-default/bench-report.md",
       "report_markdown": "# Default Bench\\n"
+    }
+  ]
+}
+"""
+
+private let benchmarkEvaluationProbeBundleJSON = """
+{
+  "export_schema_version": "melix.benchmark_export.v1",
+  "benchmark_matrix_jobs": [
+    {
+      "schema_version": "melix.benchmark_matrix_job.v1",
+      "job_id": "matrix-probe",
+      "model_id": "melix-dev-text",
+      "task_kind": "text-generation",
+      "source_repo": "fixture/repo",
+      "suite_ids": ["smoke"],
+      "benchmark_mode": "matrix",
+      "status": "completed",
+      "output_dir": "/tmp/melix/bench/matrix-runs/matrix-probe",
+      "created_at_unix_ms": 1712600000000,
+      "updated_at_unix_ms": 1712600001000,
+      "parameters": {
+        "runtime_kind": "swift-text",
+        "runtime_model_id": "target/live"
+      }
+    }
+  ],
+  "benchmark_matrix_summary_rows": [
+    {
+      "job_id": "matrix-probe",
+      "task_kind": "text-generation",
+      "source_repo": "fixture/repo",
+      "model_id": "melix-dev-text",
+      "suite_id": "smoke",
+      "context_length": 1024,
+      "generation_length": 128,
+      "batch_size": 1,
+      "cache_profile": "warm",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeats": 1,
+      "requests": 4,
+      "duration_seconds": 1,
+      "ttft_mean_ms": 25.0,
+      "request_latency_mean_ms": 85.0,
+      "cell_wall_ms": 456.7,
+      "completed_count": 3,
+      "failed_count": 1,
+      "ttft_p50_ms": 21.0,
+      "ttft_p95_ms": 29.0,
+      "request_latency_p50_ms": 80.0,
+      "request_latency_p95_ms": 91.0,
+      "created_at_unix_ms": 1712600000000
+    }
+  ],
+  "benchmark_matrix_request_rows": [
+    {
+      "job_id": "matrix-probe",
+      "cell_id": "cell-0",
+      "task_kind": "text-generation",
+      "suite_id": "smoke",
+      "context_length": 1024,
+      "generation_length": 128,
+      "batch_size": 1,
+      "cache_profile": "warm",
+      "reasoning_mode": "enabled",
+      "structured_output_mode": "plain_text",
+      "concurrency_level": 1,
+      "repeat_index": 0,
+      "request_index": 0,
+      "ttft_ms": 21.0,
+      "request_latency_ms": 80.0,
+      "prefill_tokens_per_second": 1200.0,
+      "decode_tokens_per_second": 50.0,
+      "queue_wait_ms": 0.0,
+      "peak_memory_bytes": 4096,
+      "status": "failed",
+      "error_code": "decode_error",
+      "dataset_materialize_ms": 1.1,
+      "prompt_render_ms": 2.2,
+      "warmup_ms": 3.3,
+      "prefill_ms": 4.4,
+      "decode_ms": 5.5,
+      "tokens_in": 128,
+      "tokens_out": 32,
+      "first_token_index": 7,
+      "cache_hit": true,
+      "runtime_kind": "swift-text",
+      "error_stage": "decode",
+      "speculative_acceptance_rate": 0.8,
+      "speculative_rollback_rate": 0.2,
+      "speculative_accepted_tokens": 24,
+      "speculative_rejected_tokens": 6,
+      "speculative_fallback_count": 1,
+      "speculative_num_draft_tokens": 4,
+      "speculative_draft_model_configured": true,
+      "speculative_draft_propose_ms": 8.8,
+      "speculative_target_verify_ms": 9.9,
+      "dflash_enabled": true,
+      "dflash_block_size": 16,
+      "dflash_rollback_count": 2,
+      "dflash_target_hidden_layers": 12,
+      "created_at_unix_ms": 1712600000000
+    }
+  ],
+  "evaluation_samples": [
+    {
+      "schema_version": "melix.evaluation_sample.v2",
+      "job_id": "eval-probe",
+      "suite_id": "mmlu",
+      "dataset_id": "mmlu.dev.v1",
+      "sample_id": "sample-1",
+      "input_text": "2+2?",
+      "target": "4",
+      "raw_response": "wrong answer",
+      "extracted_result": "bad",
+      "typed_score": 0.0,
+      "time_s": 0.2,
+      "extraction_status": "extracted",
+      "validation_status": "validated",
+      "failure_reason": "wrong answer",
+      "sample_render_ms": 10.1,
+      "inference_ms": 20.2,
+      "extraction_ms": 30.3,
+      "validation_ms": 40.4,
+      "scoring_ms": 50.5,
+      "raw_response_chars": 11,
+      "extracted_result_chars": 3,
+      "failure_stage": "scoring"
     }
   ]
 }

@@ -98,8 +98,13 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,task_kind,source_repo,model_id,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,duration_seconds,created_at_unix_ms\n"
     )
-    assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
+    samples_header = persisted["samples_csv"].read_text(encoding="utf-8").splitlines()[0]
+    assert samples_header.startswith(
+        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+    )
+    assert (
+        "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
+        in samples_header
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
@@ -107,8 +112,13 @@ def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Pa
     assert build_evaluation_summary_csv(export_bundle).startswith(
         "job_id,model_id,task_kind,source_repo,suite_id,dataset_id,primary_score_name,primary_score_value,sample_size,extraction_success_count,validation_success_count,scored_sample_count,failure_count,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms\r\n"
     )
-    assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
+    export_samples_header = build_evaluation_samples_csv(export_bundle).splitlines()[0]
+    assert export_samples_header.startswith(
+        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+    )
+    assert (
+        "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
+        in export_samples_header
     )
 
 
@@ -228,13 +238,23 @@ def test_persist_result_exports_code_execution_evidence_fields(tmp_path: Path) -
     assert sample_payload["code_test_status"] == "passed"
     assert sample_payload["code_tests_passed"] == 2
     assert sample_payload["code_tests_total"] == 2
-    assert persisted["samples_csv"].read_text(encoding="utf-8").startswith(
-        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\n"
+    samples_header = persisted["samples_csv"].read_text(encoding="utf-8").splitlines()[0]
+    assert samples_header.startswith(
+        "id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+    )
+    assert (
+        "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
+        in samples_header
     )
 
     export_bundle = collect_evaluation_artifacts(jobs_root)
-    assert build_evaluation_samples_csv(export_bundle).startswith(
-        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label\r\n"
+    export_samples_header = build_evaluation_samples_csv(export_bundle).splitlines()[0]
+    assert export_samples_header.startswith(
+        "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
+    )
+    assert (
+        "sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
+        in export_samples_header
     )
 
 
