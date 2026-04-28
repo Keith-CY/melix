@@ -5380,6 +5380,88 @@ struct MelixCLIRunnerTests {
         #expect(firstJob["suite_id"] as? String == "mmlu")
     }
 
+    @Test("eval run dispatches multiple remote targets concurrently and preserves target order")
+    func evalRunDispatchesMultipleRemoteTargetsConcurrently() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-parallel-remote-eval-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationDelay(nanoseconds: 100_000_000)
+        await client.setEvaluationResultsByRemoteModelID([
+            "deepseek-v4-pro": makeEvaluationRunResult(
+                jobID: "eval-deepseek",
+                modelID: "deepseek-v4-pro",
+                suiteID: "event_extraction",
+                datasetID: "top200",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.2
+            ),
+            "gemini-2.5-flash": makeEvaluationRunResult(
+                jobID: "eval-gemini",
+                modelID: "gemini-2.5-flash",
+                suiteID: "event_extraction",
+                datasetID: "top200",
+                metricName: "eval.event_extraction.overall_weighted_f1",
+                metricValue: 0.3
+            ),
+        ])
+
+        let runner = MelixCLIRunner(client: client, environment: ["MELIX_HOME": temporaryRoot.path])
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "DeepSeek",
+                    title: "DeepSeek",
+                    providerPreset: .deepseek,
+                    defaultModelID: "deepseek-v4-pro",
+                    apiKey: "sk-deepseek"
+                )
+            )
+        )
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "Gemini",
+                    title: "Gemini",
+                    providerPreset: .gemini,
+                    defaultModelID: "gemini-2.5-flash",
+                    apiKey: "sk-gemini"
+                )
+            )
+        )
+
+        let results = try await runner.runEvaluations(
+            .init(
+                remoteTargets: [
+                    EvalRemoteTargetOptions(remoteServerID: "DeepSeek", remoteModelID: ""),
+                    EvalRemoteTargetOptions(remoteServerID: "Gemini", remoteModelID: ""),
+                ],
+                suites: ["event_extraction"],
+                datasetID: "top200",
+                sampleSize: 1,
+                profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                remoteParallelism: 2
+            )
+        )
+        let requests = await client.evaluationRequests
+
+        #expect(results.map(\.job.modelID) == ["deepseek-v4-pro", "gemini-2.5-flash"])
+        #expect(await client.maxConcurrentEvaluationCalls == 2)
+        let remoteRequests = requests
+            .map {
+                (
+                    serverID: $0.remoteTarget?.remoteServerID ?? "",
+                    apiKey: $0.remoteTarget?.apiKey ?? "",
+                    modelID: $0.remoteTarget?.modelID ?? ""
+                )
+            }
+            .sorted { $0.serverID < $1.serverID }
+        #expect(remoteRequests.map(\.serverID) == ["DeepSeek", "Gemini"])
+        #expect(remoteRequests.map(\.apiKey) == ["sk-deepseek", "sk-gemini"])
+        #expect(remoteRequests.map(\.modelID) == ["deepseek-v4-pro", "gemini-2.5-flash"])
+    }
+
     @Test("eval run renders tabular text output for completed suites")
     func evalRunRendersTextOutput() async throws {
         let client = StubControlPlaneXPCClient()
@@ -6380,6 +6462,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private var hubModelCard = Melix_Controlplane_V1_HubModelCard()
     private var doctorReport = makeDoctorReport()
     private var evaluationResultsQueue: [ControlPlaneEvaluationResult] = []
+    private var evaluationResultsByRemoteModelID: [String: ControlPlaneEvaluationResult] = [:]
+    private var evaluationDelayNanoseconds: UInt64 = 0
+    private var activeEvaluationCalls = 0
+    private(set) var maxConcurrentEvaluationCalls = 0
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
     private var loadError: Error?
@@ -6434,6 +6520,14 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func setEvaluationResults(_ results: [ControlPlaneEvaluationResult]) {
         self.evaluationResultsQueue = results
+    }
+
+    func setEvaluationResultsByRemoteModelID(_ results: [String: ControlPlaneEvaluationResult]) {
+        self.evaluationResultsByRemoteModelID = results
+    }
+
+    func setEvaluationDelay(nanoseconds: UInt64) {
+        self.evaluationDelayNanoseconds = nanoseconds
     }
 
     func setExportResult(_ result: ControlPlaneExportResult) {
@@ -6665,6 +6759,18 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func runEvaluation(_ request: ControlPlaneEvaluationRequest) async throws -> ControlPlaneEvaluationResult {
         evaluationRequests.append(request)
+        activeEvaluationCalls += 1
+        maxConcurrentEvaluationCalls = max(maxConcurrentEvaluationCalls, activeEvaluationCalls)
+        defer {
+            activeEvaluationCalls -= 1
+        }
+        if evaluationDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: evaluationDelayNanoseconds)
+        }
+        let remoteModelID = request.remoteTarget?.modelID ?? ""
+        if let result = evaluationResultsByRemoteModelID[remoteModelID] {
+            return result
+        }
         guard evaluationResultsQueue.isEmpty == false else {
             throw MelixCLIError.runtime("No stub evaluation result is configured.")
         }
@@ -7486,6 +7592,7 @@ private func makeEmptyBenchmarkExportBundleJSON() -> String {
 
 private func makeEvaluationRunResult(
     jobID: String,
+    modelID: String = "melix-dev-text",
     suiteID: String,
     datasetID: String,
     metricName: String,
@@ -7494,7 +7601,7 @@ private func makeEvaluationRunResult(
     var job = Melix_Controlplane_V1_EvaluationJobSummary()
     job.schemaVersion = "melix.evaluation_job.v1"
     job.jobID = jobID
-    job.modelID = "melix-dev-text"
+    job.modelID = modelID
     job.taskKind = "text-generation"
     job.sourceRepo = "HuggingFaceH4/ultrachat_200k"
     job.suiteID = suiteID

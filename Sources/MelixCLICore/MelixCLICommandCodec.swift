@@ -412,13 +412,7 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .evalRun(let options):
             arguments = ["eval", "run"]
-            appendTarget(
-                modelID: options.modelID,
-                hfRepoID: options.hfRepoID,
-                remoteServerID: options.remoteServerID,
-                remoteModelID: options.remoteModelID,
-                into: &arguments
-            )
+            appendEvalTarget(options, into: &arguments)
             appendMultiOption("--suite", values: options.suites, into: &arguments)
             appendOption("--dataset-id", value: options.datasetID, into: &arguments)
             appendPositiveUInt32("--sample-size", value: options.sampleSize, into: &arguments)
@@ -431,6 +425,7 @@ public enum MelixCLICommandCodec {
             appendEvalParameters(options.parameters, into: &arguments)
             appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
             appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)
             json = options.json
         case .evalPromptList(let options):
             arguments = ["eval", "prompt", "list"]
@@ -509,6 +504,22 @@ public enum MelixCLICommandCodec {
         } else if remoteServerID.isEmpty == false {
             arguments.append(contentsOf: ["--remote-server-id", remoteServerID])
             appendOption("--remote-model", value: remoteModelID, into: &arguments)
+        }
+    }
+
+    private static func appendEvalTarget(_ options: EvalRunOptions, into arguments: inout [String]) {
+        if options.modelID.isEmpty == false {
+            arguments.append(contentsOf: ["--model-id", options.modelID])
+        } else if options.hfRepoID.isEmpty == false {
+            arguments.append(contentsOf: ["--repo-id", options.hfRepoID])
+        } else {
+            let targets = options.remoteTargets.isEmpty
+                ? [EvalRemoteTargetOptions(remoteServerID: options.remoteServerID, remoteModelID: options.remoteModelID)]
+                : options.remoteTargets
+            for target in targets where target.remoteServerID.isEmpty == false {
+                arguments.append(contentsOf: ["--remote-server-id", target.remoteServerID])
+                appendOption("--remote-model", value: target.remoteModelID, into: &arguments)
+            }
         }
     }
 

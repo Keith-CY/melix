@@ -15,8 +15,12 @@ struct EvaluationPromptStoreTests {
 
         #expect(baseline.id == EvaluationPromptStore.builtInBaselinePromptID)
         #expect(baseline.readOnly)
+        #expect(baseline.latestRevisionID == "baseline.v2")
+        #expect(baseline.revisions.map(\.revisionID) == ["baseline.v1", "baseline.v2"])
         #expect(revision.status == .frozen)
         #expect(revision.systemPrompt == EvaluationPromptStore.builtInBaselineSystemPrompt)
+        #expect(revision.systemPrompt.contains("# Segment Metadata Candidates"))
+        #expect(revision.systemPrompt.contains("\"event_candidates\""))
         #expect(revision.contentHash == EvaluationPromptStore.contentHash(systemPrompt: revision.systemPrompt))
         #expect(revision.contentHash.hasPrefix("sha256:"))
 

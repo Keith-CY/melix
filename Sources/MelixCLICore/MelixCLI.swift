@@ -362,11 +362,22 @@ public struct BenchExportCSVOptions: Equatable, Sendable {
     }
 }
 
+public struct EvalRemoteTargetOptions: Equatable, Sendable {
+    public let remoteServerID: String
+    public let remoteModelID: String
+
+    public init(remoteServerID: String, remoteModelID: String = "") {
+        self.remoteServerID = remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.remoteModelID = remoteModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 public struct EvalRunOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
     public let remoteServerID: String
     public let remoteModelID: String
+    public let remoteTargets: [EvalRemoteTargetOptions]
     public let suites: [String]
     public let datasetID: String
     public let sampleSize: UInt32
@@ -376,6 +387,7 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let parameters: [String: String]
     public let evalPromptID: String
     public let evalPromptRevisionID: String
+    public let remoteParallelism: UInt32
     public let json: Bool
 
     public init(
@@ -383,6 +395,7 @@ public struct EvalRunOptions: Equatable, Sendable {
         hfRepoID: String = "",
         remoteServerID: String = "",
         remoteModelID: String = "",
+        remoteTargets: [EvalRemoteTargetOptions] = [],
         suites: [String] = [],
         datasetID: String = "",
         sampleSize: UInt32 = 0,
@@ -392,12 +405,32 @@ public struct EvalRunOptions: Equatable, Sendable {
         parameters: [String: String] = [:],
         evalPromptID: String = "",
         evalPromptRevisionID: String = "",
+        remoteParallelism: UInt32 = 0,
         json: Bool = false
     ) {
+        let normalizedRemoteTargets = remoteTargets
+            .map { EvalRemoteTargetOptions(remoteServerID: $0.remoteServerID, remoteModelID: $0.remoteModelID) }
+            .filter { $0.remoteServerID.isEmpty == false }
+        let compatibilityRemoteTarget = remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? []
+            : [
+                EvalRemoteTargetOptions(
+                    remoteServerID: remoteServerID,
+                    remoteModelID: remoteModelID
+                ),
+            ]
+        let resolvedRemoteTargets = normalizedRemoteTargets.isEmpty
+            ? compatibilityRemoteTarget
+            : normalizedRemoteTargets
         self.modelID = modelID
         self.hfRepoID = hfRepoID
-        self.remoteServerID = remoteServerID
-        self.remoteModelID = remoteModelID
+        self.remoteServerID = remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (resolvedRemoteTargets.first?.remoteServerID ?? "")
+            : remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.remoteModelID = remoteModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (resolvedRemoteTargets.first?.remoteModelID ?? "")
+            : remoteModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.remoteTargets = resolvedRemoteTargets
         self.suites = suites
         self.datasetID = datasetID
         self.sampleSize = sampleSize
@@ -407,6 +440,7 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.parameters = parameters
         self.evalPromptID = evalPromptID
         self.evalPromptRevisionID = evalPromptRevisionID
+        self.remoteParallelism = remoteParallelism
         self.json = json
     }
 }
@@ -477,6 +511,11 @@ public struct EvalPromptArchiveOptions: Equatable, Sendable {
         self.promptID = promptID
         self.json = json
     }
+}
+
+private struct PlannedEvaluationRequest: Sendable {
+    let index: Int
+    let request: ControlPlaneEvaluationRequest
 }
 
 public struct EvalCompareOptions: Equatable, Sendable {
@@ -1346,7 +1385,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL) [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
@@ -2521,20 +2560,32 @@ public enum MelixCLIParser {
         switch action {
         case "run":
             let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
-                multiValueOptions: ["--suite", "--target-model-id", "--ignored-path"]
+                multiValueOptions: ["--suite", "--target-model-id", "--ignored-path", "--remote-server-id", "--remote-model"]
             )
             let modelID = values.single["--model-id"] ?? ""
             let hfRepoID = values.single["--repo-id"] ?? ""
-            let remoteServerID = values.single["--remote-server-id"] ?? ""
-            let remoteModelID = values.single["--remote-model"] ?? values.single["--model"] ?? ""
-            let explicitTargetCount = [modelID, hfRepoID, remoteServerID].filter { !$0.isEmpty }.count
+            let remoteServerIDs = (values.multi["--remote-server-id"] ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { $0.isEmpty == false }
+            var remoteModelIDs = (values.multi["--remote-model"] ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let modelAlias = values.single["--model"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               modelAlias.isEmpty == false
+            {
+                remoteModelIDs.append(modelAlias)
+            }
+            let remoteTargets = try parseEvalRemoteTargets(
+                remoteServerIDs: remoteServerIDs,
+                remoteModelIDs: remoteModelIDs
+            )
+            let remoteServerID = remoteTargets.first?.remoteServerID ?? ""
+            let remoteModelID = remoteTargets.first?.remoteModelID ?? ""
+            let explicitTargetCount = [modelID, hfRepoID].filter { !$0.isEmpty }.count
+                + (remoteTargets.isEmpty ? 0 : 1)
             guard explicitTargetCount == 1 else {
                 throw MelixCLIError.missingRequired(
                     "Exactly one of --model-id, --repo-id, or --remote-server-id is required for melix eval run."
                 )
-            }
-            if remoteServerID.isEmpty == false, remoteModelID.isEmpty {
-                throw MelixCLIError.missingRequired("--remote-model is required when using --remote-server-id for melix eval run.")
             }
             let sourceConfiguration = try parseEvaluationSourceConfiguration(
                 values,
@@ -2551,6 +2602,7 @@ public enum MelixCLIParser {
                     hfRepoID: hfRepoID,
                     remoteServerID: remoteServerID,
                     remoteModelID: remoteModelID,
+                    remoteTargets: remoteTargets,
                     suites: suites,
                     datasetID: values.single["--dataset-id"] ?? "",
                     sampleSize: sampleSize,
@@ -2560,6 +2612,7 @@ public enum MelixCLIParser {
                     parameters: parseEvalParameters(values),
                     evalPromptID: values.single["--eval-prompt-id"] ?? "",
                     evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
+                    remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
                     json: values.flags.contains("--json")
                 )
             )
@@ -2589,6 +2642,29 @@ public enum MelixCLIParser {
             return .evalExportSamplesJSONL(try parseEvalExportOptions(values, command: "melix eval export-samples-jsonl"))
         default:
             throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseEvalRemoteTargets(
+        remoteServerIDs: [String],
+        remoteModelIDs: [String]
+    ) throws -> [EvalRemoteTargetOptions] {
+        guard remoteServerIDs.isEmpty == false else {
+            if remoteModelIDs.isEmpty == false {
+                throw MelixCLIError.missingRequired("--remote-server-id is required when using --remote-model for melix eval run.")
+            }
+            return []
+        }
+        if remoteModelIDs.isEmpty {
+            return remoteServerIDs.map { EvalRemoteTargetOptions(remoteServerID: $0) }
+        }
+        guard remoteModelIDs.count == remoteServerIDs.count else {
+            throw MelixCLIError.missingRequired(
+                "Pass either no --remote-model values or exactly one --remote-model for each --remote-server-id."
+            )
+        }
+        return zip(remoteServerIDs, remoteModelIDs).map {
+            EvalRemoteTargetOptions(remoteServerID: $0.0, remoteModelID: $0.1)
         }
     }
 
@@ -4611,7 +4687,7 @@ public actor MelixCLIRunner {
         case .chatRun(let options):
             return options.remoteServerID.isEmpty
         case .evalRun(let options):
-            return options.remoteServerID.isEmpty
+            return Self.effectiveRemoteTargetOptions(for: options).isEmpty
         default:
             return false
         }
@@ -6078,51 +6154,144 @@ public actor MelixCLIRunner {
         options: EvalRunOptions,
         suites: [String]
     ) async throws -> [ControlPlaneEvaluationResult] {
-        var collected: [ControlPlaneEvaluationResult] = []
+        let remoteTargetOptions = effectiveRemoteTargetOptions(for: options)
+        let resolvedRemoteTargets: [ControlPlaneEvaluationRequest.RemoteTarget?] = try remoteTargetOptions.isEmpty
+            ? [nil]
+            : remoteTargetOptions.map {
+                try remoteEvaluationTarget(
+                    remoteServerID: $0.remoteServerID,
+                    remoteModelID: $0.remoteModelID
+                )
+            }
+        var suiteParameters: [String: [String: String]] = [:]
         for suiteID in suites {
-            let usesCustomSource = options.source.kind != .builtinPackage
-            var parameters = options.parameters
-            let usesEventPrompt = suiteID == "event_extraction"
+            suiteParameters[suiteID] = try evaluationParameters(options: options, suiteID: suiteID)
+        }
+
+        var plannedRequests: [PlannedEvaluationRequest] = []
+        for remoteTarget in resolvedRemoteTargets {
+            for suiteID in suites {
+                let usesCustomSource = options.source.kind != .builtinPackage
+                let parameters = suiteParameters[suiteID] ?? options.parameters
+                let request = ControlPlaneEvaluationRequest(
+                    modelID: options.modelID,
+                    hfRepoID: options.hfRepoID,
+                    suiteID: suiteID,
+                    datasetID: usesCustomSource
+                        ? options.datasetID
+                        : (options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID),
+                    sampleSize: options.sampleSize,
+                    source: options.source,
+                    fieldMapping: options.fieldMapping,
+                    profile: options.profile,
+                    parameters: parameters,
+                    remoteTarget: remoteTarget
+                )
+                plannedRequests.append(
+                    PlannedEvaluationRequest(index: plannedRequests.count, request: request)
+                )
+            }
+        }
+
+        guard remoteTargetOptions.count > 1 else {
+            var collected: [ControlPlaneEvaluationResult] = []
+            for plannedRequest in plannedRequests {
+                collected.append(try await client.runEvaluation(plannedRequest.request))
+            }
+            return collected
+        }
+
+        let requestedParallelism = Int(options.remoteParallelism)
+        let maxParallelism = requestedParallelism > 0 ? requestedParallelism : plannedRequests.count
+        return try await runEvaluationRequestsConcurrently(
+            plannedRequests,
+            maxParallelism: maxParallelism
+        )
+    }
+
+    private func evaluationParameters(options: EvalRunOptions, suiteID: String) throws -> [String: String] {
+        var parameters = options.parameters
+        let usesEventPrompt = suiteID == "event_extraction"
+            || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
+            || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+            || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        if usesEventPrompt {
+            guard suiteID == "event_extraction"
                 || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
                 || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
-                || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            if usesEventPrompt {
-                guard suiteID == "event_extraction"
-                    || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
-                    || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
-                else {
-                    throw MelixCLIError.runtime("Evaluation prompts are only supported for event_extraction_weighted_f1.")
-                }
-                parameters.merge(
-                    try evaluationPromptParameters(
-                        promptID: options.evalPromptID,
-                        revisionID: options.evalPromptRevisionID
-                    )
-                ) { _, new in new }
+            else {
+                throw MelixCLIError.runtime("Evaluation prompts are only supported for event_extraction_weighted_f1.")
             }
-            let remoteTarget = options.remoteServerID.isEmpty
-                ? nil
-                : try remoteEvaluationTarget(
+            parameters.merge(
+                try evaluationPromptParameters(
+                    promptID: options.evalPromptID,
+                    revisionID: options.evalPromptRevisionID
+                )
+            ) { _, new in new }
+        }
+        return parameters
+    }
+
+    private static func effectiveRemoteTargetOptions(for options: EvalRunOptions) -> [EvalRemoteTargetOptions] {
+        guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              options.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return []
+        }
+        if options.remoteTargets.isEmpty == false {
+            return options.remoteTargets.filter { $0.remoteServerID.isEmpty == false }
+        }
+        if options.remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return [
+                EvalRemoteTargetOptions(
                     remoteServerID: options.remoteServerID,
                     remoteModelID: options.remoteModelID
-                )
-            let request = ControlPlaneEvaluationRequest(
-                modelID: options.modelID,
-                hfRepoID: options.hfRepoID,
-                suiteID: suiteID,
-                datasetID: usesCustomSource
-                    ? options.datasetID
-                    : (options.datasetID.isEmpty ? Self.defaultEvaluationDatasetID(for: suiteID) : options.datasetID),
-                sampleSize: options.sampleSize,
-                source: options.source,
-                fieldMapping: options.fieldMapping,
-                profile: options.profile,
-                parameters: parameters,
-                remoteTarget: remoteTarget
-            )
-            collected.append(try await client.runEvaluation(request))
+                ),
+            ]
         }
-        return collected
+        return []
+    }
+
+    private func effectiveRemoteTargetOptions(for options: EvalRunOptions) -> [EvalRemoteTargetOptions] {
+        Self.effectiveRemoteTargetOptions(for: options)
+    }
+
+    private func runEvaluationRequestsConcurrently(
+        _ plannedRequests: [PlannedEvaluationRequest],
+        maxParallelism: Int
+    ) async throws -> [ControlPlaneEvaluationResult] {
+        guard plannedRequests.isEmpty == false else {
+            return []
+        }
+        let boundedParallelism = max(1, min(maxParallelism, plannedRequests.count))
+        let client = self.client
+        var results = Array<ControlPlaneEvaluationResult?>(repeating: nil, count: plannedRequests.count)
+        try await withThrowingTaskGroup(of: (Int, ControlPlaneEvaluationResult).self) { group in
+            var nextIndex = 0
+            for _ in 0..<boundedParallelism {
+                let plannedRequest = plannedRequests[nextIndex]
+                nextIndex += 1
+                group.addTask {
+                    (plannedRequest.index, try await client.runEvaluation(plannedRequest.request))
+                }
+            }
+            while let (index, result) = try await group.next() {
+                results[index] = result
+                if nextIndex < plannedRequests.count {
+                    let plannedRequest = plannedRequests[nextIndex]
+                    nextIndex += 1
+                    group.addTask {
+                        (plannedRequest.index, try await client.runEvaluation(plannedRequest.request))
+                    }
+                }
+            }
+        }
+        return try results.enumerated().map { index, result in
+            guard let result else {
+                throw MelixCLIError.runtime("Evaluation request \(index) did not return a result.")
+            }
+            return result
+        }
     }
 
     private func evaluationPromptParameters(promptID: String, revisionID: String) throws -> [String: String] {

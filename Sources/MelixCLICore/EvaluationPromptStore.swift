@@ -180,8 +180,9 @@ public struct EvaluationPromptStore: Sendable {
     public static let eventExtractionTaskKind = "event_extraction"
     public static let eventExtractionScoringMode = "event_extraction_weighted_f1"
     public static let builtInBaselinePromptID = "builtin.event-extraction.baseline"
-    public static let builtInBaselineRevisionID = "baseline.v1"
-    public static let builtInBaselineSystemPrompt = """
+    public static let builtInLegacyBaselineRevisionID = "baseline.v1"
+    public static let builtInBaselineRevisionID = "baseline.v2"
+    public static let builtInLegacyBaselineSystemPrompt = """
     Extract established events and future plans from a dialogue.
 
     Return only one JSON object. Do not wrap it in markdown.
@@ -195,6 +196,126 @@ public struct EvaluationPromptStore: Sendable {
     - Use null when a field is absent.
     - Keep original wording as much as possible.
     - Do not include digest; Melix derives it locally.
+    """
+    public static let builtInBaselineSystemPrompt = """
+    # Segment Metadata Candidates
+
+    Produce candidate metadata for one segment as a single JSON object that matches the stage-1 schema. This is a candidate-generation step; downstream normalization applies stricter filtering.
+
+    Input payload:
+    - `segment`: segment identifiers and segmentation metadata
+    - `participant_set`: optional dialogue-level participant roster
+    - `conversation`: ordered list of `{message_id, sender, participant_id?, timestamp, text}`
+
+    Extraction stance:
+    - Prioritize recall for concrete, already arranged or actionable events.
+    - Extract an event when dialogue-level evidence combines action + time/place/acceptance/condition, even if no single turn contains all parts.
+    - Preserve uncertainty in `detail` or `time`; do not discard only because time/place is relative or condition-dependent.
+    - Output no event only when the dialogue lacks a concrete action or lacks any commitment/schedule signal.
+    - Never invent missing facts; keep unsupported details out.
+
+    Return exactly one JSON object with this shape:
+
+    ```json
+    {
+      "boundary_decision": {
+        "starts_new_dialogue": false,
+        "new_dialogue_start_message_id": null,
+        "boundary_confidence": 0.0,
+        "boundary_reason": "no_restart"
+      },
+      "entity_mentions": [
+        {
+          "value": "string",
+          "aliases": ["string"],
+          "entity_kind": "person",
+          "normalized": "string or null",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "time_mentions": [
+        {
+          "value": "string",
+          "normalized": "string or null",
+          "aliases": ["string"],
+          "entity_kind": "time",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "location_mentions": [
+        {
+          "value": "string",
+          "aliases": ["string"],
+          "entity_kind": "location",
+          "normalized": "string or null",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "topic_candidates": [
+        {
+          "value": "string",
+          "aliases": ["string"],
+          "entity_kind": "topic",
+          "normalized": "string or null",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "digest_candidates": [
+        {
+          "text": "string",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "event_candidates": [
+        {
+          "participants": ["string"],
+          "time": ["string"],
+          "location": ["string"],
+          "action": "string",
+          "status": "planned",
+          "detail": "string or null",
+          "confidence": 0.0,
+          "evidence": ["message_id"]
+        }
+      ],
+      "issues": []
+    }
+    ```
+
+    Hard requirements:
+    - `boundary_decision` must always be present as a single object.
+    - `boundary_reason` must be one of `restart_after_long_pause`, `explicit_reopening`, `topic_reset_with_reinit`, `context_discontinuity`, or `no_restart`; use `no_restart` with `new_dialogue_start_message_id:null` when no split is proposed.
+    - If `starts_new_dialogue=true`, `new_dialogue_start_message_id` must be a current `message_id` and `boundary_reason` must not be `no_restart`.
+    - Candidate fields and `aliases` must always be arrays.
+    - Every extracted item must include `confidence` and non-empty `evidence` from the input conversation.
+    - Keep the top-level shape unchanged and do not wrap the JSON in markdown fences.
+
+    Guidance:
+    - Use the smallest complete set of candidates supported by direct dialogue evidence.
+    - Prefer grounded real-world names. If the dialogue uses canonical slots such as `user1` / `user2`, keep a single slot-id system; when `participant_set` is present, treat it as the canonical slot-to-person mapping. Direct address inside a message often names the addressee, not the speaker.
+    - `time_mentions` should contain explicit or anchorable times only. Prefer a clean anchored span such as `周六晚上`; avoid weak markers such as `平时`, `最近`, or `有次`.
+    - `location_mentions` should be real places or venues; put projects, competitions, and themes into `topic_candidates`.
+    - `topic_candidates` should be abstract themes, not keyword piles, copied fragments, time-specific labels, or one-off events. Keep surface wording in `aliases`; prefer 1-2 broad topics such as `约饭安排`, `见面安排`, `旅行协调`, `产检讨论`, or `穿搭讨论`.
+    - Put concrete scheduled actions in `event_candidates`; keep topics abstract or omit them.
+    - `event_candidates` should describe concrete event instances only. A valid event needs a concrete action plus a commitment or schedule signal: agreement, fixed time, departure/return date, bought/reserved tickets, confirmed venue/activity, or confirmed meeting plan.
+    - Reject goals, vague proposals, habitual activities, current-conversation discussion acts, questions, and unconfirmed proposals. Reject weak future contact such as `有空再联系`, `以后再约`, `总有机会碰头`, or `想约一下` unless later turns clearly confirm it.
+    - Extract explicit time-anchored invitations such as `周五一起吃饭吧` as concrete lower-confidence events; the time plus action makes them actionable even before an acceptance.
+    - Extract ticket/date/slot evidence such as `我买的是周三的票`, `周二周日两场`, or `买好票就去`; treat these as strong event evidence and keep separate supported slots as separate events.
+    - Do not let ticket-seeking openings or third-party/public future appearance comments create extra events unless a dialogue participant clearly plans to attend/use them; still extract explicitly owned tickets/slots.
+    - Extract response-confirmed plans when proposal + time/availability/condition/acceptance makes the action actionable, such as `要看比赛不` + `星期三` + `买票我就去`, `求约` + `明天放假`, or `按早上说的地方见`; place/group-targeted meetup requests plus near-term availability can support a lower-confidence `见面` or `约见`.
+    - Preserve useful uncertainty in `detail`; do not drop events only because they depend on buying tickets, confirming a place, or another concrete action.
+    - Extract asserted visits/travel when action plus place/time are stated, such as `我姐姐来澳门玩`, `后天晚上就走`, `23号就走`, or `9月16号走`.
+    - Do not merge distinct supported event slots unless one event explicitly spans multiple times.
+    - Do not extract bare travel desire (`我想回去`) or modal travel (`可能过完年回去`) unless another turn fixes the plan.
+    - Use `hypothetical` only when the hypothetical event itself is important and clearly grounded; otherwise omit it. Apply the same conservative standard to `event_candidates.time` that you use for `time_mentions`.
+    - `digest_candidates` should summarize purpose or outcome in one concise sentence, not replay every field or turn.
+    - `event_candidates.detail` is optional and must not replace structured fields or invent unsupported specifics.
+    - Use the dominant language of the input dialogue for natural-language or free-text fields. If genuinely mixed-language, preserve that. Keep schema/control fields in schema-compliant English tokens.
     """
 
     private let melixHome: MelixHome
@@ -434,6 +555,14 @@ public struct EvaluationPromptStore: Sendable {
     }
 
     public static var builtInBaselinePrompt: EvaluationPrompt {
+        let legacyRevision = makeRevision(
+            revisionID: builtInLegacyBaselineRevisionID,
+            status: .frozen,
+            systemPrompt: builtInLegacyBaselineSystemPrompt,
+            examples: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
         let revision = makeRevision(
             revisionID: builtInBaselineRevisionID,
             status: .frozen,
@@ -444,11 +573,11 @@ public struct EvaluationPromptStore: Sendable {
         )
         return EvaluationPrompt(
             id: builtInBaselinePromptID,
-            title: "Built-in Event Extraction Baseline",
+            title: "Built-in Segment Metadata Candidates",
             latestRevisionID: revision.revisionID,
             archived: false,
             readOnly: true,
-            revisions: [revision],
+            revisions: [legacyRevision, revision],
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )

@@ -100,10 +100,12 @@ Event extraction runs write model-specific artifacts under:
 <evaluation-jobs-root>/event-extraction/<run-id>/predictions/<model>.failures.jsonl
 <evaluation-jobs-root>/event-extraction/<run-id>/reports/<model>/event_eval_summary.json
 <evaluation-jobs-root>/event-extraction/<run-id>/reports/<model>/event_eval_details.jsonl
+<evaluation-jobs-root>/event-extraction/<run-id>/reports/<model>/event_eval_row_audit.jsonl
 ```
 
-The scorer aligns events by `dialogue_id + event_index`, excludes `digest`, and
-uses exact string set comparison with weights:
+The scorer aligns events within each `dialogue_id` using deterministic
+`optimal_soft_event_alignment`, excludes `digest`, and then uses exact string
+set comparison with weights:
 
 - `action = 0.35`
 - `actor = 0.30`

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -9,9 +10,11 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.engine import evaluation_core
 from worker.productization import event_extraction as event_extraction_module
 from worker.productization.event_extraction import (
+    EventExtractionClientResult,
     EventExtractionPromptSpec,
     GeminiGenerativeLanguageEventExtractionClient,
     OpenAICompatibleEventExtractionClient,
+    RemoteProviderHTTPError,
     build_event_digest,
     evaluate_event_extraction,
     make_event_extraction_client,
@@ -136,6 +139,179 @@ def test_evaluate_event_extraction_counts_unmatched_gold(tmp_path: Path) -> None
     assert details[0]["weighted_f1"] == 0.0
 
 
+def test_evaluate_event_extraction_aligns_reordered_events_before_exact_scoring(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_row_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-reordered",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""},
+                    {"actor": ["B"], "time": ["周二"], "location": ["上海"], "action": ["出差"], "digest": ""},
+                    {"actor": ["C"], "time": ["周三"], "location": None, "action": ["聚餐"], "digest": ""},
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-reordered",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["B"], "time": ["周二"], "location": ["上海"], "action": ["出差"], "digest": ""},
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""},
+                    {"actor": ["C"], "time": ["周三"], "location": None, "action": ["聚餐"], "digest": ""},
+                ],
+            }
+        ],
+    )
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    audit = [json.loads(line) for line in row_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["overall_weighted_f1"] == 1.0
+    assert summary["alignment_strategy"] == "optimal_soft_event_alignment"
+    assert summary["event_alignment"]["matched_pairs"] == 3
+    assert [(row["gold_event_index"], row["pred_event_index"]) for row in details] == [(0, 1), (1, 0), (2, 2)]
+    assert all(row["match_status"] == "matched" for row in details)
+    assert details[0]["event_index"] == 0
+    assert details[0]["alignment_score"] == 1.0
+    assert audit[0]["matched_pairs"] == [
+        {"gold_event_index": 0, "pred_event_index": 1, "alignment_score": 1.0},
+        {"gold_event_index": 1, "pred_event_index": 0, "alignment_score": 1.0},
+        {"gold_event_index": 2, "pred_event_index": 2, "alignment_score": 1.0},
+    ]
+
+
+def test_evaluate_event_extraction_uses_soft_alignment_but_exact_field_scores(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_row_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-soft",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["我"], "time": ["明天"], "location": None, "action": ["开会"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-soft",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["我"], "time": ["明天"], "location": None, "action": ["明天开会"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert detail["match_status"] == "matched"
+    assert detail["alignment_score"] >= 0.30
+    assert detail["fields"]["action"]["tp"] == 0
+    assert detail["fields"]["action"]["fp"] == 1
+    assert detail["fields"]["action"]["fn"] == 1
+    assert summary["field_metrics"]["action"]["f1"] == 0.0
+    assert summary["overall_weighted_f1"] == 0.611111
+
+
+def test_evaluate_event_extraction_keeps_low_similarity_events_unmatched(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_summary.json"
+    details_path = tmp_path / "event_eval_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_row_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-extra",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-extra",
+                "dialogue": ["A: hi"],
+                "events": [
+                    {"actor": ["A"], "time": ["周一"], "location": None, "action": ["开会"], "digest": ""},
+                    {"actor": ["Z"], "time": ["明年"], "location": ["火星"], "action": ["跑步"], "digest": ""},
+                ],
+            }
+        ],
+    )
+
+    summary = evaluate_event_extraction(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    audit = [json.loads(line) for line in row_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert [row["match_status"] for row in details] == ["matched", "unmatched_pred"]
+    assert details[1]["event_index"] == 1
+    assert details[1]["gold_event_index"] is None
+    assert details[1]["pred_event_index"] == 1
+    assert summary["summary"]["events_unmatched_pred"] == 1
+    assert audit[0]["unmatched_pred_indices"] == [1]
+
+
+def test_event_alignment_uses_global_optimum_not_greedy() -> None:
+    matches = event_extraction_module._maximum_weight_event_matching(
+        [
+            [0.90, 0.80],
+            [0.80, 0.10],
+        ],
+        [
+            [True, True],
+            [True, True],
+        ],
+    )
+
+    assert matches == [(0, 1, 0.80), (1, 0, 0.80)]
+
+
 def test_write_event_prediction_rows_preserves_input_order_and_records_failures(tmp_path: Path) -> None:
     output = tmp_path / "predictions.jsonl"
     failures = tmp_path / "failures.jsonl"
@@ -228,10 +404,14 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
         def __init__(self, target):
             self.target = target
 
-        def extract_events(self, dialogue):
-            return (
-                [{"actor": ["我", "他"], "time": ["周一"], "location": None, "action": ["开会"]}],
-                '{"events":[]}',
+        def extract_events(self, dialogue, dialogue_id=""):
+            assert dialogue_id == "dlg-1"
+            return EventExtractionClientResult(
+                events=[{"actor": ["我", "他"], "time": ["周一"], "location": None, "action": ["开会"]}],
+                raw_response='{"events":[]}',
+                request_body_bytes=123,
+                response_body_bytes=456,
+                provider_usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             )
 
     class FakeTarget:
@@ -282,9 +462,59 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     assert run.job.parameters["prompt_id"] == "event-prod"
     assert run.job.parameters["prompt_revision_id"] == "rev-1"
     assert run.job.parameters["prompt_content_hash"] == "sha256:prompt"
+    assert run.job.parameters["event_eval_dialogue_traces"].endswith("event_eval_dialogue_traces.jsonl")
+    assert run.job.parameters["event_eval_row_audit"].endswith("event_eval_row_audit.jsonl")
     assert captured["prompt_spec"].system_prompt == "Extract only events from this dialogue."
     assert (output_dir / "predictions" / "gemini-2.5-flash.jsonl").is_file()
-    assert (output_dir / "reports" / "gemini-2.5-flash" / "event_eval_summary.json").is_file()
+    summary_path = output_dir / "reports" / "gemini-2.5-flash" / "event_eval_summary.json"
+    trace_path = output_dir / "reports" / "gemini-2.5-flash" / "event_eval_dialogue_traces.jsonl"
+    row_audit_path = output_dir / "reports" / "gemini-2.5-flash" / "event_eval_row_audit.jsonl"
+    assert summary_path.is_file()
+    assert row_audit_path.is_file()
+    traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert traces == [
+        {
+            "dialogue_id": "dlg-1",
+            "line_number": 1,
+            "status": "ok",
+            "total_duration_ms": traces[0]["total_duration_ms"],
+            "request_duration_ms": traces[0]["request_duration_ms"],
+            "throttle_sleep_ms": 0.0,
+            "normalization_duration_ms": traces[0]["normalization_duration_ms"],
+            "dialogue_line_count": 1,
+            "dialogue_char_count": 10,
+            "request_body_bytes": 123,
+            "response_body_bytes": 456,
+            "raw_response_chars": 13,
+            "raw_response_path": str(output_dir / "raw-responses" / "gemini-2.5-flash" / "0001-dlg-1.txt"),
+            "predicted_event_count": 1,
+            "normalized_event_count": 1,
+            "normalization_failure_count": 0,
+            "error_code": None,
+            "failure_reason": None,
+            "provider_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    ]
+    assert traces[0]["total_duration_ms"] >= traces[0]["request_duration_ms"] >= 0
+    assert traces[0]["normalization_duration_ms"] >= 0
+    trace_json = json.dumps(traces, ensure_ascii=False)
+    assert "sk-secret" not in trace_json
+    assert "https://sub2api.example/v1" not in trace_json
+    assert "Extract only events from this dialogue." not in trace_json
+    assert "digest" not in trace_json
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    diagnostics = summary["dialogue_diagnostics"]
+    assert diagnostics["dialogue_status_counts"] == {"ok": 1, "failed": 0, "aborted": 0}
+    assert diagnostics["raw_response_chars"]["mean"] == 13.0
+    assert diagnostics["provider_usage_totals"] == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    assert diagnostics["slowest_dialogues"] == [
+        {
+            "dialogue_id": "dlg-1",
+            "line_number": 1,
+            "duration_ms": traces[0]["total_duration_ms"],
+            "status": "ok",
+        }
+    ]
     prompt_snapshot = json.loads((output_dir / "prompt_snapshot.json").read_text(encoding="utf-8"))
     assert prompt_snapshot["prompt_id"] == "event-prod"
     assert prompt_snapshot["system_prompt"] == "Extract only events from this dialogue."
@@ -316,8 +546,9 @@ def test_evaluation_core_event_extraction_records_client_and_normalization_failu
             self.target = target
             self.calls = 0
 
-        def extract_events(self, dialogue):
+        def extract_events(self, dialogue, dialogue_id=""):
             self.calls += 1
+            assert dialogue_id in {"dlg-fail-client", "dlg-fail-normalize"}
             if self.calls == 1:
                 raise RuntimeError("provider unavailable")
             return ([{"actor": [1], "time": None, "location": None, "action": ["bad"]}], '{"events":[]}')
@@ -357,6 +588,209 @@ def test_evaluation_core_event_extraction_records_client_and_normalization_failu
     assert failures[0]["reason"] == "provider unavailable"
     assert failures[1]["event_index"] == 0
     assert "actor must be null or an array of strings" in failures[1]["reason"]
+    traces = [
+        json.loads(line)
+        for line in (
+            output_dir / "reports" / "remote_model" / "event_eval_dialogue_traces.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [trace["status"] for trace in traces] == ["failed", "ok"]
+    assert traces[0]["failure_reason"] == "provider unavailable"
+    assert traces[0]["predicted_event_count"] == 0
+    assert traces[1]["normalization_failure_count"] == 1
+
+
+def test_evaluation_core_event_extraction_records_rate_limit_sleep_in_dialogue_traces(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "dialogue_id": "dlg-one",
+                "dialogue": ["A: first"],
+                "events": [{"actor": ["A"], "time": None, "location": None, "action": ["first"], "digest": ""}],
+            },
+            {
+                "dialogue_id": "dlg-two",
+                "dialogue": ["B: second"],
+                "events": [{"actor": ["B"], "time": None, "location": None, "action": ["second"], "digest": ""}],
+            },
+        ],
+    )
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.now = 100.0
+            self.sleeps: list[float] = []
+
+        def perf_counter(self) -> float:
+            value = self.now
+            self.now += 0.001
+            return value
+
+        def sleep(self, seconds: float) -> None:
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    fake_clock = FakeClock()
+
+    class FakeClient:
+        def extract_events(self, dialogue, dialogue_id=""):
+            return EventExtractionClientResult(
+                events=[{"actor": [dialogue[0][0]], "time": None, "location": None, "action": [dialogue[0][3:]]}],
+                raw_response='{"events":[]}',
+            )
+
+    class FakeTarget:
+        provider_kind = "openai-compatible"
+        base_url = "https://sub2api.example/v1"
+        api_key = "sk-secret"
+        model_id = "remote/model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 60
+
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target, prompt_spec=None: FakeClient())
+    monkeypatch.setattr(evaluation_core.time, "perf_counter", fake_clock.perf_counter)
+    monkeypatch.setattr(evaluation_core.time, "sleep", fake_clock.sleep)
+
+    run = EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
+        model_id="remote/model",
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=2,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={"event_source_jsonl": str(source)},
+        remote_target=FakeTarget(),
+    )
+
+    output_dir = Path(run.job.output_dir)
+    traces = [
+        json.loads(line)
+        for line in (
+            output_dir / "reports" / "remote_model" / "event_eval_dialogue_traces.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    summary = json.loads(
+        (output_dir / "reports" / "remote_model" / "event_eval_summary.json").read_text(encoding="utf-8")
+    )
+
+    assert traces[0]["throttle_sleep_ms"] == 0.0
+    assert traces[1]["throttle_sleep_ms"] > 900.0
+    assert summary["dialogue_diagnostics"]["total_throttle_sleep_ms"] == traces[1]["throttle_sleep_ms"]
+    assert fake_clock.sleeps
+
+
+def test_evaluation_core_event_extraction_aborts_on_provider_rate_limit_and_writes_error_log(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "dialogue_id": "dlg-rate-1",
+                "dialogue": ["A: first"],
+                "events": [{"actor": ["A"], "time": None, "location": None, "action": ["first"], "digest": ""}],
+            },
+            {
+                "dialogue_id": "dlg-rate-2",
+                "dialogue": ["B: second"],
+                "events": [{"actor": ["B"], "time": None, "location": None, "action": ["second"], "digest": ""}],
+            },
+        ],
+    )
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, target):
+            self.target = target
+            self.calls = 0
+
+        def extract_events(self, dialogue, dialogue_id=""):
+            self.calls += 1
+            raise RemoteProviderHTTPError(status_code=429, response_body='{"error":"rate"}')
+
+    class FakeTarget:
+        remote_server_id = "deepseek"
+        provider_kind = "openai-compatible"
+        base_url = "https://api.deepseek.com/v1"
+        api_key = "sk-secret"
+        model_id = "remote/model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 0
+
+    def fake_client_factory(target, prompt_spec=None):
+        client = FakeClient(target)
+        captured["client"] = client
+        return client
+
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", fake_client_factory)
+
+    try:
+        EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
+            model_id="remote/model",
+            suite_id="event_extraction",
+            dataset_root=tmp_path,
+            sample_size=2,
+            scoring_mode="event_extraction_weighted_f1",
+            parameters={"event_source_jsonl": str(source)},
+            remote_target=FakeTarget(),
+        )
+    except RuntimeError as exc:
+        assert "event extraction aborted after remote provider HTTP 429" in str(exc)
+        assert "event_eval_error.json" in str(exc)
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected provider rate limit to abort evaluation")
+
+    output_dir = tmp_path / "evals" / "event-extraction" / "eval-0001"
+    error_log = output_dir / "reports" / "remote_model" / "event_eval_error.json"
+    failure_log = output_dir / "predictions" / "remote_model.failures.jsonl"
+    prediction_log = output_dir / "predictions" / "remote_model.jsonl"
+
+    error_payload = json.loads(error_log.read_text(encoding="utf-8"))
+    assert error_payload["code"] == "remote_provider_rate_limited"
+    assert error_payload["status_code"] == 429
+    assert error_payload["line_number"] == 1
+    assert error_payload["dialogue_id"] == "dlg-rate-1"
+    assert error_payload["rows_total"] == 2
+    assert error_payload["rows_attempted"] == 1
+    assert error_payload["remote_server_id"] == "deepseek"
+    assert error_payload["event_eval_dialogue_traces"].endswith("event_eval_dialogue_traces.jsonl")
+    assert "sk-secret" not in json.dumps(error_payload)
+    assert "https://api.deepseek.com/v1" not in json.dumps(error_payload)
+    assert captured["client"].calls == 1
+
+    failures = [json.loads(line) for line in failure_log.read_text(encoding="utf-8").splitlines()]
+    assert len(failures) == 1
+    assert failures[0]["reason"] == 'remote provider HTTP 429: {"error":"rate"}'
+    assert failures[0]["code"] == "remote_provider_rate_limited"
+    assert prediction_log.read_text(encoding="utf-8") == ""
+    trace_log = output_dir / "reports" / "remote_model" / "event_eval_dialogue_traces.jsonl"
+    traces = [json.loads(line) for line in trace_log.read_text(encoding="utf-8").splitlines()]
+    assert len(traces) == 1
+    assert traces[0]["dialogue_id"] == "dlg-rate-1"
+    assert traces[0]["status"] == "aborted"
+    assert traces[0]["error_code"] == "remote_provider_rate_limited"
+    assert traces[0]["failure_reason"] == 'remote provider HTTP 429: {"error":"rate"}'
+    assert "sk-secret" not in json.dumps(traces, ensure_ascii=False)
+
+
+def test_evaluation_core_reserves_unique_job_ids_for_concurrent_runs(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "evals"
+    (jobs_root / "runs" / "eval-0001").mkdir(parents=True)
+    core = EvaluationCore(jobs_root=jobs_root)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        job_ids = list(executor.map(lambda _: core._next_job_id(), range(4)))
+
+    assert sorted(job_ids) == ["eval-0002", "eval-0003", "eval-0004", "eval-0005"]
+    for job_id in job_ids:
+        assert (jobs_root / "runs" / job_id).is_dir()
 
 
 def test_evaluation_core_event_extraction_validates_source_target_and_rows(tmp_path: Path) -> None:
@@ -639,7 +1073,7 @@ def test_openai_event_extraction_posts_chat_completions_and_parses_response(monk
         )
     )
 
-    events, raw_text = client.extract_events(["A: 明天我开会"])
+    events, raw_text = client.extract_events(["speaker_1: 明天我开会"], dialogue_id="dlg-smoke")
 
     assert events == [{"actor": ["我"], "time": ["明天"], "location": None, "action": ["开会"]}]
     assert raw_text.startswith("{")
@@ -648,7 +1082,24 @@ def test_openai_event_extraction_posts_chat_completions_and_parses_response(monk
     assert captured["timeout"] == 37
     assert captured["body"]["model"] == "kimi-2.6"
     assert captured["body"]["messages"][0]["role"] == "system"
-    assert captured["body"]["messages"][1] == {"role": "user", "content": "A: 明天我开会"}
+    request_payload = json.loads(captured["body"]["messages"][1]["content"])
+    assert request_payload["segment"] == {
+        "segment_id": "dlg-smoke",
+        "dialogue_id": "dlg-smoke",
+        "message_count": 1,
+    }
+    assert request_payload["participant_set"] == [
+        {"participant_id": "speaker_1", "display_name": "speaker_1"}
+    ]
+    assert request_payload["conversation"] == [
+        {
+            "message_id": "m1",
+            "sender": "speaker_1",
+            "participant_id": "speaker_1",
+            "timestamp": None,
+            "text": "明天我开会",
+        }
+    ]
     assert captured["body"]["temperature"] == 0
 
 
@@ -716,6 +1167,59 @@ def test_event_extraction_clients_use_selected_prompt_and_examples(monkeypatch) 
         {"role": "user", "content": "A: current dialogue has no gold answer"},
     ]
     assert "digest" not in json.dumps(captured["body"], ensure_ascii=False)
+
+
+def test_event_extraction_clients_expose_standardized_provider_usage(monkeypatch) -> None:
+    responses = [
+        {
+            "choices": [{"message": {"content": '{"events":[]}'}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        },
+        {
+            "candidates": [{"content": {"parts": [{"text": '{"events":[]}'}]}}],
+            "usageMetadata": {"promptTokenCount": 13, "candidatesTokenCount": 5, "totalTokenCount": 18},
+        },
+    ]
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", fake_urlopen)
+
+    openai_result = OpenAICompatibleEventExtractionClient(
+        RemoteEventExtractionTarget(
+            provider_kind="openai-compatible",
+            base_url="https://sub2api.example/v1",
+            api_key="sk-secret",
+            model_id="deepseek-v4-pro",
+        )
+    ).extract_events(["A: tomorrow"])
+    gemini_result = GeminiGenerativeLanguageEventExtractionClient(
+        RemoteEventExtractionTarget(
+            provider_kind="gemini-generative-language",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="AIza-secret",
+            model_id="gemini-2.5-flash",
+        )
+    ).extract_events(["A: tomorrow"])
+
+    assert openai_result.provider_usage == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    assert gemini_result.provider_usage == {"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18}
+    assert openai_result.response_body_bytes > openai_result.raw_response_chars
+    assert gemini_result.request_body_bytes > 0
 
 
 def test_remote_event_extraction_http_clients_map_request_failures(monkeypatch) -> None:
@@ -937,10 +1441,49 @@ def test_response_parsing_and_normalization_validation_errors(tmp_path: Path) ->
 {"events":[{"actor":["A"],"time":null,"location":null,"action":["arrived"]}]}
 ```"""
     ) == [{"actor": ["A"], "time": None, "location": None, "action": ["arrived"]}]
+    assert event_extraction_module.extract_events_from_response_text(
+        json.dumps(
+            {
+                "boundary_decision": {
+                    "starts_new_dialogue": False,
+                    "new_dialogue_start_message_id": None,
+                    "boundary_confidence": 0.0,
+                    "boundary_reason": "no_restart",
+                },
+                "entity_mentions": [],
+                "time_mentions": [],
+                "location_mentions": [],
+                "topic_candidates": [],
+                "digest_candidates": [],
+                "event_candidates": [
+                    {
+                        "participants": ["speaker_1", "speaker_2"],
+                        "time": ["周六晚上"],
+                        "location": [],
+                        "action": "见面吃饭",
+                        "status": "planned",
+                        "detail": None,
+                        "confidence": 0.7,
+                        "evidence": ["m1", "m2"],
+                    }
+                ],
+                "issues": [],
+            },
+            ensure_ascii=False,
+        )
+    ) == [
+        {
+            "actor": ["speaker_1", "speaker_2"],
+            "time": ["周六晚上"],
+            "location": [],
+            "action": ["见面吃饭"],
+        }
+    ]
 
     invalid_inputs = [
-        ("{}", "LLM response must include an events array"),
+        ("{}", "LLM response must include an events or event_candidates array"),
         ('{"events":["bad"]}', "each event must be a JSON object"),
+        ('{"event_candidates":["bad"]}', "each event candidate must be a JSON object"),
         ("[]", "LLM response must be a JSON object"),
     ]
     for response_text, expected in invalid_inputs:

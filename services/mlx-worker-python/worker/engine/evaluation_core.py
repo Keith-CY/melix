@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 import re
+import threading
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -42,6 +43,7 @@ from worker.productization.evaluation_final_result import (
 from worker.productization.event_extraction import (
     EventExtractionPromptSpec,
     RemoteEventExtractionTarget,
+    RemoteProviderHTTPError,
     default_event_extraction_prompt_spec,
     evaluate_event_extraction,
     event_prompt_content_hash,
@@ -127,6 +129,7 @@ class EvaluationCore:
         self._store = store or EvaluationStore()
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
+        self._job_id_lock = threading.Lock()
 
     def run_local_suite(
         self,
@@ -540,6 +543,9 @@ class EvaluationCore:
         gold_subset_path = output_root / "gold_subset.jsonl"
         summary_path = reports_dir / "event_eval_summary.json"
         details_path = reports_dir / "event_eval_details.jsonl"
+        trace_path = reports_dir / "event_eval_dialogue_traces.jsonl"
+        row_audit_path = reports_dir / "event_eval_row_audit.jsonl"
+        error_log_path = reports_dir / "event_eval_error.json"
         prompt_snapshot_path = output_root / "prompt_snapshot.json"
 
         rows = self._read_event_extraction_rows(Path(source_jsonl), sample_size=sample_size)
@@ -578,43 +584,114 @@ class EvaluationCore:
         last_request_started = 0.0
         prediction_rows: list[dict[str, object]] = []
         failures: list[dict[str, object]] = []
+        dialogue_traces: list[dict[str, object]] = []
         raw_response_dir = output_root / "raw-responses" / safe_model_name
         raw_response_dir.mkdir(parents=True, exist_ok=True)
 
         started_at = time.perf_counter()
         events_written = 0
         for line_number, row in enumerate(rows, start=1):
+            row_started_at = time.perf_counter()
             dialogue_id = str(row.get("dialogue_id") or "")
             dialogue = self._dialogue_lines(row.get("dialogue"))
+            throttle_sleep_ms = 0.0
             if min_interval_seconds > 0 and last_request_started > 0:
                 elapsed = time.perf_counter() - last_request_started
                 if elapsed < min_interval_seconds:
-                    time.sleep(min_interval_seconds - elapsed)
+                    sleep_seconds = min_interval_seconds - elapsed
+                    time.sleep(sleep_seconds)
+                    throttle_sleep_ms = self._round_ms(sleep_seconds * 1_000.0)
             last_request_started = time.perf_counter()
+            request_started_at = last_request_started
+            request_duration_ms = 0.0
             try:
-                extracted_events, raw_response = client.extract_events(dialogue)
-                (raw_response_dir / f"{line_number:04d}-{self._safe_path_component(dialogue_id)}.txt").write_text(
+                client_result = client.extract_events(dialogue, dialogue_id=dialogue_id)
+                request_duration_ms = self._round_ms((time.perf_counter() - request_started_at) * 1_000.0)
+                extracted_events, raw_response = client_result
+                raw_response_path = raw_response_dir / f"{line_number:04d}-{self._safe_path_component(dialogue_id)}.txt"
+                raw_response_path.write_text(
                     raw_response,
                     encoding="utf-8",
                 )
             except Exception as exc:  # noqa: BLE001
-                failures.append(
-                    {
-                        "dialogue_id": dialogue_id,
-                        "line_number": line_number,
-                        "event_index": None,
-                        "reason": str(exc),
-                    }
+                request_duration_ms = self._round_ms((time.perf_counter() - request_started_at) * 1_000.0)
+                failure_record = {
+                    "dialogue_id": dialogue_id,
+                    "line_number": line_number,
+                    "event_index": None,
+                    "reason": str(exc),
+                }
+                provider_error_code = self._event_extraction_provider_error_code(exc)
+                if provider_error_code:
+                    failure_record["code"] = provider_error_code
+                failures.append(failure_record)
+                should_abort = self._should_abort_event_extraction_on_provider_error(exc)
+                dialogue_traces.append(
+                    self._event_extraction_dialogue_trace(
+                        dialogue_id=dialogue_id,
+                        line_number=line_number,
+                        status="aborted" if should_abort else "failed",
+                        row_started_at=row_started_at,
+                        throttle_sleep_ms=throttle_sleep_ms,
+                        request_duration_ms=request_duration_ms,
+                        normalization_duration_ms=0.0,
+                        dialogue=dialogue,
+                        request_body_bytes=0,
+                        response_body_bytes=0,
+                        raw_response="",
+                        raw_response_path=None,
+                        predicted_event_count=0,
+                        normalized_event_count=0,
+                        normalization_failure_count=0,
+                        error_code=provider_error_code or None,
+                        failure_reason=str(exc),
+                        provider_usage={},
+                    )
                 )
+                if should_abort:
+                    prediction_path.write_text(
+                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
+                        encoding="utf-8",
+                    )
+                    failure_path.write_text(
+                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
+                        encoding="utf-8",
+                    )
+                    self._write_jsonl_rows(trace_path, dialogue_traces)
+                    error_payload = self._event_extraction_error_payload(
+                        exc=exc,
+                        failure_record=failure_record,
+                        remote_target=remote_target,
+                        remote_model_id=remote_model_id,
+                        output_root=output_root,
+                        prediction_path=prediction_path,
+                        failure_path=failure_path,
+                        trace_path=trace_path,
+                        rows_total=len(rows),
+                        rows_attempted=line_number,
+                        events_written=events_written,
+                    )
+                    error_log_path.write_text(
+                        json.dumps(error_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    raise RuntimeError(
+                        "event extraction aborted after remote provider "
+                        f"HTTP {getattr(exc, 'status_code', 'error')}; "
+                        f"error_log={error_log_path}"
+                    ) from exc
                 prediction_rows.append({"dialogue_id": dialogue_id, "dialogue": dialogue, "events": []})
                 continue
 
             normalized_events: list[dict[str, object]] = []
+            normalization_failure_count = 0
+            normalization_started_at = time.perf_counter()
             for event_index, event in enumerate(extracted_events):
                 try:
                     normalized_events.append(normalize_event_fields(event))
                     events_written += 1
                 except Exception as exc:  # noqa: BLE001
+                    normalization_failure_count += 1
                     failures.append(
                         {
                             "dialogue_id": dialogue_id,
@@ -623,6 +700,7 @@ class EvaluationCore:
                             "reason": str(exc),
                         }
                     )
+            normalization_duration_ms = self._round_ms((time.perf_counter() - normalization_started_at) * 1_000.0)
             prediction_rows.append(
                 {
                     "dialogue_id": dialogue_id,
@@ -630,7 +708,30 @@ class EvaluationCore:
                     "events": normalized_events,
                 }
             )
+            dialogue_traces.append(
+                self._event_extraction_dialogue_trace(
+                    dialogue_id=dialogue_id,
+                    line_number=line_number,
+                    status="ok",
+                    row_started_at=row_started_at,
+                    throttle_sleep_ms=throttle_sleep_ms,
+                    request_duration_ms=request_duration_ms,
+                    normalization_duration_ms=normalization_duration_ms,
+                    dialogue=dialogue,
+                    request_body_bytes=self._client_result_int(client_result, "request_body_bytes"),
+                    response_body_bytes=self._client_result_int(client_result, "response_body_bytes"),
+                    raw_response=raw_response,
+                    raw_response_path=raw_response_path,
+                    predicted_event_count=len(extracted_events),
+                    normalized_event_count=len(normalized_events),
+                    normalization_failure_count=normalization_failure_count,
+                    error_code=None,
+                    failure_reason=None,
+                    provider_usage=self._client_result_provider_usage(client_result),
+                )
+            )
 
+        self._write_jsonl_rows(trace_path, dialogue_traces)
         prediction_path.write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
             encoding="utf-8",
@@ -644,6 +745,12 @@ class EvaluationCore:
             pred_jsonl=prediction_path,
             summary_output=summary_path,
             details_output=details_path,
+            row_audit_output=row_audit_path,
+        )
+        summary["dialogue_diagnostics"] = self._event_extraction_dialogue_diagnostics(dialogue_traces)
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
         duration_seconds = round(time.perf_counter() - started_at, 6)
         overall_weighted_f1 = float(summary["summary"]["overall_weighted_f1"])
@@ -664,6 +771,8 @@ class EvaluationCore:
         job_parameters["failure_jsonl"] = str(failure_path)
         job_parameters["event_eval_summary"] = str(summary_path)
         job_parameters["event_eval_details"] = str(details_path)
+        job_parameters["event_eval_dialogue_traces"] = str(trace_path)
+        job_parameters["event_eval_row_audit"] = str(row_audit_path)
         job_parameters["prompt_snapshot"] = str(prompt_snapshot_path)
         job_parameters["prompt_id"] = prompt_spec.prompt_id
         job_parameters["prompt_revision_id"] = prompt_spec.revision_id
@@ -767,6 +876,224 @@ class EvaluationCore:
                 updated_at_unix_ms=int(time.time() * 1000),
             )
         return EvaluationRun(job=job, results=(result,), samples=(), persisted_paths=persisted_paths)
+
+    @staticmethod
+    def _event_extraction_provider_error_code(exc: Exception) -> str:
+        code = getattr(exc, "code", "")
+        return str(code) if code else ""
+
+    @staticmethod
+    def _write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+        path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _round_ms(value: float) -> float:
+        return round(float(value), 4)
+
+    @staticmethod
+    def _client_result_int(client_result: Any, field_name: str) -> int:
+        value = getattr(client_result, field_name, 0)
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return 0
+
+    @staticmethod
+    def _client_result_provider_usage(client_result: Any) -> dict[str, int]:
+        provider_usage = getattr(client_result, "provider_usage", {})
+        if not isinstance(provider_usage, dict):
+            return {}
+        normalized: dict[str, int] = {}
+        for key, value in provider_usage.items():
+            if not isinstance(key, str) or isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                normalized[key] = value
+            elif isinstance(value, float) and value.is_integer():
+                normalized[key] = int(value)
+        return normalized
+
+    @classmethod
+    def _event_extraction_dialogue_trace(
+        cls,
+        *,
+        dialogue_id: str,
+        line_number: int,
+        status: str,
+        row_started_at: float,
+        throttle_sleep_ms: float,
+        request_duration_ms: float,
+        normalization_duration_ms: float,
+        dialogue: list[str],
+        request_body_bytes: int,
+        response_body_bytes: int,
+        raw_response: str,
+        raw_response_path: Path | None,
+        predicted_event_count: int,
+        normalized_event_count: int,
+        normalization_failure_count: int,
+        error_code: str | None,
+        failure_reason: str | None,
+        provider_usage: dict[str, int],
+    ) -> dict[str, object]:
+        return {
+            "dialogue_id": dialogue_id,
+            "line_number": line_number,
+            "status": status,
+            "total_duration_ms": cls._round_ms((time.perf_counter() - row_started_at) * 1_000.0),
+            "request_duration_ms": request_duration_ms,
+            "throttle_sleep_ms": throttle_sleep_ms,
+            "normalization_duration_ms": normalization_duration_ms,
+            "dialogue_line_count": len(dialogue),
+            "dialogue_char_count": sum(len(line) for line in dialogue),
+            "request_body_bytes": request_body_bytes,
+            "response_body_bytes": response_body_bytes,
+            "raw_response_chars": len(raw_response),
+            "raw_response_path": str(raw_response_path) if raw_response_path is not None else None,
+            "predicted_event_count": predicted_event_count,
+            "normalized_event_count": normalized_event_count,
+            "normalization_failure_count": normalization_failure_count,
+            "error_code": error_code,
+            "failure_reason": failure_reason,
+            "provider_usage": provider_usage,
+        }
+
+    @classmethod
+    def _event_extraction_dialogue_diagnostics(cls, traces: list[dict[str, object]]) -> dict[str, object]:
+        status_counts = {"ok": 0, "failed": 0, "aborted": 0}
+        for trace in traces:
+            status = trace.get("status")
+            if isinstance(status, str) and status in status_counts:
+                status_counts[status] += 1
+
+        request_latencies = cls._numeric_trace_values(traces, "request_duration_ms")
+        total_latencies = cls._numeric_trace_values(traces, "total_duration_ms")
+        raw_response_chars = cls._numeric_trace_values(traces, "raw_response_chars")
+        throttle_sleep_values = cls._numeric_trace_values(traces, "throttle_sleep_ms")
+        provider_usage_totals: dict[str, int] = {}
+        for trace in traces:
+            usage = trace.get("provider_usage")
+            if not isinstance(usage, dict):
+                continue
+            for key, value in usage.items():
+                if not isinstance(key, str) or isinstance(value, bool):
+                    continue
+                if isinstance(value, int):
+                    provider_usage_totals[key] = provider_usage_totals.get(key, 0) + value
+                elif isinstance(value, float) and value.is_integer():
+                    provider_usage_totals[key] = provider_usage_totals.get(key, 0) + int(value)
+
+        slowest_dialogues = []
+        for trace in sorted(
+            traces,
+            key=lambda item: float(item.get("total_duration_ms") or 0.0),
+            reverse=True,
+        )[:5]:
+            slowest_dialogues.append(
+                {
+                    "dialogue_id": trace.get("dialogue_id", ""),
+                    "line_number": trace.get("line_number", 0),
+                    "duration_ms": trace.get("total_duration_ms", 0.0),
+                    "status": trace.get("status", ""),
+                }
+            )
+
+        return {
+            "dialogue_status_counts": status_counts,
+            "request_duration_ms": cls._latency_stats(request_latencies),
+            "total_duration_ms": cls._latency_stats(total_latencies),
+            "total_throttle_sleep_ms": cls._round_ms(sum(throttle_sleep_values)),
+            "raw_response_chars": {
+                "mean": cls._round_ms(sum(raw_response_chars) / len(raw_response_chars)) if raw_response_chars else 0.0,
+                "max": cls._round_ms(max(raw_response_chars)) if raw_response_chars else 0.0,
+            },
+            "provider_usage_totals": provider_usage_totals,
+            "slowest_dialogues": slowest_dialogues,
+        }
+
+    @staticmethod
+    def _numeric_trace_values(traces: list[dict[str, object]], field_name: str) -> list[float]:
+        values: list[float] = []
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                values.append(float(value))
+        return values
+
+    @classmethod
+    def _latency_stats(cls, values: list[float]) -> dict[str, float]:
+        if not values:
+            return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        return {
+            "mean": cls._round_ms(sum(values) / len(values)),
+            "p50": cls._round_ms(cls._percentile(values, 50.0)),
+            "p95": cls._round_ms(cls._percentile(values, 95.0)),
+            "max": cls._round_ms(max(values)),
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        sorted_values = sorted(values)
+        if len(sorted_values) == 1:
+            return sorted_values[0]
+        index = (len(sorted_values) - 1) * (percentile / 100.0)
+        lower = int(index)
+        upper = min(lower + 1, len(sorted_values) - 1)
+        fraction = index - lower
+        return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * fraction
+
+    @staticmethod
+    def _should_abort_event_extraction_on_provider_error(exc: Exception) -> bool:
+        if not isinstance(exc, RemoteProviderHTTPError):
+            return False
+        return exc.status_code in {401, 403, 404, 429} or exc.status_code >= 500
+
+    @staticmethod
+    def _event_extraction_error_payload(
+        *,
+        exc: Exception,
+        failure_record: dict[str, object],
+        remote_target: Any,
+        remote_model_id: str,
+        output_root: Path,
+        prediction_path: Path,
+        failure_path: Path,
+        trace_path: Path,
+        rows_total: int,
+        rows_attempted: int,
+        events_written: int,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "code": EvaluationCore._event_extraction_provider_error_code(exc) or "remote_provider_error",
+            "message": str(exc),
+            "remote_server_id": str(getattr(remote_target, "remote_server_id", "") or ""),
+            "provider_kind": str(getattr(remote_target, "provider_kind", "") or ""),
+            "remote_model_id": remote_model_id,
+            "dialogue_id": failure_record.get("dialogue_id", ""),
+            "line_number": failure_record.get("line_number", 0),
+            "rows_total": rows_total,
+            "rows_attempted": rows_attempted,
+            "events_written": events_written,
+            "output_dir": str(output_root),
+            "prediction_jsonl": str(prediction_path),
+            "failure_jsonl": str(failure_path),
+            "event_eval_dialogue_traces": str(trace_path),
+        }
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            payload["status_code"] = int(status_code)
+        response_body = str(getattr(exc, "response_body", "") or "")
+        if response_body:
+            payload["provider_response_excerpt"] = response_body[:2048]
+        return payload
 
     def _run_compare_suite(
         self,
@@ -1200,13 +1527,20 @@ class EvaluationCore:
             return "eval-local"
         runs_root = self._jobs_root / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
-        existing = sorted(
-            int(path.name.removeprefix("eval-"))
-            for path in runs_root.iterdir()
-            if path.is_dir() and path.name.startswith("eval-") and path.name.removeprefix("eval-").isdigit()
-        )
-        next_index = (existing[-1] + 1) if existing else 1
-        return f"eval-{next_index:04d}"
+        with self._job_id_lock:
+            existing = sorted(
+                int(path.name.removeprefix("eval-"))
+                for path in runs_root.iterdir()
+                if path.is_dir() and path.name.startswith("eval-") and path.name.removeprefix("eval-").isdigit()
+            )
+            next_index = (existing[-1] + 1) if existing else 1
+            while True:
+                job_id = f"eval-{next_index:04d}"
+                try:
+                    (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    return job_id
+                except FileExistsError:
+                    next_index += 1
 
     def _run_root(self, job_id: str) -> Path:
         if self._jobs_root is None:

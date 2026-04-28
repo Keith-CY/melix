@@ -16,7 +16,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix remote-server add"))
         #expect(MelixCLIParser.usageText.contains("melix remote-server test"))
         #expect(MelixCLIParser.usageText.contains("melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL)"))
-        #expect(MelixCLIParser.usageText.contains("melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID --remote-model MODEL)"))
+        #expect(MelixCLIParser.usageText.contains("melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...)"))
         #expect(MelixCLIParser.usageText.contains("melix eval prompt create"))
 
         let add = try MelixCLIParser.parse([
@@ -165,6 +165,9 @@ struct MelixCLIParserTests {
         #expect(evalOptions.hfRepoID == "")
         #expect(evalOptions.remoteServerID == "sub2api")
         #expect(evalOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(evalOptions.remoteTargets == [
+            EvalRemoteTargetOptions(remoteServerID: "sub2api", remoteModelID: "gemini-2.5-flash"),
+        ])
         #expect(evalOptions.suites == ["event_extraction"])
         #expect(evalOptions.source == .localJSONL(path: "/Users/ChenYu/Downloads/top200_final.jsonl"))
         #expect(evalOptions.profile.scoringMode == "event_extraction_weighted_f1")
@@ -185,13 +188,6 @@ struct MelixCLIParserTests {
                 "chat", "run",
                 "--remote-server-id", "sub2api",
                 "--message", "hello",
-            ])
-        }
-        #expect(throws: MelixCLIError.self) {
-            _ = try MelixCLIParser.parse([
-                "eval", "run",
-                "--remote-server-id", "sub2api",
-                "--source-jsonl", "/tmp/top200.jsonl",
             ])
         }
         #expect(throws: MelixCLIError.self) {
@@ -241,6 +237,39 @@ struct MelixCLIParserTests {
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse(["eval", "prompt", "unknown"])
         }
+    }
+
+    @Test("parses eval run with multiple remote provider targets")
+    func parsesEvalRunWithMultipleRemoteProviderTargets() throws {
+        let command = try MelixCLIParser.parse([
+            "eval", "run",
+            "--remote-server-id", "DeepSeek",
+            "--remote-model", "deepseek-v4-pro",
+            "--remote-server-id", "Gemini",
+            "--remote-model", "gemini-2.5-flash",
+            "--remote-server-id", "GML",
+            "--remote-model", "glm-5.1",
+            "--remote-parallelism", "3",
+            "--source-jsonl", "/tmp/top200.jsonl",
+            "--scoring-mode", "event_extraction_weighted_f1",
+            "--sample-size", "200",
+            "--json",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected eval run command")
+            return
+        }
+
+        #expect(options.remoteServerID == "DeepSeek")
+        #expect(options.remoteModelID == "deepseek-v4-pro")
+        #expect(options.remoteTargets == [
+            EvalRemoteTargetOptions(remoteServerID: "DeepSeek", remoteModelID: "deepseek-v4-pro"),
+            EvalRemoteTargetOptions(remoteServerID: "Gemini", remoteModelID: "gemini-2.5-flash"),
+            EvalRemoteTargetOptions(remoteServerID: "GML", remoteModelID: "glm-5.1"),
+        ])
+        #expect(options.remoteParallelism == 3)
+        #expect(options.suites == ["event_extraction"])
     }
 
     @Test("remote server parser supports provider presets and rejects base URL overrides")
