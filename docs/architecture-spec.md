@@ -145,7 +145,8 @@ through `RuntimeStats.generation_stream_owner_mode`,
 `RuntimeStats.worker_thread_init_latency_ms`, and
 `RuntimeStats.stream_sync_fallback_count`. Control-plane observability should
 project those fields into `python_worker.*` metrics whenever worker runtime
-stats are refreshed.
+stats are refreshed, and it must reserve distinct numeric sentinel codes for
+missing owner-mode state versus unrecognized future owner-mode strings.
 
 Python workers also own ordered multi-root on-disk registry scanning. Registry sources are user-configured model roots first, followed by the default Hugging Face cache at `~/.cache/huggingface/hub` when it exists. Root order is significant, the first root wins on duplicate `model_id`, and invalid roots must not poison discovery from valid roots. Scanning recognizes Hugging Face cache snapshots at `models--<org>--<repo>/snapshots/<snapshot-id>` and plain local MLX model directories that contain `config.json` plus model weights. The scanner must skip Hugging Face `blobs` payloads and must not load the MLX runtime during discovery.
 

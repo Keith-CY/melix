@@ -7,10 +7,11 @@ import MelixWorkerProtocol
 
 @Suite("Request Coordinator", .serialized)
 struct RequestCoordinatorTests {
-    @Test("python worker stream owner mode uses sentinel for unknown values")
-    func pythonWorkerStreamOwnerModeUsesSentinelForUnknownValues() {
-        #expect(pythonWorkerGenerationStreamOwnerModeCode("") == -1)
-        #expect(pythonWorkerGenerationStreamOwnerModeCode("future_mode") == -1)
+    @Test("python worker stream owner mode uses distinct sentinels for missing and unknown values")
+    func pythonWorkerStreamOwnerModeUsesDistinctSentinelsForMissingAndUnknownValues() {
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("") == 0)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("uninitialized") == 0)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("future_mode") == -2)
         #expect(pythonWorkerGenerationStreamOwnerModeCode("executor_owned") == 1)
     }
 
