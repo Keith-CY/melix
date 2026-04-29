@@ -117,6 +117,17 @@ class EvaluationCore:
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
 
+    @staticmethod
+    def _load_dataset_samples(samples_path: Path) -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        with samples_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                samples.append(json.loads(line))
+        return samples
+
     def run_local_suite(
         self,
         *,
@@ -138,11 +149,7 @@ class EvaluationCore:
                 f"Dataset suite mismatch: expected {suite_id}, found {manifest['suite_id']}"
             )
 
-        samples = [
-            json.loads(line)
-            for line in (dataset_root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        samples = EvaluationCore._load_dataset_samples(dataset_root / "samples.jsonl")
         score_name, default_scoring_mode = _SUITE_SCORE_MODES.get(
             suite_id,
             ("typed_score_mean", str(manifest.get("scoring_mode") or "normalized_exact_match")),
