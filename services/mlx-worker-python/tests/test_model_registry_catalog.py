@@ -6,7 +6,23 @@ import os
 import shutil
 from pathlib import Path
 
-from worker.model_registry.catalog import WorkerModelCatalog, _gemma4_index_has_vision_weights
+import pytest
+
+from packages.protocol.python.worker.v1 import common_pb2
+from worker.model_registry.catalog import (
+    WorkerModelCatalog,
+    _apply_registry_identity_metadata,
+    _default_embedding_family_for_backend,
+    _gemma4_index_has_vision_weights,
+    _has_mlx_signal,
+    _hf_cache_repo_id,
+    _hf_cache_revision,
+    _infer_embedding_identity,
+    _is_hf_cache_snapshot_dir,
+    _local_model_id,
+    _read_text_prefix,
+    _text_lora_support_metadata,
+)
 
 
 def _write_registry_manifest(
@@ -51,6 +67,194 @@ def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
 def _write_weights(variant_dir: Path) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "model.safetensors").write_bytes(b"weights")
+
+
+def test_read_text_prefix_reads_only_requested_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("placeholder", encoding="utf-8")
+    read_sizes: list[int] = []
+
+    class _Reader:
+        def __enter__(self) -> _Reader:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> str:
+            read_sizes.append(size)
+            if size == -1:
+                raise AssertionError("expected bounded prefix read")
+            return "library_name: mlx\nEXTRA"[:size]
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> _Reader:
+        assert self == target
+        assert mode == "r"
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "ignore"
+        return _Reader()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    assert _read_text_prefix(target, max_chars=17) == "library_name: mlx"
+    assert read_sizes == [17]
+
+
+
+def test_read_text_prefix_returns_empty_string_on_open_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("placeholder", encoding="utf-8")
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        assert self == target
+        raise OSError("boom")
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    assert _read_text_prefix(target) == ""
+
+
+
+def test_has_mlx_signal_returns_false_without_repo_hint_or_metadata(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is False
+
+
+
+def test_registry_catalog_helper_fallback_paths(tmp_path: Path) -> None:
+    refs_dir = tmp_path / "models--org--demo" / "refs"
+    refs_dir.mkdir(parents=True)
+    unreadable_ref = refs_dir / "main"
+    unreadable_ref.write_text("abc123\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == unreadable_ref:
+            raise OSError("boom")
+        return original_read_text(self, *args, **kwargs)
+
+    assert _hf_cache_repo_id(Path("repo-without-prefix")) is None
+    assert _hf_cache_repo_id(Path("models--missing-suffix")) is None
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        assert _hf_cache_revision(refs_dir.parent, "abc123") == "abc123"
+    finally:
+        monkeypatch.undo()
+    assert _is_hf_cache_snapshot_dir(tmp_path / "other-root", refs_dir) is False
+    assert _local_model_id(tmp_path / "other-root", refs_dir) == refs_dir.name
+
+
+
+def test_apply_registry_identity_metadata_rejects_missing_required_parts() -> None:
+    model = common_pb2.ModelSpec()
+    model.ext["melix.registry_organization_id"] = "org"
+    model.ext["melix.registry_model_name"] = ""
+    model.ext["melix.registry_variant_id"] = "main"
+
+    assert _apply_registry_identity_metadata(model, relative_parts=("org", "model", "variant")) is True
+
+    broken = common_pb2.ModelSpec()
+    broken.ext["melix.registry_organization_id"] = "org"
+    broken.ext["melix.registry_model_name"] = ""
+    broken.ext["melix.registry_variant_id"] = ""
+    assert _apply_registry_identity_metadata(broken, relative_parts=("", "", "")) is False
+
+
+
+def test_text_lora_support_metadata_covers_moe_and_fallback_families() -> None:
+    mixtral = _text_lora_support_metadata("mixtral", moe_enabled=True, expert_count_source="config")
+    unknown = _text_lora_support_metadata("custom-family", moe_enabled=False, expert_count_source="")
+
+    assert mixtral["melix.lora.family_kind"] == "moe"
+    assert mixtral["melix.lora.default_target_preset"] == "attention"
+    assert unknown["melix.lora.family_kind"] == "advanced_text"
+    assert unknown["melix.lora.training_ready"] == "false"
+
+
+
+def test_embedding_identity_helpers_cover_directory_name_variants() -> None:
+    assert _infer_embedding_identity("models/mxbai-large")["family_id"] == "mxbai-embed"
+    assert _infer_embedding_identity("models/bge-m3")["family_id"] == "bge-m3"
+    assert _infer_embedding_identity("models/xlm-r-base")["family_id"] == "xlmr"
+    assert _infer_embedding_identity("models/bert-base")["family_id"] == "bert"
+    assert _default_embedding_family_for_backend("xlmr-v1", "bert") == "xlmr"
+    assert _default_embedding_family_for_backend("bert-v1", "not-known") == "bert"
+
+
+
+def test_catalog_overlay_registration_and_snapshot_payload(tmp_path: Path) -> None:
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(tmp_path)})
+    overlay = common_pb2.ModelSpec(model_id="overlay-model", model_path=str(tmp_path / "overlay"), model_kind="text")
+
+    registered = catalog.register_model(overlay)
+    payload = catalog.registry_snapshot_payload()
+
+    assert registered.model_id == "overlay-model"
+    assert catalog.get("overlay-model") is registered
+    assert "scanned_at_unix_ms" in payload
+    assert isinstance(payload["models"], list)
+    assert catalog.remove_model("overlay-model") is True
+    assert catalog.remove_model("overlay-model") is False
+
+
+
+def test_catalog_scan_helpers_skip_invalid_huggingface_and_unreadable_directories(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    invalid_repo = root / "models--missing-snapshots"
+    invalid_repo.mkdir(parents=True)
+    valid_repo = root / "models--mlx-community--Tiny"
+    snapshots_dir = valid_repo / "snapshots"
+    snapshots_dir.mkdir(parents=True)
+    (snapshots_dir / "note.txt").write_text("not a directory", encoding="utf-8")
+    unreadable_plain = root / "unreadable-plain"
+    unreadable_plain.mkdir(parents=True)
+    unreadable_manifest = root / "unreadable-manifest"
+    unreadable_manifest.mkdir(parents=True)
+
+    original_iterdir = Path.iterdir
+
+    def fake_iterdir(self: Path):
+        if self in {unreadable_plain, unreadable_manifest}:
+            raise OSError("boom")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    assert catalog._scan_huggingface_cache_models(root=root) == []
+    assert unreadable_plain not in WorkerModelCatalog._iter_plain_local_model_dirs(root)
+    assert WorkerModelCatalog._iter_registry_manifest_paths(root) == []
+
+
+
+def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
+    text_model = WorkerModelCatalog.dev_text_model(
+        {
+            "MELIX_DEV_TEXT_FAMILY_ID": "llama",
+            "MELIX_DEV_TEXT_ROUTE_KIND": "python_text",
+        }
+    )
+    embedding_model = WorkerModelCatalog.dev_embedding_model(
+        {
+            "MELIX_DEV_EMBED_FAMILY_ID": "xlmr",
+        }
+    )
+    rerank_model = WorkerModelCatalog.dev_rerank_model(
+        {
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+            "MELIX_DEV_RERANK_YES_NO_LABELS": "affirmative,negative",
+        }
+    )
+
+    assert text_model.ext["text_family_id"] == "llama"
+    assert text_model.ext["melix.capability.route_kind"] == "python_text"
+    assert embedding_model.ext["embedding_family_id"] == "xlmr"
+    assert embedding_model.ext["embedding_backend_id"] == "xlmr-v1"
+    assert rerank_model.ext["rerank_yes_no_labels"] == "affirmative,negative"
+
 
 
 def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(tmp_path: Path) -> None:
