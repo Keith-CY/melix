@@ -54,7 +54,15 @@ class RerankFamilyAdapter:
             "rerank_family_adapter": self,
         }
 
-    def score(self, backend: DeterministicRerankBackend, query: str, document: str) -> float:
+    def score(
+        self,
+        backend: DeterministicRerankBackend,
+        query: str,
+        document: str,
+        *,
+        query_tokens: list[str] | None = None,
+        query_token_set: set[str] | None = None,
+    ) -> float:
         raise NotImplementedError
 
 
@@ -64,14 +72,25 @@ class BasicRerankFamilyAdapter(RerankFamilyAdapter):
         scoring_mode="set-overlap",
     )
 
-    def score(self, backend: DeterministicRerankBackend, query: str, document: str) -> float:
-        query_tokens = set(backend.tokenize(query))
+    def score(
+        self,
+        backend: DeterministicRerankBackend,
+        query: str,
+        document: str,
+        *,
+        query_tokens: list[str] | None = None,
+        query_token_set: set[str] | None = None,
+    ) -> float:
+        if query_tokens is None:
+            query_tokens = backend.tokenize(query)
+        if query_token_set is None:
+            query_token_set = set(query_tokens)
         document_tokens = set(backend.tokenize(document))
-        if not query_tokens and not document_tokens:
+        if not query_token_set and not document_tokens:
             overlap_score = 1.0
         else:
-            union = len(query_tokens | document_tokens) or 1
-            overlap_score = len(query_tokens & document_tokens) / union
+            union = len(query_token_set | document_tokens) or 1
+            overlap_score = len(query_token_set & document_tokens) / union
         return round(overlap_score + backend.tie_breaker(query, document), 6)
 
 
@@ -81,10 +100,20 @@ class JinaV3RerankFamilyAdapter(RerankFamilyAdapter):
         scoring_mode="order-aware-overlap",
     )
 
-    def score(self, backend: DeterministicRerankBackend, query: str, document: str) -> float:
-        query_tokens = backend.tokenize(query)
+    def score(
+        self,
+        backend: DeterministicRerankBackend,
+        query: str,
+        document: str,
+        *,
+        query_tokens: list[str] | None = None,
+        query_token_set: set[str] | None = None,
+    ) -> float:
+        if query_tokens is None:
+            query_tokens = backend.tokenize(query)
         document_tokens = backend.tokenize(document)
-        query_token_set = set(query_tokens)
+        if query_token_set is None:
+            query_token_set = set(query_tokens)
         document_token_set = set(document_tokens)
 
         if not query_token_set and not document_token_set:
@@ -139,10 +168,20 @@ class CausalLMRerankFamilyAdapter(RerankFamilyAdapter):
         metadata["rerank_yes_no_labels"] = "yes,no"
         return metadata
 
-    def score(self, backend: DeterministicRerankBackend, query: str, document: str) -> float:
-        query_tokens = backend.tokenize(query)
+    def score(
+        self,
+        backend: DeterministicRerankBackend,
+        query: str,
+        document: str,
+        *,
+        query_tokens: list[str] | None = None,
+        query_token_set: set[str] | None = None,
+    ) -> float:
+        if query_tokens is None:
+            query_tokens = backend.tokenize(query)
         document_tokens = backend.tokenize(document)
-        query_token_set = set(query_tokens)
+        if query_token_set is None:
+            query_token_set = set(query_tokens)
         document_token_set = set(document_tokens)
         overlap = len(query_token_set & document_token_set) / (len(query_token_set) or 1)
         pair_bonus = JinaV3RerankFamilyAdapter._ordered_pair_bonus(query_tokens, document_tokens)
