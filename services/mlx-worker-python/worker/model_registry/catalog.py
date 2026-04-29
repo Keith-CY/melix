@@ -146,7 +146,8 @@ def _read_text_prefix(path: Path, *, max_chars: int = 16_384) -> str:
     if not path.is_file():
         return ""
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            return handle.read(max_chars)
     except OSError:
         return ""
 
