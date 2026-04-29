@@ -17,7 +17,11 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
-from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.model_ops.job_registry import (
+    ModelOpsJob,
+    ModelOpsJobRegistry,
+    _runtime_mode_from_activation,
+)
 from worker.model_ops.hub_catalog import (
     HubCatalogError,
     HubModelCardRecord,
@@ -2237,6 +2241,87 @@ def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -
     assert custom_job["pct"] == 0.0
     assert custom_job["manifest"] == {}
     assert payload["adapters"][0]["status"] == "completed"
+
+
+def test_job_registry_snapshot_reuses_cached_manifest_after_attach(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ModelOpsJobRegistry()
+    completed = registry.start("train_lora", "melix-dev-text", "/tmp/train")
+    manifest = json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"})
+    registry.attach_manifest(completed.job_id, manifest)
+    registry.complete(completed.job_id, "/tmp/train/train_lora.adapter.json")
+
+    def fail_manifest_decode(manifest_json: str) -> dict[str, object]:
+        raise AssertionError(f"snapshot should not reparse cached manifest: {manifest_json}")
+
+    monkeypatch.setattr(ModelOpsJobRegistry, "_decode_manifest_json", staticmethod(fail_manifest_decode))
+
+    payload = registry.snapshot()
+
+    assert payload["jobs"][0]["manifest"] == {"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}
+    assert payload["adapters"][0]["adapter_name"] == "adapter-a"
+
+
+def test_job_registry_snapshot_reuses_cached_manifest_after_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    manifest_path = jobs_root / "train_lora" / "model-ops-0007" / "train_lora.adapter.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-0007",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+                "adapter_name": "adapter-restored",
+                "adapter_set_hash": "hash-restored",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+
+    def fail_manifest_decode(manifest_json: str) -> dict[str, object]:
+        raise AssertionError(f"snapshot should not reparse restored manifest: {manifest_json}")
+
+    monkeypatch.setattr(ModelOpsJobRegistry, "_decode_manifest_json", staticmethod(fail_manifest_decode))
+
+    payload = registry.snapshot()
+
+    assert payload["jobs"][0]["manifest"] == {
+        "job_id": "model-ops-0007",
+        "operation": "train_lora",
+        "source_model": "melix-dev-text",
+        "adapter_name": "adapter-restored",
+        "adapter_set_hash": "hash-restored",
+    }
+    assert payload["adapters"][0]["adapter_name"] == "adapter-restored"
+
+
+def test_job_registry_helper_paths_cover_restore_and_runtime_edges(tmp_path: Path) -> None:
+    missing_manifest = tmp_path / "missing.json"
+    list_manifest = tmp_path / "list.json"
+    list_manifest.write_text("[]\n", encoding="utf-8")
+
+    assert ModelOpsJobRegistry._decode_manifest_json("[]") == {}
+    assert ModelOpsJobRegistry._read_manifest_dict(missing_manifest) == {}
+    assert ModelOpsJobRegistry._read_manifest_dict(list_manifest) == {}
+    assert ModelOpsJobRegistry._resolved_job_id(
+        Path("/tmp/train_lora/model-ops-0042/train_lora.adapter.json"), {}
+    ) == "model-ops-0042"
+    assert ModelOpsJobRegistry._resolved_job_id(Path("/tmp/train_lora/no-job-id/manifest.json"), {}) == ""
+    assert ModelOpsJobRegistry().resolve_derived_model_target() is None
+    assert ModelOpsJobRegistry._job_sort_key(
+        ModelOpsJob(
+            job_id="custom-job",
+            operation="train_lora",
+            source_model="melix-dev-text",
+            output_dir="/tmp/custom",
+        )
+    ) == 0
+    assert common_pb2.RuntimeMode.Name(_runtime_mode_from_activation(" adapter_backed_runtime ")) == "RUNTIME_MODE_ADAPTER_BACKED"
 
 
 def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
