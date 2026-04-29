@@ -189,16 +189,33 @@ def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
     return f"{parts[0]}/{parts[1]}"
 
 
-def _hf_cache_revision(cache_repo_dir: Path, snapshot_id: str) -> str:
+def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
     refs_dir = cache_repo_dir / "refs"
+    revisions: dict[str, str] = {}
     if refs_dir.is_dir():
-        for ref_path in sorted(path for path in refs_dir.rglob("*") if path.is_file()):
+        try:
+            ref_paths = sorted(path for path in refs_dir.rglob("*") if path.is_file())
+        except OSError:
+            return revisions
+        for ref_path in ref_paths:
             try:
-                if ref_path.read_text(encoding="utf-8").strip() == snapshot_id:
-                    return os.fspath(ref_path.relative_to(refs_dir))
+                snapshot_id = ref_path.read_text(encoding="utf-8").strip()
             except OSError:
                 continue
-    return snapshot_id
+            if not snapshot_id:
+                continue
+            revisions.setdefault(snapshot_id, os.fspath(ref_path.relative_to(refs_dir)))
+    return revisions
+
+
+def _hf_cache_revision(
+    cache_repo_dir: Path,
+    snapshot_id: str,
+    *,
+    revision_map: Mapping[str, str] | None = None,
+) -> str:
+    revisions = revision_map if revision_map is not None else _hf_cache_revision_map(cache_repo_dir)
+    return revisions.get(snapshot_id, snapshot_id)
 
 
 def _is_hf_cache_snapshot_dir(root: Path, model_dir: Path) -> bool:
@@ -1005,12 +1022,13 @@ class WorkerModelCatalog:
             snapshots_dir = cache_repo_dir / "snapshots"
             if not snapshots_dir.is_dir():
                 continue
+            revision_map = _hf_cache_revision_map(cache_repo_dir)
             for snapshot_dir in sorted(path for path in snapshots_dir.iterdir() if path.is_dir()):
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
                 if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
                     continue
-                revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name)
+                revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
                 models.append(
                     self._raw_model_spec(
                         model_id=repo_id,
