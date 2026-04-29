@@ -5,11 +5,14 @@ import socket
 from pathlib import Path
 
 from worker.productization.startup_signals import (
+    _read_last_nonempty_line,
     check_for_updates,
     classify_startup_failure,
     compare_versions,
+    default_update_channel_path,
     normalized_version_parts,
     port_is_available,
+    read_product_version,
     resolve_http_port,
 )
 
@@ -35,10 +38,60 @@ def test_check_for_updates_reports_newer_available_version(tmp_path: Path) -> No
     assert result.summary == "Update available: 0.2.0"
 
 
+def test_check_for_updates_reports_up_to_date_version(tmp_path: Path) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+
+    result = check_for_updates("0.2.0", channel_path)
+
+    assert result.checked is True
+    assert result.update_available is False
+    assert result.summary == "Update: up to date"
+
+
+def test_check_for_updates_reports_missing_latest_version(tmp_path: Path) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(json.dumps({"channel": "beta"}), encoding="utf-8")
+
+    result = check_for_updates("0.1.0", channel_path)
+
+    assert result.checked is False
+    assert result.latest_version == ""
+    assert result.channel == "beta"
+    assert "does not declare latest_version" in result.detail
+
+
+def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+
+def test_read_product_version_raises_when_version_is_missing(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\n', encoding="utf-8")
+
+    try:
+        read_product_version(tmp_path)
+    except ValueError as exc:
+        assert "Unable to read version" in str(exc)
+    else:
+        raise AssertionError("expected read_product_version to raise ValueError")
+
+
+def test_default_update_channel_path_uses_stable_channel_json(tmp_path: Path) -> None:
+    expected = tmp_path.resolve() / "infra/packaging/update-channels/stable.json"
+
+    assert default_update_channel_path(tmp_path) == expected
+
+
 def test_compare_versions_ignores_build_metadata_suffix() -> None:
     assert normalized_version_parts("v1.2.3+abcdef1") == [1, 2, 3]
     assert compare_versions("1.2.3", "1.2.3+abcdef1") == 0
     assert compare_versions("1.2.4", "1.2.3+abcdef1") == 1
+    assert compare_versions("1.2.2", "1.2.3") == -1
 
 
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
@@ -56,6 +109,36 @@ def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -
 
     assert selected_port != occupied_port
     assert selected_port > occupied_port
+
+
+def test_resolve_http_port_returns_requested_port_when_preference_is_disabled() -> None:
+    assert resolve_http_port(11434, prefer_available_http_port=False) == 11434
+
+
+def test_resolve_http_port_raises_when_no_candidate_is_available() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as first_listener, socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    ) as second_listener:
+        first_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        first_listener.bind(("127.0.0.1", 0))
+        occupied_port = int(first_listener.getsockname()[1])
+        first_listener.listen(1)
+
+        second_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        second_listener.bind(("127.0.0.1", occupied_port + 1))
+        second_listener.listen(1)
+
+        try:
+            resolve_http_port(
+                occupied_port,
+                prefer_available_http_port=True,
+                search_limit=2,
+            )
+        except RuntimeError as exc:
+            assert str(occupied_port) in str(exc)
+        else:
+            raise AssertionError("expected resolve_http_port to raise RuntimeError")
 
 
 def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> None:
@@ -88,6 +171,45 @@ def test_classify_startup_failure_reports_worker_crash(tmp_path: Path) -> None:
     assert report.classification == "worker_crash"
     assert "worker" in report.summary.lower()
     assert "Traceback" in report.log_excerpt
+
+
+def test_classify_startup_failure_reports_control_plane_crash(tmp_path: Path) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    control_plane_stderr.write_text("fatal error: crashed\n", encoding="utf-8")
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert report.classification == "control_plane_crash"
+    assert "Control plane crashed" in report.summary
+    assert report.to_dict()["classification"] == "control_plane_crash"
+
+
+def test_read_last_nonempty_line_ignores_trailing_blank_lines(tmp_path: Path) -> None:
+    log_path = tmp_path / "control-plane.stderr.log"
+    log_path.write_text("booting\nready\n\n", encoding="utf-8")
+
+    assert _read_last_nonempty_line(log_path) == "ready"
+
+
+def test_read_last_nonempty_line_returns_empty_string_for_whitespace_only_file(tmp_path: Path) -> None:
+    log_path = tmp_path / "control-plane.stderr.log"
+    log_path.write_text("\n\t  \r\n", encoding="utf-8")
+
+    assert _read_last_nonempty_line(log_path) == ""
+
+
+def test_read_last_nonempty_line_decodes_invalid_utf8_with_replacement(tmp_path: Path) -> None:
+    log_path = tmp_path / "python-worker.stderr.log"
+    log_path.write_bytes(b"booting\nlast line \xff\n")
+
+    assert _read_last_nonempty_line(log_path) == "last line �"
 
 
 def test_classify_startup_failure_falls_back_to_hang_when_logs_are_empty() -> None:
