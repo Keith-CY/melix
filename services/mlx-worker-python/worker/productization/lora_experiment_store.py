@@ -39,13 +39,17 @@ class LoraExperimentStore:
         train_root = jobs_root / "train_lora"
         runs_by_id: dict[str, dict[str, Any]] = {}
         if train_root.exists():
-            for run_path in sorted(train_root.glob(f"model-ops-*/{self.run_record_name}")):
+            for run_dir in sorted(train_root.glob("model-ops-*")):
+                if run_dir.is_dir() is False:
+                    continue
+                run_path = run_dir / self.run_record_name
                 payload = self._read_payload(run_path)
                 run_id = str(payload.get("run_id", "")).strip()
                 if run_id:
                     runs_by_id[run_id] = payload
+                    continue
 
-            for manifest_path in sorted(train_root.glob("model-ops-*/train_lora.adapter.json")):
+                manifest_path = run_dir / "train_lora.adapter.json"
                 payload = self._read_payload(manifest_path)
                 run_id = str(payload.get("job_id", "")).strip() or manifest_path.parent.name
                 if run_id in runs_by_id:
