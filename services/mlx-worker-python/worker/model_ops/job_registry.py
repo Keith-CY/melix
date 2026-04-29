@@ -36,6 +36,8 @@ class ModelOpsJob:
     output_dir: str
     stage_history: list[tuple[str, float]] = field(default_factory=list)
     manifest_json: str = ""
+    manifest: dict[str, Any] = field(default_factory=dict)
+    manifest_cached: bool = False
     output_path: str = ""
     status: str = "running"
     error_code: str = ""
@@ -75,7 +77,10 @@ class ModelOpsJobRegistry:
 
     def attach_manifest(self, job_id: str, manifest_json: str) -> None:
         with self._lock:
-            self._jobs[job_id].manifest_json = manifest_json
+            job = self._jobs[job_id]
+            job.manifest_json = manifest_json
+            job.manifest = self._decode_manifest_json(manifest_json)
+            job.manifest_cached = True
 
     def complete(self, job_id: str, output_path: str) -> None:
         with self._lock:
@@ -156,9 +161,19 @@ class ModelOpsJobRegistry:
                 output_dir=str(output_dir),
                 stage_history=[("write_manifest", pct)],
                 manifest_json=json.dumps(payload, sort_keys=True),
+                manifest=payload,
+                manifest_cached=True,
                 output_path=str(manifest_path),
                 status="completed",
             )
+
+    @staticmethod
+    def _decode_manifest_json(manifest_json: str) -> dict[str, Any]:
+        try:
+            decoded = json.loads(manifest_json)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
 
     @staticmethod
     def _read_manifest_dict(path: Path) -> dict[str, Any]:
@@ -295,12 +310,10 @@ class ModelOpsJobRegistry:
 
         manifest: dict[str, Any] = {}
         if job.operation != "registry_snapshot" and job.manifest_json:
-            try:
-                decoded = json.loads(job.manifest_json)
-            except json.JSONDecodeError:
-                decoded = {}
-            if isinstance(decoded, dict):
-                manifest = decoded
+            if job.manifest_cached:
+                manifest = job.manifest
+            else:
+                manifest = ModelOpsJobRegistry._decode_manifest_json(job.manifest_json)
 
         return {
             "job_id": job.job_id,
