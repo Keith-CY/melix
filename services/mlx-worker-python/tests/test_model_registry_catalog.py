@@ -17,6 +17,7 @@ from worker.model_registry.catalog import (
     _has_mlx_signal,
     _hf_cache_repo_id,
     _hf_cache_revision,
+    _hf_cache_revision_map,
     _infer_embedding_identity,
     _is_hf_cache_snapshot_dir,
     _local_model_id,
@@ -140,11 +141,56 @@ def test_registry_catalog_helper_fallback_paths(tmp_path: Path) -> None:
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(Path, "read_text", fake_read_text)
+        assert _hf_cache_revision_map(refs_dir.parent) == {}
         assert _hf_cache_revision(refs_dir.parent, "abc123") == "abc123"
     finally:
         monkeypatch.undo()
     assert _is_hf_cache_snapshot_dir(tmp_path / "other-root", refs_dir) is False
     assert _local_model_id(tmp_path / "other-root", refs_dir) == refs_dir.name
+
+
+def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    nested_ref = refs_dir / "heads" / "main"
+    nested_ref.parent.mkdir(parents=True, exist_ok=True)
+    nested_ref.write_text("abc123\n", encoding="utf-8")
+    stable_ref = refs_dir / "tags" / "stable"
+    stable_ref.parent.mkdir(parents=True, exist_ok=True)
+    stable_ref.write_text("def456\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+    read_paths: list[Path] = []
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_paths.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    revision_map = _hf_cache_revision_map(cache_repo_dir)
+
+    assert revision_map == {"abc123": "heads/main", "def456": "tags/stable"}
+    assert read_paths == [nested_ref, stable_ref]
+    assert _hf_cache_revision(cache_repo_dir, "abc123", revision_map=revision_map) == "heads/main"
+    assert _hf_cache_revision(cache_repo_dir, "missing", revision_map=revision_map) == "missing"
+
+
+def test_hf_cache_revision_map_returns_empty_mapping_when_ref_enumeration_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+
+    original_rglob = Path.rglob
+
+    def fake_rglob(self: Path, pattern: str):
+        if self == refs_dir:
+            raise OSError("boom")
+        return original_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", fake_rglob)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {}
 
 
 
@@ -287,6 +333,37 @@ def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(t
     assert model.ext["melix.hf_revision"] == "main"
     assert model.ext["melix.model_path"] == str(snapshot_dir.resolve())
     assert "melix.registry_descriptor_path" not in model.ext
+
+
+def test_scan_huggingface_cache_models_reads_ref_files_once_per_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    cache_repo_dir = root / "models--mlx-community--Tiny"
+    refs_dir = cache_repo_dir / "refs" / "heads"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_ids = ("abc123", "def456")
+    for snapshot_id in snapshot_ids:
+        snapshot_dir = cache_repo_dir / "snapshots" / snapshot_id
+        _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+        _write_weights(snapshot_dir)
+        (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\ntags:\n- mlx\n---\n", encoding="utf-8")
+        (refs_dir / snapshot_id).write_text(snapshot_id + "\n", encoding="utf-8")
+
+    from worker.model_registry import catalog as catalog_module
+
+    original_revision_map = catalog_module._hf_cache_revision_map
+    revision_map_calls: list[Path] = []
+
+    def tracking_revision_map(cache_repo_path: Path) -> dict[str, str]:
+        revision_map_calls.append(cache_repo_path)
+        return original_revision_map(cache_repo_path)
+
+    monkeypatch.setattr(catalog_module, "_hf_cache_revision_map", tracking_revision_map)
+
+    catalog = WorkerModelCatalog.__new__(WorkerModelCatalog)
+    models = catalog._scan_huggingface_cache_models(root=root)
+
+    assert [model.revision for model in models] == ["heads/abc123", "heads/def456"]
+    assert revision_map_calls == [cache_repo_dir]
 
 
 def test_registry_snapshot_drops_huggingface_cache_model_after_snapshot_deletion(tmp_path: Path) -> None:
