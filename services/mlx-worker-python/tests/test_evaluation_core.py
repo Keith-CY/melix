@@ -347,6 +347,70 @@ def test_resolve_float_parameter_returns_parsed_or_default_value() -> None:
     ) == pytest.approx(0.1)
 
 
+def test_load_dataset_samples_streams_jsonl_and_skips_blank_lines(tmp_path: Path) -> None:
+    samples_path = tmp_path / "samples.jsonl"
+    samples_path.write_text(
+        '{"id": "1", "prompt": "2+2?", "expected": "4"}\n\n'
+        '  \n'
+        '{"id": "2", "prompt": "3+3?", "expected": "6"}\n',
+        encoding="utf-8",
+    )
+
+    assert EvaluationCore._load_dataset_samples(samples_path) == [
+        {"id": "1", "prompt": "2+2?", "expected": "4"},
+        {"id": "2", "prompt": "3+3?", "expected": "6"},
+    ]
+
+
+def test_run_local_suite_streams_samples_jsonl_without_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+            {"prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"}\n\n'
+        '{"id": "2", "input": {"text": "3+3?"}, "target": "6"}\n',
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == dataset_root / "samples.jsonl":
+            raise AssertionError("samples.jsonl should be streamed via Path.open()")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    backend = ScriptedEvaluationBackend(("Answer: 4", "Answer: 6"))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        few_shot=0,
+        seed=7,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert [sample.input_text for sample in run.samples] == ["2+2?", "3+3?"]
+    assert [sample.extracted_result for sample in run.samples] == ["4", "6"]
+
+
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
