@@ -13,6 +13,16 @@ from worker.productization.benchmark_schemas import (
 from worker.productization.benchmark_store import BenchmarkStore
 
 
+class _CountingRow:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls = 0
+
+    def to_dict(self) -> dict[str, object]:
+        self.calls += 1
+        return dict(self.payload)
+
+
 def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     tmp_path: Path,
 ) -> None:
@@ -160,6 +170,88 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in persisted["requests_csv"].read_text(
         encoding="utf-8"
     )
+
+
+def test_persist_benchmark_matrix_serializes_each_row_once_per_persist(tmp_path: Path) -> None:
+    store = BenchmarkStore()
+    jobs_root = tmp_path / "bench" / "matrix-runs" / "bench-matrix-counts"
+    job = build_benchmark_matrix_job(
+        job_id="bench-matrix-counts",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_ids=("smoke",),
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    summary_row = _CountingRow(
+        {
+            "job_id": "bench-matrix-counts",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "model_id": "melix-dev-text",
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 2,
+            "cache_profile": "cold",
+            "reasoning_mode": "enabled",
+            "structured_output_mode": "plain_text",
+            "concurrency_level": 1,
+            "repeats": 3,
+            "requests": 24,
+            "duration_seconds": 0,
+            "ttft_mean_ms": 24.45,
+            "ttft_std_ms": 1.2,
+            "request_latency_mean_ms": 88.4,
+            "request_latency_std_ms": 3.1,
+            "prefill_tokens_per_second_mean": 1400.0,
+            "decode_tokens_per_second_mean": 58.2,
+            "throughput_requests_per_second": 3.8,
+            "throughput_tokens_per_second": 221.5,
+            "success_rate": 1.0,
+            "peak_memory_bytes_max": 2_147_483_648,
+            "queue_wait_mean_ms": 5.1,
+            "queue_wait_p95_ms": 9.2,
+            "created_at_unix_ms": 101,
+        }
+    )
+    request_row = _CountingRow(
+        {
+            "job_id": "bench-matrix-counts",
+            "cell_id": "cell-1",
+            "task_kind": "text-generation",
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 2,
+            "cache_profile": "cold",
+            "reasoning_mode": "enabled",
+            "structured_output_mode": "plain_text",
+            "concurrency_level": 1,
+            "repeat_index": 0,
+            "request_index": 0,
+            "ttft_ms": 24.45,
+            "request_latency_ms": 88.4,
+            "prefill_tokens_per_second": 1400.0,
+            "decode_tokens_per_second": 58.2,
+            "queue_wait_ms": 5.1,
+            "peak_memory_bytes": 2_147_483_648,
+            "status": "completed",
+            "error_code": "",
+            "created_at_unix_ms": 101,
+        }
+    )
+
+    store.persist_benchmark_matrix(
+        jobs_root=jobs_root,
+        job=job,
+        summary_rows=(summary_row,),
+        request_rows=(request_row,),
+    )
+
+    assert summary_row.calls == 1
+    assert request_row.calls == 1
 
 
 def test_persist_benchmark_matrix_preserves_empty_jsonl_artifacts(tmp_path: Path) -> None:

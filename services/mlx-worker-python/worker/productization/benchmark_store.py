@@ -60,16 +60,19 @@ class BenchmarkStore:
             encoding="utf-8",
         )
 
+        summary_payloads = tuple(row.to_dict() for row in summary_rows)
+        request_payloads = tuple(row.to_dict() for row in request_rows)
+
         summary_jsonl_path = jobs_root / "bench-matrix-summary.jsonl"
-        self._write_jsonl(summary_jsonl_path, (row.to_dict() for row in summary_rows))
+        self._write_jsonl(summary_jsonl_path, summary_payloads)
 
         requests_jsonl_path = jobs_root / "bench-matrix-requests.jsonl"
-        self._write_jsonl(requests_jsonl_path, (row.to_dict() for row in request_rows))
+        self._write_jsonl(requests_jsonl_path, request_payloads)
 
         summary_csv_path = jobs_root / "bench-matrix-summary.csv"
         summary_csv_path.write_text(
             build_benchmark_matrix_summary_csv(
-                {"benchmark_matrix_summary_rows": [row.to_dict() for row in summary_rows]}
+                {"benchmark_matrix_summary_rows": summary_payloads}
             ),
             encoding="utf-8",
         )
@@ -77,7 +80,7 @@ class BenchmarkStore:
         requests_csv_path = jobs_root / "bench-matrix-requests.csv"
         requests_csv_path.write_text(
             build_benchmark_matrix_requests_csv(
-                {"benchmark_matrix_request_rows": [row.to_dict() for row in request_rows]}
+                {"benchmark_matrix_request_rows": request_payloads}
             ),
             encoding="utf-8",
         )
