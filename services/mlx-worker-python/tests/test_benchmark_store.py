@@ -147,14 +147,40 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
         for line in persisted["summary_jsonl"].read_text(encoding="utf-8").splitlines()
         if line.strip()
     ] == [summary_rows[0].to_dict()]
+    assert persisted["summary_jsonl"].read_text(encoding="utf-8").endswith("\n")
     assert [
         json.loads(line)
         for line in persisted["requests_jsonl"].read_text(encoding="utf-8").splitlines()
         if line.strip()
     ] == [request_rows[0].to_dict()]
+    assert persisted["requests_jsonl"].read_text(encoding="utf-8").endswith("\n")
     assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in persisted["summary_csv"].read_text(
         encoding="utf-8"
     )
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in persisted["requests_csv"].read_text(
         encoding="utf-8"
     )
+
+
+def test_persist_benchmark_matrix_preserves_empty_jsonl_artifacts(tmp_path: Path) -> None:
+    store = BenchmarkStore()
+    jobs_root = tmp_path / "bench" / "matrix-runs" / "bench-matrix-empty"
+    job = build_benchmark_matrix_job(
+        job_id="bench-matrix-empty",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_ids=("smoke",),
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+
+    persisted = store.persist_benchmark_matrix(
+        jobs_root=jobs_root,
+        job=job,
+        summary_rows=(),
+        request_rows=(),
+    )
+
+    assert persisted["summary_jsonl"].read_text(encoding="utf-8") == ""
+    assert persisted["requests_jsonl"].read_text(encoding="utf-8") == ""
