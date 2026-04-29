@@ -534,6 +534,84 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
 
 
+def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-context-rows.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            json.dumps(["ignored"]),
+            "   ",
+        ]) + "\n"
+    )
+    (tmp_path / "bench-batch-rows.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "batch"}),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+    matrix_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+    matrix_root.mkdir(parents=True, exist_ok=True)
+    (matrix_root / "bench-matrix-job.json").write_text(json.dumps({"job_id": "bench-matrix-1"}) + "\n")
+    (matrix_root / "bench-matrix-summary.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "summary"}),
+            json.dumps(123),
+        ]) + "\n"
+    )
+    (matrix_root / "bench-matrix-requests.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "request"}),
+            json.dumps(False),
+        ]) + "\n"
+    )
+
+    result = collect_benchmark_artifacts(tmp_path)
+
+    assert result["benchmark_context_rows"] == [{"job_id": "bench-1", "row_kind": "context"}]
+    assert result["benchmark_batch_rows"] == [{"job_id": "bench-1", "row_kind": "batch"}]
+    assert result["benchmark_matrix_summary_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
+    assert result["benchmark_matrix_request_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
+
+
+def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_eval_compare_fixtures(tmp_path)
+    (tmp_path / "evaluation-samples.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "eval-1", "sample_id": "kept"}),
+            json.dumps(["ignored"]),
+        ]) + "\n"
+    )
+    (tmp_path / "evaluation-compare-samples.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "sample_id": "sample-1",
+                "target_model_id": "melix-dev-text-lora-a",
+                "base_model_id": "melix-dev-text",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "input_text": "2+2?",
+                "target": "4",
+                "base_extracted_result": "4",
+                "target_extracted_result": "4",
+                "base_raw_response": "4",
+                "target_raw_response": "4",
+                "base_typed_score": 1.0,
+                "target_typed_score": 1.0,
+                "outcome": "tie",
+            }),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert [sample["sample_id"] for sample in result["evaluation_compare_samples"]] == ["sample-1"]
+    assert [sample["sample_id"] for sample in result["evaluation_samples"]] == ["kept", "melix-dev-text-lora-a:sample-1"]
+
+
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
     _write_eval_fixtures(tmp_path)
 

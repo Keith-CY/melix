@@ -415,19 +415,11 @@ def _collect_benchmark_run(
 
     context_path = run_root / "bench-context-rows.jsonl"
     if context_path.is_file():
-        for line in context_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    context_rows.append(row)
+        context_rows.extend(_iter_jsonl_dict_rows(context_path))
 
     batch_path = run_root / "bench-batch-rows.jsonl"
     if batch_path.is_file():
-        for line in batch_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    batch_rows.append(row)
+        batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
 
     for result_path in sorted(run_root.glob("bench-result-*.json")):
         if result_path.is_file():
@@ -447,19 +439,24 @@ def _collect_benchmark_matrix_run(
 
     summary_path = run_root / "bench-matrix-summary.jsonl"
     if summary_path.is_file():
-        for line in summary_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    summary_rows.append(row)
+        summary_rows.extend(_iter_jsonl_dict_rows(summary_path))
 
     requests_path = run_root / "bench-matrix-requests.jsonl"
     if requests_path.is_file():
-        for line in requests_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    request_rows.append(row)
+        request_rows.extend(_iter_jsonl_dict_rows(requests_path))
+
+
+def _iter_jsonl_dict_rows(path: Path) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            row = json.loads(stripped)
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
 
 
 def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
@@ -735,9 +732,7 @@ def _collect_evaluation_run(
 
     samples_path = run_root / "evaluation-samples.jsonl"
     if samples_path.is_file():
-        for line in samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                samples.append(json.loads(line))
+        samples.extend(_iter_jsonl_dict_rows(samples_path))
 
     compare_job_path = run_root / "evaluation-compare-job.json"
     if not compare_job_path.is_file():
@@ -757,17 +752,14 @@ def _collect_evaluation_run(
 
     compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
     if compare_samples_path.is_file():
-        for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                sample = json.loads(line)
-                compare_samples.append(sample)
-                if isinstance(sample, dict):
-                    samples.append(
-                        _normalize_evaluation_compare_sample(
-                            sample,
-                            compare_job=compare_job,
-                        )
-                    )
+        for sample in _iter_jsonl_dict_rows(compare_samples_path):
+            compare_samples.append(sample)
+            samples.append(
+                _normalize_evaluation_compare_sample(
+                    sample,
+                    compare_job=compare_job,
+                )
+            )
 
 
 def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:
