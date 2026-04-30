@@ -451,10 +451,15 @@ class DownloadPipeline:
     @staticmethod
     def _directory_size(path: Path) -> int:
         total_bytes = 0
-        for root, _dirs, filenames in os.walk(os.fspath(path)):
-            for filename in filenames:
-                file_path = os.path.join(root, filename)
-                total_bytes += os.path.getsize(file_path)
+        stack = [os.fspath(path)]
+        while stack:
+            current = stack.pop()
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.is_file():
+                        total_bytes += entry.stat().st_size
         return total_bytes
 
     @staticmethod
