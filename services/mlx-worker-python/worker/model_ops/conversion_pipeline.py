@@ -107,10 +107,12 @@ class ModelConversionPipeline:
         manifest_bytes = 0
         while True:
             manifest_payload["manifest_bytes"] = manifest_bytes
-            next_manifest_bytes = self._write_manifest(manifest_path, manifest_payload)
+            next_manifest_bytes = self._manifest_size(manifest_payload)
             if next_manifest_bytes == manifest_bytes:
                 break
             manifest_bytes = next_manifest_bytes
+        manifest_payload["manifest_bytes"] = manifest_bytes
+        self._write_manifest(manifest_path, manifest_payload)
 
         return ConversionPipelineResult(
             bundle_path=bundle_path,
@@ -215,7 +217,15 @@ class ModelConversionPipeline:
         }
 
     @staticmethod
+    def _encode_manifest(payload: dict[str, Any]) -> bytes:
+        return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+    @staticmethod
+    def _manifest_size(payload: dict[str, Any]) -> int:
+        return len(ModelConversionPipeline._encode_manifest(payload))
+
+    @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
-        encoded = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        encoded = ModelConversionPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)

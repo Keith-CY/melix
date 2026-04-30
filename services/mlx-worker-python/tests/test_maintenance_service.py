@@ -16,6 +16,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops.conversion_pipeline import ModelConversionPipeline
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
 from worker.model_ops.job_registry import (
     ModelOpsJob,
@@ -614,6 +615,40 @@ def test_convert_model_supports_convert_and_quantize_jobs(tmp_path: Path) -> Non
     assert quantize_payload["kv_quant"] == "q8"
 
 
+def test_convert_model_writes_manifest_once_after_in_memory_byte_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    write_calls = 0
+    original_write_manifest = ModelConversionPipeline._write_manifest
+
+    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write_manifest(path, payload)
+
+    monkeypatch.setattr(ModelConversionPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    convert_manifest = next(event.manifest for event in convert_events if event.HasField("manifest"))
+    convert_payload = json.loads(convert_manifest.manifest_json)
+    manifest_path = Path(convert_events[-1].completed.output_path) / "manifest.json"
+
+    assert write_calls == 1
+    assert convert_payload["manifest_bytes"] == manifest_path.stat().st_size
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == convert_payload
+
+
 def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     artifact_path = tmp_path / "artifact"
@@ -653,6 +688,44 @@ def test_convert_model_supports_download_and_upload_jobs(tmp_path: Path) -> None
     assert upload_payload["upload_backend"] == "huggingface_hub"
     assert upload_payload["published_url"] == "https://huggingface.co/melix/upload-target"
     assert upload_manifest.artifact.artifact_kind == "upload_receipt"
+
+
+def test_upload_job_writes_receipt_once_after_in_memory_byte_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    artifact_path = tmp_path / "artifact"
+    artifact_path.write_text("melix-upload", encoding="utf-8")
+    write_calls = 0
+    original_write_manifest = UploadReceiptPipeline._write_manifest
+
+    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write_manifest(path, payload)
+
+    monkeypatch.setattr(UploadReceiptPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model=str(artifact_path),
+                output_dir=str(tmp_path / "upload"),
+                generate_manifest=True,
+                ext={"operation": "upload", "target_repo": "melix/upload-target"},
+            ),
+            context=None,
+        )
+    )
+    upload_manifest = next(event.manifest for event in upload_events if event.HasField("manifest"))
+    upload_payload = json.loads(upload_manifest.manifest_json)
+    receipt_path = Path(upload_events[-1].completed.output_path)
+
+    assert write_calls == 1
+    assert upload_payload["manifest_bytes"] == receipt_path.stat().st_size
+    assert upload_payload["artifact_bytes"] == receipt_path.stat().st_size
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == upload_payload
 
 
 def test_download_job_reports_managed_hub_snapshot_without_creating_descriptor(tmp_path: Path) -> None:

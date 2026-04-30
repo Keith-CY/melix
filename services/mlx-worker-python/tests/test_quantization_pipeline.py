@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
+from worker.model_ops.quantization_pipeline import OQQuantizationPipeline
 from worker.model_ops.quantization_profiles import (
     normalize_quantization_profile,
     protected_scope_for_request,
@@ -118,6 +121,44 @@ def test_quantize_job_records_successful_smoke_validation(tmp_path: Path) -> Non
     assert manifest_event.artifact.smoke_test_passed is True
     assert completed_event.artifact.smoke_test_requested is True
     assert completed_event.artifact.smoke_test_passed is True
+
+
+def test_quantize_job_writes_manifest_once_after_in_memory_byte_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_service(tmp_path)
+    write_calls = 0
+    original_write_manifest = OQQuantizationPipeline._write_manifest
+
+    def counting_write_manifest(path: Path, payload: dict[str, object]) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write_manifest(path, payload)
+
+    monkeypatch.setattr(OQQuantizationPipeline, "_write_manifest", staticmethod(counting_write_manifest))
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "quantize"),
+                weight_quant="q4",
+                kv_quant="q8",
+                generate_manifest=True,
+                ext={"operation": "quantize"},
+            ),
+            context=None,
+        )
+    )
+
+    manifest_event = next(event.manifest for event in events if event.HasField("manifest"))
+    manifest_path = Path(events[-1].completed.output_path) / "manifest.json"
+    manifest_payload = json.loads(manifest_event.manifest_json)
+
+    assert write_calls == 1
+    assert manifest_payload["manifest_bytes"] == manifest_path.stat().st_size
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == manifest_payload
 
 
 def test_quantize_job_uses_typed_quant_profile_when_provided(tmp_path: Path) -> None:
