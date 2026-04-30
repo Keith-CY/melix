@@ -9,6 +9,7 @@ import pytest
 
 from worker.productization.benchmark_export import (
     _iter_jsonl_dict_rows,
+    _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
@@ -1109,6 +1110,21 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["extraction_status"] == "extracted"
     assert rows[0]["validation_status"] == "validated"
     assert rows[0]["input_modalities"] == "text"
+
+
+def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
+    rows = (
+        {"job_id": f"eval-{index}", "typed_score": index / 10}
+        for index in range(3)
+    )
+
+    csv_text = _rows_to_csv(rows, ["job_id", "typed_score"])
+
+    assert list(csv.DictReader(io.StringIO(csv_text))) == [
+        {"job_id": "eval-0", "typed_score": "0.0"},
+        {"job_id": "eval-1", "typed_score": "0.1"},
+        {"job_id": "eval-2", "typed_score": "0.2"},
+    ]
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
