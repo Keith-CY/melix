@@ -3754,6 +3754,46 @@ def test_doctor_health_status_helpers_cover_healthy_and_unknown_states() -> None
     assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == "unknown"
 
 
+def test_write_jsonl_rows_streams_each_row_without_joining_full_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "bench-rows.jsonl"
+    writes: list[str] = []
+
+    class RecordingFile:
+        def __enter__(self) -> RecordingFile:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> RecordingFile:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return RecordingFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    maintenance_core_module._write_jsonl_rows(
+        output_path,
+        [
+            {"suite": "smoke", "ttft_ms": 10.0},
+            {"suite": "latency", "ttft_ms": 20.0},
+        ],
+    )
+
+    assert writes == [
+        json.dumps({"suite": "smoke", "ttft_ms": 10.0}) + "\n",
+        json.dumps({"suite": "latency", "ttft_ms": 20.0}) + "\n",
+    ]
+
+
 def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),

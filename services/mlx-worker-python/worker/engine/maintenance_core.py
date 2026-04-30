@@ -201,6 +201,12 @@ def _registry_roots_override(ext: dict[str, str]) -> list[str] | None:
     return None
 
 
+def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+
 class MaintenanceCore:
     def __init__(
         self,
@@ -1255,14 +1261,14 @@ class MaintenanceCore:
                 encoding="utf-8",
             )
             if text_context_rows:
-                (output_dir / "bench-context-rows.jsonl").write_text(
-                    "\n".join(json.dumps(row) for row in text_context_rows) + "\n",
-                    encoding="utf-8",
+                _write_jsonl_rows(
+                    output_dir / "bench-context-rows.jsonl",
+                    text_context_rows,
                 )
             if text_batch_rows:
-                (output_dir / "bench-batch-rows.jsonl").write_text(
-                    "\n".join(json.dumps(row) for row in text_batch_rows) + "\n",
-                    encoding="utf-8",
+                _write_jsonl_rows(
+                    output_dir / "bench-batch-rows.jsonl",
+                    text_batch_rows,
                 )
             self._job_registry.complete(job.job_id, str(report_path))
             self._benchmark_queue_store.transition(
