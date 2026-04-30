@@ -245,6 +245,20 @@ def _chunk_single_turn(
     )
 
 
+def _passthrough_sample(sample: dict) -> dict:
+    """Return a passthrough sample with independent messages but shared top-level fields.
+
+    The chunker must not mutate the caller's messages list or nested message dicts,
+    but it also avoids deep-copying immutable-by-convention top-level payloads like
+    metadata or tool schemas on unchanged outputs.
+    """
+
+    out = {k: v for k, v in sample.items() if k != "messages"}
+    out["messages"] = copy.deepcopy(_extract_messages(sample))
+    return out
+
+
+
 def _chunk_sample(
     sample: dict,
     *,
@@ -268,13 +282,13 @@ def _chunk_sample(
     tools = _extract_tools(sample)
     messages = _extract_messages(sample)
     if _render_len(messages, tokenizer, tools=tools) <= chunk_size:
-        return [copy.deepcopy(sample)]
+        return [_passthrough_sample(sample)]
 
     sample_id = str(sample.get("id", ""))
     system_prefix, pairs = _split_messages_into_turns(messages)
 
     if not pairs:
-        return [copy.deepcopy(sample)]
+        return [_passthrough_sample(sample)]
 
     # Multi-turn: emit each (user, assistant) pair as its own chunk first.
     # If any chunk still overflows, fall through to single-turn segmentation
@@ -329,9 +343,11 @@ def chunk_long_samples(
     """Chunk every sample in ``samples`` that exceeds ``chunk_size`` tokens.
 
     Returns ``(chunked_samples, stats)``. Samples that already fit pass
-    through as one chunk each (deep-copied so downstream mutations can't leak
-    back to the caller). Iterates ``samples`` exactly once so the caller can
-    pass a generator over a large JSONL file without materializing it.
+    through as one chunk each with a copied ``messages`` payload but shared
+    top-level immutable-by-convention fields, so downstream message mutations
+    can't leak back to the caller without deep-copying large metadata blobs.
+    Iterates ``samples`` exactly once so the caller can pass a generator over
+    a large JSONL file without materializing it.
     """
 
     if chunk_size < 1:
