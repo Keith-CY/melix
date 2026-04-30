@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 import json
 from pathlib import Path
 
@@ -58,10 +59,7 @@ class EvaluationStore:
         }
         if samples:
             jsonl_path = run_root / "evaluation-samples.jsonl"
-            jsonl_path.write_text(
-                "\n".join(json.dumps(sample.to_dict()) for sample in samples) + "\n",
-                encoding="utf-8",
-            )
+            self._write_jsonl(jsonl_path, (sample.to_dict() for sample in samples))
             csv_path = run_root / "evaluation-samples.csv"
             csv_path.write_text(
                 self._samples_csv(samples),
@@ -102,10 +100,7 @@ class EvaluationStore:
         )
 
         samples_jsonl_path = run_root / "evaluation-compare-samples.jsonl"
-        samples_jsonl_path.write_text(
-            "\n".join(json.dumps(sample.to_dict()) for sample in samples) + ("\n" if samples else ""),
-            encoding="utf-8",
-        )
+        self._write_jsonl(samples_jsonl_path, (sample.to_dict() for sample in samples))
 
         report_markdown_path = run_root / "evaluation-compare-report.md"
         report_markdown_path.write_text(
@@ -120,6 +115,13 @@ class EvaluationStore:
             "samples_jsonl": samples_jsonl_path,
             "report_markdown": report_markdown_path,
         }
+
+    @staticmethod
+    def _write_jsonl(path: Path, rows: Iterable[object]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row))
+                handle.write("\n")
 
     @staticmethod
     def _summary_payload(*, job: EvaluationJob, result: EvaluationResult) -> dict[str, object]:
