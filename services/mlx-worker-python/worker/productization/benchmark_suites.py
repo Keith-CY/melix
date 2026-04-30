@@ -401,10 +401,7 @@ def _materialize_benchmark_suite(
         "default_prompt": definition.default_prompt,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    rows_path.write_text(
-        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+    _write_jsonl_rows(rows_path, rows)
     return {
         "package_path": package_path,
         "cache_key": cache_key,
@@ -565,6 +562,16 @@ def _resolve_dataset_name(
 
 def _materialized_sample_hint(*, sample_size: int, batch_factor: int) -> int:
     return max(sample_size * batch_factor, 8)
+
+
+def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        if not rows:
+            handle.write("\n")
+            return
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True))
+            handle.write("\n")
 
 
 def _load_materialized_rows(rows_path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
