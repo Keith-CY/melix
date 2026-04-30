@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from itertools import chain
 from contextlib import ExitStack
 from dataclasses import dataclass
 from dataclasses import replace
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -365,14 +366,16 @@ def build_training_dataset_artifact(
         sample_limit=sample_limit,
     )
 
-    train_samples = list(source["samples"])
-    validation_samples = list(source["validation_samples"])
-    combined_source_samples = train_samples + validation_samples
-    if not combined_source_samples:
+    source_train_samples = source["samples"]
+    source_validation_samples = source["validation_samples"]
+    if not source_train_samples and not source_validation_samples:
         raise ModelOperationError(
             code="invalid_dataset_source",
             message="Dataset builder did not resolve any usable training samples.",
         )
+
+    train_samples = source_train_samples
+    validation_samples = source_validation_samples
 
     if progress is not None:
         progress("inspect_samples", 0.45)
@@ -385,8 +388,11 @@ def build_training_dataset_artifact(
         )
         validation_strategy = "deterministic_ratio"
 
-    quality = _build_quality_report(combined_source_samples)
-    token_stats = _build_token_stats(combined_source_samples, source["format"])
+    quality = _build_quality_report(chain(source_train_samples, source_validation_samples))
+    token_stats = _build_token_stats(
+        chain(source_train_samples, source_validation_samples),
+        source["format"],
+    )
 
     manifest_payload: dict[str, Any] = {
         "dataset_id": source["dataset_id"],
@@ -954,8 +960,8 @@ def _resolve_dataset_build_source(
             "source_uri": resolved.dataset_uri,
             "source_manifest_path": str(resolved.package.manifest_path),
             "source_samples_path": str(resolved.package.samples_path),
-            "samples": list(resolved.package.normalized_samples),
-            "validation_samples": list(resolved.package.normalized_validation_samples),
+            "samples": resolved.package.normalized_samples,
+            "validation_samples": resolved.package.normalized_validation_samples,
             "response_only_supported": resolved.package.response_only_supported,
             "conversion_template": template,
             "hf_metadata": {
@@ -989,8 +995,8 @@ def _resolve_dataset_build_source(
             "source_uri": str(source_path),
             "source_manifest_path": str(package.manifest_path),
             "source_samples_path": str(package.samples_path),
-            "samples": list(package.normalized_samples),
-            "validation_samples": list(package.normalized_validation_samples),
+            "samples": package.normalized_samples,
+            "validation_samples": package.normalized_validation_samples,
             "response_only_supported": package.response_only_supported,
             "conversion_template": template,
             "hf_metadata": {},
@@ -1191,7 +1197,7 @@ def _deterministic_validation_split(
     return train_samples, validation_samples
 
 
-def _build_quality_report(samples: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
     seen: set[bytes] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
@@ -1212,11 +1218,13 @@ def _build_quality_report(samples: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _build_token_stats(samples: list[dict[str, Any]], format_name: str) -> dict[str, Any]:
+def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
     prompt_tokens: list[int] = []
     completion_tokens: list[int] = []
     total_tokens: list[int] = []
+    sample_count = 0
     for sample in samples:
+        sample_count += 1
         prompt_count, completion_count = _sample_token_counts(sample, format_name)
         prompt_tokens.append(prompt_count)
         completion_tokens.append(completion_count)
@@ -1224,7 +1232,7 @@ def _build_token_stats(samples: list[dict[str, Any]], format_name: str) -> dict[
 
     return {
         "estimator": "whitespace_v1",
-        "sample_count": len(samples),
+        "sample_count": sample_count,
         "prompt_tokens_mean": _mean_value(prompt_tokens),
         "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
         "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
