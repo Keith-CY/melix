@@ -8,8 +8,10 @@ import pytest
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset import (
+    TrainingDatasetPackage,
     build_training_dataset_artifact,
     load_training_dataset_package,
+    write_normalized_dataset_snapshot,
 )
 
 
@@ -20,6 +22,97 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_write_jsonl_rows_streams_each_row_without_joining_the_full_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "rows.jsonl"
+    writes: list[str] = []
+
+    class RecordingFile:
+        def __enter__(self) -> RecordingFile:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> RecordingFile:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return RecordingFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    training_dataset_module._write_jsonl_rows(
+        output_path,
+        [
+            {"text": "alpha"},
+            {"text": "beta"},
+        ],
+    )
+
+    assert writes == [
+        json.dumps({"text": "alpha"}) + "\n",
+        json.dumps({"text": "beta"}) + "\n",
+    ]
+
+
+def test_write_jsonl_rows_preserves_the_existing_blank_line_contract_for_empty_inputs(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "empty.jsonl"
+
+    training_dataset_module._write_jsonl_rows(output_path, [])
+
+    assert output_path.read_text(encoding="utf-8") == "\n"
+
+
+def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jsonl(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=2,
+        version="1",
+        normalized_samples=[
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "gamma", "completion": "delta"},
+        ],
+        normalized_validation_samples=[
+            {"prompt": "holdout", "completion": "answer"},
+        ],
+        validation_sample_count=1,
+        response_only_supported=False,
+    )
+
+    snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
+
+    assert snapshot.samples_path.read_text(encoding="utf-8") == (
+        '{"prompt": "alpha", "completion": "beta"}\n'
+        '{"prompt": "gamma", "completion": "delta"}\n'
+    )
+    assert snapshot.train_path.read_text(encoding="utf-8") == snapshot.samples_path.read_text(encoding="utf-8")
+    assert snapshot.valid_path is not None
+    assert snapshot.valid_path.read_text(encoding="utf-8") == (
+        '{"prompt": "holdout", "completion": "answer"}\n'
+    )
 
 
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
