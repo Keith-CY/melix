@@ -130,6 +130,7 @@ class MultimodalFastPathController:
 
         hits = 0
         misses = 0
+        adapter_hash = _adapter_hash(metadata)
         with self._image_feature_cache_lock:
             for image in prepared_request.images:
                 if not image.sha256_hex:
@@ -138,7 +139,7 @@ class MultimodalFastPathController:
                 key = self._cache_key(
                     image=image,
                     family_id=family_id,
-                    adapter_hash=_adapter_hash(metadata),
+                    adapter_hash=adapter_hash,
                     quant_profile_id=quant_profile_id,
                     metadata=metadata,
                 )
