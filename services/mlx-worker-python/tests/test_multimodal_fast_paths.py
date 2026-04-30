@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from worker.runtime.multimodal_fast_paths import (
+    ImageFeatureCacheKey,
     MULTIMODAL_DECODE_BASELINE,
     MULTIMODAL_DECODE_FALLBACK,
     MULTIMODAL_DECODE_IMAGE_CACHE_REUSE,
@@ -287,7 +288,7 @@ def test_fast_path_documents_within_request_eviction_when_request_exceeds_cache_
     assert repeat_first.image_feature_cache_misses == 1
 
 
-def test_fast_path_reuses_cached_preprocessing_fingerprint_for_same_request_shape() -> None:
+def test_fast_path_avoids_repeating_preprocessing_fingerprint_lookups_for_same_request_shape() -> None:
     _preprocessing_fingerprint.cache_clear()
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
@@ -302,9 +303,102 @@ def test_fast_path_reuses_cached_preprocessing_fingerprint_for_same_request_shap
         assert decision.image_feature_cache_hits == 0
         assert decision.image_feature_cache_misses == 2
         assert after.misses - before.misses == 1
-        assert after.hits - before.hits == 1
+        assert after.hits - before.hits == 0
     finally:
         _preprocessing_fingerprint.cache_clear()
+
+
+def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_media_shape(monkeypatch) -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    first_image = _image(b"first-image", filename="first.jpg")
+    second_image = _image(b"second-image", filename="second.jpg")
+    fingerprint_calls: list[tuple[str, str, str, str, str]] = []
+
+    def fake_fingerprint(
+        mime_type: str,
+        image_format: str,
+        vision_prompt_profile_id: str,
+        vision_tokenization_mode: str,
+        vision_max_images_per_prompt: str,
+    ) -> str:
+        fingerprint_calls.append(
+            (
+                mime_type,
+                image_format,
+                vision_prompt_profile_id,
+                vision_tokenization_mode,
+                vision_max_images_per_prompt,
+            )
+        )
+        return "fake-fingerprint"
+
+    monkeypatch.setattr("worker.runtime.multimodal_fast_paths._preprocessing_fingerprint", fake_fingerprint)
+
+    factory = controller._cache_key_factory(
+        family_id="gemma4-v1",
+        adapter_hash="adapter-a",
+        quant_profile_id="none",
+        metadata=metadata,
+    )
+
+    first_key = factory(first_image)
+    second_key = factory(second_image)
+
+    assert first_key == ImageFeatureCacheKey(
+        family_id="gemma4-v1",
+        adapter_hash="adapter-a",
+        preprocessing_fingerprint="fake-fingerprint",
+        quant_profile_id="none",
+        sha256_hex=first_image.sha256_hex,
+    )
+    assert second_key == ImageFeatureCacheKey(
+        family_id="gemma4-v1",
+        adapter_hash="adapter-a",
+        preprocessing_fingerprint="fake-fingerprint",
+        quant_profile_id="none",
+        sha256_hex=second_image.sha256_hex,
+    )
+    assert fingerprint_calls == [
+        (
+            "image/jpeg",
+            "jpg",
+            "gemma4-chatml-v1",
+            "interleaved",
+            "",
+        )
+    ]
+
+
+def test_fast_path_cache_key_wrapper_preserves_existing_key_shape() -> None:
+    loaded_model = _loaded_model()
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    image = _image(b"first-image", filename="first.jpg")
+
+    key = MultimodalFastPathController._cache_key(
+        image=image,
+        family_id="gemma4-v1",
+        adapter_hash="adapter-a",
+        quant_profile_id="none",
+        metadata=metadata,
+    )
+
+    assert key == ImageFeatureCacheKey(
+        family_id="gemma4-v1",
+        adapter_hash="adapter-a",
+        preprocessing_fingerprint=_preprocessing_fingerprint(
+            "image/jpeg",
+            "jpg",
+            "gemma4-chatml-v1",
+            "interleaved",
+            "",
+        ),
+        quant_profile_id="none",
+        sha256_hex=image.sha256_hex,
+    )
 
 
 def test_fast_path_falls_back_for_video_only_requests() -> None:
