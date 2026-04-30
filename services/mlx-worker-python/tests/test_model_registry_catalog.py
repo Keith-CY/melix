@@ -298,6 +298,42 @@ def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(mo
 
 
 
+def test_hf_cache_revision_map_reads_only_needed_snapshot_refs_and_can_early_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    (refs_dir / "heads" / "feature").parent.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "heads" / "feature").write_text("def456\n", encoding="utf-8")
+    target_ref = refs_dir / "heads" / "main"
+    target_ref.write_text("abc123\n", encoding="utf-8")
+    (refs_dir / "tags" / "release").parent.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "tags" / "release").write_text("999999\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+    original_scandir = os.scandir
+    read_paths: list[Path] = []
+    scandir_calls: list[str] = []
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_paths.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+
+    revision_map = _hf_cache_revision_map(cache_repo_dir, snapshot_ids={"abc123"})
+
+    assert revision_map == {"abc123": "heads/main"}
+    assert read_paths == [refs_dir / "heads" / "feature", refs_dir / "heads" / "main"]
+    assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads")]
+
+
 def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -721,9 +757,12 @@ def test_scan_huggingface_cache_models_reads_ref_files_once_per_repo(monkeypatch
     original_revision_map = catalog_module._hf_cache_revision_map
     revision_map_calls: list[Path] = []
 
-    def tracking_revision_map(cache_repo_path: Path) -> dict[str, str]:
+    def tracking_revision_map(cache_repo_path: Path, *, snapshot_ids: set[str] | None = None) -> dict[str, str]:
         revision_map_calls.append(cache_repo_path)
-        return original_revision_map(cache_repo_path)
+        return original_revision_map(
+            cache_repo_path,
+            snapshot_ids=snapshot_ids,
+        )
 
     monkeypatch.setattr(catalog_module, "_hf_cache_revision_map", tracking_revision_map)
 
