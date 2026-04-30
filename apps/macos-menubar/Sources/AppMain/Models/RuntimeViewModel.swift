@@ -1686,6 +1686,12 @@ public final class RuntimeViewModel {
         isEmptyPendingAssistantEntry(entry)
     }
 
+    public func isStreamingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
+        isChatStreaming
+            && entry.kind == .assistant
+            && entry.id == activeAssistantEntryID
+    }
+
     private let client: any ControlPlaneXPCClient
     private let metrics: MenuBarMetricsStore
     private let operatorSessionStore: any OperatorSessionStoring
