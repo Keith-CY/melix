@@ -2872,6 +2872,72 @@ def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models
     assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
 
 
+def test_job_registry_snapshot_records_multimodal_publish_lineage_for_derived_models() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-vlm", "adapter_set_hash": "vlm-hash-b"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    activation_manifest_path = "/runtime/activate/melix-dev-vlm/manifest.json"
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-vlm",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_set_hash": "vlm-hash-b",
+                "derived_model_id": "melix-dev-vlm",
+                "derived_model_path": "/runtime/activate/melix-dev-vlm",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, activation_manifest_path)
+
+    publish_job = registry.start("upload", "melix-dev-text", "/runtime/upload")
+    registry.attach_manifest(
+        publish_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-vlm",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "distribution_contract": "merged_multimodal",
+                "processor_config_files": ["processor_config.json"],
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-vlm",
+                    "local_manifest_path": activation_manifest_path,
+                    "source_job_id": activation_job.job_id,
+                    "source_adapter_job_id": train_job.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-vlm",
+                },
+            }
+        ),
+    )
+    registry.complete(publish_job.job_id, "/runtime/upload/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+
+    publish = next(p for p in snapshot["publishes"] if p["job_id"] == publish_job.job_id)
+    assert publish["distribution_contract"] == "merged_multimodal"
+    assert publish["processor_config_files"] == ["processor_config.json"]
+
+    derived_model = snapshot["derived_models"][0]
+    assert derived_model["published_repo"] == "melix/models/melix-dev-vlm"
+    assert derived_model["distribution_contract"] == "merged_multimodal"
+    assert derived_model["processor_config_files"] == ["processor_config.json"]
+    assert derived_model["published_state"] == "published"
+
+
 def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_uploads() -> None:
     registry = ModelOpsJobRegistry()
 
