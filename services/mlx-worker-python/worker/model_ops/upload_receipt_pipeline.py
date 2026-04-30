@@ -261,12 +261,15 @@ class UploadReceiptPipeline:
             manifest_payload["bundle_path"] = str(receipt_path)
             manifest_payload["manifest_bytes"] = manifest_bytes
             manifest_payload["artifact_bytes"] = artifact_bytes
-            next_manifest_bytes = self._write_manifest(receipt_path, manifest_payload)
+            next_manifest_bytes = self._manifest_size(manifest_payload)
             next_artifact_bytes = next_manifest_bytes
             if next_manifest_bytes == manifest_bytes and next_artifact_bytes == artifact_bytes:
                 break
             manifest_bytes = next_manifest_bytes
             artifact_bytes = next_artifact_bytes
+        manifest_payload["manifest_bytes"] = manifest_bytes
+        manifest_payload["artifact_bytes"] = artifact_bytes
+        self._write_manifest(receipt_path, manifest_payload)
 
         return UploadReceiptPipelineResult(
             receipt_path=receipt_path,
@@ -519,8 +522,16 @@ class UploadReceiptPipeline:
         return sorted(f for f in published_files if "/" not in f and f in _PROCESSOR_CONFIG_FILENAMES)
 
     @staticmethod
+    def _encode_manifest(payload: dict[str, Any]) -> bytes:
+        return json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+
+    @staticmethod
+    def _manifest_size(payload: dict[str, Any]) -> int:
+        return len(UploadReceiptPipeline._encode_manifest(payload))
+
+    @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
-        encoded = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        encoded = UploadReceiptPipeline._encode_manifest(payload)
         path.write_bytes(encoded)
         return len(encoded)
 
