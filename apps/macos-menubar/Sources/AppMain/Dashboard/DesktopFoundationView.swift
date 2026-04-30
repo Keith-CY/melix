@@ -129,7 +129,7 @@ struct DesktopModelsTabView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(model.modelID)
+                            Text(model.displayName)
                                 .font(.headline)
                             if !model.runtimeModeText.isEmpty {
                                 // Capsule badge matching the pattern used in
@@ -157,7 +157,7 @@ struct DesktopModelsTabView: View {
                                     .accessibilityLabel(model.runtimeCacheStatusText)
                             }
                         }
-                        Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
+                        Text("\(model.modelID) • \(model.kind) • \(model.stateText) • \(model.maxContext) ctx")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if model.runtimeCacheMissing {
@@ -316,8 +316,11 @@ struct DesktopModelsTabView: View {
             if let primaryModel = viewModel.primaryModel {
                 GroupBox("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(primaryModel.modelID)
+                        Text(primaryModel.displayName)
                             .font(.headline)
+                        Text(primaryModel.modelID)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             TextField(
                                 "Alias",
@@ -724,7 +727,7 @@ private struct DesktopResidencyRowsSection: View {
                 ForEach(models, id: \RuntimeModelRow.id) { (model: RuntimeModelRow) in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(model.modelID)
+                            Text(model.displayName)
                                 .font(.headline)
                             Spacer()
                             Text(model.stateText)
@@ -758,9 +761,9 @@ struct DesktopToolsTabView: View {
             if let primaryModel = viewModel.primaryModel {
                 MelixSectionCard("Primary Model") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(primaryModel.modelID)
+                        Text(primaryModel.displayName)
                             .font(.headline)
-                        Text(primaryModel.alias.isEmpty ? primaryModel.kind : primaryModel.alias)
+                        Text("\(primaryModel.modelID) • \(primaryModel.kind)")
                             .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
                             Text("Quant Profile")

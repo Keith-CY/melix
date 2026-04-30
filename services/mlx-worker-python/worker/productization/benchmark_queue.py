@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,11 +63,20 @@ class BenchmarkQueueStore:
         if not queue_root.is_dir():
             return []
 
-        records = [
-            self._load_record(path)
-            for path in queue_root.iterdir()
-            if path.suffix == ".json" and path.is_file()
-        ]
+        records = []
+        try:
+            with os.scandir(queue_root) as entries:
+                for entry in entries:
+                    if not entry.name.endswith(".json"):
+                        continue
+                    try:
+                        if not entry.is_file():
+                            continue
+                    except OSError:
+                        continue
+                    records.append(self._load_record(Path(entry.path)))
+        except OSError:
+            return []
         return sorted(records, key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
 
     def transition(

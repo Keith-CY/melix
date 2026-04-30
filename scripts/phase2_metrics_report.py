@@ -1281,6 +1281,24 @@ def decode_active_kv_metrics(
             "active_kv_decode_model_eval_sync_total_us": 0,
             "active_kv_decode_model_eval_sync_call_count": 0,
             "active_kv_decode_model_eval_sync_avg_us": 0,
+            "active_kv_decode_sample_total_us": 0,
+            "active_kv_decode_sample_call_count": 0,
+            "active_kv_decode_sample_avg_us": 0,
+            "active_kv_decode_token_id_total_us": 0,
+            "active_kv_decode_token_id_call_count": 0,
+            "active_kv_decode_token_id_avg_us": 0,
+            "active_kv_decode_detokenize_total_us": 0,
+            "active_kv_decode_detokenize_call_count": 0,
+            "active_kv_decode_detokenize_avg_us": 0,
+            "active_kv_decode_stream_yield_total_us": 0,
+            "active_kv_decode_stream_yield_call_count": 0,
+            "active_kv_decode_stream_yield_avg_us": 0,
+            "active_kv_decode_summary_total_us": 0,
+            "active_kv_decode_summary_call_count": 0,
+            "active_kv_decode_summary_avg_us": 0,
+            "active_kv_turboquant_candidate_total_us": 0,
+            "active_kv_turboquant_candidate_call_count": 0,
+            "active_kv_turboquant_candidate_avg_us": 0,
             "active_kv_fused_attention_total_us": 0,
             "active_kv_fused_attention_call_count": 0,
             "active_kv_fused_attention_avg_us": 0,
@@ -1351,6 +1369,60 @@ def decode_active_kv_metrics(
         ),
         "active_kv_decode_model_eval_sync_avg_us": exported.get(
             "swift_text.active_kv_decode_model_eval_sync_avg_us", 0
+        ),
+        "active_kv_decode_sample_total_us": exported.get(
+            "swift_text.active_kv_decode_sample_total_us", 0
+        ),
+        "active_kv_decode_sample_call_count": exported.get(
+            "swift_text.active_kv_decode_sample_call_count", 0
+        ),
+        "active_kv_decode_sample_avg_us": exported.get(
+            "swift_text.active_kv_decode_sample_avg_us", 0
+        ),
+        "active_kv_decode_token_id_total_us": exported.get(
+            "swift_text.active_kv_decode_token_id_total_us", 0
+        ),
+        "active_kv_decode_token_id_call_count": exported.get(
+            "swift_text.active_kv_decode_token_id_call_count", 0
+        ),
+        "active_kv_decode_token_id_avg_us": exported.get(
+            "swift_text.active_kv_decode_token_id_avg_us", 0
+        ),
+        "active_kv_decode_detokenize_total_us": exported.get(
+            "swift_text.active_kv_decode_detokenize_total_us", 0
+        ),
+        "active_kv_decode_detokenize_call_count": exported.get(
+            "swift_text.active_kv_decode_detokenize_call_count", 0
+        ),
+        "active_kv_decode_detokenize_avg_us": exported.get(
+            "swift_text.active_kv_decode_detokenize_avg_us", 0
+        ),
+        "active_kv_decode_stream_yield_total_us": exported.get(
+            "swift_text.active_kv_decode_stream_yield_total_us", 0
+        ),
+        "active_kv_decode_stream_yield_call_count": exported.get(
+            "swift_text.active_kv_decode_stream_yield_call_count", 0
+        ),
+        "active_kv_decode_stream_yield_avg_us": exported.get(
+            "swift_text.active_kv_decode_stream_yield_avg_us", 0
+        ),
+        "active_kv_decode_summary_total_us": exported.get(
+            "swift_text.active_kv_decode_summary_total_us", 0
+        ),
+        "active_kv_decode_summary_call_count": exported.get(
+            "swift_text.active_kv_decode_summary_call_count", 0
+        ),
+        "active_kv_decode_summary_avg_us": exported.get(
+            "swift_text.active_kv_decode_summary_avg_us", 0
+        ),
+        "active_kv_turboquant_candidate_total_us": exported.get(
+            "swift_text.active_kv_turboquant_candidate_total_us", 0
+        ),
+        "active_kv_turboquant_candidate_call_count": exported.get(
+            "swift_text.active_kv_turboquant_candidate_call_count", 0
+        ),
+        "active_kv_turboquant_candidate_avg_us": exported.get(
+            "swift_text.active_kv_turboquant_candidate_avg_us", 0
         ),
         "active_kv_fused_attention_total_us": exported.get(
             "swift_text.active_kv_fused_attention_total_us", 0
@@ -1497,6 +1569,12 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
         model_avg = median_numeric(active_rows, "active_kv_decode_model_avg_us")
         token_eval_avg = median_numeric(active_rows, "active_kv_decode_token_eval_avg_us")
         model_eval_sync_avg = median_numeric(active_rows, "active_kv_decode_model_eval_sync_avg_us")
+        sample_avg = median_numeric(active_rows, "active_kv_decode_sample_avg_us")
+        token_id_avg = median_numeric(active_rows, "active_kv_decode_token_id_avg_us")
+        detokenize_avg = median_numeric(active_rows, "active_kv_decode_detokenize_avg_us")
+        stream_yield_avg = median_numeric(active_rows, "active_kv_decode_stream_yield_avg_us")
+        summary_avg = median_numeric(active_rows, "active_kv_decode_summary_avg_us")
+        turboquant_candidate_avg = median_numeric(active_rows, "active_kv_turboquant_candidate_avg_us")
         fused_attention_avg = median_numeric(active_rows, "active_kv_fused_attention_avg_us")
         fused_attention_route_avg = median_numeric(active_rows, "active_kv_fused_attention_route_avg_us")
         quantize_avg = median_numeric(active_rows, "active_kv_decode_quantize_avg_us")
@@ -1516,6 +1594,12 @@ def build_decode_comparisons(rows: list[dict[str, Any]]) -> dict[str, dict[str, 
             "active_kv_decode_model_avg_us": model_avg,
             "active_kv_decode_token_eval_avg_us": token_eval_avg,
             "active_kv_decode_model_eval_sync_avg_us": model_eval_sync_avg,
+            "active_kv_decode_sample_avg_us": sample_avg,
+            "active_kv_decode_token_id_avg_us": token_id_avg,
+            "active_kv_decode_detokenize_avg_us": detokenize_avg,
+            "active_kv_decode_stream_yield_avg_us": stream_yield_avg,
+            "active_kv_decode_summary_avg_us": summary_avg,
+            "active_kv_turboquant_candidate_avg_us": turboquant_candidate_avg,
             "active_kv_fused_attention_avg_us": fused_attention_avg,
             "active_kv_fused_attention_route_avg_us": fused_attention_route_avg,
             "active_kv_decode_loop_total_us": median_numeric(active_rows, "active_kv_decode_loop_total_us"),
@@ -1571,6 +1655,18 @@ def build_active_kv_release_gates(
                 "decode_token_eval_total_us": 0,
                 "decode_model_eval_sync_total_us": 0,
                 "decode_model_eval_sync_call_count": 0,
+                "decode_sample_total_us": 0,
+                "decode_sample_call_count": 0,
+                "decode_token_id_total_us": 0,
+                "decode_token_id_call_count": 0,
+                "decode_detokenize_total_us": 0,
+                "decode_detokenize_call_count": 0,
+                "decode_stream_yield_total_us": 0,
+                "decode_stream_yield_call_count": 0,
+                "decode_summary_total_us": 0,
+                "decode_summary_call_count": 0,
+                "turboquant_candidate_total_us": 0,
+                "turboquant_candidate_call_count": 0,
                 "fused_attention_total_us": 0,
                 "fused_attention_call_count": 0,
                 "fused_attention_route_total_us": 0,
@@ -1621,6 +1717,36 @@ def build_active_kv_release_gates(
     )
     decode_model_eval_sync_call_count = sum(
         int_value(row.get("active_kv_decode_model_eval_sync_call_count")) for row in turbo_rows
+    )
+    decode_sample_total_us = sum(int_value(row.get("active_kv_decode_sample_total_us")) for row in turbo_rows)
+    decode_sample_call_count = sum(
+        int_value(row.get("active_kv_decode_sample_call_count")) for row in turbo_rows
+    )
+    decode_token_id_total_us = sum(int_value(row.get("active_kv_decode_token_id_total_us")) for row in turbo_rows)
+    decode_token_id_call_count = sum(
+        int_value(row.get("active_kv_decode_token_id_call_count")) for row in turbo_rows
+    )
+    decode_detokenize_total_us = sum(
+        int_value(row.get("active_kv_decode_detokenize_total_us")) for row in turbo_rows
+    )
+    decode_detokenize_call_count = sum(
+        int_value(row.get("active_kv_decode_detokenize_call_count")) for row in turbo_rows
+    )
+    decode_stream_yield_total_us = sum(
+        int_value(row.get("active_kv_decode_stream_yield_total_us")) for row in turbo_rows
+    )
+    decode_stream_yield_call_count = sum(
+        int_value(row.get("active_kv_decode_stream_yield_call_count")) for row in turbo_rows
+    )
+    decode_summary_total_us = sum(int_value(row.get("active_kv_decode_summary_total_us")) for row in turbo_rows)
+    decode_summary_call_count = sum(
+        int_value(row.get("active_kv_decode_summary_call_count")) for row in turbo_rows
+    )
+    turboquant_candidate_total_us = sum(
+        int_value(row.get("active_kv_turboquant_candidate_total_us")) for row in turbo_rows
+    )
+    turboquant_candidate_call_count = sum(
+        int_value(row.get("active_kv_turboquant_candidate_call_count")) for row in turbo_rows
     )
     fused_attention_total_us = sum(
         int_value(row.get("active_kv_fused_attention_total_us")) for row in turbo_rows
@@ -1685,6 +1811,18 @@ def build_active_kv_release_gates(
             "decode_token_eval_total_us": decode_token_eval_total_us,
             "decode_model_eval_sync_total_us": decode_model_eval_sync_total_us,
             "decode_model_eval_sync_call_count": decode_model_eval_sync_call_count,
+            "decode_sample_total_us": decode_sample_total_us,
+            "decode_sample_call_count": decode_sample_call_count,
+            "decode_token_id_total_us": decode_token_id_total_us,
+            "decode_token_id_call_count": decode_token_id_call_count,
+            "decode_detokenize_total_us": decode_detokenize_total_us,
+            "decode_detokenize_call_count": decode_detokenize_call_count,
+            "decode_stream_yield_total_us": decode_stream_yield_total_us,
+            "decode_stream_yield_call_count": decode_stream_yield_call_count,
+            "decode_summary_total_us": decode_summary_total_us,
+            "decode_summary_call_count": decode_summary_call_count,
+            "turboquant_candidate_total_us": turboquant_candidate_total_us,
+            "turboquant_candidate_call_count": turboquant_candidate_call_count,
             "fused_attention_total_us": fused_attention_total_us,
             "fused_attention_call_count": fused_attention_call_count,
             "fused_attention_route_total_us": fused_attention_route_total_us,
@@ -1752,6 +1890,18 @@ def build_active_kv_fused_candidate_probes(
                 "decode_model_eval_sync_call_count": gate.get(
                     "decode_model_eval_sync_call_count"
                 ),
+                "decode_sample_total_us": gate.get("decode_sample_total_us"),
+                "decode_sample_call_count": gate.get("decode_sample_call_count"),
+                "decode_token_id_total_us": gate.get("decode_token_id_total_us"),
+                "decode_token_id_call_count": gate.get("decode_token_id_call_count"),
+                "decode_detokenize_total_us": gate.get("decode_detokenize_total_us"),
+                "decode_detokenize_call_count": gate.get("decode_detokenize_call_count"),
+                "decode_stream_yield_total_us": gate.get("decode_stream_yield_total_us"),
+                "decode_stream_yield_call_count": gate.get("decode_stream_yield_call_count"),
+                "decode_summary_total_us": gate.get("decode_summary_total_us"),
+                "decode_summary_call_count": gate.get("decode_summary_call_count"),
+                "turboquant_candidate_total_us": gate.get("turboquant_candidate_total_us"),
+                "turboquant_candidate_call_count": gate.get("turboquant_candidate_call_count"),
                 "fused_attention_total_us": gate.get("fused_attention_total_us"),
                 "fused_attention_call_count": gate.get("fused_attention_call_count"),
                 "fused_attention_route_total_us": gate.get("fused_attention_route_total_us"),
@@ -2175,6 +2325,12 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_decode_token_eval_call_count",
                 "active_kv_decode_token_eval_avg_us",
                 "active_kv_decode_model_eval_sync_avg_us",
+                "active_kv_decode_sample_avg_us",
+                "active_kv_decode_token_id_avg_us",
+                "active_kv_decode_detokenize_avg_us",
+                "active_kv_decode_stream_yield_avg_us",
+                "active_kv_decode_summary_avg_us",
+                "active_kv_turboquant_candidate_avg_us",
                 "active_kv_fused_attention_avg_us",
                 "active_kv_fused_attention_route_avg_us",
                 "active_kv_decode_loop_total_us",
@@ -2202,6 +2358,12 @@ def render_report(report: dict[str, Any]) -> str:
                 "active_kv_decode_model_avg_us",
                 "active_kv_decode_token_eval_avg_us",
                 "active_kv_decode_model_eval_sync_avg_us",
+                "active_kv_decode_sample_avg_us",
+                "active_kv_decode_token_id_avg_us",
+                "active_kv_decode_detokenize_avg_us",
+                "active_kv_decode_stream_yield_avg_us",
+                "active_kv_decode_summary_avg_us",
+                "active_kv_turboquant_candidate_avg_us",
                 "active_kv_fused_attention_avg_us",
                 "active_kv_fused_attention_route_avg_us",
                 "active_kv_decode_loop_total_us",
@@ -2230,6 +2392,12 @@ def render_report(report: dict[str, Any]) -> str:
                 "decode_model_call_count",
                 "decode_token_eval_total_us",
                 "decode_model_eval_sync_total_us",
+                "decode_sample_total_us",
+                "decode_token_id_total_us",
+                "decode_detokenize_total_us",
+                "decode_stream_yield_total_us",
+                "decode_summary_total_us",
+                "turboquant_candidate_total_us",
                 "fused_attention_total_us",
                 "fused_attention_call_count",
                 "fused_attention_route_total_us",

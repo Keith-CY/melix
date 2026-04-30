@@ -1704,7 +1704,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private static func defaultModelSettings() -> Melix_Controlplane_V1_ModelSettings {
         var settings = Melix_Controlplane_V1_ModelSettings()
-        settings.alias = "Melix Dev Text"
+        settings.alias = "Melix Text"
         settings.memoryPolicy = .memoryResidencyEvictable
         settings.defaultAccelerationMode = .baseline
         return settings
@@ -1764,7 +1764,7 @@ func makeMenuBarImageModelSummary(
         + (supportsEdit ? ["image_edit"] : [])
     model.supportedModalities = ["text", "image"]
     model.maxContext = 0
-    model.settings.alias = "Melix Dev Image"
+    model.settings.alias = "Melix Image"
     model.settings.ext["melix.image.family_id"] = familyID
     model.settings.ext["melix.image.supports_generation"] = supportsGeneration ? "true" : "false"
     model.settings.ext["melix.image.supports_edit"] = supportsEdit ? "true" : "false"

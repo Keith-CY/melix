@@ -295,10 +295,10 @@ struct DesktopCommandCenterView: View {
                     GroupBox("Primary Model") {
                         VStack(alignment: .leading, spacing: 6) {
                             if let model = foundation.models.first {
-                                Text(model.modelID)
+                                Text(model.displayName)
                                     .font(.headline)
                                     .lineLimit(1)
-                                Text("\(model.stateText) • \(model.memoryPolicyText)")
+                                Text("\(model.modelID) • \(model.stateText) • \(model.memoryPolicyText)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Text(model.memoryText)
@@ -898,7 +898,7 @@ private struct DesktopServerSessionEditor: View {
                                 )
                             ) {
                                 ForEach(viewModel.serveableModels, id: \.modelID) { model in
-                                    Text(model.modelID).tag(model.modelID)
+                                    Text(model.displayNameWithID).tag(model.modelID)
                                 }
                             }
 
@@ -1363,9 +1363,9 @@ private struct DesktopToolsWorkspaceView: View {
                     if let primaryModel = viewModel.primaryModel {
                         GroupBox("Primary Model") {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(primaryModel.modelID)
+                                Text(primaryModel.displayName)
                                     .font(.headline)
-                                Text(primaryModel.stateText)
+                                Text("\(primaryModel.modelID) • \(primaryModel.stateText)")
                                     .foregroundStyle(.secondary)
                                 Text(primaryModel.memoryText)
                                     .font(.caption)
@@ -1902,7 +1902,7 @@ struct DesktopTrainingToolSectionView: View {
                     DesktopEditorialField("Base Model") {
                         Picker("Base Model", selection: stringBinding(\.selectedLoraModelID)) {
                             ForEach(viewModel.loraCapableModels, id: \.modelID) { model in
-                                Text(model.modelID).tag(model.modelID)
+                                Text(model.displayNameWithID).tag(model.modelID)
                             }
                         }
                         .labelsHidden()
@@ -3297,7 +3297,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 )
                             ) {
                                 ForEach(viewModel.benchmarkModels) { model in
-                                    Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                    Text(model.displayNameWithID)
                                         .tag(model.modelID)
                                 }
                             }
@@ -4068,7 +4068,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 )
                             ) {
                                 ForEach(viewModel.evaluationModels) { model in
-                                    Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                    Text(model.displayNameWithID)
                                         .tag(model.modelID)
                                 }
                             }
@@ -4464,7 +4464,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         HStack {
                                             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                                                 .foregroundStyle(isSelected ? MelixDesignTokens.accent : .secondary)
-                                            Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
+                                            Text(model.displayNameWithID)
                                                 .font(.caption)
                                                 .foregroundStyle(.primary)
                                             Spacer()

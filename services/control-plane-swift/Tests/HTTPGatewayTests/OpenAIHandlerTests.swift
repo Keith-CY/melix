@@ -2744,6 +2744,48 @@ struct OpenAIHandlerTests {
         #expect(body.contains("\"owned_by\":\"melix\""))
     }
 
+    @Test("GET /v1/models hides internal operations and exposes user-facing metadata")
+    func getModelsHidesInternalOperationsAndExposesUserFacingMetadata() async throws {
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/models", headers: [:], body: Data())
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
+        let ids = Set(rows.compactMap { $0["id"] as? String })
+        let text = try #require(rows.first { ($0["id"] as? String) == "melix-dev-text" })
+        let textMetadata = try #require(text["metadata"] as? [String: Any])
+        let image = try #require(rows.first { ($0["id"] as? String) == "melix-dev-image" })
+        let imageMetadata = try #require(image["metadata"] as? [String: Any])
+        let imageTasks = Set(
+            (imageMetadata["melix.capability.supported_tasks"] as? String ?? "")
+                .split(separator: ",")
+                .map(String.init)
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(ids.contains("melix-dev-text"))
+        #expect(ids.contains("melix-dev-image"))
+        #expect(ids.contains("melix-dev-model-ops") == false)
+        #expect(textMetadata["melix.display_name"] as? String == "Melix Text")
+        #expect(textMetadata["melix.kind"] as? String == "text")
+        #expect(textMetadata["melix.capability.class"] as? String == "text")
+        #expect(textMetadata["melix.capability.supported_tasks"] as? String == "generate")
+        #expect(textMetadata["melix.capability.supported_modalities"] as? String == "text")
+        #expect(textMetadata["melix.model_path"] == nil)
+        #expect(imageMetadata["melix.display_name"] as? String == "Melix Image")
+        #expect(imageMetadata["melix.capability.class"] as? String == "image_generation")
+        #expect(imageTasks.contains("image_generate"))
+    }
+
     @Test("GET /v1/models syncs registry models and exposes structured registry identity metadata")
     func getModelsSyncsRegistryModelsAndExposesStructuredRegistryIdentityMetadata() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

@@ -417,6 +417,7 @@ public struct DesktopFoundationState: Equatable, Sendable {
             dashboardCards: dashboardCards,
             queueLanes: queueLanes,
             models: snapshot.models
+                .filter(ModelCatalogPresentation.isUserVisible)
                 .sorted { $0.modelID < $1.modelID }
                 .map(makeRuntimeModelRow),
             settings: settings,

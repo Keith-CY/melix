@@ -11,8 +11,10 @@ from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_LOAD_NATIVE_QUANTIZED,
     MultimodalFastPathController,
     _preprocessing_fingerprint,
+    fast_path_probe_signature,
 )
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.video_preprocessing import PreparedVideoInput
 
 
 def _image(
@@ -34,15 +36,40 @@ def _image(
     )
 
 
-def _request(images: list[PreparedImageInput] | None = None) -> PreparedVisionRequest:
+def _video(payload: bytes = b"video") -> PreparedVideoInput:
+    import hashlib
+
+    return PreparedVideoInput(
+        source_kind="inline",
+        reference="inline:video.mp4",
+        bytes_data=payload,
+        mime_type="video/mp4",
+        format="mp4",
+        filename="video.mp4",
+        byte_length=len(payload),
+        duration_ms=1000,
+        frame_budget=4,
+        start_ms=0,
+        end_ms=1000,
+        sha256_hex=hashlib.sha256(payload).hexdigest(),
+    )
+
+
+def _request(
+    images: list[PreparedImageInput] | None = None,
+    *,
+    videos: list[PreparedVideoInput] | None = None,
+) -> PreparedVisionRequest:
     return PreparedVisionRequest(
         prompt_text="Describe the image.",
         images=list(images or []),
-        videos=[],
+        videos=list(videos or []),
         video_frame_policies=[],
         preprocess_latency_ms=1.0,
-        preprocess_input_bytes=sum(image.byte_length for image in images or []),
-        preprocess_peak_memory_bytes=sum(image.byte_length for image in images or []),
+        preprocess_input_bytes=sum(image.byte_length for image in images or [])
+        + sum(video.byte_length for video in videos or []),
+        preprocess_peak_memory_bytes=sum(image.byte_length for image in images or [])
+        + sum(video.byte_length for video in videos or []),
         prompt_hash_hex="prompt",
         multimodal_hash_hex="multi",
     )
@@ -278,3 +305,30 @@ def test_fast_path_reuses_cached_preprocessing_fingerprint_for_same_request_shap
         assert after.hits - before.hits == 1
     finally:
         _preprocessing_fingerprint.cache_clear()
+
+
+def test_fast_path_falls_back_for_video_only_requests() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(_loaded_model(), _request(videos=[_video()]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 0
+
+
+def test_fast_path_probe_signature_uses_nested_metadata_precedence() -> None:
+    loaded_model = _loaded_model(top_level_family_id="stale-family")
+    signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+
+    assert signature[0] == "multi"
+    assert "stale-family" not in signature[2]
+    assert "gemma4-v1" in signature[2]
+    assert "melix-dev-vlm" in signature[1]
+
+
+def test_fast_path_probe_signature_ignores_non_dict_loaded_models() -> None:
+    signature = fast_path_probe_signature(object(), _request([_image(b"image")]))
+
+    assert signature == ("multi", "()", "()")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +50,14 @@ class LoraExperimentStore:
         train_root = jobs_root / "train_lora"
         runs_by_id: dict[str, dict[str, Any]] = {}
         if train_root.exists():
-            for run_dir in sorted(train_root.glob("model-ops-*")):
-                if run_dir.is_dir() is False:
+            for entry in sorted((entry for entry in os.scandir(train_root) if entry.name.startswith("model-ops-")), key=lambda entry: entry.name):
+                try:
+                    is_dir = entry.is_dir()
+                except OSError:
                     continue
+                if is_dir is False:
+                    continue
+                run_dir = Path(entry.path)
                 run_path = run_dir / self.run_record_name
                 payload = self._read_payload(run_path)
                 run_id = str(payload.get("run_id", "")).strip()

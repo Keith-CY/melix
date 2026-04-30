@@ -22,6 +22,39 @@ from worker.productization.benchmark_export import (
 from worker.productization.evaluation_store import EvaluationStore
 
 
+def test_write_jsonl_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
+    writes: list[str] = []
+
+    class FakeFile:
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+        def __enter__(self) -> FakeFile:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    target_path = Path("/tmp/evaluation-samples.jsonl")
+
+    def fake_open(self: Path, mode: str = "r", encoding: str | None = None) -> FakeFile:
+        assert self == target_path
+        assert mode == "w"
+        assert encoding == "utf-8"
+        return FakeFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    rows = ({"sample_id": "sample-1"}, {"sample_id": "sample-2"})
+
+    EvaluationStore._write_jsonl(target_path, rows)
+
+    expected_payload = "".join(json.dumps(row) + "\n" for row in rows)
+    assert "".join(writes) == expected_payload
+    assert writes == [json.dumps(rows[0]), "\n", json.dumps(rows[1]), "\n"]
+
+
 def test_persist_result_writes_expected_artifact_names_and_payloads(tmp_path: Path) -> None:
     store = EvaluationStore()
     jobs_root = tmp_path / "evaluation"
@@ -624,6 +657,7 @@ def test_compare_job_persists_adapter_target_lineage(tmp_path: Path) -> None:
     job_payload = json.loads(persisted["job"].read_text(encoding="utf-8"))
     assert "target_lineage" in job_payload
     assert len(job_payload["target_lineage"]) == 2
+    assert persisted["samples_jsonl"].read_text(encoding="utf-8") == ""
     registered, ephemeral = job_payload["target_lineage"]
     assert registered["materialization_kind"] == "registered"
     assert registered["adapter_manifest_path"] == ""

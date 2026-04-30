@@ -20,6 +20,7 @@ from worker.model_registry.catalog import (
     _hf_cache_revision,
     _hf_cache_revision_map,
     _infer_embedding_identity,
+    _is_hf_cache_pruned_subtree,
     _is_hf_cache_snapshot_dir,
     _local_model_id,
     _read_text_prefix,
@@ -298,6 +299,42 @@ def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(mo
 
 
 
+def test_hf_cache_revision_map_reads_only_needed_snapshot_refs_and_can_early_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    (refs_dir / "heads" / "feature").parent.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "heads" / "feature").write_text("def456\n", encoding="utf-8")
+    target_ref = refs_dir / "heads" / "main"
+    target_ref.write_text("abc123\n", encoding="utf-8")
+    (refs_dir / "tags" / "release").parent.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "tags" / "release").write_text("999999\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+    original_scandir = os.scandir
+    read_paths: list[Path] = []
+    scandir_calls: list[str] = []
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_paths.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+
+    revision_map = _hf_cache_revision_map(cache_repo_dir, snapshot_ids={"abc123"})
+
+    assert revision_map == {"abc123": "heads/main"}
+    assert read_paths == [refs_dir / "heads" / "feature", refs_dir / "heads" / "main"]
+    assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads")]
+
+
 def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -562,6 +599,98 @@ def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_f
 
 
 
+def test_registry_root_tree_prunes_hf_cache_snapshot_and_refs_subtrees(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    refs_dir = root / "models--mlx-community--Tiny" / "refs"
+    plain_model_dir = root / "plain-local"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    (snapshot_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+    _write_model_config(plain_model_dir, {"model_type": "qwen3"})
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert plain_dirs == [plain_model_dir.resolve()]
+    assert snapshot_dir.resolve() not in plain_dirs
+    assert manifest_paths == []
+
+
+
+def test_registry_root_tree_does_not_prune_invalid_models_prefix_dirs(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    invalid_snapshot_dir = root / "models--custom" / "snapshots" / "v1"
+    invalid_refs_dir = root / "models--custom" / "refs"
+    _write_model_config(invalid_snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(invalid_snapshot_dir)
+    (invalid_snapshot_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    invalid_refs_dir.mkdir(parents=True, exist_ok=True)
+    (invalid_refs_dir / "main").write_text("v1\n", encoding="utf-8")
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert _is_hf_cache_pruned_subtree(root.resolve(), (root / "models--custom" / "snapshots").resolve()) is False
+    assert _is_hf_cache_pruned_subtree(root.resolve(), invalid_refs_dir.resolve()) is False
+    assert _is_hf_cache_snapshot_dir(root.resolve(), invalid_snapshot_dir.resolve()) is False
+    assert invalid_snapshot_dir.resolve() in plain_dirs
+    assert manifest_paths == []
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["models--custom/snapshots/v1"]
+    model = snapshot.models[0]
+    assert model.model_path == str(invalid_snapshot_dir.resolve())
+    assert model.ext["melix.source_kind"] == "local_mlx_directory"
+    assert "melix.hf_repo_id" not in model.ext
+
+
+def test_is_hf_cache_pruned_subtree_returns_false_for_paths_outside_root(tmp_path: Path) -> None:
+    root = (tmp_path / "root").resolve()
+    outside_snapshot_dir = (tmp_path / "outside" / "models--mlx-community--Tiny" / "snapshots").resolve()
+
+    assert _is_hf_cache_pruned_subtree(root, outside_snapshot_dir) is False
+
+
+def test_registry_snapshot_reuses_single_plain_and_manifest_tree_walk_per_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    manifest_dir = root / "alpha-provider" / "AlphaModel" / "q4"
+    _write_registry_manifest(manifest_dir, model_id="alpha-provider/AlphaModel/q4")
+    plain_model_dir = root / "beta-local-a"
+    _write_model_config(plain_model_dir, {"model_type": "qwen3"})
+    _write_weights(plain_model_dir)
+    (plain_model_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+
+    snapshot = catalog.registry_snapshot()
+
+    discovered_ids = [model.model_id for model in snapshot.models]
+    resolved_root = os.fspath(root.resolve())
+    provider_dir = os.fspath((root / "alpha-provider").resolve())
+
+    assert discovered_ids == ["alpha-provider/AlphaModel/q4", "beta-local-a"]
+    assert scandir_calls.count(resolved_root) == 2
+    assert scandir_calls.count(provider_dir) == 1
+
+
+
 def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
     text_model = WorkerModelCatalog.dev_text_model(
         {
@@ -721,9 +850,12 @@ def test_scan_huggingface_cache_models_reads_ref_files_once_per_repo(monkeypatch
     original_revision_map = catalog_module._hf_cache_revision_map
     revision_map_calls: list[Path] = []
 
-    def tracking_revision_map(cache_repo_path: Path) -> dict[str, str]:
+    def tracking_revision_map(cache_repo_path: Path, *, snapshot_ids: set[str] | None = None) -> dict[str, str]:
         revision_map_calls.append(cache_repo_path)
-        return original_revision_map(cache_repo_path)
+        return original_revision_map(
+            cache_repo_path,
+            snapshot_ids=snapshot_ids,
+        )
 
     monkeypatch.setattr(catalog_module, "_hf_cache_revision_map", tracking_revision_map)
 

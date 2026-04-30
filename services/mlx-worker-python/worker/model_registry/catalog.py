@@ -260,9 +260,17 @@ def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterabl
 
 
 
-def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
+def _hf_cache_revision_map(
+    cache_repo_dir: Path,
+    *,
+    snapshot_ids: set[str] | None = None,
+) -> dict[str, str]:
     refs_dir = cache_repo_dir / "refs"
     revisions: dict[str, str] = {}
+    remaining_snapshot_ids = set(snapshot_ids) if snapshot_ids is not None else None
+    if remaining_snapshot_ids is not None and not remaining_snapshot_ids:
+        return revisions
+
     if refs_dir.is_dir():
         try:
             for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
@@ -272,7 +280,14 @@ def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
                     continue
                 if not snapshot_id:
                     continue
+                if remaining_snapshot_ids is not None and snapshot_id not in remaining_snapshot_ids:
+                    continue
+
                 revisions.setdefault(snapshot_id, relative_name)
+                if remaining_snapshot_ids is not None:
+                    remaining_snapshot_ids.discard(snapshot_id)
+                    if not remaining_snapshot_ids:
+                        return revisions
         except OSError:
             return revisions
     return revisions
@@ -293,7 +308,19 @@ def _is_hf_cache_snapshot_dir(root: Path, model_dir: Path) -> bool:
         relative_parts = model_dir.relative_to(root).parts
     except ValueError:
         return False
-    return len(relative_parts) >= 3 and relative_parts[0].startswith("models--") and relative_parts[1] == "snapshots"
+    if len(relative_parts) < 3 or relative_parts[1] != "snapshots":
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
+
+
+def _is_hf_cache_pruned_subtree(root: Path, current: Path) -> bool:
+    try:
+        relative_parts = current.relative_to(root).parts
+    except ValueError:
+        return False
+    if len(relative_parts) < 2 or relative_parts[1] not in {"snapshots", "refs"}:
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
 
 
 def _local_model_id(root: Path, model_dir: Path) -> str:
@@ -947,7 +974,8 @@ class WorkerModelCatalog:
                 continue
 
             accepted_model_ids: list[str] = []
-            for manifest_path in self._iter_registry_manifest_paths(root):
+            manifest_paths, plain_local_model_dirs = self._scan_registry_root_tree(root)
+            for manifest_path in manifest_paths:
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
                     continue
@@ -972,6 +1000,7 @@ class WorkerModelCatalog:
                 root=root,
                 root_id=root_id,
                 root_order=index,
+                plain_local_model_dirs=plain_local_model_dirs,
                 discovered_models=discovered_models,
                 accepted_model_ids=accepted_model_ids,
             )
@@ -1044,6 +1073,7 @@ class WorkerModelCatalog:
         root: Path,
         root_id: str,
         root_order: int,
+        plain_local_model_dirs: Iterable[Path],
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
     ) -> None:
@@ -1064,7 +1094,7 @@ class WorkerModelCatalog:
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
-        for model_dir in self._iter_plain_local_model_dirs(root):
+        for model_dir in plain_local_model_dirs:
             resolved_path = model_dir
             if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
@@ -1100,8 +1130,12 @@ class WorkerModelCatalog:
             snapshots_dir = cache_repo_dir / "snapshots"
             if not snapshots_dir.is_dir():
                 continue
-            revision_map = _hf_cache_revision_map(cache_repo_dir)
-            for snapshot_dir in _sorted_child_directories(snapshots_dir):
+            snapshot_dirs = tuple(_sorted_child_directories(snapshots_dir))
+            revision_map = _hf_cache_revision_map(
+                cache_repo_dir,
+                snapshot_ids={snapshot_dir.name for snapshot_dir in snapshot_dirs},
+            )
+            for snapshot_dir in snapshot_dirs:
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
                 if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
@@ -1119,31 +1153,37 @@ class WorkerModelCatalog:
                 )
 
     @staticmethod
-    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
-        stack = [root.resolve()]
+    def _scan_registry_root_tree(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+        manifest_paths: list[Path] = []
+        plain_local_model_dirs: list[Path] = []
+        resolved_root = root.resolve()
+        stack = [resolved_root]
         while stack:
             current = stack.pop()
             if current.name in {"blobs", ".git", "__pycache__"}:
                 continue
-            if (current / "config.json").is_file():
-                yield current
-                continue
-            children = _sorted_child_directories(current)
-            stack.extend(reversed(children))
-
-    @staticmethod
-    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
-        stack = [root.resolve()]
-        while stack:
-            current = stack.pop()
-            if current.name in {"blobs", ".git", "__pycache__"}:
+            if _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
             manifest_path = current / "manifest.json"
             if manifest_path.is_file():
-                yield manifest_path
+                manifest_paths.append(manifest_path)
+                continue
+            if (current / "config.json").is_file():
+                plain_local_model_dirs.append(current)
                 continue
             children = _sorted_child_directories(current)
             stack.extend(reversed(children))
+        return tuple(manifest_paths), tuple(plain_local_model_dirs)
+
+    @staticmethod
+    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
+        _, plain_local_model_dirs = WorkerModelCatalog._scan_registry_root_tree(root)
+        yield from plain_local_model_dirs
+
+    @staticmethod
+    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
+        manifest_paths, _ = WorkerModelCatalog._scan_registry_root_tree(root)
+        yield from manifest_paths
 
     @staticmethod
     def _apply_root_metadata(

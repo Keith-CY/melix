@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,11 +80,17 @@ class ModelConversionPipeline:
         if request.run_smoke_test:
             smoke_test_passed = self._run_structural_smoke_test(bundle_path)
 
-        artifact_bytes = sum(
-            path.stat().st_size
-            for path in bundle_path.iterdir()
-            if path.is_file() and path.name != "manifest.json"
-        )
+        artifact_bytes = 0
+        with os.scandir(bundle_path) as entries:
+            for entry in entries:
+                if entry.name == "manifest.json":
+                    continue
+                try:
+                    is_file = entry.is_file()
+                except OSError:
+                    continue
+                if is_file:
+                    artifact_bytes += entry.stat().st_size
         manifest_path = bundle_path / "manifest.json"
         manifest_payload = self._manifest_payload(
             request=request,
