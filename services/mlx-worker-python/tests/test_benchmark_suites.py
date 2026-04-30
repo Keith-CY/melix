@@ -126,6 +126,66 @@ def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkey
     ]
 
 
+def test_load_materialized_rows_respects_limit(tmp_path: Path) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"prompt": "prompt-1"}),
+                json.dumps({"prompt": "prompt-2"}),
+                json.dumps({"prompt": "prompt-3"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert benchmark_suites._load_materialized_rows(rows_path, limit=2) == [
+        {"prompt": "prompt-1"},
+        {"prompt": "prompt-2"},
+    ]
+
+
+def test_benchmark_suite_catalog_cache_hit_reads_only_requested_prefix(tmp_path: Path) -> None:
+    fetcher = FakeBenchmarkSuiteFetcher()
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
+
+    first = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    assert first.cache_hit is False
+
+    package_path = Path(first.materialized_package_path)
+    rows_path = package_path / "rows.jsonl"
+    original_rows = rows_path.read_text(encoding="utf-8").rstrip("\n").splitlines()
+    extra_rows = [json.dumps({"messages": [{"role": "user", "content": f"extra-{index}"}]}) for index in range(8, 20)]
+    rows_path.write_text("\n".join([*original_rows, *extra_rows]) + "\n", encoding="utf-8")
+
+    second = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+
+    assert second.cache_hit is True
+    assert second.prompt_batches == ("Say hi.",)
+    assert fetcher.calls == [
+        (
+            "rows",
+            {
+                "dataset": "HuggingFaceH4/ultrachat_200k",
+                "config": "default",
+                "split": "train_sft",
+                "offset": "0",
+                "length": "8",
+            },
+        )
+    ]
+
+
 def test_benchmark_suite_catalog_raises_typed_error_for_unknown_suite(tmp_path: Path) -> None:
     catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=FakeBenchmarkSuiteFetcher())
 
