@@ -2357,6 +2357,56 @@ def test_upload_job_publishes_merged_multimodal_model_with_processor_lineage(tmp
     assert publish_backend.calls[-1]["artifact_kind"] == "merged_export"
 
 
+def test_upload_job_publishes_converted_bundle_as_merged_multimodal_when_processor_config_present(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path, publish_backend=FakePublishBackend())
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    # convert emits the bundle directory as output_path, not the manifest file.
+    bundle_dir = Path(convert_events[-1].completed.output_path)
+    (bundle_dir / "processor_config.json").write_text(
+        '{"processor_type": "melix-test-vlm"}\n', encoding="utf-8"
+    )
+
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, publish_backend=publish_backend)
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-converted-multimodal"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_path": str(bundle_dir),
+                    "target_repo": "melix/models/melix-dev-vlm-converted",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_multimodal"
+    assert payload["processor_config_files"] == ["processor_config.json"]
+    assert "processor_config.json" in payload["published_files"]
+
+
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry-root"
     _write_registry_manifest(
