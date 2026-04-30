@@ -512,7 +512,7 @@ class UploadReceiptPipeline:
     def _collect_processor_config_files(published_files: list[str]) -> list[str]:
         return sorted(
             f for f in published_files
-            if Path(f).name in _PROCESSOR_CONFIG_FILENAMES
+            if Path(f).parent == Path(".") and Path(f).name in _PROCESSOR_CONFIG_FILENAMES
         )
 
     @staticmethod

@@ -1676,6 +1676,26 @@ def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(t
             os.environ.pop(key, None)
 
 
+@pytest.mark.parametrize(
+    "filename",
+    ["processor_config.json", "preprocessor_config.json", "image_processor.json"],
+)
+def test_collect_processor_config_files_detects_all_supported_names_at_root(filename: str) -> None:
+    files = [filename, "config.json", "model.safetensors", "tokenizer.json"]
+    result = UploadReceiptPipeline._collect_processor_config_files(files)
+    assert result == [filename]
+
+
+def test_collect_processor_config_files_ignores_nested_processor_configs() -> None:
+    files = [
+        "config.json",
+        "model.safetensors",
+        "adapters/processor_config.json",
+        "sub/preprocessor_config.json",
+    ]
+    assert UploadReceiptPipeline._collect_processor_config_files(files) == []
+
+
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
     registry.start_request("req-active", runtime_kind="text")
