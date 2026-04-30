@@ -290,10 +290,15 @@ def _huggingface_cache_model_path(
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
-    snapshots = sorted(path for path in snapshots_root.iterdir() if path.is_dir())
-    if not snapshots:
+    snapshot_names: list[str] = []
+    with os.scandir(snapshots_root) as entries:
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            snapshot_names.append(entry.name)
+    if not snapshot_names:
         return None
-    fallback = snapshots[-1].resolve()
+    fallback = (snapshots_root / sorted(snapshot_names)[-1]).resolve()
     return _HuggingFaceCacheModelPath(
         path=fallback,
         warnings=(
