@@ -2140,6 +2140,50 @@ def test_evaluation_core_event_extraction_records_rate_limit_sleep_in_dialogue_t
     assert fake_clock.sleeps
 
 
+def test_evaluation_core_write_jsonl_rows_streams_each_row_via_path_open(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    output_path = tmp_path / "rows.jsonl"
+    writes: list[str] = []
+
+    class RecordingFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> RecordingFile:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return RecordingFile()
+
+    def fail_write_text(self: Path, data: str, encoding: str | None = None) -> int:
+        raise AssertionError("_write_jsonl_rows should not use Path.write_text")
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setattr(Path, "write_text", fail_write_text)
+
+    EvaluationCore._write_jsonl_rows(
+        output_path,
+        [
+            {"dialogue_id": "dlg-1", "events": []},
+            {"dialogue_id": "dlg-2", "events": [{"actor": ["A"]}]},
+        ],
+    )
+
+    assert writes == [
+        json.dumps({"dialogue_id": "dlg-1", "events": []}, ensure_ascii=False) + "\n",
+        json.dumps({"dialogue_id": "dlg-2", "events": [{"actor": ["A"]}]}, ensure_ascii=False) + "\n",
+    ]
+
+
 def test_evaluation_core_event_extraction_aborts_on_provider_rate_limit_and_writes_error_log(
     tmp_path: Path,
     monkeypatch,
@@ -2186,7 +2230,15 @@ def test_evaluation_core_event_extraction_aborts_on_provider_rate_limit_and_writ
         captured["client"] = client
         return client
 
+    observed_paths: list[Path] = []
+    original_write_jsonl_rows = EvaluationCore._write_jsonl_rows
+
+    def recording_write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+        observed_paths.append(path)
+        original_write_jsonl_rows(path, rows)
+
     monkeypatch.setattr(evaluation_core, "make_event_extraction_client", fake_client_factory)
+    monkeypatch.setattr(EvaluationCore, "_write_jsonl_rows", staticmethod(recording_write_jsonl_rows))
 
     try:
         EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
@@ -2227,6 +2279,9 @@ def test_evaluation_core_event_extraction_aborts_on_provider_rate_limit_and_writ
     assert failures[0]["reason"] == 'remote provider HTTP 429: {"error":"rate"}'
     assert failures[0]["code"] == "remote_provider_rate_limited"
     assert prediction_log.read_text(encoding="utf-8") == ""
+    assert output_dir / "gold_subset.jsonl" in observed_paths
+    assert prediction_log in observed_paths
+    assert failure_log in observed_paths
     trace_log = output_dir / "reports" / "remote_model" / "event_eval_dialogue_traces.jsonl"
     traces = [json.loads(line) for line in trace_log.read_text(encoding="utf-8").splitlines()]
     assert len(traces) == 1
@@ -2235,6 +2290,105 @@ def test_evaluation_core_event_extraction_aborts_on_provider_rate_limit_and_writ
     assert traces[0]["error_code"] == "remote_provider_rate_limited"
     assert traces[0]["failure_reason"] == 'remote provider HTTP 429: {"error":"rate"}'
     assert "sk-secret" not in json.dumps(traces, ensure_ascii=False)
+
+
+def test_evaluation_core_event_extraction_routes_jsonl_outputs_through_write_jsonl_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    source_rows = [
+        {
+            "dialogue_id": "dlg-1",
+            "dialogue": ["speaker_1: 明天见面"],
+            "events": [
+                {
+                    "actor": ["speaker_1"],
+                    "time": ["明天"],
+                    "location": None,
+                    "action": ["见面"],
+                    "digest": "",
+                }
+            ],
+        }
+    ]
+    _write_jsonl(source, source_rows)
+
+    class FakeClient:
+        def extract_events(self, dialogue, dialogue_id=""):
+            assert dialogue == ["speaker_1: 明天见面"]
+            assert dialogue_id == "dlg-1"
+            return EventExtractionClientResult(
+                events=[
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["见面"],
+                    }
+                ],
+                raw_response='{"events":[]}',
+            )
+
+    class FakeTarget:
+        provider_kind = "openai-compatible"
+        base_url = "https://sub2api.example/v1"
+        api_key = "sk-secret"
+        model_id = "remote-model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 0
+
+    observed_paths: list[Path] = []
+    original_write_jsonl_rows = EvaluationCore._write_jsonl_rows
+
+    def recording_write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+        observed_paths.append(path)
+        original_write_jsonl_rows(path, rows)
+
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target, prompt_spec=None: FakeClient())
+    monkeypatch.setattr(EvaluationCore, "_write_jsonl_rows", staticmethod(recording_write_jsonl_rows))
+
+    run = EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
+        model_id="remote-model",
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={"event_source_jsonl": str(source)},
+        remote_target=FakeTarget(),
+    )
+
+    output_dir = Path(run.job.output_dir)
+    gold_subset_path = output_dir / "gold_subset.jsonl"
+    prediction_path = output_dir / "predictions" / "remote-model.jsonl"
+    failure_path = output_dir / "predictions" / "remote-model.failures.jsonl"
+    expected_gold_subset = json.dumps(source_rows[0], ensure_ascii=False) + "\n"
+    expected_prediction = (
+        json.dumps(
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["speaker_1: 明天见面"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "speaker_1明天见面",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+
+    assert gold_subset_path.read_text(encoding="utf-8") == expected_gold_subset
+    assert prediction_path.read_text(encoding="utf-8") == expected_prediction
+    assert failure_path.read_text(encoding="utf-8") == ""
+    assert gold_subset_path in observed_paths
+    assert prediction_path in observed_paths
+    assert failure_path in observed_paths
 
 
 def test_evaluation_core_reserves_unique_job_ids_for_concurrent_runs(tmp_path: Path) -> None:
