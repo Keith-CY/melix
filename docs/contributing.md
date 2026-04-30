@@ -1,29 +1,33 @@
-# Contributing To Melix
+# Contributing to Melix
 
-Melix accepts documentation, tooling, protocol, runtime, CLI, and operator-surface contributions.
+Melix welcomes contributions of all kinds — documentation, tooling, protocol definitions, runtime improvements, CLI features, and macOS operator surface work. Every fix matters, and good documentation contributions are just as valued as code.
 
-## Start Here
+---
 
-Before making a broad change, read:
+## Before You Start
 
-1. `AGENTS.md`
-2. [`docs/README.md`](README.md)
-3. [`docs/engineering-standards.md`](engineering-standards.md)
+Read these three documents before making a broad change:
 
-If your change affects behavior, update the relevant spec, runbook, roadmap, or plan in the same
-transaction.
+1. [`AGENTS.md`](../AGENTS.md) — Repository-wide constraints and agent guidance
+2. [`docs/README.md`](README.md) — The documentation map and precedence rules
+3. [`docs/engineering-standards.md`](engineering-standards.md) — Coding, documentation, and tooling conventions
+
+If your change affects behavior, update the relevant spec, runbook, or roadmap document in the same commit.
+
+---
 
 ## Preferred Workflow
 
-1. Start from `main` in an isolated branch or worktree.
-2. Keep the change small enough to verify and explain.
-3. Prefer one coherent behavior slice per change rather than a mixed refactor.
-4. When a behavior changes, update the documentation that should be the new source of truth.
+1. **Branch from `main`** in an isolated branch or worktree.
+2. **Keep changes small** and focused on one behavior slice.
+3. **Prefer one coherent change per PR** rather than mixing a refactor with a feature.
+4. **Update the documentation** that should reflect the new behavior as part of the same change.
 
-## Default Verification Commands
+---
 
-Use these commands as the repository baseline unless the touched scope has a narrower targeted
-gate:
+## Verification Commands
+
+Run these commands before opening a PR. They are the baseline verification gate for the entire repository:
 
 ```bash
 make bootstrap
@@ -33,49 +37,55 @@ make py-test
 make integration-test
 ```
 
-Repository pull requests are expected to keep the same baseline green in GitHub Actions. The PR
-template is also part of the review contract: include the governing plan or spec, the commands you
-ran, the coverage or metrics result (or explicit `N/A` reason), and any known gaps or deferred
-checks.
+GitHub Actions runs the same gates on every PR. If you are working in a specific subsystem, add any relevant focused commands, smoke scripts, or runbook verification steps to your PR description.
 
-If you are working in a specific subsystem, add the relevant focused commands, smoke scripts, or
-runbook verification steps to your handoff note as well.
+---
 
-## Coverage And Metrics Expectations
+## Coverage & Metrics
 
-Before any commit or handoff involving executable code:
+For any change that touches executable code:
 
-- measured automated coverage for the touched executable scope must be at least `95%`
-- if changed-line coverage is not measurable for that scope, record the reason explicitly
-- include a metrics report for the changed scope
+- Automated coverage for the changed scope must be at least **95%**.
+- If coverage is not measurable for that scope, record the reason explicitly in the PR.
+- Include a metrics report for the changed scope.
 
 For documentation-only changes, an explicit `N/A` metrics report is acceptable.
 
+---
+
+## What Makes a Good PR
+
+A clear and complete PR includes:
+
+- **What changed and why** — a short narrative of the intent
+- **Which commands were run** — paste the relevant `make` output or test results
+- **Coverage and metrics** — or an explicit `N/A` with a reason
+- **Evidence** — screenshots, JSON bundles, or smoke logs when UI or acceptance behavior changed
+
+The [PR template](../.github/pull_request_template.md) captures these expectations. Fill it out fully — reviewers rely on it.
+
+---
+
 ## Documentation Rules
 
-- Formal repository documents are written in English.
+- Write all formal repository documents in English.
 - Keep the root `README.md` focused on what Melix is, why it exists, who it is for, and how to get started.
-- Put onboarding material under `docs/`.
+- Put onboarding and guide material under `docs/`.
 - Put executable operating procedures under `docs/runbooks/`.
 - Keep canonical top-level specs in place unless there is an explicit migration task.
 
+---
+
 ## Tooling Conventions
 
-- Use Bun for local JavaScript or TypeScript package operations when such operations are needed.
-- Do not hand-edit generated protobuf outputs; regenerate them from `packages/protocol/schema`.
-- Commit `uv.lock` and relevant generated outputs when dependency or schema changes require them.
+- Use **Bun** for local JavaScript or TypeScript package operations.
+- Do **not** hand-edit generated protobuf outputs — regenerate them from `packages/protocol/schema` using `make proto`.
+- Commit `uv.lock` and generated outputs when dependency or schema changes require them.
 
-## Handoff Expectations
-
-A good handoff or PR should include:
-
-- what changed and why
-- which commands were run
-- coverage and metrics results, or an explicit `N/A`
-- screenshots, JSON bundles, or smoke evidence when UI or acceptance behavior changed
+---
 
 ## Useful References
 
-- [`docs/current-status.md`](current-status.md)
-- [`docs/runbooks/README.md`](runbooks/README.md)
-- [`docs/templates/pr-evidence-checklist.md`](templates/pr-evidence-checklist.md)
+- [Current Status](current-status.md) — What's shipped and where the limits are
+- [Runbook Index](runbooks/README.md) — All operator runbooks
+- [PR Evidence Checklist](templates/pr-evidence-checklist.md) — Quick-reference checklist for PR completeness

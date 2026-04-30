@@ -1,91 +1,140 @@
 <p align="center">
-  <img src="apps/macos-menubar/Sources/AppMain/Resources/Branding/melix_logo.svg" alt="Melix logo" width="180">
+  <img src="apps/macos-menubar/Sources/AppMain/Resources/Branding/melix_logo.svg" alt="Melix logo" width="160">
 </p>
 
-# Melix
+<h2 align="center">Your Mac. Your Models. Your Rules.</h2>
 
-[![release gates](https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/release-gates.yml?branch=main&label=release%20gates)](https://github.com/Keith-CY/melix/actions/workflows/release-gates.yml)
-[![app packaging](https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/package-self-contained-app.yml?branch=main&label=app%20packaging)](https://github.com/Keith-CY/melix/actions/workflows/package-self-contained-app.yml)
-![platform](https://img.shields.io/badge/platform-Apple%20Silicon-black)
-![macOS](https://img.shields.io/badge/macOS-15%2B-000000)
-![Swift](https://img.shields.io/badge/Swift-6-F05138)
-![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)
-![focus](https://img.shields.io/badge/focus-LoRA%20%2B%20Bench%20%2F%20Eval-0F766E)
-[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+<p align="center">
+  A native local AI workspace for Apple Silicon — run, fine-tune, and benchmark language models<br>
+  entirely on your own machine, with no data leaving your desk.
+</p>
 
-Melix is a local-first AI runtime for Apple Silicon. It combines a Swift control plane, a Python worker stack, a public CLI, and a native macOS operator surface so one machine can manage local model serving, LoRA training, and benchmark or evaluation workflows from the same runtime.
+<p align="center">
+  <a href="https://github.com/Keith-CY/melix/actions/workflows/release-gates.yml"><img src="https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/release-gates.yml?branch=main&label=release%20gates" alt="release gates"></a>
+  <a href="https://github.com/Keith-CY/melix/actions/workflows/package-self-contained-app.yml"><img src="https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/package-self-contained-app.yml?branch=main&label=app%20packaging" alt="app packaging"></a>
+  <img src="https://img.shields.io/badge/platform-Apple%20Silicon-black" alt="platform">
+  <img src="https://img.shields.io/badge/macOS-15%2B-000000" alt="macOS">
+  <img src="https://img.shields.io/badge/focus-LoRA%20%2B%20Bench%20%2F%20Eval-0F766E" alt="focus">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license"></a>
+</p>
 
-## What Melix Is
+---
 
-Melix is not just a thin local inference wrapper. The current repository is aimed at a practical local model-operations loop:
+## What Is Melix?
 
-- import or download models into a local registry
-- bind those models to managed server sessions
-- run local chat and operator workflows through a shared control plane
-- train and activate LoRA or QLoRA adapters
-- benchmark, evaluate, compare, and export results from the same product surface
+Melix is a complete local AI operations platform built for Apple Silicon Macs. It brings together everything you need to work with language models — serving, fine-tuning, benchmarking, and evaluation — in a single native app and CLI, with no subscriptions, no cloud dependencies, and no data leaving your machine.
 
-## Why Melix Exists
+Think of it as a local AI studio: a place where you can load a model, adapt it to your needs, measure its quality, and compare results — all from your own hardware.
 
-Local AI work on Apple Silicon often gets split across too many disconnected tools: one script for serving, another for LoRA training, a notebook for evaluation, and an ad hoc shell history for benchmarks. Melix is being built to keep those loops together.
+<p align="center">
+  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/01-tools-training-overview.png" alt="Melix training overview" width="720">
+</p>
 
-The current product direction especially favors LoRA training and benchmark discipline:
+---
 
-- train adapters without leaving the local Melix workflow
-- compare base and derived models through the same CLI and operator UI
-- keep benchmark, matrix benchmark, and evaluation evidence in one repository-owned format
-- turn repeatable local benchmarking into part of the product, not an afterthought
+## What You Can Do With Melix
 
-## Who It Is For
+| Capability | What It Means For You |
+|---|---|
+| **Model Registry** | Import models from disk or download from Hugging Face into a local registry you control |
+| **Server Sessions** | Start, pause, resume, and stop local model servers with a single command or click |
+| **Local Chat** | Chat with any registered model from the menubar app or CLI, staying fully offline |
+| **LoRA Fine-Tuning** | Train a custom adapter on your own dataset to specialize a model for your use case |
+| **Benchmarking** | Run repeatable quality benchmarks and matrix comparisons across models and adapters |
+| **Evaluation** | Score models against standard suites (MMLU and more) and export the results |
+| **Native macOS App** | A polished menubar and workspace UI that puts all of the above one click away |
 
-- Apple Silicon practitioners who want a local runtime instead of a remote-only workflow
-- model engineers who need a repeatable loop for LoRA fine-tuning, comparison, and evaluation
-- local AI product builders who want a same-host runtime with both CLI and operator surfaces
-- contributors who care about typed protocols, reproducible runbooks, and productized local tooling
+<p align="center">
+  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/04-diagnostics-benchmark.png" alt="Melix benchmark diagnostics" width="720">
+</p>
 
-## What You Can Do Today
+---
 
-- manage model roots, inspect registry state, and download or import local models
-- create, select, start, pause, resume, wake, and stop server sessions
-- run local chat flows through the `melix` CLI and the macOS operator surface
-- train, activate, publish, and remove derived LoRA-backed models
-- run `bench`, `bench matrix`, `eval`, and `eval compare` workflows and export artifacts
-- package Melix for local launch agents, Homebrew service use, or preview app-bundle delivery
+## Why Melix?
+
+Local AI work tends to scatter across too many tools: one script for serving, another for training, a notebook for evaluation, and a shell history for benchmarks. Melix keeps that entire loop in one place, on one machine.
+
+- **Privacy by default.** Your models, your data, your results — none of it leaves your Mac.
+- **No subscriptions.** Run any compatible model as many times as you like at zero marginal cost.
+- **Repeatable science.** Benchmark and evaluation results are stored in a repository-owned format so comparisons stay honest over time.
+- **Operator-grade UI.** The native macOS workspace is a first-class citizen, not an afterthought.
+
+<p align="center">
+  <img src="artifacts/lora-marketing-screenshots/2026-04-24-polish/03-training-history-activation.png" alt="Melix training history and activation" width="720">
+</p>
+
+---
+
+## Who Is Melix For?
+
+- **AI practitioners on Apple Silicon** who want a local runtime instead of a remote-only workflow
+- **Model engineers** who need a repeatable loop for LoRA fine-tuning, comparison, and evaluation
+- **Privacy-conscious builders** who want full control over inference without cloud APIs
+- **Local AI enthusiasts** who want a polished native macOS experience alongside the CLI
+- **Contributors** who care about typed protocols, reproducible runbooks, and productized local tooling
+
+---
 
 ## Quick Start
 
-For the shortest repository setup path:
+Make sure you have **macOS 15+** on **Apple Silicon**, plus `swift`, `python3`, and [`uv`](https://docs.astral.sh/uv/) installed.
 
 ```bash
+# 1. Bootstrap the repository
 make bootstrap
+
+# 2. Generate protocol artifacts
 make proto
+
+# 3. Run verification gates
 make swift-test
 make py-test
 make integration-test
 ```
 
-Then use:
+Then bring up the local stack:
 
-- [Getting Started](docs/getting-started.md) for the local stack, operator app, and first CLI flows
-- [Current Status](docs/current-status.md) for what is actually shipped today
-- [Documentation Map](docs/README.md) for the deeper protocol, runbook, and plan structure
+```bash
+bash scripts/dev_up.sh
+```
+
+For the full native macOS experience:
+
+```bash
+bash scripts/dev_app_up.sh
+```
+
+**New here?** The [Getting Started guide](docs/getting-started.md) walks through every step with context.
+
+---
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Current Status](docs/current-status.md)
-- [Contributing](docs/contributing.md)
-- [Docs Map](docs/README.md)
-- [Benchmark, Evaluation, and LoRA Runbook](docs/runbooks/benchmark-matrix-evaluation-and-lora.md)
-- [Local Install Runbook](docs/runbooks/phase-8-local-install.md)
-- [Packaging Targets](docs/runbooks/platform-packaging-targets.md)
+| Document | What's Inside |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Step-by-step setup from a fresh checkout to a working loop |
+| [Current Status](docs/current-status.md) | What is shipped today and where the honest boundaries are |
+| [Phase Roadmap](docs/phase-roadmap.md) | The original phase model and its current completion state |
+| [Contributing](docs/contributing.md) | How to contribute, what to verify, and what a good PR looks like |
+| [Docs Map](docs/README.md) | Full index of specs, runbooks, architecture decisions, and plans |
+| [Benchmark & LoRA Runbook](docs/runbooks/benchmark-matrix-evaluation-and-lora.md) | Deep-dive operator guide for benchmarking and fine-tuning |
+| [Local Install Runbook](docs/runbooks/phase-8-local-install.md) | Install Melix as a persistent local service |
+| [Packaging Targets](docs/runbooks/platform-packaging-targets.md) | Homebrew, launch agent, and app-bundle delivery options |
+
+---
 
 ## Contributing
 
-Contributions are welcome. Start with [docs/contributing.md](docs/contributing.md) for the repository workflow, expected verification commands, documentation rules, and handoff expectations.
+Contributions are welcome — documentation, tooling, protocol, runtime, CLI, and macOS operator surface. Start with [docs/contributing.md](docs/contributing.md) for the workflow, verification commands, and handoff expectations.
 
-If a change alters behavior, update the relevant spec, runbook, roadmap, or plan in the same change. The README should stay focused on the project itself; operational detail belongs under `docs/`.
+The short version:
+1. Branch from `main`.
+2. Keep the change small and focused on one behavior slice.
+3. Update the relevant spec or runbook if behavior changes.
+4. Run `make swift-test && make py-test && make integration-test` before opening a PR.
+
+---
 
 ## License
 
-Melix is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Melix is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE).
