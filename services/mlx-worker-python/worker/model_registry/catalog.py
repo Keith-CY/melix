@@ -240,22 +240,41 @@ def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> 
     return tuple(root / name for name in sorted(child_names))
 
 
+def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterable[tuple[Path, str]]:
+    try:
+        with os.scandir(os.fspath(root)) as entries:
+            child_entries = sorted(entries, key=lambda entry: entry.name)
+    except OSError as exc:
+        raise OSError(str(exc)) from exc
+
+    for entry in child_entries:
+        try:
+            if entry.is_dir():
+                child_prefix = f"{prefix}{entry.name}/"
+                yield from _iter_relative_file_paths_sorted(root / entry.name, prefix=child_prefix)
+                continue
+            if entry.is_file():
+                yield root / entry.name, f"{prefix}{entry.name}"
+        except OSError as exc:
+            raise OSError(str(exc)) from exc
+
+
+
 def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
     refs_dir = cache_repo_dir / "refs"
     revisions: dict[str, str] = {}
     if refs_dir.is_dir():
         try:
-            ref_paths = sorted(path for path in refs_dir.rglob("*") if path.is_file())
+            for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
+                try:
+                    snapshot_id = ref_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    continue
+                if not snapshot_id:
+                    continue
+                revisions.setdefault(snapshot_id, relative_name)
         except OSError:
             return revisions
-        for ref_path in ref_paths:
-            try:
-                snapshot_id = ref_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if not snapshot_id:
-                continue
-            revisions.setdefault(snapshot_id, os.fspath(ref_path.relative_to(refs_dir)))
     return revisions
 
 
