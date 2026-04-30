@@ -181,7 +181,11 @@ public struct EvaluationPromptStore: Sendable {
     public static let eventExtractionScoringMode = "event_extraction_weighted_f1"
     public static let builtInBaselinePromptID = "builtin.event-extraction.baseline"
     public static let builtInLegacyBaselineRevisionID = "baseline.v1"
-    public static let builtInBaselineRevisionID = "baseline.v2"
+    public static let builtInStage1BaselineRevisionID = "baseline.v2"
+    public static let builtInDirectJSONBaselineRevisionID = "baseline.v3"
+    public static let builtInFeedbackBaselineRevisionID = "baseline.v4"
+    public static let builtInFeedbackV5BaselineRevisionID = "baseline.v5"
+    public static let builtInBaselineRevisionID = "baseline.v6"
     public static let builtInLegacyBaselineSystemPrompt = """
     Extract established events and future plans from a dialogue.
 
@@ -197,7 +201,7 @@ public struct EvaluationPromptStore: Sendable {
     - Keep original wording as much as possible.
     - Do not include digest; Melix derives it locally.
     """
-    public static let builtInBaselineSystemPrompt = """
+    public static let builtInStage1BaselineSystemPrompt = """
     # Segment Metadata Candidates
 
     Produce candidate metadata for one segment as a single JSON object that matches the stage-1 schema. This is a candidate-generation step; downstream normalization applies stricter filtering.
@@ -316,6 +320,136 @@ public struct EvaluationPromptStore: Sendable {
     - `digest_candidates` should summarize purpose or outcome in one concise sentence, not replay every field or turn.
     - `event_candidates.detail` is optional and must not replace structured fields or invent unsupported specifics.
     - Use the dominant language of the input dialogue for natural-language or free-text fields. If genuinely mixed-language, preserve that. Keep schema/control fields in schema-compliant English tokens.
+    """
+
+    public static let builtInDirectJSONBaselineSystemPrompt = """
+    你是中文对话事件抽取器。请根据输入的 dialogue 生成 events。
+
+    输入 payload 是一个 JSON 对象：
+    - `dialogue_id`: 当前对话 id
+    - `dialogue`: 按顺序排列的对话行数组，通常使用 `speaker_1:` / `speaker_2:` 作为说话人前缀
+
+    输出必须是严格 JSON，格式如下：
+
+    {
+      "dialogue_id": "<保持输入中的 dialogue_id>",
+      "events": [
+        {
+          "actor": ["事件参与者"],
+          "time": ["时间表达"],
+          "location": ["地点表达"],
+          "action": ["事件动作"],
+          "digest": "一句话摘要",
+          "source_order": 1
+        }
+      ]
+    }
+
+    字段要求：
+    - `actor` 和 `action` 必须是字符串数组；只保留有对话证据的参与者和动作。
+    - `time` 和 `location` 必须是字符串数组或 null；没有明确证据时填 null。
+    - `digest` 用简洁中文概括事件。
+    - `source_order` 按事件在对话中出现的顺序从 1 开始连续编号。
+
+    抽取规则：
+
+    1. 只抽取真实可训练事件
+    - 抽取已经发生、正在发生、明确安排、明确确认的未来事件。
+    - 可以抽取明确存在的背景事件，例如“今天生日”“明天上课”“周五回来”。
+    - 不抽取单纯聊天、情绪、评价、寒暄、解释、推测。
+
+    2. 不抽取未确认事件
+    - 被拒绝、被否定、被改掉的提议不要抽取。
+    - 例如先说“明天约饭”，后来改成“周末”，只保留“周末吃饭”，不要把“明天”放进 time。
+    - “下次约”“以后再说”“有空再约”“我来约你”这类未定事件通常删除。
+    - 如果双方明确接受但时间或安排仍不确定，可以抽取较保守的“可能见面”“可能吃饭”。
+
+    3. action 要是实际事件动作
+    - 不要使用元动作：提出、商定、改定、约时间、安排、确认、说、问、邀请。
+    - 应改成实际动作：见面、吃饭、看电影、回来、出发、上课、加班、生日、下班、去某地。
+    - 例如“后天就看老炮儿” => action: ["看电影《老炮儿》"]。
+    - 例如“周日哦可” => action: ["见面"] 或 ["吃饭"]，根据上下文选择。
+
+    4. actor 规则
+    - 使用 dialogue 中的说话人：speaker_1、speaker_2。
+    - 如果事件属于明确提到的第三方，使用原文关系或姓名，例如 `speaker_1的姐姐`、`speaker_2的朋友`、`美佳`。
+    - 不要把没有参与该事件的人放进 actor。
+    - “双方”“我们”应拆成 ["speaker_1", "speaker_2"]。
+
+    5. time 规则
+    - time 数组中的多个元素表示“或”的关系。
+    - “今天或明天” => ["今天", "明天"]。
+    - “周三或周四或周日” => ["周三", "周四", "周日"]。
+    - 不要把同一时间的组成部分拆成 OR。
+    - “明天晚上”必须是 ["明天晚上"]，不要写 ["明天", "晚上"]。
+    - “周日中午”必须是 ["周日中午"]。
+    - 如果没有明确时间，time 为 null。
+    - 如果是日期，用阿拉伯数字加上时间单位，不要仅保留阿拉伯数字。
+
+    6. location 规则
+    - location 只填事件发生地点。
+    - 不是事件地点的背景词不要放入 location。
+    - 如果没有明确地点，location 为 null。
+    - 例如“去网吧”如果网吧是动作目标，不一定要放 location；可写 action ["去网吧"], location null。
+
+    7. 拆分规则
+    - 一个事件对象只表达一个清晰事件。
+    - 如果一句话包含多个事件，要拆开。
+    - “明天回来，晚上约”应拆为：
+      1. speaker_2 明天 回来
+      2. speaker_1 和 speaker_2 明天晚上 见面或吃饭
+    - 不要把回家、回来、见面、吃饭混进一个 action 数组。
+
+    8. digest 规则
+    - digest 用简洁中文概括事件。
+    - 格式尽量是：actor + time + location + action。
+    - 多个 actor 用“和”连接。
+    - time 是多个 OR 时，用“或”连接。
+    - digest 不要包含“提出/商定/改定/约时间”等元动作。
+
+    9. source_order 规则
+    - 按事件在对话中出现的顺序从 1 开始编号。
+    - 删除事件后必须重新连续编号。
+
+    输出要求：
+    - 只输出 JSON，不要解释。
+    - 不要输出 Markdown。
+    - 不要添加 dialogue 中没有依据的信息。
+    - 如果没有可训练事件，events 输出空数组。
+    """
+
+    public static let builtInFeedbackBaselineSystemPrompt = builtInDirectJSONBaselineSystemPrompt + """
+
+    10. 反馈修正规则
+    - 连续时间区间保持单个表达，例如“1月6号到9号之间”必须写成 ["1月6号到9号之间"]，不要展开成 ["1月6号", "1月7号", "1月8号", "1月9号"]。
+    - 可用时间、候选时间、空闲时间不等于事件时间；只有对话明确采用或确认后，才把它写入 time。
+    - 同地点同时发生不等于一起做同一事件；只有共同参与同一行动时，actor 才同时包含 speaker_1 和 speaker_2。
+    - 避免重复事件：订桌、约饭、吃饭、见面如果指向同一安排，保留一个主事件；只有存在独立行动价值时才拆成多个事件。
+    - 模糊第三方关系词通常放入 action 细节，例如“和朋友吃饭”；只有第三方本身是事件主体时，才放入 actor。
+    - 不抽取微动作或准备动作作为独立事件，例如“拿位”通常并入“见面”或“吃饭”。
+    - 对不确定专名动作使用更稳的上位动作，例如“糖筛/唐筛”可以抽为“做检查”。
+    - 复合活动不要过度拆分，例如“出来转转”、“喝东西坐坐”、“逛街买衣服”应保持为一个事件动作，或放在同一事件的 action 数组中。
+    """
+
+    public static let builtInFeedbackV5BaselineSystemPrompt = builtInFeedbackBaselineSystemPrompt + """
+
+    11. 反馈案例约束
+    - “同地点同时吃饭”不等于“共同吃饭”。例如一方在对方店里请别人吃饭，另一方也和朋友吃饭，应按各自事件分别抽取，不要把 speaker_1 和 speaker_2 合并成同一个 actor 数组。
+    - “订桌/找人订桌”和“约饭/吃饭”如果只是同一吃饭安排的准备步骤，保留吃饭或见面的主事件；除非订桌本身有独立完成价值，否则不要抽取为独立事件。
+    - “拿位”“占座”“排队”等微动作通常是见面或吃饭的准备动作，不要抽取为独立事件。
+    - “出来转转”“喝东西坐坐”“逛街买衣服”这类复合活动应保留成一个自然事件，不要拆成多个互相重复的事件。
+    - “糖筛/唐筛”如果模型不确定具体写法，优先输出上位动作“做检查”，不要编造更细的检查项目。
+    """
+
+    public static let builtInBaselineSystemPrompt = builtInFeedbackV5BaselineSystemPrompt + """
+
+    12. 召回强化与新反馈约束
+    - 明确的过去事件、背景事件和已发生状态也要抽取，不只抽未来计划。例如“周日新买裙子”应抽为 speaker_1 周日 新买裙子或新进碎花长裙。
+    - 明确承诺的电话联系要抽取。例如“明天打给你”应抽为拨打电话事件，不要因为它是联系动作而丢弃。
+    - 明确航班、飞机、落地或出发时间要抽取。例如“周一晚上11点下飞机”和“周二晚上7点上飞机”是两个有时间锚点的旅行事件。
+    - 同事/朋友/表姐等模糊第三方关系词通常进入 action 细节，例如“和同事聚餐”“和朋友吃饭”“和同事看话剧”；actor 只保留实际对话参与者，除非第三方本身是事件主体。
+    - 继续避免准备动作、重复事件和微动作成为独立事件。订桌、拿位、占座、重复聚会等如果只是主事件的一部分，应并入吃饭、见面、聚会等主事件。
+    - 保持时间区间、候选时间、同地点不合并 actor、复合活动不过度拆分等 baseline.v5 规则。
     """
 
     private let melixHome: MelixHome
@@ -563,6 +697,38 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
+        let stage1Revision = makeRevision(
+            revisionID: builtInStage1BaselineRevisionID,
+            status: .frozen,
+            systemPrompt: builtInStage1BaselineSystemPrompt,
+            examples: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let directJSONRevision = makeRevision(
+            revisionID: builtInDirectJSONBaselineRevisionID,
+            status: .frozen,
+            systemPrompt: builtInDirectJSONBaselineSystemPrompt,
+            examples: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let feedbackRevision = makeRevision(
+            revisionID: builtInFeedbackBaselineRevisionID,
+            status: .frozen,
+            systemPrompt: builtInFeedbackBaselineSystemPrompt,
+            examples: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let feedbackV5Revision = makeRevision(
+            revisionID: builtInFeedbackV5BaselineRevisionID,
+            status: .frozen,
+            systemPrompt: builtInFeedbackV5BaselineSystemPrompt,
+            examples: [],
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
         let revision = makeRevision(
             revisionID: builtInBaselineRevisionID,
             status: .frozen,
@@ -573,11 +739,11 @@ public struct EvaluationPromptStore: Sendable {
         )
         return EvaluationPrompt(
             id: builtInBaselinePromptID,
-            title: "Built-in Segment Metadata Candidates",
+            title: "Built-in Chinese Event Extraction JSON",
             latestRevisionID: revision.revisionID,
             archived: false,
             readOnly: true,
-            revisions: [legacyRevision, revision],
+            revisions: [legacyRevision, stage1Revision, directJSONRevision, feedbackRevision, feedbackV5Revision, revision],
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )

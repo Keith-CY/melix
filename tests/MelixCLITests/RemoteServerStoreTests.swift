@@ -63,6 +63,7 @@ struct RemoteServerStoreTests {
         let secretState = try String(contentsOf: home.remoteServerAPIKeysFileURL, encoding: .utf8)
         #expect(secretState.contains("sk-live-secret-value"))
         #expect(try secretStore.loadAPIKey(remoteServerID: "sub2api")?.apiKey == "sk-live-secret-value")
+        #expect(try store.loadAPIKey(remoteServerID: "sub2api")?.apiKey == "sk-live-secret-value")
 
         let updated = try store.save(
             RemoteServerMutation(

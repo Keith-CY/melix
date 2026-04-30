@@ -241,6 +241,10 @@ public struct RemoteServerStore: Sendable {
         try loadDocument().servers.sorted { $0.id < $1.id }
     }
 
+    public func loadAPIKey(remoteServerID: String) throws -> RemoteServerAPIKeyRecord? {
+        try apiKeyStore.loadAPIKey(remoteServerID: remoteServerID)
+    }
+
     public func get(id: String) throws -> RemoteServer? {
         let normalizedID = Self.normalizedRequired(id, fieldName: "remote_server_id")
         return try list().first { $0.id == normalizedID }

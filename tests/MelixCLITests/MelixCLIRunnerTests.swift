@@ -2195,6 +2195,109 @@ struct MelixCLIRunnerTests {
         #expect(try await runner.run(.remoteServerList(.init())) == "No remote servers configured.\n")
     }
 
+    @Test("eval run forwards semantic judge remote target as transient parameters")
+    func evalRunForwardsSemanticJudgeRemoteTargetAsTransientParameters() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-semantic-judge-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-semantic-judge",
+                suiteID: "event_extraction",
+                datasetID: "top200",
+                metricName: "eval.event_extraction.weighted_f1",
+                metricValue: 0.5
+            ),
+        ])
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "evaluated",
+                    title: "Evaluated",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://evaluated.example/v1",
+                    defaultModelID: "evaluated-default",
+                    apiKey: "sk-evaluated",
+                    timeoutSeconds: 30,
+                    rateLimitPerMinute: 0
+                )
+            )
+        )
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    apiKey: "sk-judge",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12
+                )
+            )
+        )
+
+        _ = try await runner.run(
+            MelixCLICommand.evalRun(
+                EvalRunOptions(
+                    remoteServerID: "evaluated",
+                    remoteModelID: "evaluated-model",
+                    suites: ["event_extraction"],
+                    sampleSize: 3,
+                    source: .localJSONL(path: "/Users/ChenYu/Downloads/top200_final.jsonl"),
+                    profile: .init(scoringMode: "event_extraction_weighted_f1"),
+                    parameters: [
+                        "remote_provider_extra_body_json": "{\"max_tokens\":1024,\"chat_template_kwargs\":{\"enable_thinking\":false}}",
+                    ],
+                    semanticJudgeRemoteServerID: "judge",
+                    semanticJudgeModelID: "judge-model",
+                    json: true
+                )
+            )
+        )
+
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.remoteTarget?.remoteServerID == "evaluated")
+        #expect(request.remoteTarget?.modelID == "evaluated-model")
+        #expect(request.remoteTarget?.apiKey == "sk-evaluated")
+        #expect(request.parameters["semantic_judge_remote_server_id"] == "judge")
+        #expect(request.parameters["semantic_judge_provider_kind"] == "openai-compatible")
+        #expect(request.parameters["semantic_judge_base_url"] == "https://judge.example/v1")
+        #expect(request.parameters["semantic_judge_api_key"] == "sk-judge")
+        #expect(request.parameters["semantic_judge_model_id"] == "judge-model")
+        #expect(request.parameters["semantic_judge_timeout_seconds"] == "41")
+        #expect(request.parameters["semantic_judge_rate_limit_per_minute"] == "12")
+        #expect(request.parameters["remote_provider_extra_body_json"] == "{\"max_tokens\":1024,\"chat_template_kwargs\":{\"enable_thinking\":false}}")
+
+        await #expect(throws: MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1.")) {
+            try await runner.run(
+                MelixCLICommand.evalRun(
+                    EvalRunOptions(
+                        remoteServerID: "evaluated",
+                        remoteModelID: "evaluated-model",
+                        suites: ["mmlu"],
+                        source: .localJSONL(path: "/tmp/eval.jsonl"),
+                        fieldMapping: .init(inputTextPath: "prompt", targetPath: "answer"),
+                        profile: .init(scoringMode: "multiple_choice_accuracy"),
+                        semanticJudgeRemoteServerID: "judge",
+                        semanticJudgeModelID: "judge-model",
+                        json: true
+                    )
+                )
+            )
+        }
+    }
+
     @Test("remote server commands surface missing records and credentials")
     func remoteServerCommandsSurfaceMissingRecordsAndCredentials() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())

@@ -43,11 +43,15 @@ from worker.productization.evaluation_final_result import (
 from worker.productization.event_extraction import (
     EventExtractionPromptSpec,
     RemoteEventExtractionTarget,
+    RemoteSemanticJudgeTarget,
+    SEMANTIC_JUDGE_PROMPT_HASH,
     RemoteProviderHTTPError,
     default_event_extraction_prompt_spec,
     evaluate_event_extraction,
+    evaluate_event_extraction_semantic,
     event_prompt_content_hash,
     make_event_extraction_client,
+    make_semantic_judge_client,
     normalize_event_fields,
     prompt_example_dialogue_ids,
     prompt_snapshot_payload,
@@ -545,6 +549,10 @@ class EvaluationCore:
         details_path = reports_dir / "event_eval_details.jsonl"
         trace_path = reports_dir / "event_eval_dialogue_traces.jsonl"
         row_audit_path = reports_dir / "event_eval_row_audit.jsonl"
+        semantic_summary_path = reports_dir / "event_eval_semantic_summary.json"
+        semantic_details_path = reports_dir / "event_eval_semantic_details.jsonl"
+        semantic_row_audit_path = reports_dir / "event_eval_semantic_row_audit.jsonl"
+        judge_audit_path = reports_dir / "event_eval_judge_audit.jsonl"
         error_log_path = reports_dir / "event_eval_error.json"
         prompt_snapshot_path = output_root / "prompt_snapshot.json"
 
@@ -576,6 +584,7 @@ class EvaluationCore:
                 api_key=str(getattr(remote_target, "api_key", "")),
                 model_id=remote_model_id,
                 timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
+                extra_body=self._remote_provider_extra_body(parameters),
             ),
             prompt_spec=prompt_spec,
         )
@@ -752,6 +761,20 @@ class EvaluationCore:
             json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        semantic_summary: dict[str, object] | None = None
+        semantic_judge_target = self._semantic_judge_target(parameters)
+        if semantic_judge_target is not None:
+            semantic_summary = self._run_event_extraction_semantic_scoring(
+                gold_subset_path=gold_subset_path,
+                prediction_path=prediction_path,
+                semantic_summary_path=semantic_summary_path,
+                semantic_details_path=semantic_details_path,
+                semantic_row_audit_path=semantic_row_audit_path,
+                judge_audit_path=judge_audit_path,
+                judge_target=semantic_judge_target,
+                judge_remote_server_id=str(parameters.get("semantic_judge_remote_server_id") or "").strip(),
+                judge_model_id=semantic_judge_target.model_id,
+            )
         duration_seconds = round(time.perf_counter() - started_at, 6)
         overall_weighted_f1 = float(summary["summary"]["overall_weighted_f1"])
         events_evaluated = int(summary["summary"]["events_evaluated"])
@@ -765,6 +788,8 @@ class EvaluationCore:
         job_parameters.pop("remote_api_key", None)
         job_parameters.pop("eval_prompt_system_prompt", None)
         job_parameters.pop("eval_prompt_examples_json", None)
+        job_parameters.pop("semantic_judge_api_key", None)
+        job_parameters.pop("semantic_judge_base_url", None)
         job_parameters["dataset_root"] = str(Path(source_jsonl).resolve())
         job_parameters["event_source_jsonl"] = str(Path(source_jsonl).resolve())
         job_parameters["prediction_jsonl"] = str(prediction_path)
@@ -773,6 +798,16 @@ class EvaluationCore:
         job_parameters["event_eval_details"] = str(details_path)
         job_parameters["event_eval_dialogue_traces"] = str(trace_path)
         job_parameters["event_eval_row_audit"] = str(row_audit_path)
+        if semantic_judge_target is not None:
+            job_parameters["event_eval_semantic_summary"] = str(semantic_summary_path)
+            job_parameters["event_eval_semantic_details"] = str(semantic_details_path)
+            job_parameters["event_eval_semantic_row_audit"] = str(semantic_row_audit_path)
+            job_parameters["event_eval_judge_audit"] = str(judge_audit_path)
+            job_parameters["semantic_judge_remote_server_id"] = str(
+                parameters.get("semantic_judge_remote_server_id") or ""
+            ).strip()
+            job_parameters["semantic_judge_model_id"] = semantic_judge_target.model_id
+            job_parameters["semantic_judge_prompt_hash"] = SEMANTIC_JUDGE_PROMPT_HASH
         job_parameters["prompt_snapshot"] = str(prompt_snapshot_path)
         job_parameters["prompt_id"] = prompt_spec.prompt_id
         job_parameters["prompt_revision_id"] = prompt_spec.revision_id
@@ -802,6 +837,13 @@ class EvaluationCore:
             f"eval.{suite_id}.events_failed": "count",
             f"eval.{suite_id}.duration_seconds": "s",
         }
+        if isinstance(semantic_summary, dict):
+            semantic_metric_name = f"eval.{suite_id}.semantic_overall_weighted_f1"
+            result_metrics[semantic_metric_name] = float(semantic_summary.get("overall_weighted_f1", 0.0))
+            result_units[semantic_metric_name] = "ratio"
+            semantic_status = str(semantic_summary.get("status") or "")
+            if semantic_status:
+                job_parameters["semantic_judge_status"] = semantic_status
         if isinstance(field_metrics, dict):
             for field_name, values in field_metrics.items():
                 if isinstance(values, dict):
@@ -1016,6 +1058,89 @@ class EvaluationCore:
             "provider_usage_totals": provider_usage_totals,
             "slowest_dialogues": slowest_dialogues,
         }
+
+    @staticmethod
+    def _semantic_judge_target(parameters: dict[str, str]) -> RemoteSemanticJudgeTarget | None:
+        remote_server_id = str(parameters.get("semantic_judge_remote_server_id") or "").strip()
+        if not remote_server_id:
+            return None
+        return RemoteSemanticJudgeTarget(
+            provider_kind=str(parameters.get("semantic_judge_provider_kind") or "").strip(),
+            base_url=str(parameters.get("semantic_judge_base_url") or "").strip(),
+            api_key=str(parameters.get("semantic_judge_api_key") or "").strip(),
+            model_id=str(parameters.get("semantic_judge_model_id") or "").strip(),
+            timeout_seconds=int(str(parameters.get("semantic_judge_timeout_seconds") or "60") or 60),
+            rate_limit_per_minute=int(str(parameters.get("semantic_judge_rate_limit_per_minute") or "0") or 0),
+        )
+
+    @staticmethod
+    def _run_event_extraction_semantic_scoring(
+        *,
+        gold_subset_path: Path,
+        prediction_path: Path,
+        semantic_summary_path: Path,
+        semantic_details_path: Path,
+        semantic_row_audit_path: Path,
+        judge_audit_path: Path,
+        judge_target: RemoteSemanticJudgeTarget,
+        judge_remote_server_id: str,
+        judge_model_id: str,
+    ) -> dict[str, object]:
+        try:
+            judge = make_semantic_judge_client(judge_target)
+            return evaluate_event_extraction_semantic(
+                gold_jsonl=gold_subset_path,
+                pred_jsonl=prediction_path,
+                summary_output=semantic_summary_path,
+                details_output=semantic_details_path,
+                row_audit_output=semantic_row_audit_path,
+                judge_audit_output=judge_audit_path,
+                judge=judge,
+                judge_remote_server_id=judge_remote_server_id,
+                judge_model_id=judge_model_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            semantic_summary = {
+                "status": "failed",
+                "scoring_mode": "event_extraction_semantic_weighted_f1",
+                "base_scoring_mode": "event_extraction_weighted_f1",
+                "overall_weighted_f1": 0.0,
+                "summary": {
+                    "overall_weighted_f1": 0.0,
+                    "events_evaluated": 0,
+                    "events_matched": 0,
+                    "events_unmatched_gold": 0,
+                    "events_unmatched_pred": 0,
+                },
+                "semantic_judge": {
+                    "judge_remote_server_id": judge_remote_server_id,
+                    "judge_model_id": judge_model_id,
+                    "judge_prompt_hash": SEMANTIC_JUDGE_PROMPT_HASH,
+                    "calls": 0,
+                    "cache_hits": 0,
+                    "failures": 1,
+                    "error_code": "semantic_judge_setup_failed",
+                    "failure_reason": str(exc),
+                },
+            }
+            semantic_summary_path.write_text(
+                json.dumps(semantic_summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            EvaluationCore._write_jsonl_rows(semantic_details_path, [])
+            EvaluationCore._write_jsonl_rows(semantic_row_audit_path, [])
+            EvaluationCore._write_jsonl_rows(
+                judge_audit_path,
+                [
+                    {
+                        "status": "failed",
+                        "source": "setup",
+                        "error_code": "semantic_judge_setup_failed",
+                        "failure_reason": str(exc),
+                    }
+                ],
+            )
+            return semantic_summary
 
     @staticmethod
     def _numeric_trace_values(traces: list[dict[str, object]], field_name: str) -> list[float]:
@@ -1509,6 +1634,19 @@ class EvaluationCore:
             examples=tuple(examples),
             content_hash=content_hash,
         )
+
+    @staticmethod
+    def _remote_provider_extra_body(parameters: dict[str, str]) -> dict[str, object]:
+        raw_value = str(parameters.get("remote_provider_extra_body_json") or "").strip()
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"remote_provider_extra_body_json must be valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("remote_provider_extra_body_json must be a JSON object")
+        return parsed
 
     @staticmethod
     def _dialogue_lines(value: object) -> list[str]:

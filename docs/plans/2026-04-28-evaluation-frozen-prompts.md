@@ -13,8 +13,9 @@ draft revision so completed evaluation runs remain reproducible.
 
 - Store evaluation prompts under `$MELIX_HOME/state/evaluation-prompts.json`.
 - Ship a read-only built-in baseline prompt. `baseline.v1` preserves the
-  original direct `events` JSON prompt; the default `baseline.v2` uses the
-  stage-1 `Segment Metadata Candidates` prompt for `top200_final.jsonl`.
+  original direct `events` JSON prompt; `baseline.v2` preserves the stage-1
+  `Segment Metadata Candidates` prompt; the default `baseline.v3` uses a
+  Chinese direct JSON event-extraction prompt for `top200_final.jsonl`.
 - Allow custom prompts to be created, updated as drafts, frozen, listed, shown,
   and archived from the CLI.
 - Allow the macOS Evaluation view to select a prompt and edit/freeze draft
@@ -74,10 +75,15 @@ The Swift CLI resolves the selected prompt into transient evaluation
 parameters. The Python event extraction path consumes those transient fields,
 removes prompt content from persisted job parameters, writes
 `prompt_snapshot.json`, and passes a resolved prompt spec into the remote
-provider client. When the selected prompt is the stage-1 candidate prompt, the
-worker sends a structured input payload containing `segment`,
+provider client. When the selected prompt is the default `baseline.v3` direct
+JSON prompt, the worker sends only a structured input payload containing
+`dialogue_id` and `dialogue`; gold `events` are never included. The model is
+asked to return `dialogue_id`, `events`, event order hints, and digest text; the
+worker still normalizes outputs into the scorer-compatible `actor`, `time`,
+`location`, `action`, and locally derived `digest` shape. When the selected
+prompt is the historical stage-1 candidate prompt, the worker sends `segment`,
 `participant_set`, and `conversation`, then converts returned
-`event_candidates` into the scorer-compatible `events` shape.
+`event_candidates` into the same scorer-compatible shape.
 
 If prompt examples are later populated from a gold JSONL source, every example
 must include `dialogue_id`; the run rejects prompt examples whose ids overlap

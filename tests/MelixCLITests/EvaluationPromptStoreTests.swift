@@ -15,18 +15,56 @@ struct EvaluationPromptStoreTests {
 
         #expect(baseline.id == EvaluationPromptStore.builtInBaselinePromptID)
         #expect(baseline.readOnly)
-        #expect(baseline.latestRevisionID == "baseline.v2")
-        #expect(baseline.revisions.map(\.revisionID) == ["baseline.v1", "baseline.v2"])
+        #expect(baseline.latestRevisionID == "baseline.v6")
+        #expect(baseline.revisions.map(\.revisionID) == ["baseline.v1", "baseline.v2", "baseline.v3", "baseline.v4", "baseline.v5", "baseline.v6"])
         #expect(revision.status == .frozen)
         #expect(revision.systemPrompt == EvaluationPromptStore.builtInBaselineSystemPrompt)
-        #expect(revision.systemPrompt.contains("# Segment Metadata Candidates"))
-        #expect(revision.systemPrompt.contains("\"event_candidates\""))
+        #expect(revision.systemPrompt.contains("你是中文对话事件抽取器"))
+        #expect(revision.systemPrompt.contains("\"source_order\""))
+        #expect(revision.systemPrompt.contains("不要使用元动作"))
+        #expect(revision.systemPrompt.contains("连续时间区间"))
+        #expect(revision.systemPrompt.contains("可用时间"))
+        #expect(revision.systemPrompt.contains("模糊第三方关系词"))
+        #expect(revision.systemPrompt.contains("反馈案例约束"))
+        #expect(revision.systemPrompt.contains("召回强化"))
+        #expect(revision.systemPrompt.contains("同地点同时吃饭"))
+        #expect(revision.systemPrompt.contains("不要抽取为独立事件"))
+        #expect(revision.systemPrompt.contains("周日新买裙子"))
+        #expect(revision.systemPrompt.contains("明天打给你"))
+        #expect(revision.systemPrompt.contains("周一晚上11点下飞机"))
+        #expect(revision.systemPrompt.contains("周二晚上7点上飞机"))
+        #expect(revision.systemPrompt.contains("同事/朋友/表姐"))
         #expect(revision.contentHash == EvaluationPromptStore.contentHash(systemPrompt: revision.systemPrompt))
         #expect(revision.contentHash.hasPrefix("sha256:"))
 
         let resolved = try store.resolveForRun()
         #expect(resolved.promptID == baseline.id)
         #expect(resolved.revisionID == EvaluationPromptStore.builtInBaselineRevisionID)
+        #expect(resolved.revisionID == "baseline.v6")
+
+        let v3Resolved = try store.resolveForRun(
+            promptID: EvaluationPromptStore.builtInBaselinePromptID,
+            revisionID: "baseline.v3"
+        )
+        #expect(v3Resolved.revisionID == "baseline.v3")
+        #expect(v3Resolved.systemPrompt.contains("不要使用元动作"))
+        #expect(v3Resolved.systemPrompt.contains("连续时间区间") == false)
+
+        let v4Resolved = try store.resolveForRun(
+            promptID: EvaluationPromptStore.builtInBaselinePromptID,
+            revisionID: "baseline.v4"
+        )
+        #expect(v4Resolved.revisionID == "baseline.v4")
+        #expect(v4Resolved.systemPrompt.contains("连续时间区间"))
+        #expect(v4Resolved.systemPrompt.contains("反馈案例约束") == false)
+
+        let v5Resolved = try store.resolveForRun(
+            promptID: EvaluationPromptStore.builtInBaselinePromptID,
+            revisionID: "baseline.v5"
+        )
+        #expect(v5Resolved.revisionID == "baseline.v5")
+        #expect(v5Resolved.systemPrompt.contains("反馈案例约束"))
+        #expect(v5Resolved.systemPrompt.contains("召回强化") == false)
 
         #expect(throws: MelixCLIError.self) {
             try store.create(

@@ -300,6 +300,7 @@ struct RuntimeViewModelTests {
         #expect(server.baseURL == "https://generativelanguage.googleapis.com/v1beta")
         #expect(server.defaultModelID == "gemini-2.5-flash")
         #expect(server.apiKeyHint == "AIza...cret")
+        #expect(try NullRemoteServerStore().loadAPIKey(remoteServerID: "gemini") == nil)
         try NullRemoteServerStore().remove(id: "gemini")
         #expect(try NullRemoteServerStore().list().isEmpty)
     }
@@ -6450,6 +6451,155 @@ struct RuntimeViewModelTests {
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
+    }
+
+    @Test("evaluation semantic judge selection forwards remote server parameters")
+    @MainActor
+    func evaluationSemanticJudgeSelectionForwardsRemoteServerParameters() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12,
+                    credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                    apiKeyHint: "sk-j...udge"
+                ),
+            ],
+            apiKeys: ["judge": "sk-judge"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/Users/ChenYu/Downloads/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.parameters["semantic_judge_remote_server_id"] == "judge")
+        #expect(request.parameters["semantic_judge_provider_kind"] == "openai-compatible")
+        #expect(request.parameters["semantic_judge_base_url"] == "https://judge.example/v1")
+        #expect(request.parameters["semantic_judge_api_key"] == "sk-judge")
+        #expect(request.parameters["semantic_judge_model_id"] == "judge-model")
+        #expect(request.parameters["semantic_judge_timeout_seconds"] == "41")
+        #expect(request.parameters["semantic_judge_rate_limit_per_minute"] == "12")
+    }
+
+    @Test("evaluation semantic judge selection validates stale servers credentials and model")
+    @MainActor
+    func evaluationSemanticJudgeSelectionValidatesStaleServersCredentialsAndModel() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let judgeServer = RemoteServer(
+            id: "judge",
+            title: "Judge",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "https://judge.example/v1",
+            defaultModelID: "judge-default",
+            timeoutSeconds: 41,
+            rateLimitPerMinute: 12,
+            credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+            apiKeyHint: "sk-j...udge"
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [judgeServer],
+            apiKeys: ["judge": "sk-judge"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/Users/ChenYu/Downloads/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+
+        remoteStore.servers = []
+        viewModel.reloadRemoteServers()
+        #expect(viewModel.selectedEvaluationSemanticJudgeRemoteServerID == "")
+        #expect(viewModel.evaluationSemanticJudgeModelID == "")
+
+        remoteStore.servers = [judgeServer]
+        viewModel.reloadRemoteServers()
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Semantic judge scoring is available for standard Evaluation runs.")
+
+        viewModel.selectedEvaluationMode = .standard
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Semantic judge scoring requires selecting only the Event Extraction suite.")
+
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "missing"
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server missing was not found.") == true)
+
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        remoteStore.apiKeys.removeValue(forKey: "judge")
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server judge has no API key configured.") == true)
+
+        remoteStore.apiKeys["judge"] = "sk-judge"
+        remoteStore.servers = [
+            RemoteServer(
+                id: "judge",
+                title: "Judge",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://judge.example/v1",
+                defaultModelID: "",
+                timeoutSeconds: 41,
+                rateLimitPerMinute: 12,
+                credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                apiKeyHint: "sk-j...udge"
+            ),
+        ]
+        viewModel.reloadRemoteServers()
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = " "
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server judge has no model configured.") == true)
     }
 
     @Test("evaluation configuration forwards structured source mapping and profile controls")

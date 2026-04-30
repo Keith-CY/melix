@@ -2,6 +2,7 @@ import MelixCLICore
 
 public protocol RemoteServerStoring: Sendable {
     func list() throws -> [RemoteServer]
+    func loadAPIKey(remoteServerID: String) throws -> RemoteServerAPIKeyRecord?
     func save(_ mutation: RemoteServerMutation) throws -> RemoteServer
     func remove(id: String) throws
 }
@@ -13,6 +14,10 @@ public struct NullRemoteServerStore: RemoteServerStoring {
 
     public func list() throws -> [RemoteServer] {
         []
+    }
+
+    public func loadAPIKey(remoteServerID: String) throws -> RemoteServerAPIKeyRecord? {
+        nil
     }
 
     @discardableResult

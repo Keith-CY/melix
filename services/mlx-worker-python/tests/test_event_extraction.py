@@ -24,6 +24,54 @@ from worker.productization.event_extraction import (
 )
 
 
+def test_default_event_extraction_prompt_spec_uses_baseline_v6_feedback_rules() -> None:
+    spec = event_extraction_module.default_event_extraction_prompt_spec()
+
+    assert spec.prompt_id == event_extraction_module.EVENT_EXTRACTION_PROMPT_ID
+    assert spec.revision_id == "baseline.v6"
+    assert "连续时间区间" in spec.system_prompt
+    assert "可用时间" in spec.system_prompt
+    assert "模糊第三方关系词" in spec.system_prompt
+    assert "反馈案例约束" in spec.system_prompt
+    assert "召回强化" in spec.system_prompt
+    assert "同地点同时吃饭" in spec.system_prompt
+    assert "不要抽取为独立事件" in spec.system_prompt
+    assert "周日新买裙子" in spec.system_prompt
+    assert "明天打给你" in spec.system_prompt
+    assert "周一晚上11点下飞机" in spec.system_prompt
+    assert "周二晚上7点上飞机" in spec.system_prompt
+    assert "同事/朋友/表姐" in spec.system_prompt
+    assert spec.content_hash == event_extraction_module.event_prompt_content_hash(spec.system_prompt, [])
+
+
+def test_semantic_judge_prompt_v4_documents_event_field_and_group_boundaries() -> None:
+    assert event_extraction_module.SEMANTIC_JUDGE_PROMPT_VERSION == "semantic-judge.v4"
+    prompt = event_extraction_module.SEMANTIC_JUDGE_SYSTEM_PROMPT
+    assert "kind=event" in prompt
+    assert "kind=field" in prompt
+    assert "gold_values" in prompt
+    assert "pred_values" in prompt
+    assert "出来转转" in prompt
+    assert "见面,逛街" in prompt
+    assert "拿位" in prompt
+    assert "吃饭见面" in prompt
+    assert "吃饭\",\"见面" in prompt
+    assert "做唐筛" in prompt
+    assert "做检查" in prompt
+    assert "见面聊天" in prompt
+    assert "见面,聊聊" in prompt
+    assert "今天直到夕阳西下" in prompt
+    assert "有大聚会" in prompt
+    assert "参加聚会" in prompt
+    assert "speaker_1的朋友阿菜" in prompt
+    assert "speaker_1的表姐" in prompt
+    assert "明天" in prompt
+    assert "27号" in prompt
+    assert "同地点同时间" in prompt
+    assert "幻觉" in prompt
+    assert "重复预测" in prompt
+
+
 def test_normalize_event_fields_nulls_empty_values_and_builds_digest() -> None:
     event = normalize_event_fields(
         {
@@ -297,6 +345,1299 @@ def test_evaluate_event_extraction_keeps_low_similarity_events_unmatched(tmp_pat
     assert audit[0]["unmatched_pred_indices"] == [1]
 
 
+def test_evaluate_event_extraction_semantic_judge_matches_event_and_values(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-semantic",
+                "dialogue": ["speaker_1: 下周六见面吧", "speaker_2: 好，下周周六约见"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周六"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-semantic",
+                "dialogue": ["speaker_1: 下周六见面吧", "speaker_2: 好，下周周六约见"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周周六"],
+                        "location": None,
+                        "action": ["约见"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class FakeJudge:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, object]] = []
+
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            request_json = json.dumps(request, ensure_ascii=False)
+            assert "sk-secret" not in request_json
+            assert "https://judge.example/v1" not in request_json
+            self.requests.append(request)
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.97,
+                    "reason_code": "same_event",
+                    "short_reason": "Both events describe the same meeting plan.",
+                }
+            if request["kind"] == "field":
+                key = (request["field_name"], request["gold_value"], request["pred_value"])
+                equivalent = key in {
+                    ("time", "下周六", "下周周六"),
+                    ("action", "见面", "约见"),
+                }
+                return {
+                    "equivalent": equivalent,
+                    "confidence": 0.96 if equivalent else 0.0,
+                    "reason_code": "same_value" if equivalent else "different_value",
+                    "short_reason": "semantic value decision",
+                }
+            raise AssertionError(f"unexpected judge request kind: {request['kind']}")
+
+    judge = FakeJudge()
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=judge,
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    row_audit = [json.loads(line) for line in row_audit_path.read_text(encoding="utf-8").splitlines()]
+    judge_audit = [json.loads(line) for line in judge_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["status"] == "completed"
+    assert summary["scoring_mode"] == "event_extraction_semantic_weighted_f1"
+    assert summary["overall_weighted_f1"] == 1.0
+    assert summary["field_metrics"]["time"]["tp"] == 1
+    assert summary["field_metrics"]["action"]["tp"] == 1
+    assert summary["semantic_judge"]["judge_remote_server_id"] == "judge-server"
+    assert summary["semantic_judge"]["judge_model_id"] == "judge-model"
+    assert summary["semantic_judge"]["judge_prompt_version"] == "semantic-judge.v4"
+    assert summary["semantic_judge"]["judge_prompt_hash"].startswith("sha256:")
+    assert summary["semantic_judge"]["calls"] == 3
+    assert details[0]["match_status"] == "matched"
+    assert details[0]["fields"]["time"]["tp"] == 1
+    assert details[0]["fields"]["action"]["tp"] == 1
+    assert row_audit[0]["matched_pairs"] == [
+        {"gold_event_index": 0, "pred_event_index": 0, "alignment_score": 0.97}
+    ]
+    assert [row["kind"] for row in judge_audit] == ["event", "field", "field"]
+    assert all("api_key" not in json.dumps(row) for row in judge_audit)
+    assert len(judge.requests) == 3
+
+
+def test_evaluate_event_extraction_semantic_expands_group_actor_aliases(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-group-actor",
+                "dialogue": ["我们 周四 才 拍照"],
+                "events": [
+                    {"actor": ["我们"], "time": ["周四"], "location": None, "action": ["拍照"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-group-actor",
+                "dialogue": ["我们 周四 才 拍照"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["周四"],
+                        "location": None,
+                        "action": ["拍照"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class EventIdentityJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            assert request["kind"] == "event"
+            return {
+                "equivalent": True,
+                "confidence": 0.96,
+                "reason_code": "same_event",
+                "short_reason": "Same photo event.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=EventIdentityJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert summary["overall_weighted_f1"] == 1.0
+    assert summary["field_metrics"]["actor"]["tp"] == 2
+    assert detail["fields"]["actor"]["gold"] == ["speaker_1", "speaker_2"]
+    assert detail["fields"]["actor"]["pred"] == ["speaker_1", "speaker_2"]
+
+
+def test_evaluate_event_extraction_semantic_actor_relation_aliases_and_slot_guard(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-actor-alias",
+                "dialogue": [
+                    "speaker_1: 我的朋友阿菜后天来",
+                    "speaker_2: 你表姐23号也来吗",
+                ],
+                "events": [
+                    {
+                        "actor": ["speaker_1的朋友阿菜"],
+                        "time": ["后天"],
+                        "location": None,
+                        "action": ["来访"],
+                        "digest": "",
+                    },
+                    {
+                        "actor": ["speaker_1的表姐"],
+                        "time": ["23号"],
+                        "location": None,
+                        "action": ["来访"],
+                        "digest": "",
+                    },
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-actor-alias",
+                "dialogue": [
+                    "speaker_1: 我的朋友阿菜后天来",
+                    "speaker_2: 你表姐23号也来吗",
+                ],
+                "events": [
+                    {
+                        "actor": ["阿菜"],
+                        "time": ["后天"],
+                        "location": None,
+                        "action": ["来"],
+                        "digest": "",
+                    },
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["23号"],
+                        "location": None,
+                        "action": ["来访"],
+                        "digest": "",
+                    },
+                ],
+            }
+        ],
+    )
+
+    class ActorAliasJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.95,
+                    "reason_code": "same_event",
+                    "short_reason": "Same visit event.",
+                }
+            if request["field_name"] == "actor":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.94,
+                    "reason_code": "same_value",
+                    "short_reason": "Over-permissive actor judge.",
+                }
+            return {
+                "equivalent": True,
+                "confidence": 0.9,
+                "reason_code": "same_value",
+                "short_reason": "Same value.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=ActorAliasJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["field_metrics"]["actor"]["tp"] == 1
+    assert summary["field_metrics"]["actor"]["fp"] == 1
+    assert summary["field_metrics"]["actor"]["fn"] == 1
+    assert details[0]["fields"]["actor"]["semantic_matches"] == [
+        {"gold_value": "speaker_1的朋友阿菜", "pred_value": "阿菜", "score": 0.94}
+    ]
+    assert details[1]["fields"]["actor"]["semantic_matches"] == []
+
+
+def test_evaluate_event_extraction_semantic_rejects_obvious_time_conflicts(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-time-conflict",
+                "dialogue": ["speaker_1: 明天走", "speaker_2: 我 27 走"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["离开"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-time-conflict",
+                "dialogue": ["speaker_1: 明天走", "speaker_2: 我 27 走"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["27"], "location": None, "action": ["离开"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    class OverPermissiveJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            return {
+                "equivalent": True,
+                "confidence": 0.95,
+                "reason_code": "same_value",
+                "short_reason": "Overly permissive judge.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=OverPermissiveJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert detail["match_status"] == "matched"
+    assert detail["fields"]["time"]["tp"] == 0
+    assert detail["fields"]["time"]["fp"] == 1
+    assert detail["fields"]["time"]["fn"] == 1
+    assert detail["fields"]["time"]["semantic_matches"] == []
+    assert summary["field_metrics"]["time"]["f1"] == 0.0
+
+
+def test_evaluate_event_extraction_semantic_judge_keeps_non_equivalent_events_unmatched(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-different",
+                "dialogue": ["speaker_1: 明天吃饭"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["吃饭"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-different",
+                "dialogue": ["speaker_1: 明天吃饭"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["周末"], "location": None, "action": ["看电影"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    class RejectingJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            return {
+                "equivalent": False,
+                "confidence": 0.95,
+                "reason_code": "different_event",
+                "short_reason": "Different time and action.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=RejectingJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["overall_weighted_f1"] == 0.0
+    assert summary["summary"]["events_matched"] == 0
+    assert summary["summary"]["events_unmatched_gold"] == 1
+    assert summary["summary"]["events_unmatched_pred"] == 1
+    assert [row["match_status"] for row in details] == ["unmatched_gold", "unmatched_pred"]
+
+
+def test_evaluate_event_extraction_semantic_aligns_micro_action_without_action_tp(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-micro-action",
+                "dialogue": ["speaker_1: 下周二见面", "speaker_2: 我先去拿位"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周二"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-micro-action",
+                "dialogue": ["speaker_1: 下周二见面", "speaker_2: 我先去拿位"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周二"],
+                        "location": None,
+                        "action": ["拿位"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class MicroActionJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.93,
+                    "reason_code": "same_event",
+                    "short_reason": "拿位 is preparation for the same meetup.",
+                }
+            assert request["kind"] == "field"
+            return {
+                "equivalent": False,
+                "confidence": 0.94,
+                "reason_code": "different_value",
+                "short_reason": "拿位 is not the same action value as 见面.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=MicroActionJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert summary["summary"]["events_matched"] == 1
+    assert detail["match_status"] == "matched"
+    assert detail["fields"]["action"]["tp"] == 0
+    assert detail["fields"]["action"]["fp"] == 1
+    assert detail["fields"]["action"]["fn"] == 1
+    assert detail["fields"]["action"]["semantic_matches"] == []
+
+
+def test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_merge(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-action-merge",
+                "dialogue": ["speaker_1: 明天吃饭见面", "speaker_2: 好，明天吃饭见面"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["吃饭", "见面"],
+                        "digest": "",
+                    }
+                ],
+            },
+            {
+                "dialogue_id": "dlg-action-split",
+                "dialogue": ["speaker_1: 明天吃饭见面", "speaker_2: 好，明天吃饭见面"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["吃饭见面"],
+                        "digest": "",
+                    }
+                ],
+            },
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-action-merge",
+                "dialogue": ["speaker_1: 明天吃饭见面", "speaker_2: 好，明天吃饭见面"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["吃饭见面"],
+                        "digest": "",
+                    }
+                ],
+            },
+            {
+                "dialogue_id": "dlg-action-split",
+                "dialogue": ["speaker_1: 明天吃饭见面", "speaker_2: 好，明天吃饭见面"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["明天"],
+                        "location": None,
+                        "action": ["吃饭", "见面"],
+                        "digest": "",
+                    }
+                ],
+            },
+        ],
+    )
+
+    class ActionGroupJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.95,
+                    "reason_code": "same_event",
+                    "short_reason": "Same meal meetup event.",
+                }
+            if request.get("comparison_type") == "action_group":
+                equivalent = (
+                    request.get("gold_values") == ["吃饭", "见面"]
+                    and request.get("pred_values") == ["吃饭见面"]
+                ) or (
+                    request.get("gold_values") == ["吃饭见面"]
+                    and request.get("pred_values") == ["吃饭", "见面"]
+                )
+                return {
+                    "equivalent": equivalent,
+                    "confidence": 0.96 if equivalent else 0.0,
+                    "reason_code": "same_value" if equivalent else "different_value",
+                    "short_reason": "action group decision.",
+                }
+            return {
+                "equivalent": False,
+                "confidence": 0.0,
+                "reason_code": "different_value",
+                "short_reason": "single action values do not cover the compound action.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=ActionGroupJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["field_metrics"]["action"]["tp"] == 2
+    assert summary["field_metrics"]["action"]["fp"] == 0
+    assert summary["field_metrics"]["action"]["fn"] == 0
+    for detail in details:
+        action = detail["fields"]["action"]
+        assert action["f1"] == 1.0
+        assert action["semantic_matches"][0]["gold_values"] in (["吃饭", "见面"], ["吃饭见面"])
+        assert action["semantic_matches"][0]["pred_values"] in (["吃饭", "见面"], ["吃饭见面"])
+        assert action["semantic_matches"][0]["score"] == 0.96
+
+
+def test_evaluate_event_extraction_semantic_matches_specific_check_action(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-check-action",
+                "dialogue": ["speaker_1: 上上周五做了唐筛", "speaker_2: 这个检查挺重要"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["上上周五"], "location": None, "action": ["做唐筛"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-check-action",
+                "dialogue": ["speaker_1: 上上周五做了唐筛", "speaker_2: 这个检查挺重要"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["上上周五"], "location": None, "action": ["做检查"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    class CheckActionJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.95,
+                    "reason_code": "same_event",
+                    "short_reason": "Same medical check event.",
+                }
+            key = (request["field_name"], request["gold_value"], request["pred_value"])
+            return {
+                "equivalent": key == ("action", "做唐筛", "做检查"),
+                "confidence": 0.92,
+                "reason_code": "same_value_more_specific",
+                "short_reason": "唐筛 is the specific check in context.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=CheckActionJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert summary["field_metrics"]["action"]["tp"] == 1
+    assert detail["fields"]["action"]["semantic_matches"] == [
+        {"gold_value": "做唐筛", "pred_value": "做检查", "score": 0.92}
+    ]
+
+
+def test_evaluate_event_extraction_semantic_matches_v4_action_and_time_examples(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-v3-examples",
+                "dialogue": ["speaker_1: 今天一直待到夕阳西下，咱们见面聊天", "speaker_2: 好，今天见面聊聊"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["今天直到夕阳西下"],
+                        "location": None,
+                        "action": ["见面聊天"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-v3-examples",
+                "dialogue": ["speaker_1: 今天一直待到夕阳西下，咱们见面聊天", "speaker_2: 好，今天见面聊聊"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["今天"],
+                        "location": None,
+                        "action": ["见面", "聊聊"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class V3ExampleJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.95,
+                    "reason_code": "same_event",
+                    "short_reason": "Same meeting and chatting event.",
+                }
+            if request.get("comparison_type") == "action_group":
+                return {
+                    "equivalent": request.get("gold_values") == ["见面聊天"]
+                    and request.get("pred_values") == ["见面", "聊聊"],
+                    "confidence": 0.94,
+                    "reason_code": "same_value",
+                    "short_reason": "v4 action group decision.",
+                }
+            key = (request["field_name"], request["gold_value"], request["pred_value"])
+            equivalent = key in {
+                ("time", "今天直到夕阳西下", "今天"),
+                ("action", "见面聊天", "见面"),
+                ("action", "见面聊天", "聊聊"),
+            }
+            return {
+                "equivalent": equivalent,
+                "confidence": 0.91 if equivalent else 0.0,
+                "reason_code": "same_value" if equivalent else "different_value",
+                "short_reason": "v3 example decision.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=V3ExampleJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    assert summary["field_metrics"]["time"]["tp"] == 1
+    assert summary["field_metrics"]["action"]["tp"] == 1
+    assert detail["fields"]["time"]["semantic_matches"] == [
+        {"gold_value": "今天直到夕阳西下", "pred_value": "今天", "score": 0.91}
+    ]
+    assert detail["fields"]["action"]["tp"] == 1
+    assert detail["fields"]["action"]["fp"] == 0
+    assert detail["fields"]["action"]["fn"] == 0
+    assert detail["fields"]["action"]["semantic_matches"] == [
+        {"gold_values": ["见面聊天"], "pred_values": ["见面", "聊聊"], "score": 0.94}
+    ]
+
+
+def test_evaluate_event_extraction_semantic_flags_low_quality_event_alignment(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-low-quality-party",
+                "dialogue": ["speaker_1: 23号周六有大聚会", "speaker_2: 我那天也有别的安排"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["23号周六"], "location": None, "action": ["有大聚会"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-low-quality-party",
+                "dialogue": ["speaker_1: 23号周六有大聚会", "speaker_2: 我那天也有别的安排"],
+                "events": [
+                    {"actor": ["speaker_2"], "time": ["23号周六"], "location": None, "action": ["参加聚会"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    class PartyJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.93,
+                    "reason_code": "same_event_related_party",
+                    "short_reason": "Both sides refer to the same party mention.",
+                }
+            return {
+                "equivalent": False,
+                "confidence": 0.9,
+                "reason_code": "different_value",
+                "short_reason": "Field value is not equivalent enough for TP.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=PartyJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    row_audit = json.loads(row_audit_path.read_text(encoding="utf-8").splitlines()[0])
+    assert summary["summary"]["events_matched"] == 1
+    assert detail["fields"]["actor"]["tp"] == 0
+    assert detail["fields"]["action"]["tp"] == 0
+    assert detail["fields"]["time"]["tp"] == 1
+    assert detail["weighted_f1"] < event_extraction_module.SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD
+    assert row_audit["low_quality_alignment"] is True
+    assert row_audit["low_quality_alignment_pairs"] == [
+        {
+            "gold_event_index": 0,
+            "pred_event_index": 0,
+            "weighted_f1": detail["weighted_f1"],
+            "alignment_score": 0.93,
+        }
+    ]
+
+
+def test_evaluate_event_extraction_semantic_does_not_merge_same_place_different_actors(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-same-place",
+                "dialogue": ["speaker_1: 我明晚在你店里请人吃饭", "speaker_2: 我明晚也和朋友吃饭"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["明晚"],
+                        "location": ["speaker_2店里"],
+                        "action": ["请人吃饭"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-same-place",
+                "dialogue": ["speaker_1: 我明晚在你店里请人吃饭", "speaker_2: 我明晚也和朋友吃饭"],
+                "events": [
+                    {
+                        "actor": ["speaker_2"],
+                        "time": ["明晚"],
+                        "location": ["speaker_2店里"],
+                        "action": ["和朋友吃饭"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class SamePlaceJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            assert request["kind"] == "event"
+            return {
+                "equivalent": False,
+                "confidence": 0.96,
+                "reason_code": "different_event",
+                "short_reason": "Same place and time, but different participants and meal events.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=SamePlaceJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    details = [json.loads(line) for line in details_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["summary"]["events_matched"] == 0
+    assert [row["match_status"] for row in details] == ["unmatched_gold", "unmatched_pred"]
+
+
+def test_evaluate_event_extraction_semantic_judge_failure_marks_partial_and_uses_cache(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    rows = [
+        {
+            "dialogue_id": "dlg-cache-1",
+            "dialogue": ["speaker_1: 下周六见面"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["下周六"], "location": None, "action": ["见面"], "digest": ""}
+            ],
+        },
+        {
+            "dialogue_id": "dlg-cache-2",
+            "dialogue": ["speaker_1: 下周六见面"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["下周六"], "location": None, "action": ["见面"], "digest": ""}
+            ],
+        },
+        {
+            "dialogue_id": "dlg-failure",
+            "dialogue": ["speaker_1: 明天吃饭"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["吃饭"], "digest": ""}
+            ],
+        },
+    ]
+    predictions = [
+        {
+            "dialogue_id": "dlg-cache-1",
+            "dialogue": ["speaker_1: 下周周六约见"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["下周周六"], "location": None, "action": ["约见"], "digest": ""}
+            ],
+        },
+        {
+            "dialogue_id": "dlg-cache-2",
+            "dialogue": ["speaker_1: 下周周六约见"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["下周周六"], "location": None, "action": ["约见"], "digest": ""}
+            ],
+        },
+        {
+            "dialogue_id": "dlg-failure",
+            "dialogue": ["speaker_1: 明天吃饭"],
+            "events": [
+                {"actor": ["speaker_1"], "time": ["周末"], "location": None, "action": ["看电影"], "digest": ""}
+            ],
+        },
+    ]
+    _write_jsonl(gold, rows)
+    _write_jsonl(pred, predictions)
+
+    class CachingJudge:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            self.calls += 1
+            if request["dialogue_id"] == "dlg-failure":
+                raise RuntimeError("judge unavailable")
+            return {
+                "equivalent": True,
+                "confidence": 0.92,
+                "reason_code": "same_value",
+                "short_reason": "Reusable semantic decision.",
+            }
+
+    judge = CachingJudge()
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=judge,
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    judge_audit = [json.loads(line) for line in judge_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["status"] == "partial"
+    assert summary["semantic_judge"]["failures"] == 1
+    assert summary["semantic_judge"]["cache_hits"] > 0
+    assert any(row["source"] == "cache" for row in judge_audit)
+    assert any(row["status"] == "failed" and row["error_code"] == "judge_error" for row in judge_audit)
+    assert judge.calls < 9
+
+
+def test_evaluate_event_extraction_semantic_judge_audit_summarizes_http_failures(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-judge-http-failure",
+                "dialogue": ["speaker_1: 明天吃饭"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["吃饭"], "digest": ""}
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-judge-http-failure",
+                "dialogue": ["speaker_1: 明天看电影"],
+                "events": [
+                    {"actor": ["speaker_1"], "time": ["明天"], "location": None, "action": ["看电影"], "digest": ""}
+                ],
+            }
+        ],
+    )
+
+    class FailingJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            raise RemoteProviderHTTPError(
+                status_code=502,
+                response_body='{"error_name":"origin_bad_gateway","detail":"large body that should not be stored"}',
+            )
+
+    event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=FailingJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    audit_rows = [json.loads(line) for line in judge_audit_path.read_text(encoding="utf-8").splitlines()]
+    failed = next(row for row in audit_rows if row["status"] == "failed")
+    assert failed["failure_reason"] == "remote provider HTTP 502"
+    assert failed["short_reason"] == "remote provider HTTP 502"
+    assert "origin_bad_gateway" not in json.dumps(failed, ensure_ascii=False)
+
+
+def test_semantic_internal_helpers_cover_boundary_and_error_branches(tmp_path: Path) -> None:
+    assert event_extraction_module._is_retryable_semantic_judge_error(  # type: ignore[attr-defined]
+        event_extraction_module.RemoteProviderHTTPError(status_code=429, response_body="rate")
+    )
+    assert event_extraction_module._is_retryable_semantic_judge_error(  # type: ignore[attr-defined]
+        event_extraction_module.RemoteProviderHTTPError(status_code=502, response_body="bad gateway")
+    )
+    assert not event_extraction_module._is_retryable_semantic_judge_error(  # type: ignore[attr-defined]
+        event_extraction_module.RemoteProviderHTTPError(status_code=400, response_body="bad request")
+    )
+    assert event_extraction_module._is_retryable_semantic_judge_error(  # type: ignore[attr-defined]
+        event_extraction_module.RemoteProviderRequestError(reason="timed out")
+    )
+    assert not event_extraction_module._is_retryable_semantic_judge_error(ValueError("local"))  # type: ignore[attr-defined]
+
+    for factory in (
+        event_extraction_module.make_semantic_judge_client,
+        event_extraction_module.RemoteSemanticJudgeClient,
+    ):
+        try:
+            factory(
+                event_extraction_module.RemoteSemanticJudgeTarget(
+                    provider_kind="unsupported",
+                    base_url="https://judge.example/v1",
+                    api_key="secret",
+                    model_id="judge",
+                )
+            )
+        except ValueError as exc:
+            assert "unsupported semantic judge provider kind" in str(exc)
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError("expected unsupported judge provider validation")
+
+    assert not event_extraction_module._obvious_time_conflict("", "27号")  # type: ignore[attr-defined]
+    assert not event_extraction_module._obvious_time_conflict("明天", "明天")  # type: ignore[attr-defined]
+    assert event_extraction_module._obvious_time_conflict("明天", "27号")  # type: ignore[attr-defined]
+    assert event_extraction_module._actor_slot_relation_conflict("speaker_1", "speaker_2")  # type: ignore[attr-defined]
+    assert event_extraction_module._actor_slot_relation_conflict("speaker_1", "speaker_1的表姐")  # type: ignore[attr-defined]
+    assert not event_extraction_module._actor_slot_relation_conflict("阿菜", "speaker_1的朋友阿菜")  # type: ignore[attr-defined]
+
+    assert event_extraction_module._semantic_decision_score({"equivalent": False, "confidence": 1.0}) == 0.0  # type: ignore[attr-defined]
+    assert event_extraction_module._semantic_decision_score({"equivalent": True, "confidence": True}) == 0.0  # type: ignore[attr-defined]
+    assert event_extraction_module._semantic_decision_score({"equivalent": True, "confidence": "high"}) == 0.0  # type: ignore[attr-defined]
+    assert event_extraction_module._semantic_decision_score({"equivalent": True, "confidence": 2.0}) == 1.0  # type: ignore[attr-defined]
+
+    assert event_extraction_module._normalize_semantic_judge_decision("bad")["reason_code"] == "malformed_response"  # type: ignore[attr-defined]
+    assert event_extraction_module._normalize_semantic_judge_decision({"confidence": 0.5})["reason_code"] == "malformed_response"  # type: ignore[attr-defined]
+    uncertain = event_extraction_module._normalize_semantic_judge_decision(  # type: ignore[attr-defined]
+        {"equivalent": True, "confidence": 0.9, "reason_code": "uncertain"}
+    )
+    assert uncertain["equivalent"] is False
+    assert event_extraction_module._parse_semantic_judge_response("not json")["reason_code"] == "malformed_response"  # type: ignore[attr-defined]
+    assert (
+        event_extraction_module._semantic_judge_failure_reason(  # type: ignore[attr-defined]
+            event_extraction_module.RemoteProviderRequestError(reason="timed out")
+        )
+        == "remote provider request failed"
+    )
+    assert event_extraction_module._semantic_judge_failure_reason(Exception("\n")) == "Exception"  # type: ignore[attr-defined]
+    assert event_extraction_module._unique_preserving_order(["a", "b", "a"]) == ["a", "b"]  # type: ignore[attr-defined]
+
+    stage1_prompt = EventExtractionPromptSpec(
+        prompt_id="p",
+        revision_id="stage1",
+        title="",
+        system_prompt="stage-1 conversation event_candidates",
+        content_hash="h",
+    )
+    direct_prompt = EventExtractionPromptSpec(
+        prompt_id="p",
+        revision_id="direct",
+        title="",
+        system_prompt='你是中文对话事件抽取器 "dialogue_id" "source_order"',
+        content_hash="h",
+    )
+    assert event_extraction_module._prompt_input_mode(stage1_prompt) == "stage1"  # type: ignore[attr-defined]
+    assert event_extraction_module._prompt_input_mode(direct_prompt) == "direct_event_json"  # type: ignore[attr-defined]
+    assert event_extraction_module._prompt_input_mode(EventExtractionPromptSpec("p", "raw", "", "plain", "h")) == "raw_dialogue"  # type: ignore[attr-defined]
+    assert "conversation" in event_extraction_module._dialogue_user_content(["speaker_1: 见面"], "dlg", "stage1")  # type: ignore[attr-defined]
+    direct_user = json.loads(event_extraction_module._dialogue_user_content([" speaker_1: 见面 "], "dlg", "direct_event_json"))  # type: ignore[attr-defined]
+    assert direct_user == {"dialogue_id": "dlg", "dialogue": ["speaker_1: 见面"]}
+
+    example = {
+        "dialogue_id": "ex-1",
+        "dialogue": ["speaker_1: 周五吃饭"],
+        "events": [{"actor": ["speaker_1"], "time": ["周五"], "location": None, "action": ["吃饭"]}],
+    }
+    assert "event_candidates" in event_extraction_module._example_response_text(example, "stage1")  # type: ignore[attr-defined]
+    direct_response = json.loads(event_extraction_module._example_response_text(example, "direct_event_json"))  # type: ignore[attr-defined]
+    assert direct_response["dialogue_id"] == "ex-1"
+    assert direct_response["events"][0]["source_order"] == 1
+    assert direct_response["events"][0]["digest"] == "speaker_1周五吃饭"
+
+    invalid_rows = [
+        ("not-object", "[]", "expected JSON object"),
+        ("missing-id", '{"events":[]}', "missing dialogue_id"),
+        ("events-not-list", '{"dialogue_id":"dlg","events":{}}', "events must be a list"),
+    ]
+    for name, payload, expected in invalid_rows:
+        path = tmp_path / f"{name}.jsonl"
+        path.write_text("\n" + payload + "\n", encoding="utf-8")
+        try:
+            event_extraction_module._read_dialogue_jsonl_rows(path)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError(f"expected {expected}")
+
+
+def test_semantic_evaluation_uses_pred_dialogue_fallback_and_prefilter(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-prefilter",
+                "dialogue": [],
+                "events": [{"actor": ["alice"], "time": ["周一"], "location": ["公司"], "action": ["开会"]}],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-prefilter",
+                "dialogue": ["speaker_2: 火星历去月球潜水"],
+                "events": [{"actor": ["zzzz"], "time": ["火星历"], "location": ["月球"], "action": ["潜水"]}],
+            }
+        ],
+    )
+
+    class NoCallJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            raise AssertionError(f"prefiltered candidate should not call judge: {request}")
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=NoCallJudge(),
+        judge_remote_server_id="judge",
+        judge_model_id="judge-model",
+    )
+
+    row_audit = [json.loads(line) for line in row_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["event_alignment"]["matched_pairs"] == 0
+    assert row_audit[0]["candidate_scores"][0]["source"] == "prefilter"
+
+
+def test_evaluation_core_semantic_setup_failure_and_extra_body_validation(tmp_path: Path, monkeypatch) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    _write_jsonl(gold, [{"dialogue_id": "dlg", "dialogue": [], "events": []}])
+    _write_jsonl(pred, [{"dialogue_id": "dlg", "dialogue": [], "events": []}])
+
+    monkeypatch.setattr(
+        evaluation_core,
+        "make_semantic_judge_client",
+        lambda target: (_ for _ in ()).throw(RuntimeError("judge setup unavailable")),
+        raising=False,
+    )
+
+    summary = EvaluationCore._run_event_extraction_semantic_scoring(
+        gold_subset_path=gold,
+        prediction_path=pred,
+        semantic_summary_path=tmp_path / "summary.json",
+        semantic_details_path=tmp_path / "details.jsonl",
+        semantic_row_audit_path=tmp_path / "rows.jsonl",
+        judge_audit_path=tmp_path / "judge.jsonl",
+        judge_target=event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="openai-compatible",
+            base_url="https://judge.example/v1",
+            api_key="secret",
+            model_id="judge",
+        ),
+        judge_remote_server_id="judge",
+        judge_model_id="judge",
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["semantic_judge"]["error_code"] == "semantic_judge_setup_failed"
+    assert "judge setup unavailable" in summary["semantic_judge"]["failure_reason"]
+    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["status"] == "failed"
+    assert (tmp_path / "details.jsonl").read_text(encoding="utf-8") == ""
+    assert json.loads((tmp_path / "judge.jsonl").read_text(encoding="utf-8"))["source"] == "setup"
+
+    assert EvaluationCore._remote_provider_extra_body({}) == {}
+    for raw_value, expected in [
+        ("{bad", "must be valid JSON"),
+        ("[]", "must be a JSON object"),
+    ]:
+        try:
+            EvaluationCore._remote_provider_extra_body({"remote_provider_extra_body_json": raw_value})
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError(f"expected {expected}")
+
+
 def test_event_alignment_uses_global_optimum_not_greedy() -> None:
     matches = event_extraction_module._maximum_weight_event_matching(
         [
@@ -426,6 +1767,7 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     captured = {}
 
     def fake_client_factory(target, prompt_spec=None):
+        captured["target"] = target
         captured["prompt_spec"] = prompt_spec
         return FakeClient(target)
 
@@ -449,6 +1791,9 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
             "eval_prompt_title": "Event Prod",
             "eval_prompt_system_prompt": "Extract only events from this dialogue.",
             "eval_prompt_examples_json": "[]",
+            "remote_provider_extra_body_json": json.dumps(
+                {"max_tokens": 1024, "chat_template_kwargs": {"enable_thinking": False}}
+            ),
         },
         remote_target=FakeTarget(),
     )
@@ -465,6 +1810,7 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     assert run.job.parameters["event_eval_dialogue_traces"].endswith("event_eval_dialogue_traces.jsonl")
     assert run.job.parameters["event_eval_row_audit"].endswith("event_eval_row_audit.jsonl")
     assert captured["prompt_spec"].system_prompt == "Extract only events from this dialogue."
+    assert captured["target"].extra_body == {"max_tokens": 1024, "chat_template_kwargs": {"enable_thinking": False}}
     assert (output_dir / "predictions" / "gemini-2.5-flash.jsonl").is_file()
     summary_path = output_dir / "reports" / "gemini-2.5-flash" / "event_eval_summary.json"
     trace_path = output_dir / "reports" / "gemini-2.5-flash" / "event_eval_dialogue_traces.jsonl"
@@ -518,6 +1864,117 @@ def test_evaluation_core_runs_event_extraction_with_remote_target_without_persis
     prompt_snapshot = json.loads((output_dir / "prompt_snapshot.json").read_text(encoding="utf-8"))
     assert prompt_snapshot["prompt_id"] == "event-prod"
     assert prompt_snapshot["system_prompt"] == "Extract only events from this dialogue."
+
+
+def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judge_secret(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "top200_final.jsonl"
+    _write_jsonl(
+        source,
+        [
+            {
+                "dialogue_id": "dlg-semantic",
+                "dialogue": ["speaker_1: 下周六见面吧", "speaker_2: 好，下周周六约见"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周六"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class FakeClient:
+        def extract_events(self, dialogue, dialogue_id=""):
+            return EventExtractionClientResult(
+                events=[
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["下周周六"],
+                        "location": None,
+                        "action": ["约见"],
+                    }
+                ],
+                raw_response='{"events":[]}',
+            )
+
+    class FakeJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            return {
+                "equivalent": True,
+                "confidence": 0.94,
+                "reason_code": "same_event_or_value",
+                "short_reason": "The compared items describe the same schedule.",
+            }
+
+    class FakeTarget:
+        remote_server_id = "evaluated-server"
+        provider_kind = "openai-compatible"
+        base_url = "https://evaluated.example/v1"
+        api_key = "sk-evaluated-secret"
+        model_id = "evaluated-model"
+        timeout_seconds = 30
+        rate_limit_per_minute = 0
+
+    captured = {}
+
+    def fake_judge_factory(target):
+        captured["judge_target"] = target
+        return FakeJudge()
+
+    monkeypatch.setattr(evaluation_core, "make_event_extraction_client", lambda target, prompt_spec=None: FakeClient())
+    monkeypatch.setattr(evaluation_core, "make_semantic_judge_client", fake_judge_factory, raising=False)
+
+    run = EvaluationCore(jobs_root=tmp_path / "evals").run_local_suite(
+        model_id="evaluated-model",
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={
+            "event_source_jsonl": str(source),
+            "semantic_judge_remote_server_id": "judge-server",
+            "semantic_judge_provider_kind": "openai-compatible",
+            "semantic_judge_base_url": "https://judge.example/v1",
+            "semantic_judge_api_key": "sk-judge-secret",
+            "semantic_judge_model_id": "judge-model",
+            "semantic_judge_timeout_seconds": "42",
+            "semantic_judge_rate_limit_per_minute": "0",
+        },
+        remote_target=FakeTarget(),
+    )
+
+    output_dir = Path(run.job.output_dir)
+    safe_job_parameters = json.dumps(run.job.parameters, ensure_ascii=False)
+    assert "sk-judge-secret" not in safe_job_parameters
+    assert "https://judge.example/v1" not in safe_job_parameters
+    assert run.job.parameters["semantic_judge_remote_server_id"] == "judge-server"
+    assert run.job.parameters["semantic_judge_model_id"] == "judge-model"
+    assert run.job.parameters["event_eval_semantic_summary"].endswith("event_eval_semantic_summary.json")
+    assert run.job.parameters["event_eval_judge_audit"].endswith("event_eval_judge_audit.jsonl")
+    assert run.result.primary_score_name == "overall_weighted_f1"
+    semantic_metric = next(
+        metric
+        for metric in run.result.metrics
+        if metric.name == "eval.event_extraction.semantic_overall_weighted_f1"
+    )
+    assert semantic_metric.value == 1.0
+    assert captured["judge_target"].api_key == "sk-judge-secret"
+
+    semantic_summary_path = output_dir / "reports" / "evaluated-model" / "event_eval_semantic_summary.json"
+    semantic_summary = json.loads(semantic_summary_path.read_text(encoding="utf-8"))
+    assert semantic_summary["status"] == "completed"
+    assert semantic_summary["overall_weighted_f1"] == 1.0
+    assert semantic_summary["semantic_judge"]["judge_remote_server_id"] == "judge-server"
+    assert semantic_summary["semantic_judge"]["judge_model_id"] == "judge-model"
+    assert "sk-judge-secret" not in json.dumps(semantic_summary, ensure_ascii=False)
+    assert "https://judge.example/v1" not in json.dumps(semantic_summary, ensure_ascii=False)
 
 
 def test_evaluation_core_event_extraction_records_client_and_normalization_failures(
@@ -1036,14 +2493,17 @@ def test_openai_event_extraction_posts_chat_completions_and_parses_response(monk
                             "message": {
                                 "content": json.dumps(
                                     {
+                                        "dialogue_id": "dlg-smoke",
                                         "events": [
                                             {
                                                 "actor": ["我"],
                                                 "time": ["明天"],
                                                 "location": None,
                                                 "action": ["开会"],
+                                                "digest": "ignored",
+                                                "source_order": 1,
                                             }
-                                        ]
+                                        ],
                                     },
                                     ensure_ascii=False,
                                 )
@@ -1075,32 +2535,73 @@ def test_openai_event_extraction_posts_chat_completions_and_parses_response(monk
 
     events, raw_text = client.extract_events(["speaker_1: 明天我开会"], dialogue_id="dlg-smoke")
 
-    assert events == [{"actor": ["我"], "time": ["明天"], "location": None, "action": ["开会"]}]
+    assert events == [
+        {
+            "actor": ["我"],
+            "time": ["明天"],
+            "location": None,
+            "action": ["开会"],
+            "digest": "ignored",
+            "source_order": 1,
+        }
+    ]
     assert raw_text.startswith("{")
     assert captured["url"] == "https://sub2api.example/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-secret"
     assert captured["timeout"] == 37
     assert captured["body"]["model"] == "kimi-2.6"
     assert captured["body"]["messages"][0]["role"] == "system"
+    assert "你是中文对话事件抽取器" in captured["body"]["messages"][0]["content"]
     request_payload = json.loads(captured["body"]["messages"][1]["content"])
-    assert request_payload["segment"] == {
-        "segment_id": "dlg-smoke",
+    assert request_payload == {
         "dialogue_id": "dlg-smoke",
-        "message_count": 1,
+        "dialogue": ["speaker_1: 明天我开会"],
     }
-    assert request_payload["participant_set"] == [
-        {"participant_id": "speaker_1", "display_name": "speaker_1"}
-    ]
-    assert request_payload["conversation"] == [
-        {
-            "message_id": "m1",
-            "sender": "speaker_1",
-            "participant_id": "speaker_1",
-            "timestamp": None,
-            "text": "明天我开会",
-        }
-    ]
     assert captured["body"]["temperature"] == 0
+
+
+def test_openai_event_extraction_merges_remote_extra_body_without_core_overrides(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": '{"events":[]}'}}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", fake_urlopen)
+
+    client = OpenAICompatibleEventExtractionClient(
+        RemoteEventExtractionTarget(
+            provider_kind="openai-compatible",
+            base_url="https://sub2api.example/v1",
+            api_key="sk-secret",
+            model_id="qwen",
+            extra_body={
+                "max_tokens": 1024,
+                "chat_template_kwargs": {"enable_thinking": False},
+                "model": "wrong-model",
+                "messages": [],
+                "stream": True,
+            },
+        )
+    )
+
+    client.extract_events(["speaker_1: 明天我开会"], dialogue_id="dlg-extra-body")
+
+    assert captured["body"]["model"] == "qwen"
+    assert captured["body"]["messages"]
+    assert captured["body"]["stream"] is False
+    assert captured["body"]["max_tokens"] == 1024
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_event_extraction_clients_use_selected_prompt_and_examples(monkeypatch) -> None:
@@ -1220,6 +2721,283 @@ def test_event_extraction_clients_expose_standardized_provider_usage(monkeypatch
     assert gemini_result.provider_usage == {"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18}
     assert openai_result.response_body_bytes > openai_result.raw_response_chars
     assert gemini_result.request_body_bytes > 0
+
+
+def test_remote_semantic_judge_clients_post_strict_json_requests(monkeypatch) -> None:
+    captured = []
+    responses = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "equivalent": True,
+                                "confidence": 0.91,
+                                "reason_code": "same_value",
+                                "short_reason": "same schedule",
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "equivalent": False,
+                                        "confidence": 0.88,
+                                        "reason_code": "different_value",
+                                        "short_reason": "different action",
+                                    }
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    ]
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured.append(
+            {
+                "url": request.full_url,
+                "headers": dict(request.headers),
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", fake_urlopen)
+
+    openai_decision = event_extraction_module.make_semantic_judge_client(
+        event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="openai-compatible",
+            base_url="https://judge.example/v1",
+            api_key="sk-judge",
+            model_id="judge-model",
+            timeout_seconds=31,
+        )
+    ).judge_semantic_equivalence(
+        {
+            "kind": "field",
+            "dialogue_id": "dlg-1",
+            "field_name": "time",
+            "gold_value": "下周六",
+            "pred_value": "下周周六",
+        }
+    )
+    gemini_decision = event_extraction_module.make_semantic_judge_client(
+        event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="gemini-generative-language",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="AIza-judge",
+            model_id="gemini-2.5-flash",
+            timeout_seconds=32,
+        )
+    ).judge_semantic_equivalence(
+        {
+            "kind": "field",
+            "dialogue_id": "dlg-1",
+            "field_name": "action",
+            "gold_value": "吃饭",
+            "pred_value": "看电影",
+        }
+    )
+
+    assert openai_decision["equivalent"] is True
+    assert gemini_decision["equivalent"] is False
+    assert captured[0]["url"] == "https://judge.example/v1/chat/completions"
+    assert captured[0]["headers"]["Authorization"] == "Bearer sk-judge"
+    assert captured[0]["timeout"] == 31
+    assert captured[0]["body"]["temperature"] == 0
+    assert captured[0]["body"]["messages"][0]["content"].startswith("You are a semantic judge")
+    assert "For kind=\"event\"" in captured[0]["body"]["messages"][0]["content"]
+    assert "sk-judge" not in json.dumps(captured[0]["body"])
+    assert captured[1]["url"] == (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        "models/gemini-2.5-flash:generateContent?key=AIza-judge"
+    )
+    assert "Authorization" not in captured[1]["headers"]
+    assert captured[1]["body"]["generationConfig"]["temperature"] == 0
+    assert captured[1]["body"]["systemInstruction"]["parts"][0]["text"].startswith("You are a semantic judge")
+    assert "AIza-judge" not in json.dumps(captured[1]["body"])
+
+
+def test_remote_semantic_judge_retries_retryable_http_errors(monkeypatch) -> None:
+    attempts = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "equivalent": True,
+                                        "confidence": 0.9,
+                                        "reason_code": "same_event",
+                                        "short_reason": "retry succeeded",
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        attempts.append(request.full_url)
+        if len(attempts) == 1:
+            raise HTTPError(
+                request.full_url,
+                502,
+                "Bad Gateway",
+                hdrs=None,
+                fp=BytesIO(b'{"error_name":"origin_bad_gateway"}'),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(event_extraction_module.time, "sleep", lambda _: None)
+
+    decision = event_extraction_module.make_semantic_judge_client(
+        event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="openai-compatible",
+            base_url="https://judge.example/v1",
+            api_key="sk-judge",
+            model_id="judge-model",
+            timeout_seconds=31,
+        )
+    ).judge_semantic_equivalence({"kind": "event", "dialogue_id": "dlg-1"})
+
+    assert decision["equivalent"] is True
+    assert len(attempts) == 2
+
+
+def test_remote_semantic_judge_client_validates_edges_and_terminal_errors(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+    perf_values = iter([100.0, 100.2, 101.2])
+    throttled_client = event_extraction_module.RemoteSemanticJudgeClient(
+        event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="openai-compatible",
+            base_url="https://judge.example/v1",
+            api_key="secret",
+            model_id="judge",
+            rate_limit_per_minute=60,
+        )
+    )
+    monkeypatch.setattr(event_extraction_module.time, "perf_counter", lambda: next(perf_values))
+    monkeypatch.setattr(event_extraction_module.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+    throttled_client._throttle_if_needed()  # type: ignore[attr-defined]
+    throttled_client._throttle_if_needed()  # type: ignore[attr-defined]
+    assert sleep_calls == [0.7999999999999972]
+
+    for method_name, target in [
+        (
+            "_post_openai",
+            event_extraction_module.RemoteSemanticJudgeTarget(
+                provider_kind="openai-compatible",
+                base_url=" ",
+                api_key="secret",
+                model_id="judge",
+            ),
+        ),
+        (
+            "_post_gemini",
+            event_extraction_module.RemoteSemanticJudgeTarget(
+                provider_kind="gemini-generative-language",
+                base_url=" ",
+                api_key="secret",
+                model_id="judge",
+            ),
+        ),
+    ]:
+        client = event_extraction_module.RemoteSemanticJudgeClient(target)
+        try:
+            getattr(client, method_name)({})  # type: ignore[misc]
+        except ValueError as exc:
+            assert str(exc) == "semantic judge base_url is empty"
+        else:  # pragma: no cover - assertion guard
+            raise AssertionError("expected empty base URL validation")
+
+    client = event_extraction_module.RemoteSemanticJudgeClient(
+        event_extraction_module.RemoteSemanticJudgeTarget(
+            provider_kind="openai-compatible",
+            base_url="https://judge.example/v1",
+            api_key="secret",
+            model_id="judge",
+        )
+    )
+
+    def raise_non_retryable_http(request, timeout):
+        raise HTTPError(request.full_url, 400, "Bad Request", {}, BytesIO(b'{"error":"bad"}'))
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", raise_non_retryable_http)
+    try:
+        client._post_json_request(event_extraction_module.Request("https://judge.example/v1/chat/completions"))  # type: ignore[attr-defined]
+    except RemoteProviderHTTPError as exc:
+        assert exc.status_code == 400
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected non-retryable HTTP error")
+
+    def raise_url_error(request, timeout):
+        raise URLError("network down")
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", raise_url_error)
+    monkeypatch.setattr(event_extraction_module.time, "sleep", lambda seconds: None)
+    try:
+        client._post_json_request(event_extraction_module.Request("https://judge.example/v1/chat/completions"))  # type: ignore[attr-defined]
+    except event_extraction_module.RemoteProviderRequestError as exc:
+        assert exc.reason == "network down"
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected terminal request error")
+
+    class FakeListResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    monkeypatch.setattr(event_extraction_module, "urlopen", lambda request, timeout: FakeListResponse())
+    try:
+        client._post_json_request(event_extraction_module.Request("https://judge.example/v1/chat/completions"))  # type: ignore[attr-defined]
+    except ValueError as exc:
+        assert str(exc) == "semantic judge response must be a JSON object"
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected object response validation")
 
 
 def test_remote_event_extraction_http_clients_map_request_failures(monkeypatch) -> None:

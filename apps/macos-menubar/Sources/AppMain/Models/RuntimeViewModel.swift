@@ -1638,6 +1638,8 @@ public final class RuntimeViewModel {
     public var evaluationPromptIDDraft = "event-extraction-custom"
     public var evaluationPromptTitleDraft = "Event Extraction Prompt"
     public var evaluationPromptSystemPromptDraft = EvaluationPromptStore.builtInBaselineSystemPrompt
+    public var selectedEvaluationSemanticJudgeRemoteServerID = ""
+    public var evaluationSemanticJudgeModelID = ""
     public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
     public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
@@ -1984,6 +1986,12 @@ public final class RuntimeViewModel {
             }
             if let selected = servers.first(where: { $0.id == selectedRemoteServerID }) {
                 applyRemoteServerDraft(from: selected)
+            }
+            if selectedEvaluationSemanticJudgeRemoteServerID.isEmpty == false,
+               servers.contains(where: { $0.id == selectedEvaluationSemanticJudgeRemoteServerID }) == false
+            {
+                selectedEvaluationSemanticJudgeRemoteServerID = ""
+                evaluationSemanticJudgeModelID = ""
             }
         } catch {
             remoteServerPersistFailures += 1
@@ -6019,6 +6027,19 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
+        let usesSemanticJudge = selectedEvaluationSemanticJudgeRemoteServerID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
+        if usesSemanticJudge, selectedEvaluationMode == .compare {
+            recordLocalError("Semantic judge scoring is available for standard Evaluation runs.")
+            notifyStateChanged()
+            return
+        }
+        if usesSemanticJudge, suites != ["event_extraction"] {
+            recordLocalError("Semantic judge scoring requires selecting only the Event Extraction suite.")
+            notifyStateChanged()
+            return
+        }
 
         if let sourceValidationError = validateEvaluationSourceConfiguration() {
             recordLocalError(sourceValidationError)
@@ -6031,6 +6052,14 @@ public final class RuntimeViewModel {
             evaluationPromptSnapshot = usesEvaluationPrompt
                 ? try evaluationPromptStore.resolveForRun(promptID: selectedEvaluationPromptID, revisionID: "")
                 : nil
+        } catch {
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+            return
+        }
+        let semanticJudgeParameters: [String: String]
+        do {
+            semanticJudgeParameters = try evaluationSemanticJudgeParameters()
         } catch {
             recordLocalError(String(describing: error))
             notifyStateChanged()
@@ -6051,10 +6080,13 @@ public final class RuntimeViewModel {
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
                             parameters: evaluationParameters(
                                 compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil,
-                                promptSnapshot: nil
+                                promptSnapshot: nil,
+                                semanticJudgeParameters: [:]
                             ),
                             evalPromptID: evaluationPromptSnapshot?.promptID ?? "",
                             evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? "",
+                            semanticJudgeRemoteServerID: selectedEvaluationSemanticJudgeRemoteServerID,
+                            semanticJudgeModelID: evaluationSemanticJudgeModelID,
                             json: true
                         )
                     )
@@ -6083,7 +6115,11 @@ public final class RuntimeViewModel {
                             targetModelIDs: compareTargetModelIDs,
                             suites: suites,
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs, promptSnapshot: nil)
+                            parameters: evaluationParameters(
+                                compareTargetModelIDs: compareTargetModelIDs,
+                                promptSnapshot: nil,
+                                semanticJudgeParameters: [:]
+                            )
                         )
                     )
                 } else {
@@ -6093,9 +6129,15 @@ public final class RuntimeViewModel {
                             hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
                             suites: suites,
                             sampleSize: UInt32(evaluationSampleSize.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-                            parameters: evaluationParameters(compareTargetModelIDs: nil, promptSnapshot: nil),
+                            parameters: evaluationParameters(
+                                compareTargetModelIDs: nil,
+                                promptSnapshot: nil,
+                                semanticJudgeParameters: [:]
+                            ),
                             evalPromptID: evaluationPromptSnapshot?.promptID ?? "",
-                            evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? ""
+                            evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? "",
+                            semanticJudgeRemoteServerID: selectedEvaluationSemanticJudgeRemoteServerID,
+                            semanticJudgeModelID: evaluationSemanticJudgeModelID
                         )
                     )
                 }
@@ -6107,7 +6149,8 @@ public final class RuntimeViewModel {
                             modelID: selectedEvaluationTargetMode == .catalogModel ? modelID : "",
                             hfRepoID: selectedEvaluationTargetMode == .huggingFaceRepo ? repoID : "",
                             compareTargetModelIDs: selectedEvaluationMode == .compare ? compareTargetModelIDs : nil,
-                            promptSnapshot: evaluationPromptSnapshot
+                            promptSnapshot: evaluationPromptSnapshot,
+                            semanticJudgeParameters: semanticJudgeParameters
                         )
                     )
                 }
@@ -7433,7 +7476,8 @@ public final class RuntimeViewModel {
 
     private func evaluationParameters(
         compareTargetModelIDs: [String]?,
-        promptSnapshot: EvaluationPromptSnapshot?
+        promptSnapshot: EvaluationPromptSnapshot?,
+        semanticJudgeParameters: [String: String] = [:]
     ) -> [String: String] {
         var parameters: [String: String] = [:]
         let batchFactor = evaluationBatchFactor.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7463,7 +7507,41 @@ public final class RuntimeViewModel {
         if let promptSnapshot {
             parameters.merge(evaluationPromptParameters(from: promptSnapshot)) { _, new in new }
         }
+        parameters.merge(semanticJudgeParameters) { _, new in new }
         return parameters
+    }
+
+    private func evaluationSemanticJudgeParameters() throws -> [String: String] {
+        let selectedID = selectedEvaluationSemanticJudgeRemoteServerID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard selectedID.isEmpty == false else {
+            return [:]
+        }
+        guard let server = remoteServers.first(where: { $0.id == selectedID }) else {
+            throw MelixCLIError.runtime("Remote server \(selectedID) was not found.")
+        }
+        let apiKey = try remoteServerStore
+            .loadAPIKey(remoteServerID: selectedID)?
+            .apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard apiKey.isEmpty == false else {
+            throw MelixCLIError.runtime("Remote server \(selectedID) has no API key configured.")
+        }
+        let modelID = evaluationSemanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? server.defaultModelID
+            : evaluationSemanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelID.isEmpty == false else {
+            throw MelixCLIError.runtime("Remote server \(selectedID) has no model configured.")
+        }
+        return [
+            "semantic_judge_remote_server_id": server.id,
+            "semantic_judge_provider_kind": server.providerKind,
+            "semantic_judge_base_url": server.baseURL,
+            "semantic_judge_api_key": apiKey,
+            "semantic_judge_model_id": modelID,
+            "semantic_judge_timeout_seconds": String(server.timeoutSeconds),
+            "semantic_judge_rate_limit_per_minute": String(server.rateLimitPerMinute),
+        ]
     }
 
     private func shouldUseEvaluationPrompt(suites: [String]) -> Bool {
@@ -7518,7 +7596,8 @@ public final class RuntimeViewModel {
         modelID: String,
         hfRepoID: String,
         compareTargetModelIDs: [String]?,
-        promptSnapshot: EvaluationPromptSnapshot?
+        promptSnapshot: EvaluationPromptSnapshot?,
+        semanticJudgeParameters: [String: String] = [:]
     ) -> ControlPlaneEvaluationRequest {
         let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
         return ControlPlaneEvaluationRequest(
@@ -7547,7 +7626,11 @@ public final class RuntimeViewModel {
                 outputSchemaJSON: evaluationOutputSchemaJSON.trimmingCharacters(in: .whitespacesAndNewlines),
                 ignoredPaths: normalizedEvaluationIgnoredPaths()
             ),
-            parameters: evaluationParameters(compareTargetModelIDs: compareTargetModelIDs, promptSnapshot: promptSnapshot)
+            parameters: evaluationParameters(
+                compareTargetModelIDs: compareTargetModelIDs,
+                promptSnapshot: promptSnapshot,
+                semanticJudgeParameters: semanticJudgeParameters
+            )
         )
     }
 

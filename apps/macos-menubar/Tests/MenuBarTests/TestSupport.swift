@@ -25,9 +25,11 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     var listError: StoreError?
     var saveError: StoreError?
     var removeError: StoreError?
+    var apiKeys: [String: String]
 
-    init(servers: [RemoteServer] = []) {
+    init(servers: [RemoteServer] = [], apiKeys: [String: String] = [:]) {
         self.servers = servers
+        self.apiKeys = apiKeys
     }
 
     func list() throws -> [RemoteServer] {
@@ -35,6 +37,13 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
             throw listError
         }
         return servers.sorted { $0.id < $1.id }
+    }
+
+    func loadAPIKey(remoteServerID: String) throws -> RemoteServerAPIKeyRecord? {
+        guard let apiKey = apiKeys[remoteServerID] else {
+            return nil
+        }
+        return RemoteServerAPIKeyRecord(remoteServerID: remoteServerID, apiKey: apiKey)
     }
 
     @discardableResult
@@ -62,6 +71,9 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
             createdAt: existing?.createdAt ?? now,
             updatedAt: now
         )
+        if mutation.apiKey.isEmpty == false {
+            apiKeys[mutation.id] = mutation.apiKey
+        }
         servers.removeAll { $0.id == mutation.id }
         servers.append(server)
         return server
@@ -72,6 +84,7 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
             throw removeError
         }
         removedIDs.append(id)
+        apiKeys.removeValue(forKey: id)
         servers.removeAll { $0.id == id }
     }
 }

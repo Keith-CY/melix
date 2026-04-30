@@ -2875,6 +2875,48 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.evaluationSamplePreview.count == 2)
     }
 
+    @Test("workspace diagnostics renders semantic judge controls")
+    @MainActor
+    func workspaceDiagnosticsRendersSemanticJudgeControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12,
+                    credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                    apiKeyHint: "sk-j...udge"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+        viewModel.preferredDiagnosticsStage = .evaluation
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
+        #expect(renderedTexts.contains("Judge • judge"))
+        #expect(renderedTexts.contains("judge-model"))
+    }
+
     @Test("evaluation metric card view renders statistical evidence lines")
     @MainActor
     func evaluationMetricCardViewRendersStatisticalEvidenceLines() async throws {

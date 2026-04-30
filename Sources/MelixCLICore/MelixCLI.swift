@@ -387,6 +387,8 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let parameters: [String: String]
     public let evalPromptID: String
     public let evalPromptRevisionID: String
+    public let semanticJudgeRemoteServerID: String
+    public let semanticJudgeModelID: String
     public let remoteParallelism: UInt32
     public let json: Bool
 
@@ -405,6 +407,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         parameters: [String: String] = [:],
         evalPromptID: String = "",
         evalPromptRevisionID: String = "",
+        semanticJudgeRemoteServerID: String = "",
+        semanticJudgeModelID: String = "",
         remoteParallelism: UInt32 = 0,
         json: Bool = false
     ) {
@@ -440,6 +444,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.parameters = parameters
         self.evalPromptID = evalPromptID
         self.evalPromptRevisionID = evalPromptRevisionID
+        self.semanticJudgeRemoteServerID = semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.semanticJudgeModelID = semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.remoteParallelism = remoteParallelism
         self.json = json
     }
@@ -1385,7 +1391,7 @@ public enum MelixCLIParser {
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--output-schema-json JSON] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt-id ID] [--eval-prompt-revision REV] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
@@ -2591,6 +2597,15 @@ public enum MelixCLIParser {
                 values,
                 command: "melix eval run"
             )
+            let semanticJudgeRemoteServerID = values.single["--semantic-judge-remote-server-id"] ?? ""
+            let semanticJudgeModelID = values.single["--semantic-judge-model"] ?? ""
+            if semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            {
+                throw MelixCLIError.missingRequired(
+                    "--semantic-judge-remote-server-id is required when using --semantic-judge-model for melix eval run."
+                )
+            }
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
             let scoringMode = sourceConfiguration.profile.scoringMode
             let suites = (values.multi["--suite"] ?? []).isEmpty && scoringMode == "event_extraction_weighted_f1"
@@ -2612,6 +2627,8 @@ public enum MelixCLIParser {
                     parameters: parseEvalParameters(values),
                     evalPromptID: values.single["--eval-prompt-id"] ?? "",
                     evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
+                    semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
+                    semanticJudgeModelID: semanticJudgeModelID,
                     remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
                     json: values.flags.contains("--json")
                 )
@@ -2856,6 +2873,9 @@ public enum MelixCLIParser {
         }
         if let codeExecPolicy = values.single["--code-exec-policy"] {
             parameters["code_exec_policy"] = codeExecPolicy
+        }
+        if let remoteExtraBodyJSON = values.single["--remote-extra-body-json"] {
+            parameters["remote_provider_extra_body_json"] = remoteExtraBodyJSON
         }
         return parameters
     }
@@ -4814,6 +4834,22 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func semanticJudgeParameters(
+        remoteServerID: String,
+        remoteModelID: String
+    ) throws -> [String: String] {
+        let target = try remoteEvaluationTarget(remoteServerID: remoteServerID, remoteModelID: remoteModelID)
+        return [
+            "semantic_judge_remote_server_id": target.remoteServerID,
+            "semantic_judge_provider_kind": target.providerKind,
+            "semantic_judge_base_url": target.baseURL,
+            "semantic_judge_api_key": target.apiKey,
+            "semantic_judge_model_id": target.modelID,
+            "semantic_judge_timeout_seconds": String(target.timeoutSeconds),
+            "semantic_judge_rate_limit_per_minute": String(target.rateLimitPerMinute),
+        ]
+    }
+
     private func buildChatMessages(options: ChatRunOptions) -> [ControlPlaneChatRequest.Message] {
         var messages: [ControlPlaneChatRequest.Message] = []
         let systemPrompt = options.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6226,6 +6262,20 @@ public actor MelixCLIRunner {
                 try evaluationPromptParameters(
                     promptID: options.evalPromptID,
                     revisionID: options.evalPromptRevisionID
+                )
+            ) { _, new in new }
+        }
+        if options.semanticJudgeRemoteServerID.isEmpty == false {
+            guard suiteID == "event_extraction"
+                || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
+                || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+            else {
+                throw MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1.")
+            }
+            parameters.merge(
+                try semanticJudgeParameters(
+                    remoteServerID: options.semanticJudgeRemoteServerID,
+                    remoteModelID: options.semanticJudgeModelID
                 )
             ) { _, new in new }
         }

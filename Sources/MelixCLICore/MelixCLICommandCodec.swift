@@ -425,6 +425,8 @@ public enum MelixCLICommandCodec {
             appendEvalParameters(options.parameters, into: &arguments)
             appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
             appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
+            appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
             appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)
             json = options.json
         case .evalPromptList(let options):
@@ -621,6 +623,7 @@ public enum MelixCLICommandCodec {
             ("few_shot", "--few-shot"),
             ("scoring_mode", "--scoring-mode"),
             ("code_exec_policy", "--code-exec-policy"),
+            ("remote_provider_extra_body_json", "--remote-extra-body-json"),
         ]
         for (key, option) in mapping {
             appendOption(option, value: parameters[key], into: &arguments)

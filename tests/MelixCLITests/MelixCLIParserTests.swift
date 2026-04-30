@@ -69,6 +69,9 @@ struct MelixCLIParserTests {
             "eval", "run",
             "--remote-server-id", "sub2api",
             "--remote-model", "gemini-2.5-flash",
+            "--semantic-judge-remote-server-id", "judge-server",
+            "--semantic-judge-model", "judge-model",
+            "--remote-extra-body-json", "{\"max_tokens\":1024,\"chat_template_kwargs\":{\"enable_thinking\":false}}",
             "--source-jsonl", "/Users/ChenYu/Downloads/top200_final.jsonl",
             "--scoring-mode", "event_extraction_weighted_f1",
             "--eval-prompt-id", "event-prod",
@@ -168,9 +171,12 @@ struct MelixCLIParserTests {
         #expect(evalOptions.remoteTargets == [
             EvalRemoteTargetOptions(remoteServerID: "sub2api", remoteModelID: "gemini-2.5-flash"),
         ])
+        #expect(evalOptions.semanticJudgeRemoteServerID == "judge-server")
+        #expect(evalOptions.semanticJudgeModelID == "judge-model")
         #expect(evalOptions.suites == ["event_extraction"])
         #expect(evalOptions.source == .localJSONL(path: "/Users/ChenYu/Downloads/top200_final.jsonl"))
         #expect(evalOptions.profile.scoringMode == "event_extraction_weighted_f1")
+        #expect(evalOptions.parameters["remote_provider_extra_body_json"] == "{\"max_tokens\":1024,\"chat_template_kwargs\":{\"enable_thinking\":false}}")
         #expect(evalOptions.evalPromptID == "event-prod")
         #expect(evalOptions.evalPromptRevisionID == "rev-1")
         #expect(evalOptions.sampleSize == 3)
@@ -2436,6 +2442,14 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["eval", "run", "--model-id", "melix-dev-text", "--repo-id", "repo"],
             equals: .missingRequired("Exactly one of --model-id, --repo-id, or --remote-server-id is required for melix eval run.")
+        )
+        try assertError(
+            for: [
+                "eval", "run",
+                "--remote-server-id", "judge-target",
+                "--semantic-judge-model", "judge-model",
+            ],
+            equals: .missingRequired("--semantic-judge-remote-server-id is required when using --semantic-judge-model for melix eval run.")
         )
         try assertError(
             for: ["eval", "compare", "--model-id", "melix-dev-text"],

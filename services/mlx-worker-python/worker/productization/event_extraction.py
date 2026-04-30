@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -19,8 +21,17 @@ FIELD_WEIGHTS = {
     "action": 0.35,
 }
 EVENT_ALIGNMENT_STRATEGY = "optimal_soft_event_alignment"
+SEMANTIC_EVENT_ALIGNMENT_STRATEGY = "semantic_judge_event_alignment"
+SEMANTIC_SCORING_MODE = "event_extraction_semantic_weighted_f1"
 EVENT_ALIGNMENT_SCORE_THRESHOLD = 0.30
 EVENT_ALIGNMENT_ACTION_THRESHOLD = 0.20
+SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD = 0.50
+SEMANTIC_JUDGE_PREFILTER_SCORE_THRESHOLD = 0.15
+SEMANTIC_JUDGE_MAX_ATTEMPTS = 3
+SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD = 0.30
+SEMANTIC_ACTION_GROUP_MAX_SIZE = 3
+SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
+_GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
 _SIMILARITY_IGNORED_CHARS = set(
     " \t\r\n"
     "，。！？、；：,.!?;:"
@@ -29,7 +40,33 @@ _SIMILARITY_IGNORED_CHARS = set(
     "-_—"
 )
 EVENT_EXTRACTION_PROMPT_ID = "builtin.event-extraction.baseline"
-EVENT_EXTRACTION_PROMPT_REVISION_ID = "baseline.v2"
+EVENT_EXTRACTION_PROMPT_REVISION_ID = "baseline.v6"
+SEMANTIC_JUDGE_SYSTEM_PROMPT = """You are a semantic judge for event extraction evaluation.
+
+Return exactly one JSON object and nothing else:
+{"equivalent":true|false,"confidence":0.0,"reason_code":"same_event|same_value|same_value_more_specific|different_event|different_value|uncertain","short_reason":"brief reason"}
+
+Rules:
+- Judge semantic equivalence only; do not score model quality.
+- The input JSON has kind="event" or kind="field"; apply different strictness for each kind.
+- For kind="field", the input normally has gold_value and pred_value. For action split/merge comparisons, it may also include comparison_type="action_group", gold_values, and pred_values; judge whether the two value groups describe the same action unit.
+- For kind="event" (kind=event): decide whether gold_event and pred_event refer to the same real-world event instance. This can be broader than field equality. Do not require every field to match. Extra or missing actor, time, location, or action details should be handled by later field scoring, not by rejecting the event pair.
+- For kind="field" (kind=field): judge only the requested field_name and the provided gold_value/pred_value in the context of the matched event. Field equivalence is stricter than event equivalence.
+- actor: treat 我们, 双方, 咱们, 咱俩, and 一起 as speaker_1 + speaker_2 when the dialogue context supports it.
+- actor: a named third-party relation can match the name alone, e.g. speaker_1的朋友阿菜 and 阿菜 are equivalent when the same person is referenced; speaker_1的朋友傻妞 and 傻妞 are equivalent on the same basis.
+- actor: do not treat a vague or related third party such as speaker_1的朋友, speaker_1的表姐, or speaker_2的同事 as equivalent to speaker_1 or speaker_2. speaker_1的表姐 is not speaker_1.
+- time: treat minor equivalent variants as equivalent, e.g. 下周六 and 下周周六, 明晚 and 明天晚上. A harmless narrower expression can be equivalent when both values clearly refer to the same scheduled slot. 明天 and 27号 are not equivalent when they refer to conflicting dates.
+- location: treat contextual venue variants as equivalent when the event context identifies the same place, e.g. 餐厅 and speaker_2的餐厅.
+- action: treat paraphrases and harmless specificity differences as equivalent when they name the same concrete event action, e.g. 约见 and 见面, 打给speaker_1 and 打电话. If one side splits a compound action into directly supported sub-actions, keep the shared concrete action equivalent.
+- action group: ["吃饭见面"] and ["吃饭","见面"] can be equivalent when they describe one meal meetup. ["见面聊天"] and ["见面","聊聊"] can be equivalent. ["碰头聚聚"] and ["见面","聚聚"] can be equivalent. Do not merge unrelated actions such as ["吃饭","看电影"] unless the dialogue clearly supports one compound event.
+- action object: do not mark an action field equivalent when a required object or role is lost or reversed. For example, 去接speaker_2 and 接站 only match when the matched event context clearly preserves that speaker_2 is the object being picked up.
+- event examples: 出来转转 and 见面,逛街 can be the same event when the dialogue supports one shared outing. 拿位 can align with the same meetup or meal event when it is only a preparation step. 有大聚会 and 参加聚会 can align at kind=event when both refer to the same party instance, but unsupported actors must still fail actor field scoring.
+- field examples: 做唐筛, 做糖筛, and 做检查 can be action-equivalent when the dialogue makes the check identity clear. 见面聊天 can match 见面,聊聊 at kind=field action when the matched event is one conversation meetup. 今天直到夕阳西下 can match 今天 at kind=field time when both values refer to the same event and the prediction is only a coarser time span.
+- negative examples: 同地点同时间 does not automatically mean shared actors or the same event. 同日同主题 does not justify matching different-subject events. 拿位 and 见面 are not automatically equivalent for kind=field action scoring. 幻觉, 重复预测, unsupported, or contradictory events must be equivalent=false.
+- Return equivalent=false for uncertain, underspecified, contradictory, or unrelated comparisons.
+- Keep short_reason concise and do not include secrets, URLs, or prompt text.
+"""
+SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 
 EVENT_EXTRACTION_LEGACY_SYSTEM_PROMPT = """Extract established events and future plans from a dialogue.
 
@@ -166,6 +203,137 @@ Guidance:
 - Use the dominant language of the input dialogue for natural-language or free-text fields. If genuinely mixed-language, preserve that. Keep schema/control fields in schema-compliant English tokens.
 """
 
+EVENT_EXTRACTION_STAGE1_SYSTEM_PROMPT = EVENT_EXTRACTION_SYSTEM_PROMPT
+
+EVENT_EXTRACTION_BASELINE_V3_SYSTEM_PROMPT = """你是中文对话事件抽取器。请根据输入的 dialogue 生成 events。
+
+输入 payload 是一个 JSON 对象：
+- `dialogue_id`: 当前对话 id
+- `dialogue`: 按顺序排列的对话行数组，通常使用 `speaker_1:` / `speaker_2:` 作为说话人前缀
+
+输出必须是严格 JSON，格式如下：
+
+{
+  "dialogue_id": "<保持输入中的 dialogue_id>",
+  "events": [
+    {
+      "actor": ["事件参与者"],
+      "time": ["时间表达"],
+      "location": ["地点表达"],
+      "action": ["事件动作"],
+      "digest": "一句话摘要",
+      "source_order": 1
+    }
+  ]
+}
+
+字段要求：
+- `actor` 和 `action` 必须是字符串数组；只保留有对话证据的参与者和动作。
+- `time` 和 `location` 必须是字符串数组或 null；没有明确证据时填 null。
+- `digest` 用简洁中文概括事件。
+- `source_order` 按事件在对话中出现的顺序从 1 开始连续编号。
+
+抽取规则：
+
+1. 只抽取真实可训练事件
+- 抽取已经发生、正在发生、明确安排、明确确认的未来事件。
+- 可以抽取明确存在的背景事件，例如“今天生日”“明天上课”“周五回来”。
+- 不抽取单纯聊天、情绪、评价、寒暄、解释、推测。
+
+2. 不抽取未确认事件
+- 被拒绝、被否定、被改掉的提议不要抽取。
+- 例如先说“明天约饭”，后来改成“周末”，只保留“周末吃饭”，不要把“明天”放进 time。
+- “下次约”“以后再说”“有空再约”“我来约你”这类未定事件通常删除。
+- 如果双方明确接受但时间或安排仍不确定，可以抽取较保守的“可能见面”“可能吃饭”。
+
+3. action 要是实际事件动作
+- 不要使用元动作：提出、商定、改定、约时间、安排、确认、说、问、邀请。
+- 应改成实际动作：见面、吃饭、看电影、回来、出发、上课、加班、生日、下班、去某地。
+- 例如“后天就看老炮儿” => action: ["看电影《老炮儿》"]。
+- 例如“周日哦可” => action: ["见面"] 或 ["吃饭"]，根据上下文选择。
+
+4. actor 规则
+- 使用 dialogue 中的说话人：speaker_1、speaker_2。
+- 如果事件属于明确提到的第三方，使用原文关系或姓名，例如 `speaker_1的姐姐`、`speaker_2的朋友`、`美佳`。
+- 不要把没有参与该事件的人放进 actor。
+- “双方”“我们”应拆成 ["speaker_1", "speaker_2"]。
+
+5. time 规则
+- time 数组中的多个元素表示“或”的关系。
+- “今天或明天” => ["今天", "明天"]。
+- “周三或周四或周日” => ["周三", "周四", "周日"]。
+- 不要把同一时间的组成部分拆成 OR。
+- “明天晚上”必须是 ["明天晚上"]，不要写 ["明天", "晚上"]。
+- “周日中午”必须是 ["周日中午"]。
+- 如果没有明确时间，time 为 null。
+- 如果是日期，用阿拉伯数字加上时间单位，不要仅保留阿拉伯数字。
+
+6. location 规则
+- location 只填事件发生地点。
+- 不是事件地点的背景词不要放入 location。
+- 如果没有明确地点，location 为 null。
+- 例如“去网吧”如果网吧是动作目标，不一定要放 location；可写 action ["去网吧"], location null。
+
+7. 拆分规则
+- 一个事件对象只表达一个清晰事件。
+- 如果一句话包含多个事件，要拆开。
+- “明天回来，晚上约”应拆为：
+  1. speaker_2 明天 回来
+  2. speaker_1 和 speaker_2 明天晚上 见面或吃饭
+- 不要把回家、回来、见面、吃饭混进一个 action 数组。
+
+8. digest 规则
+- digest 用简洁中文概括事件。
+- 格式尽量是：actor + time + location + action。
+- 多个 actor 用“和”连接。
+- time 是多个 OR 时，用“或”连接。
+- digest 不要包含“提出/商定/改定/约时间”等元动作。
+
+9. source_order 规则
+- 按事件在对话中出现的顺序从 1 开始编号。
+- 删除事件后必须重新连续编号。
+
+输出要求：
+- 只输出 JSON，不要解释。
+- 不要输出 Markdown。
+- 不要添加 dialogue 中没有依据的信息。
+- 如果没有可训练事件，events 输出空数组。
+"""
+
+EVENT_EXTRACTION_BASELINE_V4_SYSTEM_PROMPT = EVENT_EXTRACTION_BASELINE_V3_SYSTEM_PROMPT + """
+
+10. 反馈修正规则
+- 连续时间区间保持单个表达，例如“1月6号到9号之间”必须写成 ["1月6号到9号之间"]，不要展开成 ["1月6号", "1月7号", "1月8号", "1月9号"]。
+- 可用时间、候选时间、空闲时间不等于事件时间；只有对话明确采用或确认后，才把它写入 time。
+- 同地点同时发生不等于一起做同一事件；只有共同参与同一行动时，actor 才同时包含 speaker_1 和 speaker_2。
+- 避免重复事件：订桌、约饭、吃饭、见面如果指向同一安排，保留一个主事件；只有存在独立行动价值时才拆成多个事件。
+- 模糊第三方关系词通常放入 action 细节，例如“和朋友吃饭”；只有第三方本身是事件主体时，才放入 actor。
+- 不抽取微动作或准备动作作为独立事件，例如“拿位”通常并入“见面”或“吃饭”。
+- 对不确定专名动作使用更稳的上位动作，例如“糖筛/唐筛”可以抽为“做检查”。
+- 复合活动不要过度拆分，例如“出来转转”、“喝东西坐坐”、“逛街买衣服”应保持为一个事件动作，或放在同一事件的 action 数组中。
+"""
+
+EVENT_EXTRACTION_BASELINE_V5_SYSTEM_PROMPT = EVENT_EXTRACTION_BASELINE_V4_SYSTEM_PROMPT + """
+
+11. 反馈案例约束
+- “同地点同时吃饭”不等于“共同吃饭”。例如一方在对方店里请别人吃饭，另一方也和朋友吃饭，应按各自事件分别抽取，不要把 speaker_1 和 speaker_2 合并成同一个 actor 数组。
+- “订桌/找人订桌”和“约饭/吃饭”如果只是同一吃饭安排的准备步骤，保留吃饭或见面的主事件；除非订桌本身有独立完成价值，否则不要抽取为独立事件。
+- “拿位”“占座”“排队”等微动作通常是见面或吃饭的准备动作，不要抽取为独立事件。
+- “出来转转”“喝东西坐坐”“逛街买衣服”这类复合活动应保留成一个自然事件，不要拆成多个互相重复的事件。
+- “糖筛/唐筛”如果模型不确定具体写法，优先输出上位动作“做检查”，不要编造更细的检查项目。
+"""
+
+EVENT_EXTRACTION_SYSTEM_PROMPT = EVENT_EXTRACTION_BASELINE_V5_SYSTEM_PROMPT + """
+
+12. 召回强化与新反馈约束
+- 明确的过去事件、背景事件和已发生状态也要抽取，不只抽未来计划。例如“周日新买裙子”应抽为 speaker_1 周日 新买裙子或新进碎花长裙。
+- 明确承诺的电话联系要抽取。例如“明天打给你”应抽为拨打电话事件，不要因为它是联系动作而丢弃。
+- 明确航班、飞机、落地或出发时间要抽取。例如“周一晚上11点下飞机”和“周二晚上7点上飞机”是两个有时间锚点的旅行事件。
+- 同事/朋友/表姐等模糊第三方关系词通常进入 action 细节，例如“和同事聚餐”“和朋友吃饭”“和同事看话剧”；actor 只保留实际对话参与者，除非第三方本身是事件主体。
+- 继续避免准备动作、重复事件和微动作成为独立事件。订桌、拿位、占座、重复聚会等如果只是主事件的一部分，应并入吃饭、见面、聚会等主事件。
+- 保持时间区间、候选时间、同地点不合并 actor、复合活动不过度拆分等 baseline.v5 规则。
+"""
+
 
 @dataclass(frozen=True)
 class EventExtractionPromptSpec:
@@ -173,7 +341,7 @@ class EventExtractionPromptSpec:
     revision_id: str
     system_prompt: str
     content_hash: str
-    title: str = "Built-in Segment Metadata Candidates"
+    title: str = "Built-in Chinese Event Extraction JSON"
     examples: tuple[dict[str, object], ...] = ()
 
 
@@ -209,6 +377,17 @@ class RemoteEventExtractionTarget:
     api_key: str
     model_id: str
     timeout_seconds: int = 60
+    extra_body: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RemoteSemanticJudgeTarget:
+    provider_kind: str
+    base_url: str
+    api_key: str
+    model_id: str
+    timeout_seconds: int = 60
+    rate_limit_per_minute: int = 0
 
 
 @dataclass(frozen=True)
@@ -257,6 +436,13 @@ class RemoteProviderRequestError(ValueError):
         return "remote_provider_request_failed"
 
 
+def _is_retryable_semantic_judge_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code == 429 or status_code >= 500
+    return isinstance(exc, RemoteProviderRequestError)
+
+
 def make_event_extraction_client(
     target: RemoteEventExtractionTarget,
     prompt_spec: EventExtractionPromptSpec | None = None,
@@ -268,6 +454,13 @@ def make_event_extraction_client(
     if provider_kind == "gemini-generative-language":
         return GeminiGenerativeLanguageEventExtractionClient(target, resolved_prompt)
     raise ValueError(f"unsupported remote provider kind: {provider_kind}")
+
+
+def make_semantic_judge_client(target: RemoteSemanticJudgeTarget):
+    provider_kind = target.provider_kind.strip()
+    if provider_kind in {"openai-compatible", "gemini-generative-language"}:
+        return RemoteSemanticJudgeClient(target)
+    raise ValueError(f"unsupported semantic judge provider kind: {provider_kind}")
 
 
 class OpenAICompatibleEventExtractionClient:
@@ -288,15 +481,19 @@ class OpenAICompatibleEventExtractionClient:
         dialogue_id: str = "",
     ) -> EventExtractionClientResult:
         messages = [{"role": "system", "content": self._prompt.system_prompt}]
-        use_stage1_schema = _prompt_uses_stage1_schema(self._prompt)
-        messages.extend(_openai_example_messages(self._prompt.examples, use_stage1_schema))
-        messages.append({"role": "user", "content": _dialogue_user_content(dialogue, dialogue_id, use_stage1_schema)})
+        prompt_input_mode = _prompt_input_mode(self._prompt)
+        messages.extend(_openai_example_messages(self._prompt.examples, prompt_input_mode))
+        messages.append({"role": "user", "content": _dialogue_user_content(dialogue, dialogue_id, prompt_input_mode)})
         payload = {
             "model": self._target.model_id,
             "messages": messages,
             "stream": False,
             "temperature": 0,
         }
+        for key, value in self._target.extra_body.items():
+            if key in {"model", "messages", "stream"}:
+                continue
+            payload[key] = value
         response, request_body_bytes, response_body_bytes = self._post_json(payload)
         content = _assistant_content(response)
         return EventExtractionClientResult(
@@ -339,6 +536,122 @@ class OpenAICompatibleEventExtractionClient:
         return parsed, len(body), len(response_bytes)
 
 
+class RemoteSemanticJudgeClient:
+    def __init__(self, target: RemoteSemanticJudgeTarget) -> None:
+        provider_kind = target.provider_kind.strip()
+        if provider_kind not in {"openai-compatible", "gemini-generative-language"}:
+            raise ValueError(f"unsupported semantic judge provider kind: {provider_kind}")
+        self._target = target
+        self._last_request_started = 0.0
+
+    def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+        self._throttle_if_needed()
+        payload = self._payload(request)
+        if self._target.provider_kind.strip() == "gemini-generative-language":
+            response = self._post_gemini(payload)
+            content = _gemini_content(response)
+        else:
+            response = self._post_openai(payload)
+            content = _assistant_content(response)
+        return _parse_semantic_judge_response(content)
+
+    def _payload(self, request: dict[str, object]) -> dict[str, object]:
+        user_content = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if self._target.provider_kind.strip() == "gemini-generative-language":
+            return {
+                "systemInstruction": {"parts": [{"text": SEMANTIC_JUDGE_SYSTEM_PROMPT}]},
+                "contents": [{"role": "user", "parts": [{"text": user_content}]}],
+                "generationConfig": {"temperature": 0},
+            }
+        return {
+            "model": self._target.model_id,
+            "messages": [
+                {"role": "system", "content": SEMANTIC_JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            "stream": False,
+            "temperature": 0,
+        }
+
+    def _throttle_if_needed(self) -> None:
+        rate_limit_per_minute = int(self._target.rate_limit_per_minute or 0)
+        if rate_limit_per_minute <= 0:
+            return
+        now = time.perf_counter()
+        if self._last_request_started > 0:
+            min_interval_seconds = 60.0 / rate_limit_per_minute
+            elapsed = now - self._last_request_started
+            if elapsed < min_interval_seconds:
+                time.sleep(min_interval_seconds - elapsed)
+                now = time.perf_counter()
+        self._last_request_started = now
+
+    def _post_openai(self, payload: dict[str, object]) -> dict[str, object]:
+        base_url = self._target.base_url.strip().rstrip("/")
+        if not base_url:
+            raise ValueError("semantic judge base_url is empty")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = Request(
+            f"{base_url}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self._target.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "OpenAI/Python 1.0.0 Melix/0.1",
+            },
+            method="POST",
+        )
+        return self._post_json_request(request)
+
+    def _post_gemini(self, payload: dict[str, object]) -> dict[str, object]:
+        base_url = self._target.base_url.strip().rstrip("/")
+        if not base_url:
+            raise ValueError("semantic judge base_url is empty")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        model_path = _gemini_model_path(self._target.model_id)
+        request = Request(
+            f"{base_url}/{model_path}:generateContent?key={quote(self._target.api_key, safe='')}",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "OpenAI/Python 1.0.0 Melix/0.1",
+            },
+            method="POST",
+        )
+        return self._post_json_request(request)
+
+    def _post_json_request(self, request: Request) -> dict[str, object]:
+        last_error: Exception | None = None
+        for attempt in range(1, SEMANTIC_JUDGE_MAX_ATTEMPTS + 1):
+            try:
+                with urlopen(request, timeout=self._target.timeout_seconds) as response:
+                    response_body = response.read().decode("utf-8")
+                break
+            except HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                error = RemoteProviderHTTPError(status_code=exc.code, response_body=error_body)
+                if not _is_retryable_semantic_judge_error(error) or attempt >= SEMANTIC_JUDGE_MAX_ATTEMPTS:
+                    raise error from exc
+                last_error = error
+            except URLError as exc:
+                error = RemoteProviderRequestError(reason=exc.reason)
+                if attempt >= SEMANTIC_JUDGE_MAX_ATTEMPTS:
+                    raise error from exc
+                last_error = error
+            time.sleep(float(attempt))
+        else:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("semantic judge request failed without response")
+
+        parsed = json.loads(response_body)
+        if not isinstance(parsed, dict):
+            raise ValueError("semantic judge response must be a JSON object")
+        return parsed
+
+
 class GeminiGenerativeLanguageEventExtractionClient:
     def __init__(
         self,
@@ -356,12 +669,12 @@ class GeminiGenerativeLanguageEventExtractionClient:
         dialogue: list[str],
         dialogue_id: str = "",
     ) -> EventExtractionClientResult:
-        use_stage1_schema = _prompt_uses_stage1_schema(self._prompt)
-        contents = _gemini_example_contents(self._prompt.examples, use_stage1_schema)
+        prompt_input_mode = _prompt_input_mode(self._prompt)
+        contents = _gemini_example_contents(self._prompt.examples, prompt_input_mode)
         contents.append(
             {
                 "role": "user",
-                "parts": [{"text": _dialogue_user_content(dialogue, dialogue_id, use_stage1_schema)}],
+                "parts": [{"text": _dialogue_user_content(dialogue, dialogue_id, prompt_input_mode)}],
             }
         )
         payload = {
@@ -679,6 +992,966 @@ def evaluate_event_extraction(
     return summary
 
 
+def evaluate_event_extraction_semantic(
+    *,
+    gold_jsonl: Path,
+    pred_jsonl: Path,
+    summary_output: Path,
+    details_output: Path,
+    row_audit_output: Path,
+    judge_audit_output: Path,
+    judge: object,
+    judge_remote_server_id: str,
+    judge_model_id: str,
+) -> dict[str, object]:
+    gold_dialogues = _read_dialogue_jsonl_rows(gold_jsonl)
+    pred_dialogues = _read_dialogue_jsonl_rows(pred_jsonl)
+    judge_runtime = _SemanticJudgeRuntime(
+        judge=judge,
+        judge_remote_server_id=judge_remote_server_id,
+        judge_model_id=judge_model_id,
+    )
+
+    details: list[dict[str, object]] = []
+    row_audits: list[dict[str, object]] = []
+    field_totals = {field_name: {"tp": 0, "fp": 0, "fn": 0} for field_name in FIELD_NAMES}
+    matched_event_scores: list[float] = []
+    matched_events = 0
+    unmatched_gold = 0
+    unmatched_pred = 0
+    alignment_scores: list[float] = []
+
+    for dialogue_id in sorted(set(gold_dialogues) | set(pred_dialogues)):
+        gold_row = gold_dialogues.get(dialogue_id, {"events": [], "dialogue": []})
+        pred_row = pred_dialogues.get(dialogue_id, {"events": [], "dialogue": []})
+        gold_events = gold_row["events"] if isinstance(gold_row.get("events"), list) else []
+        pred_events = pred_row["events"] if isinstance(pred_row.get("events"), list) else []
+        dialogue = gold_row["dialogue"] if isinstance(gold_row.get("dialogue"), list) else []
+        if not dialogue and isinstance(pred_row.get("dialogue"), list):
+            dialogue = pred_row["dialogue"]
+
+        alignment = _semantic_align_dialogue_events(
+            dialogue_id=dialogue_id,
+            dialogue=dialogue,
+            gold_events=gold_events,
+            pred_events=pred_events,
+            judge_runtime=judge_runtime,
+        )
+        matched_by_gold = {gold_index: pred_index for gold_index, pred_index, _score in alignment["matches"]}
+        matched_pred_indices = {pred_index for _gold_index, pred_index, _score in alignment["matches"]}
+        alignment_by_pair = {
+            (gold_index, pred_index): pair
+            for pair in alignment.get("pair_decisions", [])
+            if isinstance(pair, dict)
+            for gold_index, pred_index in [
+                (int(pair.get("gold_event_index", -1)), int(pair.get("pred_event_index", -1)))
+            ]
+        }
+        row_audit = _build_semantic_row_alignment_audit(
+            dialogue_id=dialogue_id,
+            gold_events=gold_events,
+            pred_events=pred_events,
+            alignment=alignment,
+        )
+        row_audits.append(row_audit)
+
+        for gold_index, gold_event in enumerate(gold_events):
+            pred_index = matched_by_gold.get(gold_index)
+            if pred_index is None:
+                unmatched_gold += 1
+                field_details = _build_unmatched_fields(gold_event, None)
+                _add_field_scores(field_totals, field_details)
+                details.append(
+                    {
+                        "dialogue_id": dialogue_id,
+                        "event_index": gold_index,
+                        "gold_event_index": gold_index,
+                        "pred_event_index": None,
+                        "match_status": "unmatched_gold",
+                        "weighted_f1": 0.0,
+                        "active_weight": 0.0,
+                        "alignment_score": 0.0,
+                        "semantic_alignment_score": 0.0,
+                        "alignment_fields": {},
+                        "fields": field_details,
+                    }
+                )
+                continue
+
+            pred_event = pred_events[pred_index]
+            pair_decision = alignment_by_pair.get((gold_index, pred_index), {})
+            matched_events += 1
+            semantic_alignment_score = float(pair_decision.get("alignment_score", 0.0) or 0.0)
+            alignment_scores.append(semantic_alignment_score)
+            field_details: dict[str, dict[str, object]] = {}
+            weighted_score_total = 0.0
+            active_weight = 0.0
+            for field_name in FIELD_NAMES:
+                field_score = _semantic_score_field(
+                    dialogue_id=dialogue_id,
+                    dialogue=dialogue,
+                    field_name=field_name,
+                    gold_event_index=gold_index,
+                    pred_event_index=pred_index,
+                    gold_event=gold_event,
+                    pred_event=pred_event,
+                    judge_runtime=judge_runtime,
+                )
+                field_details[field_name] = field_score
+                if field_score["gold"] or field_score["pred"]:
+                    weight = FIELD_WEIGHTS[field_name]
+                    active_weight += weight
+                    weighted_score_total += weight * float(field_score["f1"])
+            _add_field_scores(field_totals, field_details)
+
+            weighted_f1 = _round_metric(weighted_score_total / active_weight) if active_weight else 0.0
+            matched_event_scores.append(weighted_f1)
+            if weighted_f1 < SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD:
+                row_audit["low_quality_alignment"] = True
+                low_quality_pairs = row_audit.setdefault("low_quality_alignment_pairs", [])
+                if isinstance(low_quality_pairs, list):
+                    low_quality_pairs.append(
+                        {
+                            "gold_event_index": gold_index,
+                            "pred_event_index": pred_index,
+                            "weighted_f1": weighted_f1,
+                            "alignment_score": _round_metric(semantic_alignment_score),
+                        }
+                    )
+            details.append(
+                {
+                    "dialogue_id": dialogue_id,
+                    "event_index": gold_index,
+                    "gold_event_index": gold_index,
+                    "pred_event_index": pred_index,
+                    "match_status": "matched",
+                    "weighted_f1": weighted_f1,
+                    "active_weight": _round_metric(active_weight),
+                    "alignment_score": _round_metric(semantic_alignment_score),
+                    "semantic_alignment_score": _round_metric(semantic_alignment_score),
+                    "alignment_fields": pair_decision.get("alignment_fields", {}),
+                    "fields": field_details,
+                }
+            )
+
+        for pred_index, pred_event in enumerate(pred_events):
+            if pred_index in matched_pred_indices:
+                continue
+            unmatched_pred += 1
+            field_details = _build_unmatched_fields(None, pred_event)
+            _add_field_scores(field_totals, field_details)
+            details.append(
+                {
+                    "dialogue_id": dialogue_id,
+                    "event_index": pred_index,
+                    "gold_event_index": None,
+                    "pred_event_index": pred_index,
+                    "match_status": "unmatched_pred",
+                    "weighted_f1": 0.0,
+                    "active_weight": 0.0,
+                    "alignment_score": 0.0,
+                    "semantic_alignment_score": 0.0,
+                    "alignment_fields": {},
+                    "fields": field_details,
+                }
+            )
+
+    events_evaluated = matched_events + unmatched_gold + unmatched_pred
+    summary = _build_summary(
+        field_totals=field_totals,
+        matched_event_scores=matched_event_scores,
+        events_evaluated=events_evaluated,
+        matched_events=matched_events,
+        unmatched_gold=unmatched_gold,
+        unmatched_pred=unmatched_pred,
+        alignment_scores=alignment_scores,
+    )
+    status = "completed" if judge_runtime.failures == 0 else "partial"
+    summary["status"] = status
+    summary["scoring_mode"] = SEMANTIC_SCORING_MODE
+    summary["base_scoring_mode"] = "event_extraction_weighted_f1"
+    summary["alignment_strategy"] = SEMANTIC_EVENT_ALIGNMENT_STRATEGY
+    summary["event_alignment"]["alignment_strategy"] = SEMANTIC_EVENT_ALIGNMENT_STRATEGY
+    summary["semantic_judge"] = {
+        "judge_remote_server_id": judge_runtime.judge_remote_server_id,
+        "judge_model_id": judge_runtime.judge_model_id,
+        "judge_prompt_version": SEMANTIC_JUDGE_PROMPT_VERSION,
+        "judge_prompt_hash": SEMANTIC_JUDGE_PROMPT_HASH,
+        "calls": judge_runtime.calls,
+        "cache_hits": judge_runtime.cache_hits,
+        "failures": judge_runtime.failures,
+    }
+
+    _write_json(summary_output, summary)
+    _write_jsonl(details_output, details)
+    _write_jsonl(row_audit_output, row_audits)
+    _write_jsonl(judge_audit_output, judge_runtime.audit_rows)
+    return summary
+
+
+class _SemanticJudgeRuntime:
+    def __init__(
+        self,
+        *,
+        judge: object,
+        judge_remote_server_id: str,
+        judge_model_id: str,
+    ) -> None:
+        self.judge = judge
+        self.judge_remote_server_id = judge_remote_server_id
+        self.judge_model_id = judge_model_id
+        self.calls = 0
+        self.cache_hits = 0
+        self.failures = 0
+        self.cache: dict[str, dict[str, object]] = {}
+        self.audit_rows: list[dict[str, object]] = []
+
+    def decide(self, request: dict[str, object]) -> dict[str, object]:
+        cache_key = _semantic_judge_cache_key(request)
+        if cache_key in self.cache:
+            self.cache_hits += 1
+            decision = dict(self.cache[cache_key])
+            self.audit_rows.append(
+                _semantic_judge_audit_row(
+                    request=request,
+                    decision=decision,
+                    cache_key=cache_key,
+                    source="cache",
+                    status="ok",
+                    error_code=None,
+                    failure_reason=None,
+                )
+            )
+            return decision
+
+        self.calls += 1
+        try:
+            raw_decision = getattr(self.judge, "judge_semantic_equivalence")(request)
+            decision = _normalize_semantic_judge_decision(raw_decision)
+            self.cache[cache_key] = decision
+            self.audit_rows.append(
+                _semantic_judge_audit_row(
+                    request=request,
+                    decision=decision,
+                    cache_key=cache_key,
+                    source="judge",
+                    status="ok",
+                    error_code=None,
+                    failure_reason=None,
+                )
+            )
+            return decision
+        except Exception as exc:  # noqa: BLE001
+            self.failures += 1
+            failure_reason = _semantic_judge_failure_reason(exc)
+            decision = {
+                "equivalent": False,
+                "confidence": 0.0,
+                "reason_code": getattr(exc, "code", "judge_error"),
+                "short_reason": failure_reason,
+            }
+            self.audit_rows.append(
+                _semantic_judge_audit_row(
+                    request=request,
+                    decision=decision,
+                    cache_key=cache_key,
+                    source="judge",
+                    status="failed",
+                    error_code=str(getattr(exc, "code", "judge_error")),
+                    failure_reason=failure_reason,
+                )
+            )
+            return decision
+
+
+def _semantic_align_dialogue_events(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    gold_events: list[dict[str, object]],
+    pred_events: list[dict[str, object]],
+    judge_runtime: _SemanticJudgeRuntime,
+) -> dict[str, object]:
+    scores: list[list[float]] = []
+    accepted: list[list[bool]] = []
+    candidate_scores: list[dict[str, object]] = []
+    pair_decisions: list[dict[str, object]] = []
+    for gold_index, gold_event in enumerate(gold_events):
+        score_row: list[float] = []
+        accepted_row: list[bool] = []
+        for pred_index, pred_event in enumerate(pred_events):
+            local_alignment = _event_alignment(gold_event, pred_event)
+            local_score = float(local_alignment["score"])
+            if bool(local_alignment["accepted"]) and local_score >= 0.999:
+                decision = {
+                    "equivalent": True,
+                    "confidence": 1.0,
+                    "reason_code": "deterministic_exact",
+                    "short_reason": "Local exact/high-confidence alignment.",
+                }
+                source = "deterministic"
+            elif local_score < SEMANTIC_JUDGE_PREFILTER_SCORE_THRESHOLD:
+                decision = {
+                    "equivalent": False,
+                    "confidence": 0.0,
+                    "reason_code": "prefilter_rejected",
+                    "short_reason": "Local similarity below semantic judge prefilter.",
+                }
+                source = "prefilter"
+            else:
+                decision = judge_runtime.decide(
+                    _semantic_event_request(
+                        dialogue_id=dialogue_id,
+                        dialogue=dialogue,
+                        gold_event_index=gold_index,
+                        pred_event_index=pred_index,
+                        gold_event=gold_event,
+                        pred_event=pred_event,
+                    )
+                )
+                source = "judge"
+            score = _semantic_decision_score(decision)
+            is_accepted = score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD
+            score_row.append(score)
+            accepted_row.append(is_accepted)
+            candidate = {
+                "gold_event_index": gold_index,
+                "pred_event_index": pred_index,
+                "alignment_score": _round_metric(score),
+                "accepted": is_accepted,
+                "source": source,
+                "reason_code": decision.get("reason_code", ""),
+                "local_alignment_score": local_alignment["score"],
+            }
+            candidate_scores.append(candidate)
+            pair_decisions.append(
+                {
+                    **candidate,
+                    "alignment_fields": local_alignment.get("fields", {}),
+                    "confidence": _round_metric(float(decision.get("confidence", 0.0) or 0.0)),
+                    "equivalent": bool(decision.get("equivalent", False)),
+                    "short_reason": str(decision.get("short_reason") or ""),
+                }
+            )
+        scores.append(score_row)
+        accepted.append(accepted_row)
+
+    matches = _maximum_weight_event_matching(scores, accepted)
+    return {
+        "matches": matches,
+        "candidate_scores": candidate_scores,
+        "pair_decisions": pair_decisions,
+    }
+
+
+def _semantic_score_field(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    field_name: str,
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    judge_runtime: _SemanticJudgeRuntime,
+) -> dict[str, object]:
+    gold_values = _semantic_field_values(field_name, gold_event)
+    pred_values = _semantic_field_values(field_name, pred_event)
+    if not gold_values or not pred_values:
+        score = _score_field(gold_values, pred_values)
+        score["semantic_matches"] = []
+        return score
+    if field_name == "action":
+        return _semantic_score_action_field(
+            dialogue_id=dialogue_id,
+            dialogue=dialogue,
+            gold_event_index=gold_event_index,
+            pred_event_index=pred_event_index,
+            gold_event=gold_event,
+            pred_event=pred_event,
+            gold_values=gold_values,
+            pred_values=pred_values,
+            judge_runtime=judge_runtime,
+        )
+
+    scores: list[list[float]] = []
+    accepted: list[list[bool]] = []
+    for gold_index, gold_value in enumerate(gold_values):
+        score_row: list[float] = []
+        accepted_row: list[bool] = []
+        for pred_index, pred_value in enumerate(pred_values):
+            score, _reason_code = _semantic_field_value_score(
+                dialogue_id=dialogue_id,
+                dialogue=dialogue,
+                field_name=field_name,
+                gold_event_index=gold_event_index,
+                pred_event_index=pred_event_index,
+                gold_event=gold_event,
+                pred_event=pred_event,
+                gold_value=gold_value,
+                pred_value=pred_value,
+                judge_runtime=judge_runtime,
+            )
+            score_row.append(score)
+            accepted_row.append(score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD)
+        scores.append(score_row)
+        accepted.append(accepted_row)
+
+    matches = _maximum_weight_event_matching(scores, accepted)
+    tp = len(matches)
+    fp = len(pred_values) - tp
+    fn = len(gold_values) - tp
+    return {
+        "gold": gold_values,
+        "pred": pred_values,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": _round_metric(_safe_divide(tp, tp + fp)),
+        "recall": _round_metric(_safe_divide(tp, tp + fn)),
+        "f1": _round_metric(_safe_divide(2 * tp, 2 * tp + fp + fn)),
+        "semantic_matches": [
+            {
+                "gold_value": gold_values[gold_index],
+                "pred_value": pred_values[pred_index],
+                "score": _round_metric(score),
+            }
+            for gold_index, pred_index, score in matches
+        ],
+    }
+
+
+def _semantic_score_action_field(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    gold_values: list[str],
+    pred_values: list[str],
+    judge_runtime: _SemanticJudgeRuntime,
+) -> dict[str, object]:
+    candidates: list[dict[str, object]] = []
+
+    for gold_index, gold_value in enumerate(gold_values):
+        for pred_index, pred_value in enumerate(pred_values):
+            score, reason_code = _semantic_field_value_score(
+                dialogue_id=dialogue_id,
+                dialogue=dialogue,
+                field_name="action",
+                gold_event_index=gold_event_index,
+                pred_event_index=pred_event_index,
+                gold_event=gold_event,
+                pred_event=pred_event,
+                gold_value=gold_value,
+                pred_value=pred_value,
+                judge_runtime=judge_runtime,
+            )
+            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+                candidates.append(
+                    {
+                        "gold_indices": (gold_index,),
+                        "pred_indices": (pred_index,),
+                        "score": score,
+                        "reason_code": reason_code,
+                    }
+                )
+
+    for gold_index, gold_value in enumerate(gold_values):
+        for pred_indices in _semantic_value_groups(len(pred_values)):
+            pred_group = [pred_values[index] for index in pred_indices]
+            score, reason_code = _semantic_action_group_score(
+                dialogue_id=dialogue_id,
+                dialogue=dialogue,
+                gold_event_index=gold_event_index,
+                pred_event_index=pred_event_index,
+                gold_event=gold_event,
+                pred_event=pred_event,
+                gold_values=[gold_value],
+                pred_values=pred_group,
+                judge_runtime=judge_runtime,
+            )
+            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+                candidates.append(
+                    {
+                        "gold_indices": (gold_index,),
+                        "pred_indices": pred_indices,
+                        "score": score,
+                        "reason_code": reason_code,
+                    }
+                )
+
+    for gold_indices in _semantic_value_groups(len(gold_values)):
+        gold_group = [gold_values[index] for index in gold_indices]
+        for pred_index, pred_value in enumerate(pred_values):
+            score, reason_code = _semantic_action_group_score(
+                dialogue_id=dialogue_id,
+                dialogue=dialogue,
+                gold_event_index=gold_event_index,
+                pred_event_index=pred_event_index,
+                gold_event=gold_event,
+                pred_event=pred_event,
+                gold_values=gold_group,
+                pred_values=[pred_value],
+                judge_runtime=judge_runtime,
+            )
+            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+                candidates.append(
+                    {
+                        "gold_indices": gold_indices,
+                        "pred_indices": (pred_index,),
+                        "score": score,
+                        "reason_code": reason_code,
+                    }
+                )
+
+    matches = _maximum_weight_semantic_value_group_matching(
+        candidates,
+        gold_count=len(gold_values),
+        pred_count=len(pred_values),
+    )
+    consumed_gold = {
+        index
+        for match in matches
+        for index in match["gold_indices"]
+        if isinstance(match.get("gold_indices"), tuple)
+    }
+    consumed_pred = {
+        index
+        for match in matches
+        for index in match["pred_indices"]
+        if isinstance(match.get("pred_indices"), tuple)
+    }
+    tp = len(matches)
+    fp = len(pred_values) - len(consumed_pred)
+    fn = len(gold_values) - len(consumed_gold)
+    return {
+        "gold": gold_values,
+        "pred": pred_values,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": _round_metric(_safe_divide(tp, tp + fp)),
+        "recall": _round_metric(_safe_divide(tp, tp + fn)),
+        "f1": _round_metric(_safe_divide(2 * tp, 2 * tp + fp + fn)),
+        "semantic_matches": [
+            _semantic_action_match_payload(match, gold_values=gold_values, pred_values=pred_values)
+            for match in matches
+        ],
+    }
+
+
+def _semantic_field_value_score(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    field_name: str,
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    gold_value: str,
+    pred_value: str,
+    judge_runtime: _SemanticJudgeRuntime,
+) -> tuple[float, str]:
+    if gold_value == pred_value:
+        return 1.0, "exact_value"
+    if field_name == "actor" and _actor_slot_relation_conflict(gold_value, pred_value):
+        return 0.0, "actor_slot_relation_conflict"
+    if field_name == "time" and _obvious_time_conflict(gold_value, pred_value):
+        return 0.0, "local_time_conflict"
+    decision = judge_runtime.decide(
+        _semantic_field_request(
+            dialogue_id=dialogue_id,
+            dialogue=dialogue,
+            field_name=field_name,
+            gold_event_index=gold_event_index,
+            pred_event_index=pred_event_index,
+            gold_event=gold_event,
+            pred_event=pred_event,
+            gold_value=gold_value,
+            pred_value=pred_value,
+        )
+    )
+    return _semantic_decision_score(decision), str(decision.get("reason_code") or "")
+
+
+def _semantic_action_group_score(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    gold_values: list[str],
+    pred_values: list[str],
+    judge_runtime: _SemanticJudgeRuntime,
+) -> tuple[float, str]:
+    decision = judge_runtime.decide(
+        _semantic_action_group_request(
+            dialogue_id=dialogue_id,
+            dialogue=dialogue,
+            gold_event_index=gold_event_index,
+            pred_event_index=pred_event_index,
+            gold_event=gold_event,
+            pred_event=pred_event,
+            gold_values=gold_values,
+            pred_values=pred_values,
+        )
+    )
+    return _semantic_decision_score(decision), str(decision.get("reason_code") or "")
+
+
+def _semantic_value_groups(value_count: int) -> list[tuple[int, ...]]:
+    groups: list[tuple[int, ...]] = []
+    max_size = min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count)
+    for group_size in range(2, max_size + 1):
+        groups.extend(tuple(group) for group in combinations(range(value_count), group_size))
+    return groups
+
+
+def _maximum_weight_semantic_value_group_matching(
+    candidates: list[dict[str, object]],
+    *,
+    gold_count: int,
+    pred_count: int,
+) -> list[dict[str, object]]:
+    ordered_candidates = sorted(
+        candidates,
+        key=lambda candidate: (
+            tuple(candidate.get("gold_indices", ())),
+            tuple(candidate.get("pred_indices", ())),
+            -float(candidate.get("score", 0.0) or 0.0),
+        ),
+    )
+    memo: dict[tuple[int, int, int], tuple[float, int, tuple[int, ...]]] = {}
+
+    def better(
+        candidate: tuple[float, int, tuple[int, ...]],
+        current: tuple[float, int, tuple[int, ...]],
+    ) -> bool:
+        if candidate[0] > current[0] + 1e-12:
+            return True
+        if abs(candidate[0] - current[0]) <= 1e-12:
+            if candidate[1] > current[1]:
+                return True
+            if candidate[1] == current[1]:
+                return candidate[2] < current[2]
+        return False
+
+    def solve(candidate_index: int, used_gold_mask: int, used_pred_mask: int) -> tuple[float, int, tuple[int, ...]]:
+        key = (candidate_index, used_gold_mask, used_pred_mask)
+        if key in memo:
+            return memo[key]
+        if candidate_index >= len(ordered_candidates):
+            return (0.0, 0, ())
+
+        best = solve(candidate_index + 1, used_gold_mask, used_pred_mask)
+        candidate = ordered_candidates[candidate_index]
+        gold_indices = tuple(
+            index
+            for index in candidate.get("gold_indices", ())
+            if isinstance(index, int) and 0 <= index < gold_count
+        )
+        pred_indices = tuple(
+            index
+            for index in candidate.get("pred_indices", ())
+            if isinstance(index, int) and 0 <= index < pred_count
+        )
+        gold_mask = sum(1 << index for index in gold_indices)
+        pred_mask = sum(1 << index for index in pred_indices)
+        if gold_indices and pred_indices and not (used_gold_mask & gold_mask) and not (used_pred_mask & pred_mask):
+            next_score, next_consumed, next_indices = solve(
+                candidate_index + 1,
+                used_gold_mask | gold_mask,
+                used_pred_mask | pred_mask,
+            )
+            score = float(candidate.get("score", 0.0) or 0.0)
+            consumed = len(gold_indices) + len(pred_indices)
+            taken = (score + next_score, consumed + next_consumed, (candidate_index,) + next_indices)
+            if better(taken, best):
+                best = taken
+        memo[key] = best
+        return best
+
+    _score, _consumed, indices = solve(0, 0, 0)
+    return [ordered_candidates[index] for index in indices]
+
+
+def _semantic_action_match_payload(
+    match: dict[str, object],
+    *,
+    gold_values: list[str],
+    pred_values: list[str],
+) -> dict[str, object]:
+    gold_indices = tuple(index for index in match.get("gold_indices", ()) if isinstance(index, int))
+    pred_indices = tuple(index for index in match.get("pred_indices", ()) if isinstance(index, int))
+    score = _round_metric(float(match.get("score", 0.0) or 0.0))
+    if len(gold_indices) == 1 and len(pred_indices) == 1:
+        return {
+            "gold_value": gold_values[gold_indices[0]],
+            "pred_value": pred_values[pred_indices[0]],
+            "score": score,
+        }
+    return {
+        "gold_values": [gold_values[index] for index in gold_indices],
+        "pred_values": [pred_values[index] for index in pred_indices],
+        "score": score,
+    }
+
+
+def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[str]:
+    values = _unique_preserving_order(_normalize_event_field(event.get(field_name)))
+    if field_name != "actor":
+        return values
+    expanded: list[str] = []
+    for value in values:
+        if _normalize_similarity_text(value) in {_normalize_similarity_text(alias) for alias in _GROUP_ACTOR_ALIASES}:
+            expanded.extend(("speaker_1", "speaker_2"))
+        else:
+            expanded.append(value)
+    return _unique_preserving_order(expanded)
+
+
+def _obvious_time_conflict(left: str, right: str) -> bool:
+    normalized_left = _normalize_similarity_text(left)
+    normalized_right = _normalize_similarity_text(right)
+    if not normalized_left or not normalized_right:
+        return False
+    if normalized_left == normalized_right:
+        return False
+    relative_terms = ("今天", "今晚", "明天", "明晚", "后天", "后晚", "昨天", "昨晚")
+    left_relative = any(term in normalized_left for term in relative_terms)
+    right_relative = any(term in normalized_right for term in relative_terms)
+    left_numeric = any(character.isdigit() for character in normalized_left)
+    right_numeric = any(character.isdigit() for character in normalized_right)
+    if left_relative != right_relative and left_numeric != right_numeric:
+        return True
+    return False
+
+
+def _actor_slot_relation_conflict(left: str, right: str) -> bool:
+    normalized_left = _normalize_similarity_text(left)
+    normalized_right = _normalize_similarity_text(right)
+    speaker_slots = {"speaker1", "speaker2"}
+    if normalized_left in speaker_slots and normalized_right in speaker_slots:
+        return normalized_left != normalized_right
+    for speaker_slot in ("speaker1", "speaker2"):
+        if normalized_left == speaker_slot and normalized_right.startswith(f"{speaker_slot}的"):
+            return True
+        if normalized_right == speaker_slot and normalized_left.startswith(f"{speaker_slot}的"):
+            return True
+    return False
+
+
+def _semantic_decision_score(decision: dict[str, object]) -> float:
+    if not bool(decision.get("equivalent", False)):
+        return 0.0
+    confidence = decision.get("confidence", 0.0)
+    if isinstance(confidence, bool):
+        return 0.0
+    if not isinstance(confidence, (int, float)):
+        return 0.0
+    return _round_metric(max(0.0, min(1.0, float(confidence))))
+
+
+def _semantic_event_request(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "event",
+        "dialogue_id": dialogue_id,
+        "gold_event_index": gold_event_index,
+        "pred_event_index": pred_event_index,
+        "gold_event": _semantic_event_payload(gold_event),
+        "pred_event": _semantic_event_payload(pred_event),
+        "dialogue_excerpt": _dialogue_excerpt(dialogue),
+    }
+
+
+def _semantic_field_request(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    field_name: str,
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    gold_value: str,
+    pred_value: str,
+) -> dict[str, object]:
+    return {
+        "kind": "field",
+        "dialogue_id": dialogue_id,
+        "field_name": field_name,
+        "gold_value": gold_value,
+        "pred_value": pred_value,
+        "gold_event_index": gold_event_index,
+        "pred_event_index": pred_event_index,
+        "gold_event": _semantic_event_payload(gold_event),
+        "pred_event": _semantic_event_payload(pred_event),
+        "dialogue_excerpt": _dialogue_excerpt(dialogue),
+    }
+
+
+def _semantic_action_group_request(
+    *,
+    dialogue_id: str,
+    dialogue: list[str],
+    gold_event_index: int,
+    pred_event_index: int,
+    gold_event: dict[str, object],
+    pred_event: dict[str, object],
+    gold_values: list[str],
+    pred_values: list[str],
+) -> dict[str, object]:
+    return {
+        "kind": "field",
+        "comparison_type": "action_group",
+        "dialogue_id": dialogue_id,
+        "field_name": "action",
+        "gold_value": ",".join(gold_values),
+        "pred_value": ",".join(pred_values),
+        "gold_values": gold_values,
+        "pred_values": pred_values,
+        "gold_event_index": gold_event_index,
+        "pred_event_index": pred_event_index,
+        "gold_event": _semantic_event_payload(gold_event),
+        "pred_event": _semantic_event_payload(pred_event),
+        "dialogue_excerpt": _dialogue_excerpt(dialogue),
+    }
+
+
+def _semantic_event_payload(event: dict[str, object]) -> dict[str, object]:
+    return {field_name: _normalize_event_field(event.get(field_name)) for field_name in FIELD_NAMES}
+
+
+def _dialogue_excerpt(dialogue: list[str]) -> list[str]:
+    return [line for line in dialogue[:8] if isinstance(line, str) and line.strip()]
+
+
+def _normalize_semantic_judge_decision(raw_decision: object) -> dict[str, object]:
+    if not isinstance(raw_decision, dict):
+        return {
+            "equivalent": False,
+            "confidence": 0.0,
+            "reason_code": "malformed_response",
+            "short_reason": "Judge response was not a JSON object.",
+        }
+    equivalent = raw_decision.get("equivalent")
+    if not isinstance(equivalent, bool):
+        return {
+            "equivalent": False,
+            "confidence": 0.0,
+            "reason_code": "malformed_response",
+            "short_reason": "Judge response did not contain a boolean equivalent field.",
+        }
+    confidence_value = raw_decision.get("confidence", 0.0)
+    confidence = 0.0
+    if not isinstance(confidence_value, bool) and isinstance(confidence_value, (int, float)):
+        confidence = max(0.0, min(1.0, float(confidence_value)))
+    reason_code = raw_decision.get("reason_code")
+    short_reason = raw_decision.get("short_reason")
+    if str(reason_code or "").strip() == "uncertain":
+        equivalent = False
+    return {
+        "equivalent": equivalent,
+        "confidence": _round_metric(confidence),
+        "reason_code": str(reason_code or ("same_value" if equivalent else "uncertain")).strip(),
+        "short_reason": str(short_reason or "").strip(),
+    }
+
+
+def _parse_semantic_judge_response(response_text: str) -> dict[str, object]:
+    try:
+        return _normalize_semantic_judge_decision(_parse_response_json(response_text))
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "equivalent": False,
+            "confidence": 0.0,
+            "reason_code": "malformed_response",
+            "short_reason": str(exc),
+        }
+
+
+def _semantic_judge_cache_key(request: dict[str, object]) -> str:
+    payload = {
+        key: value
+        for key, value in request.items()
+        if key not in {"dialogue_id", "dialogue_excerpt", "gold_event_index", "pred_event_index"}
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _semantic_judge_failure_reason(exc: Exception) -> str:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return f"remote provider HTTP {status_code}"
+    if isinstance(exc, RemoteProviderRequestError):
+        return "remote provider request failed"
+    first_line = str(exc).splitlines()[0].strip()
+    if not first_line:
+        return exc.__class__.__name__
+    return first_line[:240]
+
+
+def _semantic_judge_audit_row(
+    *,
+    request: dict[str, object],
+    decision: dict[str, object],
+    cache_key: str,
+    source: str,
+    status: str,
+    error_code: str | None,
+    failure_reason: str | None,
+) -> dict[str, object]:
+    return {
+        "dialogue_id": request.get("dialogue_id", ""),
+        "kind": request.get("kind", ""),
+        "judge_prompt_version": SEMANTIC_JUDGE_PROMPT_VERSION,
+        "judge_prompt_hash": SEMANTIC_JUDGE_PROMPT_HASH,
+        "field_name": request.get("field_name"),
+        "comparison_type": request.get("comparison_type"),
+        "gold_event_index": request.get("gold_event_index"),
+        "pred_event_index": request.get("pred_event_index"),
+        "gold_value": request.get("gold_value"),
+        "pred_value": request.get("pred_value"),
+        "gold_values": request.get("gold_values"),
+        "pred_values": request.get("pred_values"),
+        "equivalent": bool(decision.get("equivalent", False)),
+        "confidence": _round_metric(float(decision.get("confidence", 0.0) or 0.0)),
+        "reason_code": str(decision.get("reason_code") or ""),
+        "short_reason": str(decision.get("short_reason") or ""),
+        "source": source,
+        "status": status,
+        "cache_key": cache_key,
+        "error_code": error_code,
+        "failure_reason": failure_reason,
+    }
+
+
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
+
+
 def _normalize_optional_string_list(value: object, field_name: str) -> list[str] | None:
     if value is None:
         return None
@@ -921,6 +2194,42 @@ def _build_row_alignment_audit(
     }
 
 
+def _build_semantic_row_alignment_audit(
+    *,
+    dialogue_id: str,
+    gold_events: list[dict[str, object]],
+    pred_events: list[dict[str, object]],
+    alignment: dict[str, object],
+) -> dict[str, object]:
+    matches = alignment["matches"] if isinstance(alignment.get("matches"), list) else []
+    matched_gold = {gold_index for gold_index, _pred_index, _score in matches}
+    matched_pred = {pred_index for _gold_index, pred_index, _score in matches}
+    return {
+        "dialogue_id": dialogue_id,
+        "alignment_strategy": SEMANTIC_EVENT_ALIGNMENT_STRATEGY,
+        "gold_event_count": len(gold_events),
+        "pred_event_count": len(pred_events),
+        "matched_pairs": [
+            {
+                "gold_event_index": gold_index,
+                "pred_event_index": pred_index,
+                "alignment_score": _round_metric(score),
+            }
+            for gold_index, pred_index, score in matches
+        ],
+        "unmatched_gold_indices": [
+            gold_index for gold_index in range(len(gold_events)) if gold_index not in matched_gold
+        ],
+        "unmatched_pred_indices": [
+            pred_index for pred_index in range(len(pred_events)) if pred_index not in matched_pred
+        ],
+        "candidate_scores": alignment.get("candidate_scores", []),
+        "low_quality_alignment": False,
+        "low_quality_alignment_threshold": SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD,
+        "low_quality_alignment_pairs": [],
+    }
+
+
 def _build_summary(
     *,
     field_totals: dict[str, dict[str, int]],
@@ -1001,6 +2310,29 @@ def _read_dialogue_jsonl(path: Path) -> dict[str, list[dict[str, object]]]:
             if not isinstance(events, list):
                 raise ValueError(f"events must be a list at {path}:{line_number}")
             dialogues[dialogue_id] = [event for event in events if isinstance(event, dict)]
+    return dialogues
+
+
+def _read_dialogue_jsonl_rows(path: Path) -> dict[str, dict[str, object]]:
+    dialogues: dict[str, dict[str, object]] = {}
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError(f"expected JSON object at {path}:{line_number}")
+            dialogue_id = row.get("dialogue_id")
+            if not isinstance(dialogue_id, str) or not dialogue_id:
+                raise ValueError(f"missing dialogue_id at {path}:{line_number}")
+            events = row.get("events")
+            if not isinstance(events, list):
+                raise ValueError(f"events must be a list at {path}:{line_number}")
+            dialogues[dialogue_id] = {
+                "dialogue": _normalize_dialogue_lines(row.get("dialogue")),
+                "events": [event for event in events if isinstance(event, dict)],
+            }
     return dialogues
 
 
@@ -1123,58 +2455,75 @@ def _gemini_model_path(model_id: str) -> str:
 
 def _openai_example_messages(
     examples: Sequence[dict[str, object]],
-    use_stage1_schema: bool = False,
+    prompt_input_mode: str = "raw_dialogue",
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     for example in examples:
-        messages.append({"role": "user", "content": _example_dialogue_text(example, use_stage1_schema)})
-        messages.append({"role": "assistant", "content": _example_response_text(example, use_stage1_schema)})
+        messages.append({"role": "user", "content": _example_dialogue_text(example, prompt_input_mode)})
+        messages.append({"role": "assistant", "content": _example_response_text(example, prompt_input_mode)})
     return messages
 
 
 def _gemini_example_contents(
     examples: Sequence[dict[str, object]],
-    use_stage1_schema: bool = False,
+    prompt_input_mode: str = "raw_dialogue",
 ) -> list[dict[str, object]]:
     contents: list[dict[str, object]] = []
     for example in examples:
         contents.append(
             {
                 "role": "user",
-                "parts": [{"text": _example_dialogue_text(example, use_stage1_schema)}],
+                "parts": [{"text": _example_dialogue_text(example, prompt_input_mode)}],
             }
         )
         contents.append(
             {
                 "role": "model",
-                "parts": [{"text": _example_response_text(example, use_stage1_schema)}],
+                "parts": [{"text": _example_response_text(example, prompt_input_mode)}],
             }
         )
     return contents
 
 
-def _example_dialogue_text(example: dict[str, object], use_stage1_schema: bool = False) -> str:
+def _example_dialogue_text(example: dict[str, object], prompt_input_mode: str = "raw_dialogue") -> str:
     return _dialogue_user_content(
         _normalize_dialogue_lines(example.get("dialogue")),
         str(example.get("dialogue_id") or "").strip(),
-        use_stage1_schema,
+        prompt_input_mode,
     )
 
 
-def _example_response_text(example: dict[str, object], use_stage1_schema: bool = False) -> str:
+def _example_response_text(example: dict[str, object], prompt_input_mode: str = "raw_dialogue") -> str:
     events = example.get("events")
     normalized_events: list[dict[str, object]] = []
     if isinstance(events, list):
         for event in events:
             if isinstance(event, dict):
                 normalized_events.append({field_name: event.get(field_name) for field_name in FIELD_NAMES})
-    if use_stage1_schema:
+    if prompt_input_mode == "stage1":
         return json.dumps(
             _stage1_response_payload_from_events(normalized_events),
             ensure_ascii=False,
             separators=(",", ":"),
         )
+    if prompt_input_mode == "direct_event_json":
+        return json.dumps(
+            _direct_event_response_payload_from_events(
+                dialogue_id=str(example.get("dialogue_id") or "").strip(),
+                events=normalized_events,
+            ),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     return json.dumps({"events": normalized_events}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _prompt_input_mode(prompt_spec: EventExtractionPromptSpec) -> str:
+    if _prompt_uses_stage1_schema(prompt_spec):
+        return "stage1"
+    if _prompt_uses_direct_event_json_schema(prompt_spec):
+        return "direct_event_json"
+    return "raw_dialogue"
 
 
 def _prompt_uses_stage1_schema(prompt_spec: EventExtractionPromptSpec) -> bool:
@@ -1182,18 +2531,33 @@ def _prompt_uses_stage1_schema(prompt_spec: EventExtractionPromptSpec) -> bool:
     return "event_candidates" in prompt and "conversation" in prompt and "stage-1" in prompt
 
 
+def _prompt_uses_direct_event_json_schema(prompt_spec: EventExtractionPromptSpec) -> bool:
+    prompt = prompt_spec.system_prompt
+    return '"dialogue_id"' in prompt and '"source_order"' in prompt and "你是中文对话事件抽取器" in prompt
+
+
 def _dialogue_user_content(
     dialogue: Sequence[str],
     dialogue_id: str = "",
-    use_stage1_schema: bool = False,
+    prompt_input_mode: str = "raw_dialogue",
 ) -> str:
-    if not use_stage1_schema:
+    if prompt_input_mode == "stage1":
+        return json.dumps(
+            _dialogue_segment_payload(dialogue, dialogue_id),
+            ensure_ascii=False,
+            indent=2,
+        )
+    if prompt_input_mode == "direct_event_json":
+        return json.dumps(
+            {
+                "dialogue_id": dialogue_id.strip(),
+                "dialogue": _normalize_dialogue_lines(list(dialogue)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    else:
         return "\n".join(_normalize_dialogue_lines(list(dialogue)))
-    return json.dumps(
-        _dialogue_segment_payload(dialogue, dialogue_id),
-        ensure_ascii=False,
-        indent=2,
-    )
 
 
 def _dialogue_segment_payload(dialogue: Sequence[str], dialogue_id: str = "") -> dict[str, object]:
@@ -1275,6 +2639,38 @@ def _stage1_response_payload_from_events(events: Sequence[dict[str, object]]) ->
         "event_candidates": event_candidates,
         "issues": [],
     }
+
+
+def _direct_event_response_payload_from_events(
+    *,
+    dialogue_id: str,
+    events: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    direct_events: list[dict[str, object]] = []
+    for index, event in enumerate(events, start=1):
+        actor = event.get("actor")
+        time = event.get("time")
+        location = event.get("location")
+        action = event.get("action")
+        digest = event.get("digest")
+        direct_events.append(
+            {
+                "actor": actor,
+                "time": time,
+                "location": location,
+                "action": action,
+                "digest": str(digest).strip()
+                if isinstance(digest, str) and digest.strip()
+                else build_event_digest(
+                    actor=_coerce_string_list(actor) or None,
+                    time=_coerce_string_list(time) or None,
+                    location=_coerce_string_list(location) or None,
+                    action=_coerce_string_list(action) or None,
+                ),
+                "source_order": index,
+            }
+        )
+    return {"dialogue_id": dialogue_id, "events": direct_events}
 
 
 def _event_from_candidate(candidate: dict[str, object]) -> dict[str, object]:

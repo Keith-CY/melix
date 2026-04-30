@@ -4187,6 +4187,40 @@ struct DesktopDiagnosticsToolSectionView: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 10) {
+                        Text("Semantic Judge")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Judge Remote Server",
+                            selection: Binding(
+                                get: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID },
+                                set: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID = $0 }
+                            )
+                        ) {
+                            Text("None").tag("")
+                            ForEach(viewModel.remoteServers, id: \.id) { server in
+                                Text(server.title.isEmpty ? server.id : "\(server.title) • \(server.id)")
+                                    .tag(server.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if viewModel.selectedEvaluationSemanticJudgeRemoteServerID.isEmpty == false {
+                            TextField(
+                                "Judge Model",
+                                text: Binding(
+                                    get: { viewModel.evaluationSemanticJudgeModelID },
+                                    set: { viewModel.evaluationSemanticJudgeModelID = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
                         Text("Dataset Source")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
