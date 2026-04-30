@@ -4469,6 +4469,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
     ) == (4, 8)
     assert core._benchmark_context_lengths(
         suite=suite,
+        parameters={"context_lengths": "8, 4, 8, 4"},
+    ) == (4, 8)
+    assert core._benchmark_context_lengths(
+        suite=suite,
         parameters={"context_lengths": "8, , 4"},
     ) == (4, 8)
     assert core._benchmark_context_lengths(
@@ -4476,6 +4480,7 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(tmp_path: Pa
         parameters={"context_length": "oops"},
     ) == (32,)
     assert core._benchmark_batch_sizes({"batch_sizes": "1, bad, 2"}) == (1, 2)
+    assert core._benchmark_batch_sizes({"batch_sizes": "2, 1, 2, 1"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_sizes": "1, , 2"}) == (1, 2)
     assert core._benchmark_batch_sizes({"batch_size": "oops"}) == (1,)
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
