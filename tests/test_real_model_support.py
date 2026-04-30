@@ -8,11 +8,11 @@ from scripts.real_model_support import (
     REAL_SMALL_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
     _descriptor_runtime_model_path,
+    _has_recognized_model_weight_files,
     build_runtime_model_preflight,
     resolve_real_small_text_model_path,
     resolve_real_small_text_model_source,
 )
-
 
 def test_phase2_default_draft_model_is_small_mlx_qwen() -> None:
     assert PHASE2_DEFAULT_DRAFT_TEXT_MODEL_ID == "mlx-community/Qwen3-0.6B-4bit"
@@ -347,3 +347,26 @@ def test_runtime_model_preflight_accepts_index_weight_files(tmp_path: Path) -> N
     )
 
     assert preflight.runtime_model_class == "real_local_model"
+
+
+def test_has_recognized_model_weight_files_skips_path_iterdir(monkeypatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_text("{}", encoding="utf-8")
+
+    def fail_iterdir(_: Path):
+        raise AssertionError("path.iterdir should not be called in _has_recognized_model_weight_files")
+
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+
+
+def test_has_recognized_model_weight_files_does_not_recurse_into_subdirectories(tmp_path: Path) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+    nested = model_dir / "nested"
+    nested.mkdir()
+    (nested / "model.safetensors").write_text("{}", encoding="utf-8")
+
+    assert _has_recognized_model_weight_files(model_dir) is False
