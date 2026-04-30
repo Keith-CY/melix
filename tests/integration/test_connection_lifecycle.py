@@ -42,7 +42,12 @@ def test_connection_lifecycle_resume_preserves_request_identity_and_records_metr
         assert saw_keepalive is True
         assert ": keepalive " in first_body
 
-        time.sleep(0.02)
+        values = wait_for_metric(
+            stack.control_plane_metrics_path,
+            "http.stream_disconnect_count",
+            minimum=1,
+        )
+        assert values["http.stream_disconnect_count"] >= 1
 
         resumed = stream_chat_completion(
             stack,
@@ -59,12 +64,6 @@ def test_connection_lifecycle_resume_preserves_request_identity_and_records_metr
         assert "data: [DONE]" in resumed["body"]
         assert "stream_disconnect_timeout" not in resumed["body"]
 
-        values = wait_for_metric(
-            stack.control_plane_metrics_path,
-            "http.stream_disconnect_count",
-            minimum=1,
-        )
-        assert values["http.stream_disconnect_count"] >= 1
         values = wait_for_metric(
             stack.control_plane_metrics_path,
             "disconnect.resume_success_rate",

@@ -344,12 +344,11 @@ def _joined_path(prefix: str, key: str) -> str:
 
 def _local_source_metadata(*, source_kind: str, source_path: Path) -> dict[str, Any]:
     resolved = Path(source_path).expanduser().resolve()
-    source_bytes = resolved.read_bytes()
     return {
         "source_kind": source_kind,
         "source_path": str(resolved),
-        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "source_size_bytes": len(source_bytes),
+        "source_sha256": _sha256_for_path(resolved),
+        "source_size_bytes": resolved.stat().st_size,
     }
 
 
@@ -371,19 +370,28 @@ def _hf_source_metadata(*, source: HFEvaluationDatasetSource, rows: list[dict[st
     }
 
 
+def _sha256_for_path(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _read_local_rows(source_kind: str, source_path: Path) -> list[dict[str, Any]]:
     resolved = Path(source_path).expanduser().resolve()
     if source_kind == "jsonl":
         rows: list[dict[str, Any]] = []
-        for raw_line in resolved.read_text(encoding="utf-8").splitlines():
-            if raw_line.strip():
-                payload = json.loads(raw_line)
-                if not isinstance(payload, dict):
-                    raise ModelOperationError(
-                        code="invalid_evaluation_source",
-                        message="JSONL evaluation rows must be JSON objects.",
-                    )
-                rows.append(payload)
+        with resolved.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                if raw_line.strip():
+                    payload = json.loads(raw_line)
+                    if not isinstance(payload, dict):
+                        raise ModelOperationError(
+                            code="invalid_evaluation_source",
+                            message="JSONL evaluation rows must be JSON objects.",
+                        )
+                    rows.append(payload)
         return rows
     if source_kind == "csv":
         with resolved.open("r", encoding="utf-8", newline="") as handle:

@@ -72,6 +72,85 @@ class ModelAwareComparisonBackend:
         yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
 
 
+def test_evaluation_failure_stage_disables_score_threshold_when_zero() -> None:
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="validated",
+            typed_score=-0.1,
+            threshold=0.0,
+        )
+        == ""
+    )
+
+
+def test_evaluation_failure_stage_reports_validation_and_positive_threshold_scoring() -> None:
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="not_validated",
+            typed_score=1.0,
+            threshold=1.0,
+        )
+        == "validation"
+    )
+    assert (
+        EvaluationCore._evaluation_failure_stage(
+            extraction_status="extracted",
+            validation_status="validated",
+            typed_score=0.5,
+            threshold=1.0,
+        )
+        == "scoring"
+    )
+
+
+def test_multimodal_media_helpers_collect_nested_references(tmp_path: Path) -> None:
+    sample = {
+        "input": {
+            "image_uri": "input.png",
+            "image_uris": ["input-list.png"],
+            "media": [{"uri": "input-media.png"}],
+        },
+        "images": ["sample-list.png"],
+        "media": [{"image_uri": "sample-media.png"}],
+    }
+
+    references = EvaluationCore._media_references_for_sample(
+        task_kind="image-text-to-text",
+        dataset_root=tmp_path,
+        sample=sample,
+    )
+
+    assert references == (
+        str((tmp_path / "input.png").resolve()),
+        str((tmp_path / "input-list.png").resolve()),
+        str((tmp_path / "sample-list.png").resolve()),
+        str((tmp_path / "input-media.png").resolve()),
+        str((tmp_path / "sample-media.png").resolve()),
+    )
+    assert EvaluationCore._sample_declares_image_media(sample) is True
+    assert (
+        EvaluationCore._resolved_media_reference(
+            dataset_root=tmp_path,
+            value="https://example.test/image.png",
+        )
+        == "https://example.test/image.png"
+    )
+
+
+def test_evaluation_static_fallback_helpers_cover_non_default_branches() -> None:
+    assert EvaluationCore._deterministic_answer("7 - 2?") == "5"
+    assert EvaluationCore._input_modalities_for_sample(
+        task_kind="text-generation",
+        prompt="",
+        media_references=(),
+        manifest_input_modalities=(),
+    ) == ("text",)
+    assert EvaluationCore._target_text_for_sample({"target": {"answer": 4}}) == '{"answer":4}'
+    assert EvaluationCore._evaluation_max_output_tokens("{}", result_kind="json") == 256
+
+
 class FakeEvaluationRegistry:
     def __init__(
         self,
@@ -266,6 +345,221 @@ def test_resolve_float_parameter_returns_parsed_or_default_value() -> None:
         key="effect_threshold",
         default_value=0.1,
     ) == pytest.approx(0.1)
+
+
+def test_load_dataset_samples_streams_jsonl_and_skips_blank_lines(tmp_path: Path) -> None:
+    samples_path = tmp_path / "samples.jsonl"
+    samples_path.write_text(
+        '{"id": "1", "prompt": "2+2?", "expected": "4"}\n\n'
+        '  \n'
+        '{"id": "2", "prompt": "3+3?", "expected": "6"}\n',
+        encoding="utf-8",
+    )
+
+    assert EvaluationCore._load_dataset_samples(samples_path) == [
+        {"id": "1", "prompt": "2+2?", "expected": "4"},
+        {"id": "2", "prompt": "3+3?", "expected": "6"},
+    ]
+
+
+def test_plan_evaluation_samples_preserves_order_without_shuffle() -> None:
+    samples = [
+        {"id": "first"},
+        {"id": "second"},
+        {"id": "third"},
+    ]
+
+    few_shot_examples, selected = EvaluationCore._plan_evaluation_samples(
+        samples=samples,
+        sample_size=-5,
+        few_shot=2,
+        seed=0,
+    )
+
+    assert few_shot_examples == ({"id": "first"}, {"id": "second"})
+    assert selected == []
+    assert samples == [
+        {"id": "first"},
+        {"id": "second"},
+        {"id": "third"},
+    ]
+
+
+def test_run_local_suite_only_loads_needed_prefix_without_shuffle(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev-prefix",
+        suite_id="mmlu",
+        samples=(
+            {"id": "1", "prompt": "2+2?", "expected": "4"},
+            {"id": "2", "prompt": "3+3?", "expected": "6"},
+            {"id": "3", "prompt": "4+4?", "expected": "8"},
+        ),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"}\n'
+        '{"id": "2", "input": {"text": "3+3?"}, "target": "6"}\n'
+        '{"id": "3", "input": {"text": "4+4?"}, "target": "8"\n',
+        encoding="utf-8",
+    )
+
+    backend = ScriptedEvaluationBackend(("Answer: 6",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=1,
+        seed=0,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert [sample.input_text for sample in run.samples] == ["3+3?"]
+    assert [sample.extracted_result for sample in run.samples] == ["6"]
+
+
+def test_run_local_suite_skips_dataset_parsing_for_zero_sample_request(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev-zero",
+        suite_id="mmlu",
+        samples=(({"id": "1", "prompt": "2+2?", "expected": "4"}),),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"\n',
+        encoding="utf-8",
+    )
+
+    backend = ScriptedEvaluationBackend(())
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=0,
+        few_shot=0,
+        seed=7,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert run.samples == ()
+
+
+def test_run_local_suite_reuses_combined_sample_list_for_validators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+            {"prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("Answer: 4", "Answer: 6"))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    validator_sample_ids: list[int] = []
+    original_task_kind_validator = EvaluationCore._validate_task_kind_against_dataset
+    original_live_validator = EvaluationCore._validate_live_multimodal_execution
+
+    def capture_task_kind_validator(**kwargs: object) -> None:
+        validator_sample_ids.append(id(kwargs["samples"]))
+        original_task_kind_validator(**kwargs)
+
+    def capture_live_validator(**kwargs: object) -> None:
+        validator_sample_ids.append(id(kwargs["samples"]))
+        original_live_validator(**kwargs)
+
+    monkeypatch.setattr(
+        EvaluationCore,
+        "_validate_task_kind_against_dataset",
+        staticmethod(capture_task_kind_validator),
+    )
+    monkeypatch.setattr(
+        EvaluationCore,
+        "_validate_live_multimodal_execution",
+        staticmethod(capture_live_validator),
+    )
+
+    runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        few_shot=1,
+        seed=0,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert len(validator_sample_ids) == 2
+    assert validator_sample_ids[0] == validator_sample_ids[1]
+
+
+def test_run_local_suite_streams_samples_jsonl_without_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+            {"prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"}\n\n'
+        '{"id": "2", "input": {"text": "3+3?"}, "target": "6"}\n',
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == dataset_root / "samples.jsonl":
+            raise AssertionError("samples.jsonl should be streamed via Path.open()")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    backend = ScriptedEvaluationBackend(("Answer: 4", "Answer: 6"))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        few_shot=0,
+        seed=7,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert [sample.input_text for sample in run.samples] == ["2+2?", "3+3?"]
+    assert [sample.extracted_result for sample in run.samples] == ["4", "6"]
 
 
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:

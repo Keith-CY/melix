@@ -86,21 +86,46 @@ def _normalized_generation_config_value(value: object) -> str | None:
     return None
 
 
+def _load_json_dict_file(
+    path: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, object]:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        if json_cache is not None:
+            json_cache.pop(path, None)
+        return {}
+
+    if json_cache is not None:
+        cached_entry = json_cache.get(path)
+        if cached_entry is not None:
+            cached_mtime_ns, cached_size, cached_payload = cached_entry
+            if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+                return cached_payload
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+    if json_cache is not None:
+        json_cache[path] = (stat_result.st_mtime_ns, stat_result.st_size, payload)
+    return payload
+
+
 def _merge_generation_config_metadata(
     model_dir: Path,
     *,
     ext: dict[str, str],
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> None:
     generation_config_path = model_dir / "generation_config.json"
-    if not generation_config_path.is_file():
-        return
-
-    try:
-        payload = json.loads(generation_config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-
-    if not isinstance(payload, dict):
+    payload = _load_json_dict_file(generation_config_path, json_cache=json_cache)
+    if not payload:
         return
 
     recognized_values = {
@@ -123,30 +148,39 @@ def _merge_generation_config_metadata(
         ext[_GENERATION_CONFIG_SOURCE_KEY] = str(generation_config_path)
 
 
-def _load_model_config_payload(model_dir: Path) -> dict[str, object]:
+def _load_model_config_payload(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, object]:
     config_path = model_dir / "config.json"
-    if not config_path.is_file():
-        return {}
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return _load_json_dict_file(config_path, json_cache=json_cache)
 
 
 def _has_model_weight_files(model_dir: Path) -> bool:
     if (model_dir / "model.safetensors.index.json").is_file():
         return True
-    return any(path.is_file() for path in model_dir.glob("*.safetensors")) or any(
-        path.is_file() for path in model_dir.glob("*.npz")
-    )
+    try:
+        with os.scandir(os.fspath(model_dir)) as entries:
+            for entry in entries:
+                if not entry.name.endswith((".safetensors", ".npz")):
+                    continue
+                try:
+                    if entry.is_file():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
 
 
 def _read_text_prefix(path: Path, *, max_chars: int = 16_384) -> str:
     if not path.is_file():
         return ""
     try:
-        return path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            return handle.read(max_chars)
     except OSError:
         return ""
 
@@ -188,16 +222,70 @@ def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
     return f"{parts[0]}/{parts[1]}"
 
 
-def _hf_cache_revision(cache_repo_dir: Path, snapshot_id: str) -> str:
-    refs_dir = cache_repo_dir / "refs"
-    if refs_dir.is_dir():
-        for ref_path in sorted(path for path in refs_dir.rglob("*") if path.is_file()):
-            try:
-                if ref_path.read_text(encoding="utf-8").strip() == snapshot_id:
-                    return os.fspath(ref_path.relative_to(refs_dir))
-            except OSError:
+def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> tuple[Path, ...]:
+    child_names: list[str] = []
+    try:
+        with os.scandir(os.fspath(root)) as entries:
+            for entry in entries:
+                if name_prefix is not None and not entry.name.startswith(name_prefix):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                child_names.append(entry.name)
+    except OSError:
+        return ()
+    return tuple(root / name for name in sorted(child_names))
+
+
+def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterable[tuple[Path, str]]:
+    try:
+        with os.scandir(os.fspath(root)) as entries:
+            child_entries = sorted(entries, key=lambda entry: entry.name)
+    except OSError as exc:
+        raise OSError(str(exc)) from exc
+
+    for entry in child_entries:
+        try:
+            if entry.is_dir():
+                child_prefix = f"{prefix}{entry.name}/"
+                yield from _iter_relative_file_paths_sorted(root / entry.name, prefix=child_prefix)
                 continue
-    return snapshot_id
+            if entry.is_file():
+                yield root / entry.name, f"{prefix}{entry.name}"
+        except OSError as exc:
+            raise OSError(str(exc)) from exc
+
+
+
+def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
+    refs_dir = cache_repo_dir / "refs"
+    revisions: dict[str, str] = {}
+    if refs_dir.is_dir():
+        try:
+            for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
+                try:
+                    snapshot_id = ref_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    continue
+                if not snapshot_id:
+                    continue
+                revisions.setdefault(snapshot_id, relative_name)
+        except OSError:
+            return revisions
+    return revisions
+
+
+def _hf_cache_revision(
+    cache_repo_dir: Path,
+    snapshot_id: str,
+    *,
+    revision_map: Mapping[str, str] | None = None,
+) -> str:
+    revisions = revision_map if revision_map is not None else _hf_cache_revision_map(cache_repo_dir)
+    return revisions.get(snapshot_id, snapshot_id)
 
 
 def _is_hf_cache_snapshot_dir(root: Path, model_dir: Path) -> bool:
@@ -573,7 +661,12 @@ def _is_gemma4_vlm_config(config_payload: Mapping[str, object] | None) -> bool:
     return False
 
 
-def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object] | None) -> str:
+def _gemma4_execution_mode(
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> str:
     config_payload = dict(config_payload or {})
     vision_config = config_payload.get("vision_config")
     if isinstance(vision_config, Mapping) and len(vision_config) > 0:
@@ -584,20 +677,19 @@ def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object]
         key in config_payload and config_payload.get(key) not in (None, "", [], {})
         for key in ("image_token_id", "boi_token_id", "eoi_token_id")
     )
-    if has_multimodal_marker and _gemma4_index_has_vision_weights(model_dir):
+    if has_multimodal_marker and _gemma4_index_has_vision_weights(model_dir, json_cache=json_cache):
         return ""
     return "text_backed"
 
 
-def _gemma4_index_has_vision_weights(model_dir: Path) -> bool:
+def _gemma4_index_has_vision_weights(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> bool:
     index_path = model_dir / "model.safetensors.index.json"
-    if not index_path.is_file():
-        return False
-    try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
+    payload = _load_json_dict_file(index_path, json_cache=json_cache)
+    if not payload:
         return False
     weight_map = payload.get("weight_map")
     if not isinstance(weight_map, dict):
@@ -614,6 +706,7 @@ def _vlm_capability_metadata(
     model_dir: Path,
     metadata: dict[str, str] | None = None,
     config_payload: Mapping[str, object] | None = None,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> dict[str, str]:
     metadata = dict(metadata or {})
     config_payload = dict(config_payload or {})
@@ -637,7 +730,11 @@ def _vlm_capability_metadata(
             or resolved_family.multimodal_adapter_hash
         ),
     }
-    execution_mode = _gemma4_execution_mode(model_dir, config_payload) if family_id == "gemma4-v1" else ""
+    execution_mode = (
+        _gemma4_execution_mode(model_dir, config_payload, json_cache=json_cache)
+        if family_id == "gemma4-v1"
+        else ""
+    )
     if execution_mode:
         ext["melix.vlm.execution_mode"] = execution_mode
     return ext
@@ -725,6 +822,7 @@ class WorkerModelCatalog:
         self._models = dict(self._seed_models)
         self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
         self._registry_lock = threading.RLock()
+        self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
@@ -949,29 +1047,30 @@ class WorkerModelCatalog:
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
     ) -> None:
+        root_resolved = root.resolve()
         seen_paths: set[Path] = set()
         for model in self._scan_huggingface_cache_models(root=root):
-            resolved_path = Path(model.model_path).resolve()
+            resolved_path = Path(model.model_path)
             seen_paths.add(resolved_path)
             if model.model_id in discovered_models or model.model_id in self._seed_models:
                 continue
             self._apply_root_metadata(
                 model,
-                root=root,
+                resolved_root=root_resolved,
                 root_id=root_id,
                 root_order=root_order,
-                relative_path=resolved_path.relative_to(root.resolve()),
+                relative_path=resolved_path.relative_to(root_resolved),
             )
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
         for model_dir in self._iter_plain_local_model_dirs(root):
-            resolved_path = model_dir.resolve()
-            if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root.resolve(), resolved_path):
+            resolved_path = model_dir
+            if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
             if (resolved_path / "manifest.json").is_file():
                 continue
-            model_id = _local_model_id(root.resolve(), resolved_path)
+            model_id = _local_model_id(root_resolved, resolved_path)
             if model_id in discovered_models or model_id in self._seed_models:
                 continue
             if not _has_model_weight_files(resolved_path) or not _has_mlx_signal(model_dir=resolved_path, repo_id=model_id):
@@ -985,66 +1084,55 @@ class WorkerModelCatalog:
             )
             self._apply_root_metadata(
                 model,
-                root=root,
+                resolved_root=root_resolved,
                 root_id=root_id,
                 root_order=root_order,
-                relative_path=resolved_path.relative_to(root.resolve()),
+                relative_path=resolved_path.relative_to(root_resolved),
             )
             discovered_models[model_id] = model
             accepted_model_ids.append(model_id)
 
-    def _scan_huggingface_cache_models(self, *, root: Path) -> list[common_pb2.ModelSpec]:
-        models: list[common_pb2.ModelSpec] = []
-        for cache_repo_dir in sorted(root.glob("models--*")):
-            if not cache_repo_dir.is_dir():
-                continue
+    def _scan_huggingface_cache_models(self, *, root: Path) -> Iterable[common_pb2.ModelSpec]:
+        for cache_repo_dir in _sorted_child_directories(root, name_prefix="models--"):
             repo_id = _hf_cache_repo_id(cache_repo_dir)
             if repo_id is None:
                 continue
             snapshots_dir = cache_repo_dir / "snapshots"
             if not snapshots_dir.is_dir():
                 continue
-            for snapshot_dir in sorted(path for path in snapshots_dir.iterdir() if path.is_dir()):
+            revision_map = _hf_cache_revision_map(cache_repo_dir)
+            for snapshot_dir in _sorted_child_directories(snapshots_dir):
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
                 if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
                     continue
-                revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name)
-                models.append(
-                    self._raw_model_spec(
-                        model_id=repo_id,
-                        model_dir=snapshot_dir.resolve(),
-                        revision=revision,
-                        source_kind="hf_cache_snapshot",
-                        metadata={
-                            "melix.hf_repo_id": repo_id,
-                            "melix.hf_revision": revision,
-                        },
-                    )
+                revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
+                yield self._raw_model_spec(
+                    model_id=repo_id,
+                    model_dir=snapshot_dir.resolve(),
+                    revision=revision,
+                    source_kind="hf_cache_snapshot",
+                    metadata={
+                        "melix.hf_repo_id": repo_id,
+                        "melix.hf_revision": revision,
+                    },
                 )
-        return models
 
     @staticmethod
-    def _iter_plain_local_model_dirs(root: Path) -> list[Path]:
-        model_dirs: list[Path] = []
+    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
         stack = [root.resolve()]
         while stack:
             current = stack.pop()
             if current.name in {"blobs", ".git", "__pycache__"}:
                 continue
             if (current / "config.json").is_file():
-                model_dirs.append(current)
+                yield current
                 continue
-            try:
-                children = sorted(path for path in current.iterdir() if path.is_dir())
-            except OSError:
-                continue
+            children = _sorted_child_directories(current)
             stack.extend(reversed(children))
-        return model_dirs
 
     @staticmethod
-    def _iter_registry_manifest_paths(root: Path) -> list[Path]:
-        manifest_paths: list[Path] = []
+    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
         stack = [root.resolve()]
         while stack:
             current = stack.pop()
@@ -1052,31 +1140,27 @@ class WorkerModelCatalog:
                 continue
             manifest_path = current / "manifest.json"
             if manifest_path.is_file():
-                manifest_paths.append(manifest_path)
+                yield manifest_path
                 continue
-            try:
-                children = sorted(path for path in current.iterdir() if path.is_dir())
-            except OSError:
-                continue
+            children = _sorted_child_directories(current)
             stack.extend(reversed(children))
-        return sorted(manifest_paths)
 
     @staticmethod
     def _apply_root_metadata(
         model: common_pb2.ModelSpec,
         *,
-        root: Path,
+        resolved_root: Path,
         root_id: str,
         root_order: int,
         relative_path: Path,
     ) -> None:
         model.ext["melix.registry_root_id"] = root_id
-        model.ext["melix.registry_root_path"] = str(root.resolve())
+        model.ext["melix.registry_root_path"] = str(resolved_root)
         model.ext["melix.registry_root_order"] = str(root_order)
         model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
 
-    @staticmethod
     def _raw_model_spec(
+        self,
         *,
         model_id: str,
         model_dir: Path,
@@ -1084,13 +1168,17 @@ class WorkerModelCatalog:
         source_kind: str,
         metadata: dict[str, str],
     ) -> common_pb2.ModelSpec:
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
         runtime_model_path = str(model_dir)
         ext = {
             **metadata,
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
-        config_payload = _load_model_config_payload(model_dir)
+        config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
@@ -1109,9 +1197,10 @@ class WorkerModelCatalog:
                     model_dir=model_dir,
                     metadata=ext,
                     config_payload=config_payload,
+                    json_cache=json_cache,
                 )
             )
-        _merge_generation_config_metadata(model_dir, ext=ext)
+        _merge_generation_config_metadata(model_dir, ext=ext, json_cache=json_cache)
         return common_pb2.ModelSpec(
             model_id=model_id,
             model_path=runtime_model_path,
@@ -1125,16 +1214,16 @@ class WorkerModelCatalog:
             ext=ext,
         )
 
-    @staticmethod
     def _parse_registry_manifest(
+        self,
         manifest_path: Path,
     ) -> tuple[str, common_pb2.ModelSpec] | None:
-        try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-
-        if not isinstance(payload, dict):
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
+        payload = _load_json_dict_file(manifest_path, json_cache=json_cache)
+        if not payload:
             return None
 
         model_id = _normalized(str(payload.get("model_id", "")))
@@ -1180,7 +1269,7 @@ class WorkerModelCatalog:
             normalized_ext["melix.model_path_missing"] = "true"
         else:
             normalized_ext.pop("melix.model_path_missing", None)
-        config_payload = _load_model_config_payload(runtime_model_dir)
+        config_payload = _load_model_config_payload(runtime_model_dir, json_cache=json_cache)
         normalized_ext.update(dflash_draft_metadata(config_payload))
         model_kind = (
             "vlm"
@@ -1203,6 +1292,7 @@ class WorkerModelCatalog:
                     model_dir=runtime_model_dir,
                     metadata=normalized_ext,
                     config_payload=config_payload,
+                    json_cache=json_cache,
                 )
             )
         if model_kind == "image":
@@ -1213,7 +1303,11 @@ class WorkerModelCatalog:
                     default_task_kind=normalized_ext.get("melix.image.task_kind", "text-to-image"),
                 )
             )
-        _merge_generation_config_metadata(runtime_model_dir, ext=normalized_ext)
+        _merge_generation_config_metadata(
+            runtime_model_dir,
+            ext=normalized_ext,
+            json_cache=json_cache,
+        )
 
         return model_id, common_pb2.ModelSpec(
             model_id=model_id,

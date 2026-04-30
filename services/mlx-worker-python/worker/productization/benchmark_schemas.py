@@ -108,6 +108,30 @@ class ServingBenchmarkContextRow:
     cache_profile: str
     reasoning_mode: str
     structured_output_mode: str
+    dataset_materialize_ms: float = 0.0
+    prompt_render_ms: float = 0.0
+    warmup_ms: float = 0.0
+    prefill_ms: float = 0.0
+    decode_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    first_token_index: int = 0
+    cache_hit: bool = False
+    runtime_kind: str = ""
+    error_stage: str = ""
+    speculative_acceptance_rate: float = 0.0
+    speculative_rollback_rate: float = 0.0
+    speculative_accepted_tokens: int = 0
+    speculative_rejected_tokens: int = 0
+    speculative_fallback_count: int = 0
+    speculative_num_draft_tokens: int = 0
+    speculative_draft_model_configured: bool = False
+    speculative_draft_propose_ms: float = 0.0
+    speculative_target_verify_ms: float = 0.0
+    dflash_enabled: bool = False
+    dflash_block_size: int = 0
+    dflash_rollback_count: int = 0
+    dflash_target_hidden_layers: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -130,6 +154,30 @@ class ServingBenchmarkContextRow:
             "cache_profile": self.cache_profile,
             "reasoning_mode": self.reasoning_mode,
             "structured_output_mode": self.structured_output_mode,
+            "dataset_materialize_ms": self.dataset_materialize_ms,
+            "prompt_render_ms": self.prompt_render_ms,
+            "warmup_ms": self.warmup_ms,
+            "prefill_ms": self.prefill_ms,
+            "decode_ms": self.decode_ms,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "first_token_index": self.first_token_index,
+            "cache_hit": self.cache_hit,
+            "runtime_kind": self.runtime_kind,
+            "error_stage": self.error_stage,
+            "speculative_acceptance_rate": self.speculative_acceptance_rate,
+            "speculative_rollback_rate": self.speculative_rollback_rate,
+            "speculative_accepted_tokens": self.speculative_accepted_tokens,
+            "speculative_rejected_tokens": self.speculative_rejected_tokens,
+            "speculative_fallback_count": self.speculative_fallback_count,
+            "speculative_num_draft_tokens": self.speculative_num_draft_tokens,
+            "speculative_draft_model_configured": self.speculative_draft_model_configured,
+            "speculative_draft_propose_ms": self.speculative_draft_propose_ms,
+            "speculative_target_verify_ms": self.speculative_target_verify_ms,
+            "dflash_enabled": self.dflash_enabled,
+            "dflash_block_size": self.dflash_block_size,
+            "dflash_rollback_count": self.dflash_rollback_count,
+            "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
         }
 
 
@@ -154,6 +202,30 @@ class ServingBenchmarkBatchRow:
     cache_profile: str
     reasoning_mode: str
     structured_output_mode: str
+    dataset_materialize_ms: float = 0.0
+    prompt_render_ms: float = 0.0
+    warmup_ms: float = 0.0
+    prefill_ms: float = 0.0
+    decode_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    first_token_index: int = 0
+    cache_hit: bool = False
+    runtime_kind: str = ""
+    error_stage: str = ""
+    speculative_acceptance_rate: float = 0.0
+    speculative_rollback_rate: float = 0.0
+    speculative_accepted_tokens: int = 0
+    speculative_rejected_tokens: int = 0
+    speculative_fallback_count: int = 0
+    speculative_num_draft_tokens: int = 0
+    speculative_draft_model_configured: bool = False
+    speculative_draft_propose_ms: float = 0.0
+    speculative_target_verify_ms: float = 0.0
+    dflash_enabled: bool = False
+    dflash_block_size: int = 0
+    dflash_rollback_count: int = 0
+    dflash_target_hidden_layers: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -176,6 +248,30 @@ class ServingBenchmarkBatchRow:
             "cache_profile": self.cache_profile,
             "reasoning_mode": self.reasoning_mode,
             "structured_output_mode": self.structured_output_mode,
+            "dataset_materialize_ms": self.dataset_materialize_ms,
+            "prompt_render_ms": self.prompt_render_ms,
+            "warmup_ms": self.warmup_ms,
+            "prefill_ms": self.prefill_ms,
+            "decode_ms": self.decode_ms,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "first_token_index": self.first_token_index,
+            "cache_hit": self.cache_hit,
+            "runtime_kind": self.runtime_kind,
+            "error_stage": self.error_stage,
+            "speculative_acceptance_rate": self.speculative_acceptance_rate,
+            "speculative_rollback_rate": self.speculative_rollback_rate,
+            "speculative_accepted_tokens": self.speculative_accepted_tokens,
+            "speculative_rejected_tokens": self.speculative_rejected_tokens,
+            "speculative_fallback_count": self.speculative_fallback_count,
+            "speculative_num_draft_tokens": self.speculative_num_draft_tokens,
+            "speculative_draft_model_configured": self.speculative_draft_model_configured,
+            "speculative_draft_propose_ms": self.speculative_draft_propose_ms,
+            "speculative_target_verify_ms": self.speculative_target_verify_ms,
+            "dflash_enabled": self.dflash_enabled,
+            "dflash_block_size": self.dflash_block_size,
+            "dflash_rollback_count": self.dflash_rollback_count,
+            "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
         }
 
 
@@ -212,6 +308,7 @@ class BenchmarkMatrixJob:
     output_dir: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    parameters: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -224,6 +321,7 @@ class BenchmarkMatrixJob:
             "benchmark_mode": self.benchmark_mode,
             "status": self.status,
             "output_dir": self.output_dir,
+            "parameters": dict(self.parameters),
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
         }
@@ -258,7 +356,14 @@ class BenchmarkMatrixSummaryRow:
     peak_memory_bytes_max: int
     queue_wait_mean_ms: float
     queue_wait_p95_ms: float
-    created_at_unix_ms: int
+    cell_wall_ms: float = 0.0
+    completed_count: int = 0
+    failed_count: int = 0
+    ttft_p50_ms: float = 0.0
+    ttft_p95_ms: float = 0.0
+    request_latency_p50_ms: float = 0.0
+    request_latency_p95_ms: float = 0.0
+    created_at_unix_ms: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -289,6 +394,13 @@ class BenchmarkMatrixSummaryRow:
             "peak_memory_bytes_max": self.peak_memory_bytes_max,
             "queue_wait_mean_ms": self.queue_wait_mean_ms,
             "queue_wait_p95_ms": self.queue_wait_p95_ms,
+            "cell_wall_ms": self.cell_wall_ms,
+            "completed_count": self.completed_count,
+            "failed_count": self.failed_count,
+            "ttft_p50_ms": self.ttft_p50_ms,
+            "ttft_p95_ms": self.ttft_p95_ms,
+            "request_latency_p50_ms": self.request_latency_p50_ms,
+            "request_latency_p95_ms": self.request_latency_p95_ms,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
 
@@ -317,6 +429,30 @@ class BenchmarkMatrixRequestRow:
     status: str
     error_code: str
     created_at_unix_ms: int
+    dataset_materialize_ms: float = 0.0
+    prompt_render_ms: float = 0.0
+    warmup_ms: float = 0.0
+    prefill_ms: float = 0.0
+    decode_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    first_token_index: int = 0
+    cache_hit: bool = False
+    runtime_kind: str = ""
+    error_stage: str = ""
+    speculative_acceptance_rate: float = 0.0
+    speculative_rollback_rate: float = 0.0
+    speculative_accepted_tokens: int = 0
+    speculative_rejected_tokens: int = 0
+    speculative_fallback_count: int = 0
+    speculative_num_draft_tokens: int = 0
+    speculative_draft_model_configured: bool = False
+    speculative_draft_propose_ms: float = 0.0
+    speculative_target_verify_ms: float = 0.0
+    dflash_enabled: bool = False
+    dflash_block_size: int = 0
+    dflash_rollback_count: int = 0
+    dflash_target_hidden_layers: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -341,6 +477,30 @@ class BenchmarkMatrixRequestRow:
             "peak_memory_bytes": self.peak_memory_bytes,
             "status": self.status,
             "error_code": self.error_code,
+            "dataset_materialize_ms": self.dataset_materialize_ms,
+            "prompt_render_ms": self.prompt_render_ms,
+            "warmup_ms": self.warmup_ms,
+            "prefill_ms": self.prefill_ms,
+            "decode_ms": self.decode_ms,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "first_token_index": self.first_token_index,
+            "cache_hit": self.cache_hit,
+            "runtime_kind": self.runtime_kind,
+            "error_stage": self.error_stage,
+            "speculative_acceptance_rate": self.speculative_acceptance_rate,
+            "speculative_rollback_rate": self.speculative_rollback_rate,
+            "speculative_accepted_tokens": self.speculative_accepted_tokens,
+            "speculative_rejected_tokens": self.speculative_rejected_tokens,
+            "speculative_fallback_count": self.speculative_fallback_count,
+            "speculative_num_draft_tokens": self.speculative_num_draft_tokens,
+            "speculative_draft_model_configured": self.speculative_draft_model_configured,
+            "speculative_draft_propose_ms": self.speculative_draft_propose_ms,
+            "speculative_target_verify_ms": self.speculative_target_verify_ms,
+            "dflash_enabled": self.dflash_enabled,
+            "dflash_block_size": self.dflash_block_size,
+            "dflash_rollback_count": self.dflash_rollback_count,
+            "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
 
@@ -404,6 +564,7 @@ def build_benchmark_matrix_job(
     output_dir: str,
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    parameters: dict[str, str] | None = None,
 ) -> BenchmarkMatrixJob:
     return BenchmarkMatrixJob(
         schema_version=_BENCHMARK_MATRIX_JOB_SCHEMA_VERSION,
@@ -417,6 +578,7 @@ def build_benchmark_matrix_job(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        parameters=dict(parameters or {}),
     )
 
 
@@ -449,7 +611,14 @@ def build_benchmark_matrix_summary_row(
     peak_memory_bytes_max: int,
     queue_wait_mean_ms: float,
     queue_wait_p95_ms: float,
-    created_at_unix_ms: int,
+    cell_wall_ms: float = 0.0,
+    completed_count: int = 0,
+    failed_count: int = 0,
+    ttft_p50_ms: float = 0.0,
+    ttft_p95_ms: float = 0.0,
+    request_latency_p50_ms: float = 0.0,
+    request_latency_p95_ms: float = 0.0,
+    created_at_unix_ms: int = 0,
 ) -> BenchmarkMatrixSummaryRow:
     return BenchmarkMatrixSummaryRow(
         job_id=job_id,
@@ -479,6 +648,13 @@ def build_benchmark_matrix_summary_row(
         peak_memory_bytes_max=peak_memory_bytes_max,
         queue_wait_mean_ms=queue_wait_mean_ms,
         queue_wait_p95_ms=queue_wait_p95_ms,
+        cell_wall_ms=cell_wall_ms,
+        completed_count=completed_count,
+        failed_count=failed_count,
+        ttft_p50_ms=ttft_p50_ms,
+        ttft_p95_ms=ttft_p95_ms,
+        request_latency_p50_ms=request_latency_p50_ms,
+        request_latency_p95_ms=request_latency_p95_ms,
         created_at_unix_ms=created_at_unix_ms,
     )
 
@@ -507,6 +683,30 @@ def build_benchmark_matrix_request_row(
     status: str,
     error_code: str,
     created_at_unix_ms: int,
+    dataset_materialize_ms: float = 0.0,
+    prompt_render_ms: float = 0.0,
+    warmup_ms: float = 0.0,
+    prefill_ms: float = 0.0,
+    decode_ms: float = 0.0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    first_token_index: int = 0,
+    cache_hit: bool = False,
+    runtime_kind: str = "",
+    error_stage: str = "",
+    speculative_acceptance_rate: float = 0.0,
+    speculative_rollback_rate: float = 0.0,
+    speculative_accepted_tokens: int = 0,
+    speculative_rejected_tokens: int = 0,
+    speculative_fallback_count: int = 0,
+    speculative_num_draft_tokens: int = 0,
+    speculative_draft_model_configured: bool = False,
+    speculative_draft_propose_ms: float = 0.0,
+    speculative_target_verify_ms: float = 0.0,
+    dflash_enabled: bool = False,
+    dflash_block_size: int = 0,
+    dflash_rollback_count: int = 0,
+    dflash_target_hidden_layers: int = 0,
 ) -> BenchmarkMatrixRequestRow:
     return BenchmarkMatrixRequestRow(
         job_id=job_id,
@@ -531,6 +731,30 @@ def build_benchmark_matrix_request_row(
         status=status,
         error_code=error_code,
         created_at_unix_ms=created_at_unix_ms,
+        dataset_materialize_ms=dataset_materialize_ms,
+        prompt_render_ms=prompt_render_ms,
+        warmup_ms=warmup_ms,
+        prefill_ms=prefill_ms,
+        decode_ms=decode_ms,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        first_token_index=first_token_index,
+        cache_hit=cache_hit,
+        runtime_kind=runtime_kind,
+        error_stage=error_stage,
+        speculative_acceptance_rate=speculative_acceptance_rate,
+        speculative_rollback_rate=speculative_rollback_rate,
+        speculative_accepted_tokens=speculative_accepted_tokens,
+        speculative_rejected_tokens=speculative_rejected_tokens,
+        speculative_fallback_count=speculative_fallback_count,
+        speculative_num_draft_tokens=speculative_num_draft_tokens,
+        speculative_draft_model_configured=speculative_draft_model_configured,
+        speculative_draft_propose_ms=speculative_draft_propose_ms,
+        speculative_target_verify_ms=speculative_target_verify_ms,
+        dflash_enabled=dflash_enabled,
+        dflash_block_size=dflash_block_size,
+        dflash_rollback_count=dflash_rollback_count,
+        dflash_target_hidden_layers=dflash_target_hidden_layers,
     )
 
 
@@ -554,6 +778,30 @@ def build_serving_benchmark_context_row(
     cache_profile: str,
     reasoning_mode: str,
     structured_output_mode: str,
+    dataset_materialize_ms: float = 0.0,
+    prompt_render_ms: float = 0.0,
+    warmup_ms: float = 0.0,
+    prefill_ms: float = 0.0,
+    decode_ms: float = 0.0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    first_token_index: int = 0,
+    cache_hit: bool = False,
+    runtime_kind: str = "",
+    error_stage: str = "",
+    speculative_acceptance_rate: float = 0.0,
+    speculative_rollback_rate: float = 0.0,
+    speculative_accepted_tokens: int = 0,
+    speculative_rejected_tokens: int = 0,
+    speculative_fallback_count: int = 0,
+    speculative_num_draft_tokens: int = 0,
+    speculative_draft_model_configured: bool = False,
+    speculative_draft_propose_ms: float = 0.0,
+    speculative_target_verify_ms: float = 0.0,
+    dflash_enabled: bool = False,
+    dflash_block_size: int = 0,
+    dflash_rollback_count: int = 0,
+    dflash_target_hidden_layers: int = 0,
 ) -> ServingBenchmarkContextRow:
     return ServingBenchmarkContextRow(
         schema_version="melix.serving_benchmark_context_row.v1",
@@ -575,6 +823,30 @@ def build_serving_benchmark_context_row(
         cache_profile=cache_profile,
         reasoning_mode=reasoning_mode,
         structured_output_mode=structured_output_mode,
+        dataset_materialize_ms=dataset_materialize_ms,
+        prompt_render_ms=prompt_render_ms,
+        warmup_ms=warmup_ms,
+        prefill_ms=prefill_ms,
+        decode_ms=decode_ms,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        first_token_index=first_token_index,
+        cache_hit=cache_hit,
+        runtime_kind=runtime_kind,
+        error_stage=error_stage,
+        speculative_acceptance_rate=speculative_acceptance_rate,
+        speculative_rollback_rate=speculative_rollback_rate,
+        speculative_accepted_tokens=speculative_accepted_tokens,
+        speculative_rejected_tokens=speculative_rejected_tokens,
+        speculative_fallback_count=speculative_fallback_count,
+        speculative_num_draft_tokens=speculative_num_draft_tokens,
+        speculative_draft_model_configured=speculative_draft_model_configured,
+        speculative_draft_propose_ms=speculative_draft_propose_ms,
+        speculative_target_verify_ms=speculative_target_verify_ms,
+        dflash_enabled=dflash_enabled,
+        dflash_block_size=dflash_block_size,
+        dflash_rollback_count=dflash_rollback_count,
+        dflash_target_hidden_layers=dflash_target_hidden_layers,
     )
 
 
@@ -598,6 +870,30 @@ def build_serving_benchmark_batch_row(
     cache_profile: str,
     reasoning_mode: str,
     structured_output_mode: str,
+    dataset_materialize_ms: float = 0.0,
+    prompt_render_ms: float = 0.0,
+    warmup_ms: float = 0.0,
+    prefill_ms: float = 0.0,
+    decode_ms: float = 0.0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    first_token_index: int = 0,
+    cache_hit: bool = False,
+    runtime_kind: str = "",
+    error_stage: str = "",
+    speculative_acceptance_rate: float = 0.0,
+    speculative_rollback_rate: float = 0.0,
+    speculative_accepted_tokens: int = 0,
+    speculative_rejected_tokens: int = 0,
+    speculative_fallback_count: int = 0,
+    speculative_num_draft_tokens: int = 0,
+    speculative_draft_model_configured: bool = False,
+    speculative_draft_propose_ms: float = 0.0,
+    speculative_target_verify_ms: float = 0.0,
+    dflash_enabled: bool = False,
+    dflash_block_size: int = 0,
+    dflash_rollback_count: int = 0,
+    dflash_target_hidden_layers: int = 0,
 ) -> ServingBenchmarkBatchRow:
     return ServingBenchmarkBatchRow(
         schema_version="melix.serving_benchmark_batch_row.v1",
@@ -619,6 +915,30 @@ def build_serving_benchmark_batch_row(
         cache_profile=cache_profile,
         reasoning_mode=reasoning_mode,
         structured_output_mode=structured_output_mode,
+        dataset_materialize_ms=dataset_materialize_ms,
+        prompt_render_ms=prompt_render_ms,
+        warmup_ms=warmup_ms,
+        prefill_ms=prefill_ms,
+        decode_ms=decode_ms,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        first_token_index=first_token_index,
+        cache_hit=cache_hit,
+        runtime_kind=runtime_kind,
+        error_stage=error_stage,
+        speculative_acceptance_rate=speculative_acceptance_rate,
+        speculative_rollback_rate=speculative_rollback_rate,
+        speculative_accepted_tokens=speculative_accepted_tokens,
+        speculative_rejected_tokens=speculative_rejected_tokens,
+        speculative_fallback_count=speculative_fallback_count,
+        speculative_num_draft_tokens=speculative_num_draft_tokens,
+        speculative_draft_model_configured=speculative_draft_model_configured,
+        speculative_draft_propose_ms=speculative_draft_propose_ms,
+        speculative_target_verify_ms=speculative_target_verify_ms,
+        dflash_enabled=dflash_enabled,
+        dflash_block_size=dflash_block_size,
+        dflash_rollback_count=dflash_rollback_count,
+        dflash_target_hidden_layers=dflash_target_hidden_layers,
     )
 
 

@@ -46,6 +46,8 @@ private actor ResumableExecutionHub {
     private var lifecycleEvents: [ConnectionLifecycleEvent]
     private var eventContinuations: [UUID: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation]
     private var lifecycleContinuations: [UUID: AsyncStream<ConnectionLifecycleEvent>.Continuation]
+    private var terminatedEventStreamIDs: Set<UUID>
+    private var terminatedLifecycleStreamIDs: Set<UUID>
     private var terminalState: TerminalState?
 
     init(
@@ -62,6 +64,8 @@ private actor ResumableExecutionHub {
         self.lifecycleEvents = [.active]
         self.eventContinuations = [:]
         self.lifecycleContinuations = [:]
+        self.terminatedEventStreamIDs = []
+        self.terminatedLifecycleStreamIDs = []
         self.terminalState = nil
     }
 
@@ -187,11 +191,17 @@ private actor ResumableExecutionHub {
     private func registerEventContinuation(
         _ streamID: UUID,
         continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation
-    ) -> (replay: [Melix_Worker_V1_ExecuteEvent], terminalState: TerminalState?) {
+    ) async -> (replay: [Melix_Worker_V1_ExecuteEvent], terminalState: TerminalState?) {
         let replay = bufferedEvents
         let terminalState = self.terminalState
         if terminalState == nil {
-            eventContinuations[streamID] = continuation
+            if terminatedEventStreamIDs.remove(streamID) != nil {
+                if eventContinuations.isEmpty {
+                    await onLastConsumerDetached()
+                }
+            } else {
+                eventContinuations[streamID] = continuation
+            }
         }
         return (replay, terminalState)
     }
@@ -199,17 +209,22 @@ private actor ResumableExecutionHub {
     private func registerLifecycleContinuation(
         _ streamID: UUID,
         continuation: AsyncStream<ConnectionLifecycleEvent>.Continuation
-    ) -> (replay: [ConnectionLifecycleEvent], isTerminal: Bool) {
+    ) async -> (replay: [ConnectionLifecycleEvent], isTerminal: Bool) {
         let replay = lifecycleEvents
         let isTerminal = terminalState != nil
         if !isTerminal {
-            lifecycleContinuations[streamID] = continuation
+            if terminatedLifecycleStreamIDs.remove(streamID) == nil {
+                lifecycleContinuations[streamID] = continuation
+            }
         }
         return (replay, isTerminal)
     }
 
     private func detachStream(_ streamID: UUID) async {
         guard eventContinuations.removeValue(forKey: streamID) != nil else {
+            if terminalState == nil {
+                terminatedEventStreamIDs.insert(streamID)
+            }
             return
         }
         guard eventContinuations.isEmpty, terminalState == nil else {
@@ -219,9 +234,78 @@ private actor ResumableExecutionHub {
     }
 
     private func detachLifecycleStream(_ streamID: UUID) {
-        lifecycleContinuations.removeValue(forKey: streamID)
+        if lifecycleContinuations.removeValue(forKey: streamID) == nil, terminalState == nil {
+            terminatedLifecycleStreamIDs.insert(streamID)
+        }
+    }
+
+    #if DEBUG
+    func testingRegisterEventStreamAfterPreRegistrationTermination() async {
+        let streamID = UUID()
+        await detachStream(streamID)
+        var capturedContinuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation?
+        _ = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            capturedContinuation = continuation
+        }
+        guard let capturedContinuation else {
+            return
+        }
+        _ = await registerEventContinuation(streamID, continuation: capturedContinuation)
+    }
+
+    func testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination() async -> Bool {
+        let streamID = UUID()
+        detachLifecycleStream(streamID)
+        var capturedContinuation: AsyncStream<ConnectionLifecycleEvent>.Continuation?
+        _ = AsyncStream<ConnectionLifecycleEvent> { continuation in
+            capturedContinuation = continuation
+        }
+        guard let capturedContinuation else {
+            return false
+        }
+        _ = await registerLifecycleContinuation(streamID, continuation: capturedContinuation)
+        return lifecycleContinuations[streamID] == nil
+    }
+
+    func testingDetachAllConsumersWithoutLifecycleCallback() {
+        eventContinuations.removeAll()
+    }
+    #endif
+}
+
+#if DEBUG
+func testingResumableExecutionHubPreRegistrationTerminationSnapshot() async -> (
+    detachCount: Int,
+    hasConsumers: Bool,
+    lifecycleDetached: Bool
+) {
+    let detachCounter = TestingResumableExecutionDetachCounter()
+    let hub = ResumableExecutionHub(
+        requestID: "req-pre-registration-termination",
+        modelID: "melix-dev-text",
+        bufferLimit: 8,
+        onLastConsumerDetached: {
+            await detachCounter.increment()
+        }
+    )
+
+    await hub.testingRegisterEventStreamAfterPreRegistrationTermination()
+    let lifecycleDetached = await hub.testingLifecycleStreamRemainsDetachedAfterPreRegistrationTermination()
+    return (
+        detachCount: await detachCounter.value,
+        hasConsumers: await hub.hasConsumers(),
+        lifecycleDetached: lifecycleDetached
+    )
+}
+
+private actor TestingResumableExecutionDetachCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }
+#endif
 
 private enum CacheRouteClass: String, Sendable {
     case cold
@@ -501,6 +585,7 @@ public actor RequestCoordinator {
     private let metricsStore: MetricsStore
     private let modelCatalog: ModelCatalog?
     private let sessionGraphStore: SessionGraphStore?
+    private let reasoningContinuityStore: ReasoningContinuityStore?
     private let cacheMetadataStore: CacheMetadataStore?
     private let now: @Sendable () -> Date
     private let lifecyclePolicy: ConnectionLifecyclePolicy
@@ -529,6 +614,7 @@ public actor RequestCoordinator {
         metricsStore: MetricsStore = MetricsStore(),
         modelCatalog: ModelCatalog? = nil,
         sessionGraphStore: SessionGraphStore? = nil,
+        reasoningContinuityStore: ReasoningContinuityStore? = ReasoningContinuityStore(),
         cacheMetadataStore: CacheMetadataStore? = nil,
         lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
         now: @escaping @Sendable () -> Date = Date.init
@@ -540,6 +626,7 @@ public actor RequestCoordinator {
         self.metricsStore = metricsStore
         self.modelCatalog = modelCatalog
         self.sessionGraphStore = sessionGraphStore
+        self.reasoningContinuityStore = reasoningContinuityStore
         self.cacheMetadataStore = cacheMetadataStore
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
@@ -570,6 +657,14 @@ public actor RequestCoordinator {
         }
 
         disconnectResumeAttemptCount += 1
+        // Race: the last consumer detached, but the disconnect bookkeeping
+        // has not recorded `disconnectStartedAt` yet. Synthesize it here so
+        // resume metrics still capture the recovery path correctly.
+        if disconnectStartedAt[requestID] == nil,
+           disconnectGraceTasks[requestID] == nil,
+           !(await hub.hasConsumers()) {
+            await handleLastConsumerDetached(requestID: requestID)
+        }
         if let startedAt = disconnectStartedAt.removeValue(forKey: requestID) {
             disconnectGraceTasks.removeValue(forKey: requestID)?.cancel()
             let recoveryLatencyMs = now().timeIntervalSince(startedAt) * 1000
@@ -598,6 +693,26 @@ public actor RequestCoordinator {
             }
         )
     }
+
+#if DEBUG
+    func testingInstallExecutionHubWithoutConsumers(requestID: String, modelID: String) {
+        executionHubs[requestID] = ResumableExecutionHub(
+            requestID: requestID,
+            modelID: modelID,
+            bufferLimit: lifecyclePolicy.resumeBufferLimit,
+            onLastConsumerDetached: { [self] in
+                await self.handleLastConsumerDetached(requestID: requestID)
+            }
+        )
+    }
+
+    func testingDetachExecutionConsumersWithoutBookkeeping(requestID: String) async {
+        guard let hub = executionHubs[requestID] else {
+            return
+        }
+        await hub.testingDetachAllConsumersWithoutLifecycleCallback()
+    }
+#endif
 
     public func startChatCompletion(
         _ translatedRequest: TranslatedChatRequest,
@@ -822,6 +937,19 @@ public actor RequestCoordinator {
                                 await metricsStore.increment("http.reasoning_delta_count")
                             case .toolCallDelta:
                                 await metricsStore.increment("http.tool_delta_count")
+                            case .completed(let completed):
+                                await self.preserveReasoningContinuity(
+                                    requestIdentity: request.workerRequest.execution.id,
+                                    completed: completed
+                                )
+                                for (metricName, rawValue) in completed.parserMetrics {
+                                    if let value = Double(rawValue) {
+                                        await metricsStore.set(
+                                            value,
+                                            forKey: "http.parser.\(metricName)"
+                                        )
+                                    }
+                                }
                             default:
                                 break
                             }
@@ -1150,6 +1278,30 @@ public actor RequestCoordinator {
         )
     }
 
+    private func preserveReasoningContinuity(
+        requestIdentity: Melix_Worker_V1_RequestIdentity,
+        completed: Melix_Worker_V1_Completed
+    ) async {
+        guard
+            let reasoningContinuityStore,
+            !requestIdentity.sessionID.isEmpty,
+            !requestIdentity.requestID.isEmpty,
+            !completed.reasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        let branchID = requestIdentity.branchID.isEmpty ? "branch-main" : requestIdentity.branchID
+        if await reasoningContinuityStore.record(
+            sessionID: requestIdentity.sessionID,
+            branchID: branchID,
+            requestID: requestIdentity.requestID,
+            reasoningText: completed.reasoningText
+        ) != nil {
+            await metricsStore.increment("http.reasoning_continuity_preserved_count")
+        }
+    }
+
     private func hydrateSnapshotCreated(
         requestIdentity: Melix_Worker_V1_RequestIdentity,
         requestID: String,
@@ -1222,11 +1374,95 @@ public actor RequestCoordinator {
             }
         }
 
+        workerRequest = await reasoningContinuityRehydratedRequest(workerRequest)
+
         return TranslatedChatRequest(
             requestID: translatedRequest.requestID,
             modelID: translatedRequest.modelID,
             workerRequest: workerRequest,
             stream: translatedRequest.stream
+        )
+    }
+
+    private func reasoningContinuityRehydratedRequest(
+        _ request: Melix_Worker_V1_GenerateRequest
+    ) async -> Melix_Worker_V1_GenerateRequest {
+        guard
+            let reasoningContinuityStore,
+            !request.execution.id.sessionID.isEmpty
+        else {
+            return request
+        }
+
+        let branchID = request.execution.id.branchID.isEmpty
+            ? "branch-main"
+            : request.execution.id.branchID
+        guard
+            let record = await reasoningContinuityStore.latest(
+                sessionID: request.execution.id.sessionID,
+                branchID: branchID
+            ),
+            record.requestID != request.execution.id.requestID
+        else {
+            return request
+        }
+
+        var updated = request
+        updated.execution.reasoning.continuityRehydrated = true
+        updated.execution.scope.reasoningContinuityPresent = true
+        updated.execution.ext["melix.reasoning.continuity_rehydrated"] = "true"
+        updated.execution.ext["melix.reasoning.continuity_key"] = record.continuityKey
+        updated.execution.ext["melix.reasoning.continuity_request_id"] = record.requestID
+        updated.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] = "true"
+        let mergedTemplateKwargs = chatTemplateKwargsJSON(
+            merging: updated.execution.ext["melix.chat_template_kwargs.effective_json"],
+            continuityRecord: record
+        )
+        if mergedTemplateKwargs.hadParseFailure {
+            await metricsStore.increment("http.reasoning_continuity_template_kwargs_parse_failure_count")
+        }
+        let updatedTemplateKwargsJSON = mergedTemplateKwargs.json
+        let updatedTemplateKwargsHash = cacheScopeHash(updatedTemplateKwargsJSON)
+        updated.execution.ext["melix.chat_template_kwargs.effective_json"] = updatedTemplateKwargsJSON
+        updated.execution.scope.chatTemplateKwargsHash = updatedTemplateKwargsHash
+        updated.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] = updatedTemplateKwargsHash
+
+        await metricsStore.increment("http.reasoning_continuity_rehydrated_count")
+        return updated
+    }
+
+    private struct ChatTemplateKwargsMergeResult {
+        let json: String
+        let hadParseFailure: Bool
+    }
+
+    private func chatTemplateKwargsJSON(
+        merging rawJSON: String?,
+        continuityRecord: ReasoningContinuityRecord
+    ) -> ChatTemplateKwargsMergeResult {
+        var object: [String: Any] = [:]
+        var hadParseFailure = false
+        if let rawJSON,
+           !rawJSON.isEmpty {
+            if let data = rawJSON.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                object = parsed
+            } else {
+                hadParseFailure = true
+            }
+        }
+        object["melix_reasoning_continuity"] = [
+            "present": true,
+            "continuity_key": continuityRecord.continuityKey,
+            "source_request_id": continuityRecord.requestID,
+        ]
+        // The object contains only parsed JSON plus Bool/String continuity
+        // markers; invalid raw JSON already fell back to an empty object.
+        precondition(JSONSerialization.isValidJSONObject(object))
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return ChatTemplateKwargsMergeResult(
+            json: String(decoding: data, as: UTF8.self),
+            hadParseFailure: hadParseFailure
         )
     }
 
@@ -2098,6 +2334,7 @@ public actor RequestCoordinator {
         }
 
         let stats = runtimeStats.stats
+        await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
         switch routeKind {
         case .pythonOCR:
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")

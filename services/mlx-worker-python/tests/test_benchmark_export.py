@@ -5,7 +5,12 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from worker.productization.benchmark_export import (
+    _iter_jsonl_dict_rows,
+    _iter_sorted_child_directories,
+    _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
@@ -534,6 +539,116 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
 
 
+def test_iter_sorted_child_directories_returns_sorted_directories(tmp_path: Path) -> None:
+    parent = tmp_path / "artifacts"
+    (parent / "b_dir").mkdir(parents=True)
+    (parent / "a_dir").mkdir(parents=True)
+    (parent / "c_file").write_text("x")
+    (parent / "a_file.txt").write_text("x")
+
+    # ensure non-directories are ignored and ordering is lexical
+    assert [path.name for path in _iter_sorted_child_directories(parent)] == ["a_dir", "b_dir"]
+
+
+def test_iter_sorted_child_directories_nonexistent_root_returns_empty() -> None:
+    assert _iter_sorted_child_directories(Path("/tmp/this-path-should-not-exist-12345")) == ()
+
+
+def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-context-rows.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            json.dumps(["ignored"]),
+            "   ",
+        ]) + "\n"
+    )
+    (tmp_path / "bench-batch-rows.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "batch"}),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+    matrix_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+    matrix_root.mkdir(parents=True, exist_ok=True)
+    (matrix_root / "bench-matrix-job.json").write_text(json.dumps({"job_id": "bench-matrix-1"}) + "\n")
+    (matrix_root / "bench-matrix-summary.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "summary"}),
+            json.dumps(123),
+        ]) + "\n"
+    )
+    (matrix_root / "bench-matrix-requests.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "request"}),
+            json.dumps(False),
+        ]) + "\n"
+    )
+
+    result = collect_benchmark_artifacts(tmp_path)
+
+    assert result["benchmark_context_rows"] == [{"job_id": "bench-1", "row_kind": "context"}]
+    assert result["benchmark_batch_rows"] == [{"job_id": "bench-1", "row_kind": "batch"}]
+    assert result["benchmark_matrix_summary_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
+    assert result["benchmark_matrix_request_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
+
+
+def test_iter_jsonl_dict_rows_streams_rows_lazily(tmp_path: Path) -> None:
+    path = tmp_path / "streamed.jsonl"
+    path.write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            "not-json",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = _iter_jsonl_dict_rows(path)
+
+    assert next(rows) == {"job_id": "bench-1", "row_kind": "context"}
+    with pytest.raises(json.JSONDecodeError):
+        next(rows)
+
+
+def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_eval_compare_fixtures(tmp_path)
+    (tmp_path / "evaluation-samples.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "eval-1", "sample_id": "kept"}),
+            json.dumps(["ignored"]),
+        ]) + "\n"
+    )
+    (tmp_path / "evaluation-compare-samples.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "sample_id": "sample-1",
+                "target_model_id": "melix-dev-text-lora-a",
+                "base_model_id": "melix-dev-text",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "input_text": "2+2?",
+                "target": "4",
+                "base_extracted_result": "4",
+                "target_extracted_result": "4",
+                "base_raw_response": "4",
+                "target_raw_response": "4",
+                "base_typed_score": 1.0,
+                "target_typed_score": 1.0,
+                "outcome": "tie",
+            }),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert [sample["sample_id"] for sample in result["evaluation_compare_samples"]] == ["sample-1"]
+    assert [sample["sample_id"] for sample in result["evaluation_samples"]] == ["kept", "melix-dev-text-lora-a:sample-1"]
+
+
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
     _write_eval_fixtures(tmp_path)
 
@@ -715,10 +830,104 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     summary_csv = build_benchmark_matrix_summary_csv(bundle)
     requests_csv = build_benchmark_matrix_requests_csv(bundle)
 
-    assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_csv.splitlines()[0]
-    assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in requests_csv.splitlines()[0]
-    assert "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,111" in summary_csv
-    assert "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,111" in requests_csv
+    summary_lines = summary_csv.splitlines()
+    request_lines = requests_csv.splitlines()
+    assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_lines[0]
+    assert "cell_wall_ms,completed_count,failed_count" in summary_lines[0]
+    assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in request_lines[0]
+    assert "dataset_materialize_ms,prompt_render_ms,warmup_ms" in request_lines[0]
+    assert summary_lines[1].startswith(
+        "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,"
+    )
+    assert summary_lines[1].endswith("111")
+    assert request_lines[1].startswith(
+        "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,"
+    )
+    assert request_lines[1].endswith("111")
+
+
+def test_export_csv_preserves_probe_columns() -> None:
+    bundle = {
+        "benchmark_context_rows": [
+            {
+                "job_id": "bench-1",
+                "model_id": "model-a",
+                "task_kind": "text-generation",
+                "source_repo": "repo/a",
+                "suite": "smoke",
+                "context_length": 32,
+                "generation_length": 8,
+                "batch_size": 1,
+                "repeat_index": 0,
+                "prefill_tokens_per_second": 24.45,
+                "decode_tokens_per_second": 47.08,
+                "ttft_ms": 24.45,
+                "request_latency_ms": 64.0,
+                "peak_memory_bytes": 2048.0,
+                "speedup_vs_batch_1": 1.0,
+                "cache_profile": "warm",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "dataset_materialize_ms": 2.0,
+                "prompt_render_ms": 1.0,
+                "warmup_ms": 4.0,
+                "prefill_ms": 24.45,
+                "decode_ms": 39.55,
+                "tokens_in": 32,
+                "tokens_out": 8,
+                "first_token_index": 1,
+                "cache_hit": True,
+                "runtime_kind": "text",
+                "error_stage": "",
+            }
+        ],
+        "benchmark_matrix_summary_rows": [
+            {
+                "job_id": "matrix-1",
+                "task_kind": "text-generation",
+                "source_repo": "repo/a",
+                "model_id": "model-a",
+                "suite_id": "smoke",
+                "context_length": 32,
+                "generation_length": 8,
+                "batch_size": 1,
+                "cache_profile": "warm",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "concurrency_level": 1,
+                "repeats": 1,
+                "requests": 2,
+                "duration_seconds": 0,
+                "ttft_mean_ms": 24.45,
+                "ttft_std_ms": 0.2,
+                "request_latency_mean_ms": 64.0,
+                "request_latency_std_ms": 0.4,
+                "prefill_tokens_per_second_mean": 24.45,
+                "decode_tokens_per_second_mean": 47.08,
+                "throughput_requests_per_second": 2.0,
+                "throughput_tokens_per_second": 94.16,
+                "success_rate": 1.0,
+                "peak_memory_bytes_max": 2048,
+                "queue_wait_mean_ms": 0.0,
+                "queue_wait_p95_ms": 0.0,
+                "cell_wall_ms": 128.0,
+                "completed_count": 2,
+                "failed_count": 0,
+                "ttft_p50_ms": 24.45,
+                "ttft_p95_ms": 24.7,
+                "request_latency_p50_ms": 64.0,
+                "request_latency_p95_ms": 64.4,
+                "created_at_unix_ms": 111,
+            }
+        ],
+    }
+
+    context_header = build_benchmark_context_csv(bundle).splitlines()[0]
+    matrix_header = build_benchmark_matrix_summary_csv(bundle).splitlines()[0]
+
+    assert "dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms" in context_header
+    assert "tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage" in context_header
+    assert "cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms" in matrix_header
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:
@@ -917,6 +1126,21 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["extraction_status"] == "extracted"
     assert rows[0]["validation_status"] == "validated"
     assert rows[0]["input_modalities"] == "text"
+
+
+def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
+    rows = (
+        {"job_id": f"eval-{index}", "typed_score": index / 10}
+        for index in range(3)
+    )
+
+    csv_text = _rows_to_csv(rows, ["job_id", "typed_score"])
+
+    assert list(csv.DictReader(io.StringIO(csv_text))) == [
+        {"job_id": "eval-0", "typed_score": "0.0"},
+        {"job_id": "eval-1", "typed_score": "0.1"},
+        {"job_id": "eval-2", "typed_score": "0.2"},
+    ]
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:

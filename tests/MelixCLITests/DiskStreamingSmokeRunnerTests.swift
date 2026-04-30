@@ -390,6 +390,7 @@ private actor DiskStreamingSmokeStubClient: ControlPlaneXPCClient {
 
     func runBench(_ request: ControlPlaneBenchRequest) async throws -> ControlPlaneBenchResult {
         #expect(request.modelID == "melix-dev-text")
+        #expect(request.parameters["allow_deterministic_runtime"] == "true")
         if let benchFailureCode {
             throw ControlPlaneXPCClientError.requestFailed(code: benchFailureCode, message: "baseline failed")
         }

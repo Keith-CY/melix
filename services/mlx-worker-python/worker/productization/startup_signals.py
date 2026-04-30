@@ -218,7 +218,49 @@ def _log_excerpt(*paths: object) -> str:
         resolved = Path(str(path)).expanduser()
         if resolved.exists() is False:
             continue
-        payload = resolved.read_text(encoding="utf-8", errors="replace").strip()
-        if payload:
-            excerpts.append(payload.splitlines()[-1])
+        excerpt = _read_last_nonempty_line(resolved)
+        if excerpt:
+            excerpts.append(excerpt)
     return " | ".join(excerpts)
+
+
+def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        payload_end = _seek_non_whitespace_end(handle, chunk_size=chunk_size)
+        if payload_end == 0:
+            return ""
+        line_start = _seek_last_line_start(handle, payload_end=payload_end, chunk_size=chunk_size)
+        handle.seek(line_start)
+        payload = handle.read(payload_end - line_start)
+    return payload.decode("utf-8", errors="replace").rstrip()
+
+
+def _seek_non_whitespace_end(handle: Any, *, chunk_size: int) -> int:
+    position = handle.tell()
+    while position > 0:
+        read_size = min(chunk_size, position)
+        start = position - read_size
+        handle.seek(start)
+        chunk = handle.read(read_size)
+        index = read_size - 1
+        while index >= 0 and chr(chunk[index]).isspace():
+            index -= 1
+        if index >= 0:
+            return start + index + 1
+        position = start
+    return 0
+
+
+def _seek_last_line_start(handle: Any, *, payload_end: int, chunk_size: int) -> int:
+    position = payload_end
+    while position > 0:
+        read_size = min(chunk_size, position)
+        start = position - read_size
+        handle.seek(start)
+        chunk = handle.read(read_size)
+        newline_index = max(chunk.rfind(b"\n"), chunk.rfind(b"\r"))
+        if newline_index >= 0:
+            return start + newline_index + 1
+        position = start
+    return 0

@@ -8,8 +8,12 @@ import pytest
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset import (
+    HFDatasetReference,
+    ResolvedTrainingDatasetPackage,
+    TrainingDatasetPackage,
     build_training_dataset_artifact,
     load_training_dataset_package,
+    write_normalized_dataset_snapshot,
 )
 
 
@@ -20,6 +24,138 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_write_jsonl_rows_streams_each_row_without_joining_the_full_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "rows.jsonl"
+    writes: list[str] = []
+
+    class RecordingFile:
+        def __enter__(self) -> RecordingFile:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> RecordingFile:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return RecordingFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    training_dataset_module._write_jsonl_rows(
+        output_path,
+        [
+            {"text": "alpha"},
+            {"text": "beta"},
+        ],
+    )
+
+    assert writes == [
+        json.dumps({"text": "alpha"}) + "\n",
+        json.dumps({"text": "beta"}) + "\n",
+    ]
+
+
+def test_write_jsonl_rows_preserves_the_existing_blank_line_contract_for_empty_inputs(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "empty.jsonl"
+
+    training_dataset_module._write_jsonl_rows(output_path, [])
+
+    assert output_path.read_text(encoding="utf-8") == "\n"
+
+
+def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jsonl(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    manifest_path = package_path / "manifest.json"
+    samples_path = package_path / "samples.jsonl"
+
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=2,
+        version="1",
+        normalized_samples=[
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "gamma", "completion": "delta"},
+        ],
+        normalized_validation_samples=[
+            {"prompt": "holdout", "completion": "answer"},
+        ],
+        validation_sample_count=1,
+        response_only_supported=False,
+    )
+
+    snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
+
+    assert snapshot.samples_path.read_text(encoding="utf-8") == (
+        '{"prompt": "alpha", "completion": "beta"}\n'
+        '{"prompt": "gamma", "completion": "delta"}\n'
+    )
+    assert snapshot.train_path.read_text(encoding="utf-8") == snapshot.samples_path.read_text(encoding="utf-8")
+    assert snapshot.valid_path is not None
+    assert snapshot.valid_path.read_text(encoding="utf-8") == (
+        '{"prompt": "holdout", "completion": "answer"}\n'
+    )
+
+
+def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=2,
+        version="1",
+        normalized_samples=[
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "gamma", "completion": "delta"},
+        ],
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=False,
+    )
+
+    def fail_copyfile(src: Path, dst: Path) -> None:
+        raise AssertionError(f"write_normalized_dataset_snapshot should not copy {src} to {dst}")
+
+    monkeypatch.setattr(training_dataset_module.shutil, "copyfile", fail_copyfile)
+
+    snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
+
+    expected_payload = (
+        '{"prompt": "alpha", "completion": "beta"}\n'
+        '{"prompt": "gamma", "completion": "delta"}\n'
+    )
+    assert snapshot.samples_path.read_text(encoding="utf-8") == expected_payload
+    assert snapshot.train_path.read_text(encoding="utf-8") == expected_payload
+    assert snapshot.valid_path is None
 
 
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
@@ -238,6 +374,7 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
     assert built.manifest_payload["conversion_template"] == "existing_package"
     assert built.manifest_payload["preview_samples"] == [{"text": "alpha beta"}]
 
+
     with pytest.raises(ModelOperationError) as missing_uri:
         training_dataset_module._resolve_dataset_build_source(
             {},
@@ -363,3 +500,194 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
             field_name="validation_ratio",
         )
     assert float_range_exc.value.code == "invalid_dataset_source"
+
+
+def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized_samples = [{"text": "alpha beta"}]
+    normalized_validation_samples = [{"text": "gamma delta"}]
+    package_path = tmp_path / "existing-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    package = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="existing-package",
+        format="text_completion",
+        sample_count=1,
+        version="1",
+        normalized_samples=normalized_samples,
+        normalized_validation_samples=normalized_validation_samples,
+        validation_sample_count=1,
+        response_only_supported=False,
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "load_training_dataset_package",
+        lambda dataset_uri, sample_limit=0: package,
+    )
+
+    resolved = training_dataset_module._resolve_dataset_build_source(
+        {"dataset_uri": str(tmp_path / "existing-package"), "template": "existing_package"},
+        jobs_root=tmp_path / "jobs",
+        hf_dataset_fetcher=None,
+        sample_limit=0,
+    )
+
+    assert resolved["samples"] is normalized_samples
+    assert resolved["validation_samples"] is normalized_validation_samples
+
+
+def test_resolve_dataset_build_source_reuses_hf_package_sample_lists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized_samples = [
+        {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]}
+    ]
+    normalized_validation_samples = [
+        {"messages": [{"role": "user", "content": "Bye"}, {"role": "assistant", "content": "Goodbye"}]}
+    ]
+    package = TrainingDatasetPackage(
+        package_path=tmp_path / "hf-package",
+        manifest_path=tmp_path / "hf-package" / "manifest.json",
+        samples_path=tmp_path / "hf-package" / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="hf-package",
+        format="chat_messages",
+        sample_count=1,
+        version="1",
+        normalized_samples=normalized_samples,
+        normalized_validation_samples=normalized_validation_samples,
+        validation_sample_count=1,
+        response_only_supported=True,
+    )
+    reference = HFDatasetReference(
+        dataset_path="HuggingFaceH4/ultrachat_200k",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        valid_split="validation",
+        chat_feature="messages",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="",
+    )
+    resolved_package = ResolvedTrainingDatasetPackage(
+        package=package,
+        source_kind="hf_dataset",
+        dataset_uri="hf://HuggingFaceH4/ultrachat_200k",
+        materialized_package_path=package.package_path,
+        cache_key="demo-key",
+        cache_hit=True,
+        hf_reference=reference,
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "resolve_training_dataset_package",
+        lambda request_ext, jobs_root, hf_dataset_fetcher, sample_limit=0: resolved_package,
+    )
+
+    resolved = training_dataset_module._resolve_dataset_build_source(
+        {"hf_dataset_path": "HuggingFaceH4/ultrachat_200k", "template": "source_schema"},
+        jobs_root=tmp_path / "jobs",
+        hf_dataset_fetcher=None,
+        sample_limit=0,
+    )
+
+    assert resolved["samples"] is normalized_samples
+    assert resolved["validation_samples"] is normalized_validation_samples
+    assert resolved["hf_metadata"]["hf_valid_split"] == "validation"
+
+
+def test_build_training_dataset_artifact_streams_local_jsonl_without_bulk_row_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "alpaca-streamed.jsonl",
+        [
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Summarize.",
+                "input": "A short article",
+                "output": "A concise summary",
+            },
+        ],
+    )
+
+    def fail_read_rows(path: Path, *, sample_limit: int) -> list[dict[str, object]]:
+        raise AssertionError(f"bulk row reader should not be used for {path} ({sample_limit=})")
+
+    def fail_convert_rows(rows: list[dict[str, object]], template: str) -> tuple[str, list[dict[str, object]]]:
+        raise AssertionError(f"bulk row converter should not be used for {template}")
+
+    monkeypatch.setattr(training_dataset_module, "_read_local_jsonl_rows", fail_read_rows)
+    monkeypatch.setattr(training_dataset_module, "_convert_local_rows", fail_convert_rows)
+
+    built = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "auto",
+            "preview_count": "1",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "streamed-package",
+        source_model_id="melix-dev-text",
+    )
+
+    assert built.manifest_payload["source_kind"] == "local_path"
+    assert built.manifest_payload["conversion_template"] == "alpaca"
+    assert built.manifest_payload["sample_count"] == 2
+    assert built.manifest_payload["preview_samples"] == [
+        {
+            "prompt": "Translate to French.\n\nInput:\nHello world",
+            "completion": "Bonjour le monde",
+        }
+    ]
+    assert (built.package_path / "samples.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "Translate to French.\\n\\nInput:\\nHello world", "completion": "Bonjour le monde"}\n'
+        '{"prompt": "Summarize.\\n\\nInput:\\nA short article", "completion": "A concise summary"}\n'
+    )
+
+
+def test_local_jsonl_helpers_cover_streaming_and_single_row_conversions(tmp_path: Path) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "helpers.jsonl",
+        [
+            {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]},
+            {"prompt": "Question", "completion": "Answer"},
+        ],
+    )
+
+    assert training_dataset_module._read_local_jsonl_rows(dataset_path, sample_limit=0) == [
+        {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]},
+        {"prompt": "Question", "completion": "Answer"},
+    ]
+    assert training_dataset_module._convert_local_row(
+        {"messages": [{"role": "user", "content": "Hi"}]},
+        "chat_messages",
+    ) == {"messages": [{"role": "user", "content": "Hi"}]}
+    assert training_dataset_module._convert_local_row(
+        {"prompt": "Question", "completion": "Answer"},
+        "prompt_completion",
+    ) == {"prompt": "Question", "completion": "Answer"}
+
+    empty_jsonl = tmp_path / "empty-stream.jsonl"
+    empty_jsonl.write_text("\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError) as empty_exc:
+        training_dataset_module._resolve_local_training_samples(
+            empty_jsonl,
+            template="auto",
+            sample_limit=0,
+        )
+    assert empty_exc.value.code == "invalid_dataset_source"

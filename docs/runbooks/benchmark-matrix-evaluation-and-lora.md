@@ -169,6 +169,11 @@ Notes:
 
 - use the summary CSV for cell-level comparisons
 - use the requests CSV for request-level latency and throughput inspection
+- request exports include phase probes for dataset materialization, prompt rendering, warmup,
+  prefill, decode, token counts, cache-hit state, runtime kind, speculative decode acceptance and
+  rollback, DFlash state, and failure stage
+- summary exports include cell wall time, completed and failed request counts, and p50/p95 latency
+  probes for faster cell-level regression triage
 - matrix runs persist under `<jobs_root>/bench/matrix-runs/<job_id>/`
 
 ## Run An Evaluation Suite
@@ -264,6 +269,8 @@ Notes:
 - evaluation runs persist under `<jobs_root>/evaluation/runs/<job_id>/`
 - sample JSONL and CSV exports now include `execution_status` plus `execution_metadata` for
   code-suite evidence and non-evidence states
+- sample exports include phase probes for render, inference, extraction, validation, scoring,
+  response size, extracted-result size, and failure stage
 
 ## Planned Final-Result Evaluation Workflow
 
@@ -495,6 +502,69 @@ material provides stable category metadata.
 Benchmark and matrix workflows remain one target per run, so benchmark-to-benchmark comparison is
 still a serial job review workflow using `bench list`, `bench matrix list`, and CSV exports across
 job IDs.
+
+## Generate A Local Benchmark/Evaluation Report
+
+Use the same report builder as CI when you want to compare two local export bundles in the terminal.
+The inputs can be a bundle file or a directory containing `benchmark-evaluation-export.json` or
+`export-bundle.json`.
+
+Example:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python scripts/benchmark_evaluation_report.py \
+    --baseline /tmp/melix-base/benchmark-evaluation-export.json \
+    --candidate /tmp/melix-head/benchmark-evaluation-export.json \
+    --format terminal \
+    --output-dir /tmp/melix-bench-eval-report
+```
+
+The command prints a terminal table and writes:
+
+- `/tmp/melix-bench-eval-report/report.md`
+- `/tmp/melix-bench-eval-report/report.json`
+
+Markdown or JSON output can be printed directly:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python scripts/benchmark_evaluation_report.py \
+    --baseline /tmp/melix-base \
+    --candidate /tmp/melix-head \
+    --format markdown
+```
+
+Report status is advisory. `warning` rows indicate direction-aware regressions, including latency,
+failure, rejected-token, rollback, and DFlash rollback increases or throughput, accuracy,
+acceptance-rate, and accepted-token decreases. `missing` rows show metrics present on only one side.
+`not_comparable` rows show differing runtime metadata, neutral numeric probes, or zero-baseline
+data. Only malformed inputs make the script exit non-zero.
+
+## Pull Request Report Workflow
+
+The `bench-eval-report` GitHub Actions workflow runs on pull-request open, reopen, synchronize, and
+ready-for-review events.
+
+The workflow:
+
+- checks out the base SHA and PR head SHA on the same macOS runner
+- runs the same benchmark, matrix, and evaluation smoke suite for both revisions
+- defaults the CI runtime to the deterministic text backend so PR reports do not depend on a
+  runner-local model checkout or Swift MLX metallib cache
+- pins the deterministic dev-text model path to a slash-free logical value so legacy base-SHA
+  control planes do not require live-model evidence for the seed dev model
+- prebuilds the Swift worker and control plane before startup so worker readiness waits measure
+  process readiness instead of cold Swift compilation
+- isolates each run with a separate `MELIX_HOME`, `.runtime` tree, model-ops root, and HTTP port
+- uploads base, head, and report artifacts
+- updates one sticky pull-request comment marked with
+  `<!-- melix-benchmark-evaluation-report -->`
+
+The PR comment does not block merges on advisory regressions. It is intended to make performance and
+accuracy changes visible during review while preserving the exported artifacts for deeper debugging.
 
 ## Native Operator Window Equivalents
 

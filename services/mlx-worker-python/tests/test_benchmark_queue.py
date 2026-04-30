@@ -83,6 +83,32 @@ def test_list_records_is_stable_by_created_time_then_id(tmp_path: Path) -> None:
     assert [record.queue_item_id for record in records] == ["queue-a", "queue-b", "queue-c"]
 
 
+def test_list_records_ignores_non_json_entries_and_json_named_directories(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue"
+    queue_root.mkdir()
+    (queue_root / "notes.txt").write_text("ignore me", encoding="utf-8")
+    (queue_root / "nested-record.json").mkdir()
+
+    store.enqueue(
+        queue_root=queue_root,
+        record=BenchmarkQueueRecord(
+            queue_item_id="queue-valid",
+            job_kind="benchmark",
+            model_id="melix-dev-text",
+            suite_ids=("smoke",),
+            parameters={},
+            status="queued",
+            created_at_unix_ms=100,
+            updated_at_unix_ms=100,
+        ),
+    )
+
+    records = store.list_records(queue_root=queue_root)
+
+    assert [record.queue_item_id for record in records] == ["queue-valid"]
+
+
 def test_queue_snapshot_returns_counts_and_records_by_status(tmp_path: Path) -> None:
     store = BenchmarkQueueStore()
     queue_root = tmp_path / "queue"
@@ -194,6 +220,16 @@ def test_list_records_returns_empty_when_queue_root_does_not_exist(tmp_path: Pat
     store = BenchmarkQueueStore()
 
     records = store.list_records(queue_root=tmp_path / "missing-queue-dir")
+
+    assert records == []
+
+
+def test_list_records_returns_empty_when_queue_root_is_a_file(tmp_path: Path) -> None:
+    store = BenchmarkQueueStore()
+    queue_root = tmp_path / "queue-file"
+    queue_root.write_text("not a directory", encoding="utf-8")
+
+    records = store.list_records(queue_root=queue_root)
 
     assert records == []
 

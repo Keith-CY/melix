@@ -7,6 +7,7 @@ from worker.runtime.video_preprocessing import (
     MAX_VIDEO_FRAME_BUDGET,
     PreparedVideoInput,
     VideoPreprocessError,
+    _parse_video_reference,
     prepare_video_input,
 )
 
@@ -107,6 +108,21 @@ def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
     assert prepared.format == "m4v"
     assert prepared.filename == "local-demo.m4v"
     assert len(prepared.sha256_hex) == 64
+
+
+def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
+    remote = _parse_video_reference("https://example.com/media/demo%20clip.mov?token=abc")
+    local = _parse_video_reference("file:///tmp/local%20demo.webm")
+
+    assert remote.scheme == "https"
+    assert remote.decoded_path == "/media/demo clip.mov"
+    assert remote.path_name == "demo clip.mov"
+    assert remote.path_suffix == "mov"
+
+    assert local.scheme == "file"
+    assert local.decoded_path == "/tmp/local demo.webm"
+    assert local.path_name == "local demo.webm"
+    assert local.path_suffix == "webm"
 
 
 @pytest.mark.parametrize(

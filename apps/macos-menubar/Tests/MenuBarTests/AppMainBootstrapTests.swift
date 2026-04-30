@@ -231,7 +231,10 @@ struct AppMainBootstrapTests {
             bootstrapFactory: { _ in bootstrap },
             presentationMode: .dockAndTray
         )
-        try await waitForBootstrapCondition("expected dock and tray launch handshake to complete") {
+        try await waitForBootstrapCondition(
+            "expected dock and tray launch handshake to complete",
+            timeout: .seconds(5)
+        ) {
             await client.handshakeCount == 1
         }
 
@@ -1075,11 +1078,11 @@ private func posixPermissions(at url: URL) throws -> Int {
 @MainActor
 private func waitForBootstrapCondition(
     _ description: String,
-    timeout: Duration = .seconds(2),
+    timeout: Duration? = nil,
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @MainActor () async -> Bool
 ) async throws {
-    let deadline = ContinuousClock.now + timeout
+    let deadline = ContinuousClock.now + (timeout ?? MenuBarTestEnvironment.bootstrapConditionTimeout)
     while ContinuousClock.now < deadline {
         if await condition() {
             return

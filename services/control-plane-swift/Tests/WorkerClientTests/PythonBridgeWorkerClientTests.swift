@@ -184,6 +184,9 @@ struct PythonBridgeWorkerClientTests {
         runtimeResponse.stats.workerState = "idle"
         runtimeResponse.stats.l1CacheBytes = 2_048
         runtimeResponse.stats.l1HitRate = 0.5
+        runtimeResponse.stats.generationStreamOwnerMode = "executor_owned"
+        runtimeResponse.stats.workerThreadInitLatencyMs = 3
+        runtimeResponse.stats.streamSyncFallbackCount = 1
 
         var cacheResponse = Melix_Worker_V1_GetCacheStatsResponse()
         cacheResponse.stats.l1Bytes = 2_048
@@ -206,6 +209,9 @@ struct PythonBridgeWorkerClientTests {
 
         #expect(runtimeStats.stats.l1CacheBytes == 2_048)
         #expect(runtimeStats.stats.l1HitRate == 0.5)
+        #expect(runtimeStats.stats.generationStreamOwnerMode == "executor_owned")
+        #expect(runtimeStats.stats.workerThreadInitLatencyMs == 3)
+        #expect(runtimeStats.stats.streamSyncFallbackCount == 1)
         #expect(cacheStats.stats.l1Bytes == 2_048)
         #expect(cacheStats.stats.blockCount == 1)
         #expect(cacheStats.stats.l1HitRate == 0.5)

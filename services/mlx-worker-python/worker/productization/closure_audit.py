@@ -328,15 +328,16 @@ def _load_milestone_statuses(execution_index_path: Path) -> dict[str, str]:
         return statuses
 
     current_milestone = ""
-    for raw_line in execution_index_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line.startswith("- `M9."):
-            current_milestone = line.split("`", 2)[1]
-            continue
-        if current_milestone and line.startswith("Status:"):
-            status = line.split(":", 1)[1].strip().split(".", 1)[0].split()[0].lower()
-            statuses[current_milestone] = status
-            current_milestone = ""
+    with execution_index_path.open(encoding="utf-8") as execution_index_file:
+        for raw_line in execution_index_file:
+            line = raw_line.strip()
+            if line.startswith("- `M9."):
+                current_milestone = line.split("`", 2)[1]
+                continue
+            if current_milestone and line.startswith("Status:"):
+                status = line.split(":", 1)[1].strip().split(".", 1)[0].split()[0].lower()
+                statuses[current_milestone] = status
+                current_milestone = ""
     return statuses
 
 
@@ -368,6 +369,8 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
     }
     candidate_files = sorted(_iter_probe_text_files(root))
     for file_path in candidate_files:
+        if _probe_sources_complete(probe_sources):
+            break
         relative_path = file_path.relative_to(root).as_posix()
         contents = file_path.read_text(encoding="utf-8", errors="ignore")
         for probe_name, matches in probe_sources.items():
@@ -376,6 +379,10 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
             if probe_name in contents:
                 matches.append(relative_path)
     return probe_sources
+
+
+def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:
+    return all(len(matches) >= 3 for matches in probe_sources.values())
 
 
 def _iter_probe_text_files(root: Path) -> list[Path]:

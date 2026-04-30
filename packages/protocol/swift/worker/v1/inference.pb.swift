@@ -752,6 +752,10 @@ public struct Melix_Worker_V1_TokenDelta: Sendable {
 
   public var text: String = String()
 
+  public var rawText: String = String()
+
+  public var parserObservation: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -763,6 +767,10 @@ public struct Melix_Worker_V1_ReasoningDelta: Sendable {
   // methods supported on all messages.
 
   public var text: String = String()
+
+  public var rawText: String = String()
+
+  public var modeSource: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -779,6 +787,12 @@ public struct Melix_Worker_V1_ToolCallDelta: Sendable {
   public var toolName: String = String()
 
   public var argumentsJsonFragment: String = String()
+
+  public var fragmentIndex: UInt32 = 0
+
+  public var parserMode: String = String()
+
+  public var complete: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -860,6 +874,16 @@ public struct Melix_Worker_V1_Completed: Sendable {
   public var assistantText: String = String()
 
   public var reasoningText: String = String()
+
+  public var rawAssistantText: String = String()
+
+  public var reasoningModeSource: String = String()
+
+  public var reasoningEffort: String = String()
+
+  public var reasoningContinuityPreserved: Bool = false
+
+  public var parserMetrics: Dictionary<String,String> = [:]
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2759,7 +2783,7 @@ extension Melix_Worker_V1_DecodeStarted: SwiftProtobuf.Message, SwiftProtobuf._M
 
 extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TokenDelta"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}raw_text\0\u{3}parser_observation\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2768,6 +2792,8 @@ extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftProtobuf._Mess
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.rawText) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.parserObservation) }()
       default: break
       }
     }
@@ -2777,11 +2803,19 @@ extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
     }
+    if !self.rawText.isEmpty {
+      try visitor.visitSingularStringField(value: self.rawText, fieldNumber: 2)
+    }
+    if !self.parserObservation.isEmpty {
+      try visitor.visitSingularStringField(value: self.parserObservation, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_TokenDelta, rhs: Melix_Worker_V1_TokenDelta) -> Bool {
     if lhs.text != rhs.text {return false}
+    if lhs.rawText != rhs.rawText {return false}
+    if lhs.parserObservation != rhs.parserObservation {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2789,7 +2823,7 @@ extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftProtobuf._Mess
 
 extension Melix_Worker_V1_ReasoningDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ReasoningDelta"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}raw_text\0\u{3}mode_source\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2798,6 +2832,8 @@ extension Melix_Worker_V1_ReasoningDelta: SwiftProtobuf.Message, SwiftProtobuf._
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.rawText) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.modeSource) }()
       default: break
       }
     }
@@ -2807,11 +2843,19 @@ extension Melix_Worker_V1_ReasoningDelta: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
     }
+    if !self.rawText.isEmpty {
+      try visitor.visitSingularStringField(value: self.rawText, fieldNumber: 2)
+    }
+    if !self.modeSource.isEmpty {
+      try visitor.visitSingularStringField(value: self.modeSource, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_ReasoningDelta, rhs: Melix_Worker_V1_ReasoningDelta) -> Bool {
     if lhs.text != rhs.text {return false}
+    if lhs.rawText != rhs.rawText {return false}
+    if lhs.modeSource != rhs.modeSource {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2819,7 +2863,7 @@ extension Melix_Worker_V1_ReasoningDelta: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Melix_Worker_V1_ToolCallDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ToolCallDelta"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{3}tool_name\0\u{3}arguments_json_fragment\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{3}tool_name\0\u{3}arguments_json_fragment\0\u{3}fragment_index\0\u{3}parser_mode\0\u{1}complete\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2830,6 +2874,9 @@ extension Melix_Worker_V1_ToolCallDelta: SwiftProtobuf.Message, SwiftProtobuf._M
       case 1: try { try decoder.decodeSingularStringField(value: &self.callID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.toolName) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.argumentsJsonFragment) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.fragmentIndex) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.parserMode) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.complete) }()
       default: break
       }
     }
@@ -2845,6 +2892,15 @@ extension Melix_Worker_V1_ToolCallDelta: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.argumentsJsonFragment.isEmpty {
       try visitor.visitSingularStringField(value: self.argumentsJsonFragment, fieldNumber: 3)
     }
+    if self.fragmentIndex != 0 {
+      try visitor.visitSingularUInt32Field(value: self.fragmentIndex, fieldNumber: 4)
+    }
+    if !self.parserMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.parserMode, fieldNumber: 5)
+    }
+    if self.complete != false {
+      try visitor.visitSingularBoolField(value: self.complete, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2852,6 +2908,9 @@ extension Melix_Worker_V1_ToolCallDelta: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.callID != rhs.callID {return false}
     if lhs.toolName != rhs.toolName {return false}
     if lhs.argumentsJsonFragment != rhs.argumentsJsonFragment {return false}
+    if lhs.fragmentIndex != rhs.fragmentIndex {return false}
+    if lhs.parserMode != rhs.parserMode {return false}
+    if lhs.complete != rhs.complete {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3003,7 +3062,7 @@ extension Melix_Worker_V1_BoundarySnapshotCreated: SwiftProtobuf.Message, SwiftP
 
 extension Melix_Worker_V1_Completed: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Completed"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}finish_reason\0\u{3}assistant_text\0\u{3}reasoning_text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}finish_reason\0\u{3}assistant_text\0\u{3}reasoning_text\0\u{3}raw_assistant_text\0\u{3}reasoning_mode_source\0\u{3}reasoning_effort\0\u{3}reasoning_continuity_preserved\0\u{3}parser_metrics\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3014,6 +3073,11 @@ extension Melix_Worker_V1_Completed: SwiftProtobuf.Message, SwiftProtobuf._Messa
       case 1: try { try decoder.decodeSingularStringField(value: &self.finishReason) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.assistantText) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.reasoningText) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.rawAssistantText) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.reasoningModeSource) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.reasoningEffort) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.reasoningContinuityPreserved) }()
+      case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.parserMetrics) }()
       default: break
       }
     }
@@ -3029,6 +3093,21 @@ extension Melix_Worker_V1_Completed: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if !self.reasoningText.isEmpty {
       try visitor.visitSingularStringField(value: self.reasoningText, fieldNumber: 3)
     }
+    if !self.rawAssistantText.isEmpty {
+      try visitor.visitSingularStringField(value: self.rawAssistantText, fieldNumber: 4)
+    }
+    if !self.reasoningModeSource.isEmpty {
+      try visitor.visitSingularStringField(value: self.reasoningModeSource, fieldNumber: 5)
+    }
+    if !self.reasoningEffort.isEmpty {
+      try visitor.visitSingularStringField(value: self.reasoningEffort, fieldNumber: 6)
+    }
+    if self.reasoningContinuityPreserved != false {
+      try visitor.visitSingularBoolField(value: self.reasoningContinuityPreserved, fieldNumber: 7)
+    }
+    if !self.parserMetrics.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.parserMetrics, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3036,6 +3115,11 @@ extension Melix_Worker_V1_Completed: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if lhs.finishReason != rhs.finishReason {return false}
     if lhs.assistantText != rhs.assistantText {return false}
     if lhs.reasoningText != rhs.reasoningText {return false}
+    if lhs.rawAssistantText != rhs.rawAssistantText {return false}
+    if lhs.reasoningModeSource != rhs.reasoningModeSource {return false}
+    if lhs.reasoningEffort != rhs.reasoningEffort {return false}
+    if lhs.reasoningContinuityPreserved != rhs.reasoningContinuityPreserved {return false}
+    if lhs.parserMetrics != rhs.parserMetrics {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -257,6 +257,41 @@ def test_score_documents_resolves_backend_and_family_from_loaded_model_metadata(
     assert scores[0] > 0.0
 
 
+def test_score_documents_tokenizes_the_query_once_for_multiple_documents() -> None:
+    class CountingBackend(DeterministicRerankBackend):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def tokenize(self, text: str) -> list[str]:
+            self.calls.append(text)
+            return super().tokenize(text)
+
+    runtime = DeterministicRerankRuntime()
+    backend = CountingBackend()
+
+    scores = runtime.score_documents(
+        {
+            "rerank_backend": backend,
+            "rerank_family_adapter": JinaV3RerankFamilyAdapter(),
+        },
+        "swift runtime",
+        [
+            "swift runtime is available",
+            "runtime swift uses reversed order",
+            "python packaging release",
+        ],
+    )
+
+    assert len(scores) == 3
+    assert backend.calls.count("swift runtime") == 1
+    assert backend.calls == [
+        "swift runtime",
+        "swift runtime is available",
+        "runtime swift uses reversed order",
+        "python packaging release",
+    ]
+
+
 def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     runtime_service, inference_service = build_services()
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())

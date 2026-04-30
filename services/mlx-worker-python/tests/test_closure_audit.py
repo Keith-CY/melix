@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from worker.productization import closure_audit as closure_audit_module
 from worker.productization.closure_audit import (
     build_closure_audit,
     render_closure_audit_json,
@@ -108,6 +111,128 @@ def test_build_closure_audit_reports_release_gate_asset_and_policy_gaps(
         "Phase 8 release-gate policy is missing required sections: "
         "install, benchmarks, training, recovery, audio, runtime_core, evaluation, quantization"
     ) in summaries
+
+
+def test_collect_probe_sources_stops_reading_after_all_probe_slots_are_filled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = _seed_repo(tmp_path)
+    docs_root = repo_root / "docs"
+    probe_names = [
+        probe_name
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    ]
+    repeated_probe_text = "\n".join(probe_names) + "\n"
+    for index in range(3):
+        (docs_root / f"a-probe-{index}.md").write_text(repeated_probe_text, encoding="utf-8")
+    sentinel = docs_root / "z-after-saturation.md"
+    sentinel.write_text("this file should not be read\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def tracked_read_text(self: Path, *args, **kwargs) -> str:
+        if self == sentinel:
+            raise AssertionError("probe scan should stop before reading files after saturation")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracked_read_text)
+
+    probe_sources = closure_audit_module._collect_probe_sources(repo_root)
+
+    for probe_name in probe_names:
+        assert probe_sources[probe_name] == [
+            "docs/a-probe-0.md",
+            "docs/a-probe-1.md",
+            "docs/a-probe-2.md",
+        ]
+
+
+def test_load_milestone_statuses_streams_execution_index_without_read_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    execution_index = tmp_path / "execution-index.md"
+    execution_index.write_text(
+        "\n".join(
+            [
+                "# Execution Index",
+                "",
+                "- `M9.3` `docs/plans/m9.3.md`",
+                "  Status: completed. done.",
+                "- `M9.4` `docs/plans/m9.4.md`",
+                "  Status: pending. todo.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def fail_read_text(self: Path, *args, **kwargs) -> str:
+        if self == execution_index:
+            raise AssertionError("execution index parsing should not use Path.read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert closure_audit_module._load_milestone_statuses(execution_index) == {
+        "M9.3": "completed",
+        "M9.4": "pending",
+    }
+
+
+def test_closure_audit_helper_fallbacks_cover_policy_and_probe_edge_cases(tmp_path: Path) -> None:
+    missing_index = tmp_path / "missing-execution-index.md"
+    assert closure_audit_module._load_milestone_statuses(missing_index) == {}
+
+    invalid_policy = tmp_path / "invalid-policy.json"
+    invalid_policy.write_text("{not-json}\n", encoding="utf-8")
+    assert closure_audit_module._missing_release_gate_policy_sections(invalid_policy) == list(
+        closure_audit_module._REQUIRED_RELEASE_GATE_POLICY_SECTIONS
+    )
+
+    list_policy = tmp_path / "list-policy.json"
+    list_policy.write_text("[]\n", encoding="utf-8")
+    assert closure_audit_module._missing_release_gate_policy_sections(list_policy) == list(
+        closure_audit_module._REQUIRED_RELEASE_GATE_POLICY_SECTIONS
+    )
+
+    helper_root = tmp_path / "helper-root"
+    helper_root.mkdir(parents=True, exist_ok=True)
+    (helper_root / "docs").write_text("not a supported text root file\n", encoding="utf-8")
+    services_dir = helper_root / "services"
+    services_dir.mkdir()
+    (services_dir / "ignored.bin").write_bytes(b"ignored")
+    expected_text_file = services_dir / "kept.md"
+    expected_text_file.write_text("kept\n", encoding="utf-8")
+    assert closure_audit_module._iter_probe_text_files(helper_root) == [expected_text_file]
+
+    first_probe_name = next(iter(closure_audit_module._REQUIRED_PROBES.values()))[0]
+    partial_sources = {probe_name: [] for probe_group in closure_audit_module._REQUIRED_PROBES.values() for probe_name in probe_group}
+    partial_sources[first_probe_name] = ["one", "two", "three"]
+    assert closure_audit_module._probe_sources_complete(partial_sources) is False
+
+    repo_root = tmp_path / "continue-root"
+    (repo_root / "docs").mkdir(parents=True, exist_ok=True)
+    all_probe_names = [
+        probe_name
+        for probe_group in closure_audit_module._REQUIRED_PROBES.values()
+        for probe_name in probe_group
+    ]
+    target_probe = all_probe_names[0]
+    for index in range(3):
+        (repo_root / "docs" / f"a-target-{index}.md").write_text(f"{target_probe}\n", encoding="utf-8")
+    (repo_root / "docs" / "b-fill-rest.md").write_text("\n".join(all_probe_names) + "\n", encoding="utf-8")
+
+    continued_probe_sources = closure_audit_module._collect_probe_sources(repo_root)
+
+    assert continued_probe_sources[target_probe] == [
+        "docs/a-target-0.md",
+        "docs/a-target-1.md",
+        "docs/a-target-2.md",
+    ]
+    assert closure_audit_module._probe_sources_complete(continued_probe_sources) is False
 
 
 def _seed_repo(

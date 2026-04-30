@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 from worker.productization.benchmark_export import (
@@ -59,22 +60,19 @@ class BenchmarkStore:
             encoding="utf-8",
         )
 
+        summary_payloads = tuple(row.to_dict() for row in summary_rows)
+        request_payloads = tuple(row.to_dict() for row in request_rows)
+
         summary_jsonl_path = jobs_root / "bench-matrix-summary.jsonl"
-        summary_jsonl_path.write_text(
-            "".join(json.dumps(row.to_dict()) + "\n" for row in summary_rows),
-            encoding="utf-8",
-        )
+        self._write_jsonl(summary_jsonl_path, summary_payloads)
 
         requests_jsonl_path = jobs_root / "bench-matrix-requests.jsonl"
-        requests_jsonl_path.write_text(
-            "".join(json.dumps(row.to_dict()) + "\n" for row in request_rows),
-            encoding="utf-8",
-        )
+        self._write_jsonl(requests_jsonl_path, request_payloads)
 
         summary_csv_path = jobs_root / "bench-matrix-summary.csv"
         summary_csv_path.write_text(
             build_benchmark_matrix_summary_csv(
-                {"benchmark_matrix_summary_rows": [row.to_dict() for row in summary_rows]}
+                {"benchmark_matrix_summary_rows": summary_payloads}
             ),
             encoding="utf-8",
         )
@@ -82,7 +80,7 @@ class BenchmarkStore:
         requests_csv_path = jobs_root / "bench-matrix-requests.csv"
         requests_csv_path.write_text(
             build_benchmark_matrix_requests_csv(
-                {"benchmark_matrix_request_rows": [row.to_dict() for row in request_rows]}
+                {"benchmark_matrix_request_rows": request_payloads}
             ),
             encoding="utf-8",
         )
@@ -94,3 +92,10 @@ class BenchmarkStore:
             "requests_jsonl": requests_jsonl_path,
             "requests_csv": requests_csv_path,
         }
+
+    @staticmethod
+    def _write_jsonl(path: Path, rows: Iterable[dict[str, object]]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row))
+                handle.write("\n")

@@ -7,6 +7,14 @@ import MelixWorkerProtocol
 
 @Suite("Request Coordinator", .serialized)
 struct RequestCoordinatorTests {
+    @Test("python worker stream owner mode uses distinct sentinels for missing and unknown values")
+    func pythonWorkerStreamOwnerModeUsesDistinctSentinelsForMissingAndUnknownValues() {
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("") == 0)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("uninitialized") == 0)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("future_mode") == -2)
+        #expect(pythonWorkerGenerationStreamOwnerModeCode("executor_owned") == 1)
+    }
+
     @Test("empty model identifiers are rejected before dispatch")
     func emptyModelIdentifiersAreRejectedBeforeDispatch() async throws {
         let coordinator = RequestCoordinator(
@@ -79,6 +87,15 @@ struct RequestCoordinatorTests {
         #expect(progress?.phase != .requestAborted)
     }
 
+    @Test("hub ignores stream registrations that arrive after termination")
+    func hubIgnoresStreamRegistrationsThatArriveAfterTermination() async throws {
+        let snapshot = await testingResumableExecutionHubPreRegistrationTerminationSnapshot()
+
+        #expect(snapshot.detachCount == 1)
+        #expect(snapshot.hasConsumers == false)
+        #expect(snapshot.lifecycleDetached)
+    }
+
     @Test("disconnect grace keeps a request resume-eligible until a new consumer attaches")
     func disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -144,6 +161,40 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
     }
 
+    @Test("resume synthesizes disconnect bookkeeping when a request has no active consumers")
+    func resumeSynthesizesDisconnectBookkeepingWhenARequestHasNoActiveConsumers() async throws {
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: BlockingWorkerClient()),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: metricsStore,
+            lifecyclePolicy: ConnectionLifecyclePolicy(
+                keepaliveInterval: 15,
+                disconnectGracePeriod: 0.1
+            )
+        )
+
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-detach",
+            modelID: "test-model"
+        )
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "req-detach")
+        await coordinator.testingDetachExecutionConsumersWithoutBookkeeping(requestID: "missing")
+        await coordinator.testingInstallExecutionHubWithoutConsumers(
+            requestID: "req-resume-race",
+            modelID: "test-model"
+        )
+
+        let resumedExecution = try await coordinator.resumeChatCompletion(requestID: "req-resume-race")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(resumedExecution.requestID == "req-resume-race")
+        #expect(resumedExecution.modelID == "test-model")
+        #expect(metrics.values["disconnect.recovery_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["disconnect.resume_success_rate", default: 0] == 100)
+    }
+
     @Test("disconnect grace expiry aborts the worker and records a terminal lifecycle failure")
     func disconnectGraceExpiryAbortsTheWorkerAndRecordsATerminalLifecycleFailure() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -182,12 +233,10 @@ struct RequestCoordinatorTests {
         initialConsumer.cancel()
         _ = await initialConsumer.result
 
-        for _ in 0..<100 {
-            let metrics = await metricsStore.snapshot()
-            if metrics.values["http.stream_disconnect_count", default: 0] >= 1 {
-                break
-            }
+        var disconnectMetrics = await metricsStore.snapshot()
+        for _ in 0..<100 where disconnectMetrics.values["http.stream_disconnect_count", default: 0] < 1 {
             try? await Task.sleep(nanoseconds: 10_000_000)
+            disconnectMetrics = await metricsStore.snapshot()
         }
 
         let terminalProgress = try #require(await waitForProgress(
@@ -202,6 +251,7 @@ struct RequestCoordinatorTests {
             metrics = await metricsStore.snapshot()
         }
 
+        #expect(disconnectMetrics.values["http.stream_disconnect_count", default: 0] == 1)
         do {
             _ = try await coordinator.resumeChatCompletion(requestID: "req-resume-timeout")
             Issue.record("Expected expired disconnect grace to reject resume.")
@@ -758,6 +808,9 @@ struct RequestCoordinatorTests {
             response.stats.lastTempMediaCleanupFailureCount = 0
             response.stats.l1CacheBytes = 2048
             response.stats.l1HitRate = 0.5
+            response.stats.generationStreamOwnerMode = "executor_owned_no_stream"
+            response.stats.workerThreadInitLatencyMs = 4
+            response.stats.streamSyncFallbackCount = 2
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -807,6 +860,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
+        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
+        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
     }
 
     @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
@@ -1001,6 +1057,231 @@ struct RequestCoordinatorTests {
         #expect(state?.latestToolCallID == "tool-call-1")
         #expect(state?.branches.first?.lastToolCallID == "tool-call-1")
         #expect(metrics.values["http.tool_delta_count", default: 0] == 1)
+    }
+
+    @Test("session reasoning continuity uses metadata markers without raw hidden leakage")
+    func sessionReasoningContinuityUsesMetadataMarkersWithoutRawHiddenLeakage() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_500 })
+        let reasoningContinuityStore = ReasoningContinuityStore()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            reasoningContinuityStore: reasoningContinuityStore
+        )
+
+        let parentExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-parent",
+                sessionID: "session-continuity",
+                branchID: "branch-main"
+            )
+        )
+        let parentCollector = Task {
+            for try await _ in parentExecution.stream {
+            }
+        }
+        await workerClient.emitToken(requestID: "req-continuity-parent", text: "visible answer")
+        await workerClient.finishDecode(
+            requestID: "req-continuity-parent",
+            assistantText: "visible answer",
+            reasoningText: "hidden chain should stay internal"
+        )
+        _ = try await parentCollector.value
+
+        let stored = await reasoningContinuityStore.latest(
+            sessionID: "session-continuity",
+            branchID: "branch-main"
+        )
+        #expect(stored?.reasoningText == "hidden chain should stay internal")
+
+        let followupExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-followup",
+                sessionID: "session-continuity",
+                branchID: "branch-main",
+                parentRequestID: "req-continuity-parent",
+                executionExt: [
+                    "melix.chat_template_kwargs.effective_json": "{\"existing\":true}"
+                ]
+            )
+        )
+        let followupCollector = Task {
+            for try await _ in followupExecution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 2 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequests = await workerClient.generatedRequests
+        let followupRequest = try #require(generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-followup",
+            assistantText: "next answer"
+        )
+        _ = try await followupCollector.value
+
+        let effectiveTemplate = followupRequest.execution.ext["melix.chat_template_kwargs.effective_json"] ?? ""
+        let extText = followupRequest.execution.ext.values.joined(separator: "\n")
+        let metrics = await metricsStore.snapshot()
+
+        #expect(followupRequest.execution.reasoning.continuityRehydrated)
+        #expect(followupRequest.execution.scope.reasoningContinuityPresent)
+        #expect(followupRequest.execution.ext["melix.reasoning.continuity_rehydrated"] == "true")
+        #expect(followupRequest.execution.ext["melix.reasoning.continuity_request_id"] == "req-continuity-parent")
+        #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
+        #expect(effectiveTemplate.contains("\"existing\":true"))
+        let effectiveTemplateHash = followupRequest.execution.scope.chatTemplateKwargsHash
+        #expect(effectiveTemplateHash != effectiveTemplate)
+        #expect(effectiveTemplateHash.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil)
+        #expect(followupRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] == effectiveTemplateHash)
+        #expect(!effectiveTemplate.contains("hidden chain should stay internal"))
+        #expect(!extText.contains("hidden chain should stay internal"))
+        #expect(metrics.values["http.reasoning_continuity_preserved_count", default: 0] == 1)
+        #expect(metrics.values["http.reasoning_continuity_rehydrated_count", default: 0] == 1)
+    }
+
+    @Test("session reasoning continuity preserves markers when template kwargs JSON is invalid")
+    func sessionReasoningContinuityPreservesMarkersWhenTemplateKwargsJSONIsInvalid() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_550 })
+        let reasoningContinuityStore = ReasoningContinuityStore()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore,
+            reasoningContinuityStore: reasoningContinuityStore
+        )
+        _ = await reasoningContinuityStore.record(
+            sessionID: "session-continuity-invalid-template",
+            branchID: "branch-main",
+            requestID: "req-continuity-invalid-template-parent",
+            reasoningText: "hidden text must not leak"
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-invalid-template-followup",
+                sessionID: "session-continuity-invalid-template",
+                branchID: "branch-main",
+                executionExt: [
+                    "melix.chat_template_kwargs.effective_json": "{\"broken\""
+                ]
+            )
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-invalid-template-followup",
+            assistantText: "visible"
+        )
+        _ = try await collector.value
+
+        let effectiveTemplate = generatedRequest.execution.ext["melix.chat_template_kwargs.effective_json"] ?? ""
+        let metrics = await metricsStore.snapshot()
+
+        #expect(effectiveTemplate.contains("melix_reasoning_continuity"))
+        #expect(effectiveTemplate.contains("req-continuity-invalid-template-parent"))
+        #expect(effectiveTemplate.contains("session-continuity-invalid-template::branch-main::req-continuity-invalid-template-parent"))
+        #expect(!effectiveTemplate.contains("hidden text must not leak"))
+        #expect(generatedRequest.execution.scope.chatTemplateKwargsHash.range(
+            of: #"^[0-9a-f]{64}$"#,
+            options: .regularExpression
+        ) != nil)
+        #expect(
+            metrics.values[
+                "http.reasoning_continuity_template_kwargs_parse_failure_count",
+                default: 0
+            ] == 1
+        )
+    }
+
+    @Test("session requests skip reasoning continuity when no hidden store is configured")
+    func sessionRequestsSkipReasoningContinuityWhenNoHiddenStoreIsConfigured() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_700 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: MetricsStore(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-continuity-no-store",
+                sessionID: "session-continuity-no-store",
+                branchID: "branch-main"
+            )
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        for _ in 0..<100 {
+            if await workerClient.generatedRequests.count >= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
+        await workerClient.finishDecode(
+            requestID: "req-continuity-no-store",
+            assistantText: "visible"
+        )
+        _ = try await collector.value
+
+        #expect(generatedRequest.execution.reasoning.continuityRehydrated == false)
+        #expect(generatedRequest.execution.scope.reasoningContinuityPresent == false)
+    }
+
+    @Test("completed parser metrics are recorded as numeric HTTP parser metrics")
+    func completedParserMetricsAreRecordedAsNumericHTTPParserMetrics() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-parser-metrics")
+        )
+        let collector = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        await workerClient.finishDecode(
+            requestID: "req-parser-metrics",
+            assistantText: "visible",
+            parserMetrics: [
+                "malformed_tool_fragment_count": "2",
+                "duplicate_tool_delta_count": "not-a-number"
+            ]
+        )
+        _ = try await collector.value
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["http.parser.malformed_tool_fragment_count", default: 0] == 2)
+        #expect(metrics.values["http.parser.duplicate_tool_delta_count", default: -1] == -1)
     }
 
     @Test("session follow-up requests restore the latest branch snapshot through phase-aware prefill")
@@ -1424,6 +1705,32 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+    }
+
+    @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
+    func ciWaitMultiplierEnvOverrideOverridesDefault() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "8"]) == 8)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "  16 "]) == 16)
+        #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true", "CI_WAIT_MULTIPLIER": "2"]) == 2)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100"]) == 100)
+    }
+
+    @Test("CI_WAIT_MULTIPLIER falls back to the default when invalid")
+    func ciWaitMultiplierEnvOverrideFallsBackForInvalidValues() {
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "abc"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "0"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "-3"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": ""]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "   "]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "101"]) == 4)
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true", "CI_WAIT_MULTIPLIER": "100000"]) == 4)
+    }
+
+    @Test("CI_WAIT_MULTIPLIER without a CI flag stays at the local default")
+    func ciWaitMultiplierEnvOverrideRequiresCIFlag() {
+        // The env var alone shouldn't widen budgets on a developer laptop —
+        // the operator has to opt in explicitly via CI/GITHUB_ACTIONS.
+        #expect(computedWaitAttemptsMultiplier(environment: ["CI_WAIT_MULTIPLIER": "8"]) == 1)
     }
 
     @Test("chunked prefills emit progress events and scheduler metrics for long prompts")
@@ -2698,6 +3005,7 @@ private actor PhaseAwareWorkerClient:
     private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
     private(set) var generatedRequestIDs: [String] = []
+    private(set) var generatedRequests: [Melix_Worker_V1_GenerateRequest] = []
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var cacheStatsResponse = Melix_Worker_V1_GetCacheStatsResponse()
 
@@ -2717,6 +3025,7 @@ private actor PhaseAwareWorkerClient:
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         generatedRequestIDs.append(request.execution.id.requestID)
+        generatedRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
             continuations[requestID] = continuation
@@ -3000,7 +3309,8 @@ private actor PhaseAwareWorkerClient:
     func finishDecode(
         requestID: String,
         assistantText: String = "done",
-        reasoningText: String = ""
+        reasoningText: String = "",
+        parserMetrics: [String: String] = [:]
     ) {
         guard let continuation = continuations.removeValue(forKey: requestID) else {
             return
@@ -3015,6 +3325,7 @@ private actor PhaseAwareWorkerClient:
         completed.finishReason = "stop"
         completed.assistantText = assistantText
         completed.reasoningText = reasoningText
+        completed.parserMetrics = parserMetrics
         event.completed = completed
         continuation.yield(event)
         continuation.finish()
@@ -3250,16 +3561,29 @@ private func makeCoordinatorTextModel(
 /// phase-transition polls can't race the scheduler under contention. The
 /// actual numerical default still passes locally in a few tens of ms — the
 /// multiplier only affects the *ceiling* before a timeout returns nil.
+///
+/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
+/// within the accepted range, so future tuning doesn't require a code change.
 private let waitAttemptsMultiplier: Int = {
     computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
 }()
 
+private let defaultCIWaitMultiplier: Int = 4
+private let maximumCIWaitMultiplier: Int = 100
+
 private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
-    if isTruthyEnvironmentFlag(environment["CI"])
-        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"]) {
-        return 4
+    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
+        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
+    guard ciActive else {
+        return 1
     }
-    return 1
+    if let raw = environment["CI_WAIT_MULTIPLIER"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       let parsed = Int(raw),
+       (1...maximumCIWaitMultiplier).contains(parsed) {
+        return parsed
+    }
+    return defaultCIWaitMultiplier
 }
 
 private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {

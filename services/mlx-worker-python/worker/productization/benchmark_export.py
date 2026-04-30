@@ -4,6 +4,8 @@ import csv
 import json
 import io
 import time
+from collections.abc import Iterable, Iterator
+import os
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -43,25 +45,23 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
             request_rows=matrix_request_rows,
         )
     runs_root = jobs_root / "runs"
-    if runs_root.is_dir():
-        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_benchmark_run(
-                run_root,
-                summary_rows=summary_rows,
-                context_rows=context_rows,
-                batch_rows=batch_rows,
-                results=results,
-            )
+    for run_root in _iter_sorted_child_directories(runs_root):
+        _collect_benchmark_run(
+            run_root,
+            summary_rows=summary_rows,
+            context_rows=context_rows,
+            batch_rows=batch_rows,
+            results=results,
+        )
     for matrix_root in matrix_roots:
         matrix_runs_root = matrix_root / "matrix-runs"
-        if matrix_runs_root.is_dir():
-            for run_root in sorted(path for path in matrix_runs_root.iterdir() if path.is_dir()):
-                _collect_benchmark_matrix_run(
-                    run_root,
-                    jobs=matrix_jobs,
-                    summary_rows=matrix_summary_rows,
-                    request_rows=matrix_request_rows,
-                )
+        for run_root in _iter_sorted_child_directories(matrix_runs_root):
+            _collect_benchmark_matrix_run(
+                run_root,
+                jobs=matrix_jobs,
+                summary_rows=matrix_summary_rows,
+                request_rows=matrix_request_rows,
+            )
 
     return {
         "benchmark_jobs": summary_rows,
@@ -101,18 +101,17 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
         compare_samples=compare_samples,
     )
     runs_root = jobs_root / "runs"
-    if runs_root.is_dir():
-        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_evaluation_run(
-                run_root,
-                jobs=jobs,
-                results=results,
-                summaries=summaries,
-                samples=samples,
-                compare_jobs=compare_jobs,
-                compare_summary_rows=compare_summary_rows,
-                compare_samples=compare_samples,
-            )
+    for run_root in _iter_sorted_child_directories(runs_root):
+        _collect_evaluation_run(
+            run_root,
+            jobs=jobs,
+            results=results,
+            summaries=summaries,
+            samples=samples,
+            compare_jobs=compare_jobs,
+            compare_summary_rows=compare_summary_rows,
+            compare_samples=compare_samples,
+        )
 
     return {
         "evaluation_jobs": jobs,
@@ -137,9 +136,8 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
 
 
 def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -167,17 +165,19 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        [_normalized_evaluation_sample_row(row) for row in rows],
+        (
+            _normalized_evaluation_sample_row(row)
+            for row in bundle.get("evaluation_samples", [])
+            if isinstance(row, dict)
+        ),
         _canonical_evaluation_sample_columns(),
     )
 
 
 def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "base_model_id",
@@ -198,9 +198,8 @@ def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)),
         [
             "job_id",
             "suite_id",
@@ -250,9 +249,8 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -277,23 +275,31 @@ def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_summary_columns(),
+    )
 
 
 def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_request_columns(),
+    )
 
 
 def write_export_bundle(jobs_root: Path, output_path: Path) -> Path:
@@ -398,6 +404,23 @@ def _resolve_artifact_root(
     return jobs_root
 
 
+
+def _iter_sorted_child_directories(parent: Path) -> tuple[Path, ...]:
+    try:
+        names: list[str] = []
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                names.append(entry.name)
+    except OSError:
+        return ()
+    return tuple(parent / name for name in sorted(names))
+
+
 def _collect_benchmark_run(
     run_root: Path,
     *,
@@ -415,19 +438,11 @@ def _collect_benchmark_run(
 
     context_path = run_root / "bench-context-rows.jsonl"
     if context_path.is_file():
-        for line in context_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    context_rows.append(row)
+        context_rows.extend(_iter_jsonl_dict_rows(context_path))
 
     batch_path = run_root / "bench-batch-rows.jsonl"
     if batch_path.is_file():
-        for line in batch_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    batch_rows.append(row)
+        batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
 
     for result_path in sorted(run_root.glob("bench-result-*.json")):
         if result_path.is_file():
@@ -447,22 +462,25 @@ def _collect_benchmark_matrix_run(
 
     summary_path = run_root / "bench-matrix-summary.jsonl"
     if summary_path.is_file():
-        for line in summary_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    summary_rows.append(row)
+        summary_rows.extend(_iter_jsonl_dict_rows(summary_path))
 
     requests_path = run_root / "bench-matrix-requests.jsonl"
     if requests_path.is_file():
-        for line in requests_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    request_rows.append(row)
+        request_rows.extend(_iter_jsonl_dict_rows(requests_path))
 
 
-def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
+def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            row = json.loads(stripped)
+            if isinstance(row, dict):
+                yield row
+
+
+def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -491,6 +509,30 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "cache_profile",
         "reasoning_mode",
         "structured_output_mode",
+        "dataset_materialize_ms",
+        "prompt_render_ms",
+        "warmup_ms",
+        "prefill_ms",
+        "decode_ms",
+        "tokens_in",
+        "tokens_out",
+        "first_token_index",
+        "cache_hit",
+        "runtime_kind",
+        "error_stage",
+        "speculative_acceptance_rate",
+        "speculative_rollback_rate",
+        "speculative_accepted_tokens",
+        "speculative_rejected_tokens",
+        "speculative_fallback_count",
+        "speculative_num_draft_tokens",
+        "speculative_draft_model_configured",
+        "speculative_draft_propose_ms",
+        "speculative_target_verify_ms",
+        "dflash_enabled",
+        "dflash_block_size",
+        "dflash_rollback_count",
+        "dflash_target_hidden_layers",
     ]
 
 
@@ -522,6 +564,14 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "code_failure_detail",
         "category_label",
         "subject_label",
+        "sample_render_ms",
+        "inference_ms",
+        "extraction_ms",
+        "validation_ms",
+        "scoring_ms",
+        "raw_response_chars",
+        "extracted_result_chars",
+        "failure_stage",
     ]
 
 
@@ -560,6 +610,17 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
         "code_failure_detail": row.get("code_failure_detail", ""),
         "category_label": row.get("category_label", ""),
         "subject_label": row.get("subject_label", ""),
+        "sample_render_ms": row.get("sample_render_ms", 0.0),
+        "inference_ms": row.get("inference_ms", 0.0),
+        "extraction_ms": row.get("extraction_ms", 0.0),
+        "validation_ms": row.get("validation_ms", 0.0),
+        "scoring_ms": row.get("scoring_ms", 0.0),
+        "raw_response_chars": row.get("raw_response_chars", len(str(row.get("raw_response", "")))),
+        "extracted_result_chars": row.get(
+            "extracted_result_chars",
+            len(str(row.get("extracted_result", row.get("predicted", "")))),
+        ),
+        "failure_stage": row.get("failure_stage", ""),
     }
 
 
@@ -592,6 +653,13 @@ def _canonical_benchmark_matrix_summary_columns() -> list[str]:
         "peak_memory_bytes_max",
         "queue_wait_mean_ms",
         "queue_wait_p95_ms",
+        "cell_wall_ms",
+        "completed_count",
+        "failed_count",
+        "ttft_p50_ms",
+        "ttft_p95_ms",
+        "request_latency_p50_ms",
+        "request_latency_p95_ms",
         "created_at_unix_ms",
     ]
 
@@ -619,6 +687,30 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "peak_memory_bytes",
         "status",
         "error_code",
+        "dataset_materialize_ms",
+        "prompt_render_ms",
+        "warmup_ms",
+        "prefill_ms",
+        "decode_ms",
+        "tokens_in",
+        "tokens_out",
+        "first_token_index",
+        "cache_hit",
+        "runtime_kind",
+        "error_stage",
+        "speculative_acceptance_rate",
+        "speculative_rollback_rate",
+        "speculative_accepted_tokens",
+        "speculative_rejected_tokens",
+        "speculative_fallback_count",
+        "speculative_num_draft_tokens",
+        "speculative_draft_model_configured",
+        "speculative_draft_propose_ms",
+        "speculative_target_verify_ms",
+        "dflash_enabled",
+        "dflash_block_size",
+        "dflash_rollback_count",
+        "dflash_target_hidden_layers",
         "created_at_unix_ms",
     ]
 
@@ -661,9 +753,7 @@ def _collect_evaluation_run(
 
     samples_path = run_root / "evaluation-samples.jsonl"
     if samples_path.is_file():
-        for line in samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                samples.append(json.loads(line))
+        samples.extend(_iter_jsonl_dict_rows(samples_path))
 
     compare_job_path = run_root / "evaluation-compare-job.json"
     if not compare_job_path.is_file():
@@ -683,17 +773,14 @@ def _collect_evaluation_run(
 
     compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
     if compare_samples_path.is_file():
-        for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                sample = json.loads(line)
-                compare_samples.append(sample)
-                if isinstance(sample, dict):
-                    samples.append(
-                        _normalize_evaluation_compare_sample(
-                            sample,
-                            compare_job=compare_job,
-                        )
-                    )
+        for sample in _iter_jsonl_dict_rows(compare_samples_path):
+            compare_samples.append(sample)
+            samples.append(
+                _normalize_evaluation_compare_sample(
+                    sample,
+                    compare_job=compare_job,
+                )
+            )
 
 
 def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:

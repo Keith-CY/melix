@@ -115,6 +115,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let workflowNodeID: String?
     public let stopSequences: [String]
     public let userID: String?
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
     public let thinking: MelixMessagesThinkingConfig?
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
@@ -140,6 +142,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         workflowNodeID: String? = nil,
         stopSequences: [String] = [],
         userID: String? = nil,
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
         toolParser: ToolParserSelection? = nil,
@@ -164,6 +168,9 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.workflowNodeID = workflowNodeID
         self.stopSequences = stopSequences
         self.userID = userID
+        self.enableThinking = enableThinking
+        let trimmedReasoningEffort = reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.reasoningEffort = trimmedReasoningEffort?.isEmpty == false ? trimmedReasoningEffort : nil
         self.thinking = thinking
         self.structuredOutput = structuredOutput?.isEnabled == true ? structuredOutput : nil
         self.toolParser = toolParser
@@ -208,8 +215,12 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let thinking: MelixMessagesThinkingConfig?
     public let reasoningMode: String
     public let reasoningSource: String
+    public let reasoningEffort: String?
+    public let reasoningAutoDetectModelFamily: String?
+    public let reasoningContinuityRehydrated: Bool
     public let structuredOutput: StructuredOutputConfiguration?
     public let toolParser: ToolParserSelection?
+    public let toolParserSuppressedReason: String?
     public let chatTemplate: ResolvedChatTemplatePolicy?
     public let ocrPolicy: ResolvedOCRExecutionPolicy?
     public let partialMode: String?
@@ -349,6 +360,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
 
     public let model: String
     public let messages: [Message]
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
     public let stream: Bool?
     public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
@@ -372,6 +385,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case model
         case messages
+        case enableThinking = "enable_thinking"
+        case reasoningEffort = "reasoning_effort"
         case stream
         case streamOptions = "stream_options"
         case temperature
@@ -397,6 +412,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public init(
         model: String,
         messages: [Message],
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         stream: Bool? = nil,
         streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
@@ -419,6 +436,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     ) {
         self.model = model
         self.messages = messages
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
         self.stream = stream
         self.streamOptions = streamOptions
         self.temperature = temperature
@@ -444,6 +463,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.model = try container.decode(String.self, forKey: .model)
         self.messages = try container.decode([Message].self, forKey: .messages)
+        self.enableThinking = try container.decodeIfPresent(Bool.self, forKey: .enableThinking)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         self.stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
         self.streamOptions = try container.decodeIfPresent(OpenAIStreamOptions.self, forKey: .streamOptions)
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
@@ -469,6 +490,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(model, forKey: .model)
         try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(enableThinking, forKey: .enableThinking)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(stream, forKey: .stream)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(temperature, forKey: .temperature)
@@ -537,6 +560,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
 public struct OpenAICompletionsRequest: Codable, Sendable {
     public let model: String
     public let prompt: String
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
     public let stream: Bool?
     public let streamOptions: OpenAIStreamOptions?
     public let temperature: Double?
@@ -558,6 +583,8 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case model
         case prompt
+        case enableThinking = "enable_thinking"
+        case reasoningEffort = "reasoning_effort"
         case stream
         case streamOptions = "stream_options"
         case temperature
@@ -580,6 +607,8 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public init(
         model: String,
         prompt: String,
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         stream: Bool? = nil,
         streamOptions: OpenAIStreamOptions? = nil,
         temperature: Double? = nil,
@@ -600,6 +629,8 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     ) {
         self.model = model
         self.prompt = prompt
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
         self.stream = stream
         self.streamOptions = streamOptions
         self.temperature = temperature
@@ -714,6 +745,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
 
     public let model: String
     public let input: Input
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
     public let instructions: String?
     public let stream: Bool?
     public let streamOptions: OpenAIStreamOptions?
@@ -736,6 +769,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case model
         case input
+        case enableThinking = "enable_thinking"
+        case reasoningEffort = "reasoning_effort"
         case instructions
         case stream
         case streamOptions = "stream_options"
@@ -759,6 +794,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public init(
         model: String,
         input: Input,
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         instructions: String? = nil,
         stream: Bool? = nil,
         streamOptions: OpenAIStreamOptions? = nil,
@@ -780,6 +817,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     ) {
         self.model = model
         self.input = input
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
         self.instructions = instructions
         self.stream = stream
         self.streamOptions = streamOptions
@@ -993,6 +1032,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
 
     public let model: String
     public let messages: [Message]
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
     private let rawSystem: MelixMessagesContentValue?
     public let stream: Bool?
     public let streamOptions: OpenAIStreamOptions?
@@ -1018,6 +1059,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case model
         case messages
+        case enableThinking = "enable_thinking"
+        case reasoningEffort = "reasoning_effort"
         case system
         case stream
         case streamOptions = "stream_options"
@@ -1044,6 +1087,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public init(
         model: String,
         messages: [Message],
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         system: String? = nil,
         systemBlocks: [MelixMessagesContentBlock]? = nil,
         stream: Bool? = nil,
@@ -1069,6 +1114,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
     ) {
         self.model = model
         self.messages = messages
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
         if let systemBlocks {
             self.rawSystem = .blocks(systemBlocks)
         } else if let system {
@@ -1102,6 +1149,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.model = try container.decode(String.self, forKey: .model)
         self.messages = try container.decode([Message].self, forKey: .messages)
+        self.enableThinking = try container.decodeIfPresent(Bool.self, forKey: .enableThinking)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         self.rawSystem = try container.decodeIfPresent(MelixMessagesContentValue.self, forKey: .system)
         self.stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
         self.streamOptions = try container.decodeIfPresent(OpenAIStreamOptions.self, forKey: .streamOptions)
@@ -1129,6 +1178,8 @@ public struct MelixMessagesRequest: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(model, forKey: .model)
         try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(enableThinking, forKey: .enableThinking)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(rawSystem, forKey: .system)
         try container.encodeIfPresent(stream, forKey: .stream)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
@@ -1255,6 +1306,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             stopSequences: request.stopSequences,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1294,6 +1347,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
             stopSequences: request.stopSequences,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1323,6 +1378,8 @@ public struct ChatRequestTranslator: Sendable {
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1370,6 +1427,8 @@ public struct ChatRequestTranslator: Sendable {
             workflow: request.workflow,
             workflowRunID: request.workflowRunID,
             workflowNodeID: request.workflowNodeID,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
             chatTemplate: request.chatTemplateSelection
@@ -1417,6 +1476,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowNodeID: request.workflowNodeID,
             stopSequences: request.stopSequences,
             userID: request.metadata?.userID,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
             thinking: request.thinking,
             structuredOutput: try request.structuredOutputConfiguration,
             toolParser: try request.toolParserSelection,
@@ -1444,6 +1505,8 @@ public struct ChatRequestTranslator: Sendable {
         workflowNodeID: String?,
         stopSequences: [String]? = nil,
         userID: String? = nil,
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
         thinking: MelixMessagesThinkingConfig? = nil,
         structuredOutput: StructuredOutputConfiguration? = nil,
         toolParser: ToolParserSelection? = nil,
@@ -1469,6 +1532,8 @@ public struct ChatRequestTranslator: Sendable {
             workflowNodeID: workflowNodeID,
             stopSequences: stopSequences ?? [],
             userID: userID,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
             thinking: thinking,
             structuredOutput: structuredOutput,
             toolParser: toolParser,
@@ -1563,6 +1628,22 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.cacheHints.cachePolicy = shapedRequest.cachePolicy ?? ""
         generateRequest.execution.ext["melix.reasoning.mode"] = shapedRequest.reasoningMode
         generateRequest.execution.ext["melix.reasoning.source"] = shapedRequest.reasoningSource
+        generateRequest.execution.ext["melix.reasoning.mode_source"] = shapedRequest.reasoningSource
+        if let reasoningEffort = shapedRequest.reasoningEffort {
+            generateRequest.execution.ext["melix.reasoning.effort"] = reasoningEffort
+        }
+        if let autoDetectFamily = shapedRequest.reasoningAutoDetectModelFamily {
+            generateRequest.execution.ext["melix.reasoning.auto_detect_model_family"] = autoDetectFamily
+        }
+        generateRequest.execution.ext["melix.reasoning.continuity_rehydrated"] =
+            shapedRequest.reasoningContinuityRehydrated ? "true" : "false"
+        generateRequest.execution.reasoning = Melix_Worker_V1_ReasoningConfig()
+        generateRequest.execution.reasoning.mode = shapedRequest.reasoningMode
+        generateRequest.execution.reasoning.modeSource = shapedRequest.reasoningSource
+        generateRequest.execution.reasoning.effort = shapedRequest.reasoningEffort ?? ""
+        generateRequest.execution.reasoning.autoDetectModelFamily =
+            shapedRequest.reasoningAutoDetectModelFamily ?? ""
+        generateRequest.execution.reasoning.continuityRehydrated = shapedRequest.reasoningContinuityRehydrated
         if let presetID = shapedRequest.presetID {
             generateRequest.execution.ext["melix.preset_id"] = presetID
         }
@@ -1598,6 +1679,9 @@ public struct ChatRequestTranslator: Sendable {
             if !toolParser.mcpSourceIDs.isEmpty {
                 generateRequest.execution.ext["melix.mcp.source_ids"] = toolParser.mcpSourceIDs.joined(separator: ",")
             }
+        }
+        if let toolParserSuppressedReason = shapedRequest.toolParserSuppressedReason {
+            generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] = toolParserSuppressedReason
         }
         if let chatTemplate = shapedRequest.chatTemplate,
            let effectiveJSONString = chatTemplate.effectiveJSONString {
@@ -1658,7 +1742,6 @@ public struct ChatRequestTranslator: Sendable {
             generateRequest.execution.ext["melix.harmony"] = "true"
         }
         if let thinking = shapedRequest.thinking, thinking.isEnabled {
-            generateRequest.execution.reasoning = Melix_Worker_V1_ReasoningConfig()
             generateRequest.execution.reasoning.enabled = true
             generateRequest.execution.reasoning.separateStream = true
             generateRequest.execution.ext["melix.messages.thinking.type"] = thinking.normalizedType
@@ -1669,6 +1752,27 @@ public struct ChatRequestTranslator: Sendable {
                 generateRequest.execution.ext["melix.reasoning.overflow_behavior"] = "close_stream"
             }
         }
+        generateRequest.execution.scope = Melix_Worker_V1_CacheScope()
+        generateRequest.execution.scope.modelID = shapedRequest.model
+        generateRequest.execution.scope.parserMode = shapedRequest.toolParser?.mode.rawValue ?? ""
+        generateRequest.execution.scope.reasoningMode = shapedRequest.reasoningMode
+        generateRequest.execution.scope.reasoningEffort = shapedRequest.reasoningEffort ?? ""
+        generateRequest.execution.scope.toolParserMode = shapedRequest.toolParser?.mode.rawValue ?? ""
+        generateRequest.execution.scope.structuredOutputMode = shapedRequest.structuredOutput?.mode.rawValue ?? ""
+        let chatTemplateKwargsHash = cacheScopeHash(shapedRequest.chatTemplate?.effectiveJSONString)
+        generateRequest.execution.scope.chatTemplateKwargsHash = chatTemplateKwargsHash
+        generateRequest.execution.scope.reasoningContinuityPresent = shapedRequest.reasoningContinuityRehydrated
+        // CacheScope is the canonical worker cache partition. The matching ext
+        // keys are a compatibility mirror for older evidence/report readers.
+        generateRequest.execution.ext["melix.cache.fingerprint.reasoning_mode"] = shapedRequest.reasoningMode
+        generateRequest.execution.ext["melix.cache.fingerprint.reasoning_effort"] = shapedRequest.reasoningEffort ?? ""
+        generateRequest.execution.ext["melix.cache.fingerprint.parser_mode"] = shapedRequest.toolParser?.mode.rawValue ?? ""
+        generateRequest.execution.ext["melix.cache.fingerprint.structured_output_mode"] =
+            shapedRequest.structuredOutput?.mode.rawValue ?? ""
+        generateRequest.execution.ext["melix.cache.fingerprint.chat_template_kwargs"] =
+            chatTemplateKwargsHash
+        generateRequest.execution.ext["melix.cache.fingerprint.reasoning_continuity_present"] =
+            shapedRequest.reasoningContinuityRehydrated ? "true" : "false"
         if !(shapedRequest.sessionID ?? "").isEmpty {
             generateRequest.execution.cacheHints.allowL1 = true
             generateRequest.execution.cacheHints.allowL2 = true

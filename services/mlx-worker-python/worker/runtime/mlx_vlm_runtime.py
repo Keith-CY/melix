@@ -9,7 +9,9 @@ from threading import Event
 from typing import Any, Callable
 
 from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
+from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import resolve_vision_family_config
@@ -263,23 +265,53 @@ class MLXVLMRuntime:
         backend: AutoMLXVLMBackend | None = None,
         temp_root: Path | str | None = None,
         temp_media_session_factory: Callable[..., TempMediaSession] | None = None,
+        fast_path_controller: MultimodalFastPathController | None = None,
+        executor: MLXRuntimeExecutor | None = None,
     ) -> None:
         self._backend = backend or AutoMLXVLMBackend()
         self._temp_root = Path(temp_root) if temp_root is not None else None
         self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
+        self._fast_path_controller = fast_path_controller or MultimodalFastPathController()
+        self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_fast_path_signature: tuple[str, ...] | None = None
 
     @property
     def runtime_name(self) -> str:
         return getattr(self._backend, "runtime_name", "mlx-vlm-unavailable")
 
     def load_model(self, model_spec):
-        return self._backend.load_model(model_spec)
+        if self._executor is None:
+            return self._backend.load_model(model_spec)
+        return self._executor.run(lambda: self._backend.load_model(model_spec))
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
 
     def render_prompt(
+        self,
+        messages,
+        loaded_model=None,
+        template_kwargs=None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> PreparedVisionRequest:
+        if self._executor is not None:
+            return self._executor.run(
+                lambda: self._render_prompt(
+                    messages,
+                    loaded_model=loaded_model,
+                    template_kwargs=template_kwargs,
+                    execution_ext=execution_ext,
+                )
+            )
+        return self._render_prompt(
+            messages,
+            loaded_model=loaded_model,
+            template_kwargs=template_kwargs,
+            execution_ext=execution_ext,
+        )
+
+    def _render_prompt(
         self,
         messages,
         loaded_model=None,
@@ -321,18 +353,7 @@ class MLXVLMRuntime:
                     family_config=family_config,
                     started_at=started_at,
                 )
-        self._last_probe = VisionProbeSnapshot(
-            preprocess_latency_ms=prepared.preprocess_latency_ms,
-            preprocess_input_bytes=prepared.preprocess_input_bytes,
-            preprocess_peak_memory_bytes=prepared.preprocess_peak_memory_bytes,
-            first_token_latency_ms=0.0,
-            video_effective_frame_count=prepared.effective_video_frame_count,
-            video_requested_frame_budget=prepared.requested_video_frame_budget,
-            video_window_ms=prepared.effective_video_window_ms,
-            cache_identity="",
-            cache_scope_id="",
-            cache_hit=False,
-        )
+        self._record_fast_path_probe(loaded_model, prepared)
         return prepared
 
     def prompt_token_count(
@@ -357,7 +378,7 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
-        self._backend._ensure_runtime()
+        self._ensure_fast_path_probe(loaded_model, prepared_request)
         if cancel_event.is_set():
             return
 
@@ -368,61 +389,75 @@ class MLXVLMRuntime:
         )
         try:
             image_paths = self._materialize_media(prepared_request, temp_media_session)
-            formatted_prompt = self._backend.apply_chat_template_fn(
-                loaded_model["processor"],
-                loaded_model["model"].config,
-                prepared_request.prompt_text,
-                num_images=len(image_paths),
-            )
-            image_argument = image_paths if image_paths else None
 
-            started_at = time.perf_counter()
-            first_token_at: float | None = None
-            completion_tokens = 0
-            for response in self._backend.stream_generate_fn(
-                loaded_model["model"],
-                loaded_model["processor"],
-                formatted_prompt,
-                image=image_argument,
-                max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-                temperature=float(getattr(sampling, "temperature", 0.0)),
-                top_p=float(getattr(sampling, "top_p", 1.0)),
-                top_k=int(getattr(sampling, "top_k", 0)),
-                verbose=False,
-            ):
+            def backend_events():
+                # Must run on the executor-owned thread so the MLX runtime is
+                # initialized inside the same stream ownership context used for
+                # the subsequent token generation work.
+                self._backend._ensure_runtime()
                 if cancel_event.is_set():
                     return
-                text = str(getattr(response, "text", "") or "")
-                if not text:
-                    continue
-                now = time.perf_counter()
-                if first_token_at is None:
-                    first_token_at = now
-                    self._last_probe = VisionProbeSnapshot(
-                        preprocess_latency_ms=prepared_request.preprocess_latency_ms,
-                        preprocess_input_bytes=prepared_request.preprocess_input_bytes,
-                        preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
-                        first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
-                        video_effective_frame_count=prepared_request.effective_video_frame_count,
-                        video_requested_frame_budget=prepared_request.requested_video_frame_budget,
-                        video_window_ms=prepared_request.effective_video_window_ms,
-                        cache_identity="",
-                        cache_scope_id="",
-                        cache_hit=False,
+
+                formatted_prompt = self._backend.apply_chat_template_fn(
+                    loaded_model["processor"],
+                    loaded_model["model"].config,
+                    prepared_request.prompt_text,
+                    num_images=len(image_paths),
+                )
+                image_argument = image_paths if image_paths else None
+
+                started_at = time.perf_counter()
+                first_token_at: float | None = None
+                completion_tokens = 0
+                for response in self._backend.stream_generate_fn(
+                    loaded_model["model"],
+                    loaded_model["processor"],
+                    formatted_prompt,
+                    image=image_argument,
+                    max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
+                    temperature=float(getattr(sampling, "temperature", 0.0)),
+                    top_p=float(getattr(sampling, "top_p", 1.0)),
+                    top_k=int(getattr(sampling, "top_k", 0)),
+                    verbose=False,
+                ):
+                    if cancel_event.is_set():
+                        return
+                    text = str(getattr(response, "text", "") or "")
+                    if not text:
+                        continue
+                    now = time.perf_counter()
+                    if first_token_at is None:
+                        first_token_at = now
+                        self._last_probe = replace(
+                            self._last_probe,
+                            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                            first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                            video_effective_frame_count=prepared_request.effective_video_frame_count,
+                            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                            video_window_ms=prepared_request.effective_video_window_ms,
+                            cache_identity="",
+                            cache_scope_id="",
+                            cache_hit=False,
+                        )
+                    completion_tokens = max(
+                        completion_tokens,
+                        int(getattr(response, "generation_tokens", 0) or (completion_tokens + 1)),
                     )
-                completion_tokens = max(
-                    completion_tokens,
-                    int(getattr(response, "generation_tokens", 0) or (completion_tokens + 1)),
-                )
-                yield RuntimeTokenEvent(
-                    text=text,
-                    prompt_tokens=int(getattr(response, "prompt_tokens", 0) or prompt_tokens),
-                    completion_tokens=completion_tokens,
-                    prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
-                    generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
-                    peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
-                    finish_reason="stop",
-                )
+                    yield RuntimeTokenEvent(
+                        text=text,
+                        prompt_tokens=int(getattr(response, "prompt_tokens", 0) or prompt_tokens),
+                        completion_tokens=completion_tokens,
+                        prompt_tps=float(getattr(response, "prompt_tps", 0.0) or 0.0),
+                        generation_tps=float(getattr(response, "generation_tps", 0.0) or 0.0),
+                        peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
+                        finish_reason="stop",
+                    )
+
+            event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
+            for event in event_iterable:
+                yield event
         finally:
             cleanup_report = temp_media_session.cleanup()
             self._last_probe = replace(
@@ -435,6 +470,58 @@ class MLXVLMRuntime:
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe
+
+    def _ensure_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> None:
+        """Call plan() when generate_tokens() did not follow render_prompt().
+
+        The signature guard deduplicates the normal render_prompt/generate_tokens
+        sequence for one prepared request. If shared-runtime tests reuse identical
+        multimodal_hash_hex and model metadata for different requests, the second
+        request can inherit the previous probe's cache counts; production request
+        hashes should include real prompt and media identity, so the edge case is
+        metrics-only and does not affect generated data.
+        """
+        signature = fast_path_probe_signature(loaded_model, prepared_request)
+        if self._last_fast_path_signature == signature:
+            return
+        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+
+    def _record_fast_path_probe(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        *,
+        signature: tuple[str, ...] | None = None,
+    ) -> None:
+        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        self._last_fast_path_signature = signature or fast_path_probe_signature(
+            loaded_model,
+            prepared_request,
+        )
+        self._last_probe = VisionProbeSnapshot(
+            preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+            preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+            preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+            first_token_latency_ms=0.0,
+            video_effective_frame_count=prepared_request.effective_video_frame_count,
+            video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+            video_window_ms=prepared_request.effective_video_window_ms,
+            cache_identity="",
+            cache_scope_id="",
+            cache_hit=False,
+            image_feature_cache_hits=fast_path.image_feature_cache_hits,
+            image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            multimodal_decode_mode=fast_path.multimodal_decode_mode,
+            multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
+            multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
+            multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            quantized_load_mode=fast_path.quantized_load_mode,
+            quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+        )
 
     @staticmethod
     def _materialize_media(

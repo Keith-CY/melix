@@ -6,7 +6,25 @@ import os
 import shutil
 from pathlib import Path
 
-from worker.model_registry.catalog import WorkerModelCatalog, _gemma4_index_has_vision_weights
+import pytest
+
+from packages.protocol.python.worker.v1 import common_pb2
+from worker.model_registry.catalog import (
+    WorkerModelCatalog,
+    _apply_registry_identity_metadata,
+    _default_embedding_family_for_backend,
+    _gemma4_index_has_vision_weights,
+    _has_mlx_signal,
+    _has_model_weight_files,
+    _hf_cache_repo_id,
+    _hf_cache_revision,
+    _hf_cache_revision_map,
+    _infer_embedding_identity,
+    _is_hf_cache_snapshot_dir,
+    _local_model_id,
+    _read_text_prefix,
+    _text_lora_support_metadata,
+)
 
 
 def _write_registry_manifest(
@@ -53,6 +71,524 @@ def _write_weights(variant_dir: Path) -> None:
     (variant_dir / "model.safetensors").write_bytes(b"weights")
 
 
+def test_read_text_prefix_reads_only_requested_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("placeholder", encoding="utf-8")
+    read_sizes: list[int] = []
+
+    class _Reader:
+        def __enter__(self) -> _Reader:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> str:
+            read_sizes.append(size)
+            if size == -1:
+                raise AssertionError("expected bounded prefix read")
+            return "library_name: mlx\nEXTRA"[:size]
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> _Reader:
+        assert self == target
+        assert mode == "r"
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "ignore"
+        return _Reader()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    assert _read_text_prefix(target, max_chars=17) == "library_name: mlx"
+    assert read_sizes == [17]
+
+
+
+def test_read_text_prefix_returns_empty_string_on_open_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("placeholder", encoding="utf-8")
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        assert self == target
+        raise OSError("boom")
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    assert _read_text_prefix(target) == ""
+
+
+
+def test_has_mlx_signal_returns_false_without_repo_hint_or_metadata(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-transformers-model"
+    model_dir.mkdir()
+    assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is False
+
+
+
+def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or_iterdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "hf-snapshot"
+    model_dir.mkdir()
+
+    class _FakeDirEntry:
+        def __init__(self, name: str, *, is_file_result: bool) -> None:
+            self.name = name
+            self._is_file_result = is_file_result
+
+        def is_file(self) -> bool:
+            return self._is_file_result
+
+    scandir_calls: list[str] = []
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(
+                [
+                    _FakeDirEntry("config.json", is_file_result=True),
+                    _FakeDirEntry("model.safetensors", is_file_result=True),
+                ]
+            )
+
+    def fake_scandir(path: str):
+        scandir_calls.append(path)
+        assert path == os.fspath(model_dir)
+        return _FakeScandir()
+
+    def fail_iterdir(self: Path):
+        if self == model_dir:
+            raise AssertionError("expected os.scandir single-pass directory scan")
+        return iter(())
+
+    def fail_glob(self: Path, pattern: str):
+        if self == model_dir:
+            raise AssertionError("expected os.scandir single-pass directory scan")
+        return []
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert _has_model_weight_files(model_dir) is True
+    assert scandir_calls == [os.fspath(model_dir)]
+
+
+
+def test_has_model_weight_files_returns_false_when_scandir_raises_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "unreadable-model"
+    model_dir.mkdir()
+
+    original_scandir = os.scandir
+
+    def fake_scandir(path: str):
+        if path == os.fspath(model_dir):
+            raise OSError("boom")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _has_model_weight_files(model_dir) is False
+
+
+
+def test_has_model_weight_files_skips_unreadable_candidate_entries_and_finds_later_valid_weight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "partially-unreadable-model"
+    model_dir.mkdir()
+    unreadable_weight = model_dir / "broken.safetensors"
+    unreadable_weight.write_bytes(b"broken")
+    valid_weight = model_dir / "model.npz"
+    valid_weight.write_bytes(b"weights")
+
+    class _FakeDirEntry:
+        def __init__(self, name: str, *, error: OSError | None = None, is_file_result: bool = False) -> None:
+            self.name = name
+            self._error = error
+            self._is_file_result = is_file_result
+
+        def is_file(self) -> bool:
+            if self._error is not None:
+                raise self._error
+            return self._is_file_result
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(
+                [
+                    _FakeDirEntry(unreadable_weight.name, error=OSError("boom")),
+                    _FakeDirEntry(valid_weight.name, is_file_result=True),
+                ]
+            )
+
+    def fake_scandir(path: str):
+        assert path == os.fspath(model_dir)
+        return _FakeScandir()
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _has_model_weight_files(model_dir) is True
+
+
+
+def test_registry_catalog_helper_fallback_paths(tmp_path: Path) -> None:
+    refs_dir = tmp_path / "models--org--demo" / "refs"
+    refs_dir.mkdir(parents=True)
+    unreadable_ref = refs_dir / "main"
+    unreadable_ref.write_text("abc123\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == unreadable_ref:
+            raise OSError("boom")
+        return original_read_text(self, *args, **kwargs)
+
+    assert _hf_cache_repo_id(Path("repo-without-prefix")) is None
+    assert _hf_cache_repo_id(Path("models--missing-suffix")) is None
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        assert _hf_cache_revision_map(refs_dir.parent) == {}
+        assert _hf_cache_revision(refs_dir.parent, "abc123") == "abc123"
+    finally:
+        monkeypatch.undo()
+    assert _is_hf_cache_snapshot_dir(tmp_path / "other-root", refs_dir) is False
+    assert _local_model_id(tmp_path / "other-root", refs_dir) == refs_dir.name
+
+
+def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    nested_ref = refs_dir / "heads" / "main"
+    nested_ref.parent.mkdir(parents=True, exist_ok=True)
+    nested_ref.write_text("abc123\n", encoding="utf-8")
+    stable_ref = refs_dir / "tags" / "stable"
+    stable_ref.parent.mkdir(parents=True, exist_ok=True)
+    stable_ref.write_text("def456\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+    read_paths: list[Path] = []
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        read_paths.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    revision_map = _hf_cache_revision_map(cache_repo_dir)
+
+    assert revision_map == {"abc123": "heads/main", "def456": "tags/stable"}
+    assert read_paths == [nested_ref, stable_ref]
+    assert _hf_cache_revision(cache_repo_dir, "abc123", revision_map=revision_map) == "heads/main"
+    assert _hf_cache_revision(cache_repo_dir, "missing", revision_map=revision_map) == "missing"
+
+
+
+def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    nested_ref = refs_dir / "heads" / "main"
+    nested_ref.parent.mkdir(parents=True, exist_ok=True)
+    nested_ref.write_text("abc123\n", encoding="utf-8")
+    stable_ref = refs_dir / "tags" / "stable"
+    stable_ref.parent.mkdir(parents=True, exist_ok=True)
+    stable_ref.write_text("def456\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("expected os.scandir-based recursive scan")
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {"abc123": "heads/main", "def456": "tags/stable"}
+    assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads"), os.fspath(refs_dir / "tags")]
+
+
+
+def test_hf_cache_revision_map_returns_empty_mapping_when_ref_enumeration_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+
+    original_scandir = os.scandir
+
+    def fake_scandir(path: str):
+        if path == os.fspath(refs_dir):
+            raise OSError("boom")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {}
+
+
+
+def test_hf_cache_revision_map_returns_empty_mapping_when_entry_type_probe_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+
+    class _BrokenDirEntry:
+        name = "broken"
+
+        def is_dir(self) -> bool:
+            raise OSError("boom")
+
+        def is_file(self) -> bool:
+            raise AssertionError("is_file should not be reached after is_dir failure")
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter([_BrokenDirEntry()])
+
+    original_scandir = os.scandir
+
+    def fake_scandir(path: str):
+        if path == os.fspath(refs_dir):
+            return _FakeScandir()
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {}
+
+
+
+def test_hf_cache_revision_map_skips_blank_snapshot_ids(tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    blank_ref = refs_dir / "heads" / "blank"
+    blank_ref.parent.mkdir(parents=True, exist_ok=True)
+    blank_ref.write_text("\n", encoding="utf-8")
+    valid_ref = refs_dir / "tags" / "stable"
+    valid_ref.parent.mkdir(parents=True, exist_ok=True)
+    valid_ref.write_text("def456\n", encoding="utf-8")
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {"def456": "tags/stable"}
+
+
+def test_apply_registry_identity_metadata_rejects_missing_required_parts() -> None:
+    model = common_pb2.ModelSpec()
+    model.ext["melix.registry_organization_id"] = "org"
+    model.ext["melix.registry_model_name"] = ""
+    model.ext["melix.registry_variant_id"] = "main"
+
+    assert _apply_registry_identity_metadata(model, relative_parts=("org", "model", "variant")) is True
+
+    broken = common_pb2.ModelSpec()
+    broken.ext["melix.registry_organization_id"] = "org"
+    broken.ext["melix.registry_model_name"] = ""
+    broken.ext["melix.registry_variant_id"] = ""
+    assert _apply_registry_identity_metadata(broken, relative_parts=("", "", "")) is False
+
+
+
+def test_text_lora_support_metadata_covers_moe_and_fallback_families() -> None:
+    mixtral = _text_lora_support_metadata("mixtral", moe_enabled=True, expert_count_source="config")
+    unknown = _text_lora_support_metadata("custom-family", moe_enabled=False, expert_count_source="")
+
+    assert mixtral["melix.lora.family_kind"] == "moe"
+    assert mixtral["melix.lora.default_target_preset"] == "attention"
+    assert unknown["melix.lora.family_kind"] == "advanced_text"
+    assert unknown["melix.lora.training_ready"] == "false"
+
+
+
+def test_embedding_identity_helpers_cover_directory_name_variants() -> None:
+    assert _infer_embedding_identity("models/mxbai-large")["family_id"] == "mxbai-embed"
+    assert _infer_embedding_identity("models/bge-m3")["family_id"] == "bge-m3"
+    assert _infer_embedding_identity("models/xlm-r-base")["family_id"] == "xlmr"
+    assert _infer_embedding_identity("models/bert-base")["family_id"] == "bert"
+    assert _default_embedding_family_for_backend("xlmr-v1", "bert") == "xlmr"
+    assert _default_embedding_family_for_backend("bert-v1", "not-known") == "bert"
+
+
+
+def test_catalog_overlay_registration_and_snapshot_payload(tmp_path: Path) -> None:
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(tmp_path)})
+    overlay = common_pb2.ModelSpec(model_id="overlay-model", model_path=str(tmp_path / "overlay"), model_kind="text")
+
+    registered = catalog.register_model(overlay)
+    payload = catalog.registry_snapshot_payload()
+
+    assert registered.model_id == "overlay-model"
+    assert catalog.get("overlay-model") is registered
+    assert "scanned_at_unix_ms" in payload
+    assert isinstance(payload["models"], list)
+    assert catalog.remove_model("overlay-model") is True
+    assert catalog.remove_model("overlay-model") is False
+
+
+
+def test_catalog_scan_helpers_skip_invalid_huggingface_and_unreadable_directories(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    invalid_repo = root / "models--missing-snapshots"
+    invalid_repo.mkdir(parents=True)
+    valid_repo = root / "models--mlx-community--Tiny"
+    snapshots_dir = valid_repo / "snapshots"
+    snapshots_dir.mkdir(parents=True)
+    (snapshots_dir / "note.txt").write_text("not a directory", encoding="utf-8")
+    unreadable_plain = root / "unreadable-plain"
+    unreadable_plain.mkdir(parents=True)
+    unreadable_manifest = root / "unreadable-manifest"
+    unreadable_manifest.mkdir(parents=True)
+
+    original_iterdir = Path.iterdir
+
+    def fake_iterdir(self: Path):
+        if self in {unreadable_plain, unreadable_manifest}:
+            raise OSError("boom")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
+    assert list(catalog._scan_huggingface_cache_models(root=root)) == []
+    assert unreadable_plain not in WorkerModelCatalog._iter_plain_local_model_dirs(root)
+    assert list(WorkerModelCatalog._iter_registry_manifest_paths(root)) == []
+
+
+def test_scan_huggingface_cache_models_uses_os_scandir_without_glob_or_iterdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    cache_repo_dir = root / "models--mlx-community--Tiny"
+    snapshots_dir = cache_repo_dir / "snapshots"
+    refs_dir = cache_repo_dir / "refs"
+    snapshot_dir = snapshots_dir / "abc123"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\ntags:\n- mlx\n---\n", encoding="utf-8")
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_glob(self: Path, pattern: str):
+        if self in {root, snapshots_dir}:
+            raise AssertionError("expected os.scandir-based Hugging Face cache traversal")
+        return []
+
+    def fail_iterdir(self: Path):
+        if self == snapshots_dir:
+            raise AssertionError("expected os.scandir-based Hugging Face cache traversal")
+        return iter(())
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    catalog = WorkerModelCatalog.__new__(WorkerModelCatalog)
+
+    models = list(catalog._scan_huggingface_cache_models(root=root))
+
+    assert [model.model_id for model in models] == ["mlx-community/Tiny"]
+    assert os.fspath(root) in scandir_calls
+    assert os.fspath(snapshots_dir) in scandir_calls
+
+
+def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_first_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    manifest_dir = root / "alpha-provider" / "AlphaModel" / "q4"
+    _write_registry_manifest(manifest_dir, model_id="alpha-provider/AlphaModel/q4")
+    plain_a = root / "beta-local-a"
+    plain_b = root / "beta-local-b"
+    _write_model_config(plain_a, {"model_type": "qwen3"})
+    _write_model_config(plain_b, {"model_type": "qwen3"})
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_iterdir(self: Path):
+        if self == root or self == root / "alpha-provider":
+            raise AssertionError("expected os.scandir-based directory traversal")
+        return iter(())
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert plain_dirs == [plain_a.resolve(), plain_b.resolve()]
+    assert manifest_paths == [manifest_dir.resolve() / "manifest.json"]
+    assert os.fspath(root.resolve()) in scandir_calls
+
+
+
+def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
+    text_model = WorkerModelCatalog.dev_text_model(
+        {
+            "MELIX_DEV_TEXT_FAMILY_ID": "llama",
+            "MELIX_DEV_TEXT_ROUTE_KIND": "python_text",
+        }
+    )
+    embedding_model = WorkerModelCatalog.dev_embedding_model(
+        {
+            "MELIX_DEV_EMBED_FAMILY_ID": "xlmr",
+        }
+    )
+    rerank_model = WorkerModelCatalog.dev_rerank_model(
+        {
+            "MELIX_DEV_RERANK_FAMILY_ID": "causal-lm",
+            "MELIX_DEV_RERANK_YES_NO_LABELS": "affirmative,negative",
+        }
+    )
+
+    assert text_model.ext["text_family_id"] == "llama"
+    assert text_model.ext["melix.capability.route_kind"] == "python_text"
+    assert embedding_model.ext["embedding_family_id"] == "xlmr"
+    assert embedding_model.ext["embedding_backend_id"] == "xlmr-v1"
+    assert rerank_model.ext["rerank_yes_no_labels"] == "affirmative,negative"
+
+
+
 def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(tmp_path: Path) -> None:
     home = tmp_path / "home"
     hf_cache = home / ".cache" / "huggingface" / "hub"
@@ -83,6 +619,119 @@ def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(t
     assert model.ext["melix.hf_revision"] == "main"
     assert model.ext["melix.model_path"] == str(snapshot_dir.resolve())
     assert "melix.registry_descriptor_path" not in model.ext
+
+
+def test_registry_snapshot_rescan_reuses_cached_json_payloads_for_unchanged_registry_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Tiny" / "4bit"
+    _write_registry_manifest(variant_dir, model_id="mlx-community/Tiny/4bit")
+    _write_model_config(variant_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    (variant_dir / "generation_config.json").write_text(
+        json.dumps({"temperature": 0.2, "top_p": 0.9}) + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    manifest_path = variant_dir / "manifest.json"
+    config_path = variant_dir / "config.json"
+    generation_path = variant_dir / "generation_config.json"
+    original_read_text = Path.read_text
+    read_counts: dict[Path, int] = {
+        manifest_path: 0,
+        config_path: 0,
+        generation_path: 0,
+    }
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self in read_counts:
+            read_counts[self] += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    catalog.registry_snapshot(rescan=True)
+    catalog.registry_snapshot(rescan=True)
+
+    assert read_counts == {
+        manifest_path: 0,
+        config_path: 0,
+        generation_path: 0,
+    }
+
+
+def test_registry_snapshot_rescan_invalidates_cached_manifest_payload_when_file_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Tiny" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Tiny/4bit",
+        max_context=8192,
+    )
+    _write_model_config(variant_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    manifest_path = variant_dir / "manifest.json"
+    original_read_text = Path.read_text
+    manifest_reads = 0
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal manifest_reads
+        if self == manifest_path:
+            manifest_reads += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Tiny/4bit",
+        max_context=16384,
+    )
+
+    snapshot = catalog.registry_snapshot(rescan=True)
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert discovered["mlx-community/Tiny/4bit"].max_context == 16384
+    assert manifest_reads == 1
+
+
+def test_scan_huggingface_cache_models_reads_ref_files_once_per_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    cache_repo_dir = root / "models--mlx-community--Tiny"
+    refs_dir = cache_repo_dir / "refs" / "heads"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_ids = ("abc123", "def456")
+    for snapshot_id in snapshot_ids:
+        snapshot_dir = cache_repo_dir / "snapshots" / snapshot_id
+        _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+        _write_weights(snapshot_dir)
+        (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\ntags:\n- mlx\n---\n", encoding="utf-8")
+        (refs_dir / snapshot_id).write_text(snapshot_id + "\n", encoding="utf-8")
+
+    from worker.model_registry import catalog as catalog_module
+
+    original_revision_map = catalog_module._hf_cache_revision_map
+    revision_map_calls: list[Path] = []
+
+    def tracking_revision_map(cache_repo_path: Path) -> dict[str, str]:
+        revision_map_calls.append(cache_repo_path)
+        return original_revision_map(cache_repo_path)
+
+    monkeypatch.setattr(catalog_module, "_hf_cache_revision_map", tracking_revision_map)
+
+    catalog = WorkerModelCatalog.__new__(WorkerModelCatalog)
+    models = catalog._scan_huggingface_cache_models(root=root)
+
+    assert [model.revision for model in models] == ["heads/abc123", "heads/def456"]
+    assert revision_map_calls == [cache_repo_dir]
 
 
 def test_registry_snapshot_drops_huggingface_cache_model_after_snapshot_deletion(tmp_path: Path) -> None:

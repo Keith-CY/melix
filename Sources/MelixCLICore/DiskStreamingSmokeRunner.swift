@@ -112,7 +112,8 @@ public struct DiskStreamingSmokeRunner: Sendable {
                     repeats: 1,
                     cacheProfile: "cold",
                     reasoningMode: "off",
-                    structuredOutputMode: "off"
+                    structuredOutputMode: "off",
+                    parameters: baselineBenchParameters(modelID: modelID)
                 )
             )
 
@@ -208,6 +209,15 @@ public struct DiskStreamingSmokeRunner: Sendable {
         }
         throw DiskStreamingSmokeRunnerError.missingModel(modelID)
     }
+}
+
+private func baselineBenchParameters(modelID: String) -> [String: String] {
+    // Melix dev aliases are repository-owned deterministic fixtures for smoke tests.
+    // User-imported and external models should keep the real runtime path unless explicitly opted in.
+    guard modelID.hasPrefix("melix-dev-") else {
+        return [:]
+    }
+    return ["allow_deterministic_runtime": "true"]
 }
 
 func resolvedUnsupportedCacheCompatibility(

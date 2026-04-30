@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,125 @@ def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     assert len(first.prompt_batches) == 2
     assert first.prompt_batches[0] == "Say hi.\n\nSay bye."
     assert first.metadata()["dataset_uri"].startswith("hf://HuggingFaceH4/ultrachat_200k")
+
+
+def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"prompt": "Say hi."}),
+                "",
+                json.dumps(["ignored", "list"]),
+                json.dumps({"prompt": "Say bye."}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == rows_path:
+            raise AssertionError("rows loader should stream from disk instead of calling read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    assert benchmark_suites._load_materialized_rows(rows_path) == [
+        {"prompt": "Say hi."},
+        {"prompt": "Say bye."},
+    ]
+
+
+def test_load_materialized_rows_respects_limit(tmp_path: Path) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"prompt": "prompt-1"}),
+                json.dumps({"prompt": "prompt-2"}),
+                json.dumps({"prompt": "prompt-3"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert benchmark_suites._load_materialized_rows(rows_path, limit=2) == [
+        {"prompt": "prompt-1"},
+        {"prompt": "prompt-2"},
+    ]
+
+
+def test_benchmark_suite_catalog_reuses_in_memory_resolved_suite_for_identical_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetcher = FakeBenchmarkSuiteFetcher()
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
+
+    first = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    def fail_materialization(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("identical suite resolution should reuse the in-memory result")
+
+    monkeypatch.setattr(benchmark_suites, "_materialize_benchmark_suite", fail_materialization)
+
+    second = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.prompt_batches == first.prompt_batches
+    assert second.cases == first.cases
+
+
+def test_benchmark_suite_catalog_cache_hit_reads_only_requested_prefix(tmp_path: Path) -> None:
+    fetcher = FakeBenchmarkSuiteFetcher()
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
+
+    first = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    assert first.cache_hit is False
+
+    package_path = Path(first.materialized_package_path)
+    rows_path = package_path / "rows.jsonl"
+    original_rows = rows_path.read_text(encoding="utf-8").rstrip("\n").splitlines()
+    extra_rows = [json.dumps({"messages": [{"role": "user", "content": f"extra-{index}"}]}) for index in range(8, 20)]
+    rows_path.write_text("\n".join([*original_rows, *extra_rows]) + "\n", encoding="utf-8")
+
+    second = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "1", "batch_factor": "1"},
+    )
+
+    assert second.cache_hit is True
+    assert second.prompt_batches == ("Say hi.",)
+    assert fetcher.calls == [
+        (
+            "rows",
+            {
+                "dataset": "HuggingFaceH4/ultrachat_200k",
+                "config": "default",
+                "split": "train_sft",
+                "offset": "0",
+                "length": "8",
+            },
+        )
+    ]
 
 
 def test_benchmark_suite_catalog_raises_typed_error_for_unknown_suite(tmp_path: Path) -> None:

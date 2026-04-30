@@ -36,6 +36,15 @@ class PreparedVideoInput:
     sha256_hex: str
 
 
+@dataclass(frozen=True)
+class ParsedVideoReference:
+    raw: str
+    scheme: str
+    decoded_path: str
+    path_name: str
+    path_suffix: str
+
+
 def prepare_video_input(part) -> PreparedVideoInput:
     media = getattr(part, "media", None)
     mime_type = str(getattr(media, "mime_type", "") or "").strip().lower()
@@ -69,9 +78,12 @@ def prepare_video_input(part) -> PreparedVideoInput:
     uri = str(getattr(part, "video_uri", "") or "").strip()
     if not uri:
         raise VideoPreprocessError("No video input provided.")
-    _validate_video_uri(uri)
-    resolved_format = _resolve_video_format(format_name, mime_type, filename, uri)
-    resolved_filename = filename or _filename_from_reference(uri) or f"remote-video.{resolved_format}"
+    parsed_reference = _parse_video_reference(uri)
+    _validate_video_uri(parsed_reference)
+    resolved_format = _resolve_video_format(format_name, mime_type, filename, parsed_reference)
+    resolved_filename = (
+        filename or _filename_from_reference(parsed_reference) or f"remote-video.{resolved_format}"
+    )
     return PreparedVideoInput(
         source_kind="uri",
         reference=uri,
@@ -117,17 +129,36 @@ def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms:
         raise VideoPreprocessError("end_ms must be less than or equal to duration_ms.")
 
 
-def _validate_video_uri(uri: str) -> None:
-    parsed = urlparse(uri)
-    if parsed.scheme in {"", "file", "http", "https"}:
+def _parse_video_reference(reference: str) -> ParsedVideoReference:
+    parsed = urlparse(reference)
+    if parsed.scheme in {"http", "https", "file"}:
+        decoded_path = unquote(parsed.path)
+        path = Path(decoded_path)
+    else:
+        decoded_path = reference
+        path = Path(reference)
+    return ParsedVideoReference(
+        raw=reference,
+        scheme=parsed.scheme,
+        decoded_path=decoded_path,
+        path_name=path.name,
+        path_suffix=path.suffix.lstrip(".").lower(),
+    )
+
+
+def _validate_video_uri(reference: str | ParsedVideoReference) -> None:
+    parsed_reference = (
+        reference if isinstance(reference, ParsedVideoReference) else _parse_video_reference(reference)
+    )
+    if parsed_reference.scheme in {"", "file", "http", "https"}:
         return
-    raise VideoPreprocessError(f"Unsupported video URI scheme: {parsed.scheme}.")
+    raise VideoPreprocessError(f"Unsupported video URI scheme: {parsed_reference.scheme}.")
 
 
 def _resolve_video_format(
     format_name: str,
     mime_type: str,
-    *candidates: str,
+    *candidates: str | ParsedVideoReference,
 ) -> str:
     if format_name:
         if format_name in SUPPORTED_VIDEO_FORMATS:
@@ -145,23 +176,21 @@ def _resolve_video_format(
     raise VideoPreprocessError("input_video.format or input_video.mime_type is required.")
 
 
-def _infer_format(candidate: str) -> str:
-    trimmed = candidate.strip()
-    if not trimmed:
+def _infer_format(candidate: str | ParsedVideoReference) -> str:
+    parsed_reference = (
+        candidate if isinstance(candidate, ParsedVideoReference) else _parse_video_reference(candidate.strip())
+    )
+    if not parsed_reference.raw:
         return ""
-    parsed = urlparse(trimmed)
-    if parsed.scheme in {"http", "https", "file"}:
-        suffix = Path(unquote(parsed.path)).suffix.lstrip(".").lower()
-    else:
-        suffix = Path(trimmed).suffix.lstrip(".").lower()
+    suffix = parsed_reference.path_suffix
     return suffix if suffix in SUPPORTED_VIDEO_FORMATS else ""
 
 
-def _filename_from_reference(reference: str) -> str:
-    parsed = urlparse(reference)
-    if parsed.scheme in {"http", "https", "file"}:
-        return Path(unquote(parsed.path)).name
-    return Path(reference).name
+def _filename_from_reference(reference: str | ParsedVideoReference) -> str:
+    parsed_reference = (
+        reference if isinstance(reference, ParsedVideoReference) else _parse_video_reference(reference)
+    )
+    return parsed_reference.path_name
 
 
 def _uri_identity_hash(

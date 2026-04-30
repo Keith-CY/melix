@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from threading import Event
+from threading import get_ident
 from pathlib import Path
 import types
 import sys
@@ -11,6 +12,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_registry.catalog import WorkerModelCatalog
+from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
 
 
@@ -167,7 +169,7 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
             "sampler": sampler,
         }
         yield FakeGenerationResponse(text="Hel", prompt_tokens=12, generation_tokens=1)
-        yield FakeGenerationResponse(
+        tail = FakeGenerationResponse(
             text="lo",
             prompt_tokens=12,
             generation_tokens=2,
@@ -176,6 +178,12 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
             generation_tps=123.0,
             peak_memory=1.5,
         )
+        tail.speculative_acceptance_rate = 0.8
+        tail.speculative_rejected_tokens = 3
+        tail.speculative_draft_model_configured = True
+        tail.dflash_enabled = True
+        tail.dflash_rollback_count = 2
+        yield tail
 
     backend = AutoMLXBackend(
         load_fn=fake_load,
@@ -215,6 +223,67 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].prompt_tokens == 12
     assert chunks[-1].completion_tokens == 2
     assert chunks[-1].generation_tps == 123.0
+    assert chunks[-1].speculative_acceptance_rate == 0.8
+    assert chunks[-1].speculative_rejected_tokens == 3
+    assert chunks[-1].speculative_draft_model_configured is True
+    assert chunks[-1].dflash_enabled is True
+    assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_text_runtime_load_and_generation_run_on_mlx_executor_thread() -> None:
+    main_thread_id = get_ident()
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load_thread_id"] = get_ident()
+        seen["load"] = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        _ = temp
+        _ = top_p
+        _ = top_k
+        return "sampler"
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler):
+        _ = model
+        _ = tokenizer
+        _ = prompt
+        _ = max_tokens
+        _ = sampler
+        seen["stream_thread_id"] = get_ident()
+        yield FakeGenerationResponse(text="owned", prompt_tokens=4, generation_tokens=1, finish_reason="stop")
+
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    runtime = MLXTextRuntime(
+        backend=AutoMLXBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            sampler_factory=fake_sampler_factory,
+        ),
+        executor=executor,
+    )
+    try:
+        model_spec = WorkerModelCatalog.dev_text_model(
+            environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"}
+        )
+        loaded_model = runtime.load_model(model_spec)
+        chunks = list(
+            runtime.generate_tokens(
+                loaded_model,
+                "prompt",
+                common_pb2.SamplingConfig(max_output_tokens=4),
+                Event(),
+            )
+        )
+        executor_thread_id = executor.run(get_ident)
+    finally:
+        executor.shutdown()
+
+    assert [chunk.text for chunk in chunks] == ["owned"]
+    assert seen["load_thread_id"] == executor_thread_id
+    assert seen["stream_thread_id"] == executor_thread_id
+    assert executor_thread_id != main_thread_id
 
 
 def test_adapter_backed_contract_exposes_typed_fields_from_ext_metadata() -> None:
