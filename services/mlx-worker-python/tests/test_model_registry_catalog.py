@@ -297,22 +297,107 @@ def test_hf_cache_revision_map_reads_refs_once_and_preserves_nested_ref_names(mo
     assert _hf_cache_revision(cache_repo_dir, "missing", revision_map=revision_map) == "missing"
 
 
+
+def test_hf_cache_revision_map_uses_recursive_scandir_without_rglob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    nested_ref = refs_dir / "heads" / "main"
+    nested_ref.parent.mkdir(parents=True, exist_ok=True)
+    nested_ref.write_text("abc123\n", encoding="utf-8")
+    stable_ref = refs_dir / "tags" / "stable"
+    stable_ref.parent.mkdir(parents=True, exist_ok=True)
+    stable_ref.write_text("def456\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("expected os.scandir-based recursive scan")
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {"abc123": "heads/main", "def456": "tags/stable"}
+    assert scandir_calls == [os.fspath(refs_dir), os.fspath(refs_dir / "heads"), os.fspath(refs_dir / "tags")]
+
+
+
 def test_hf_cache_revision_map_returns_empty_mapping_when_ref_enumeration_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cache_repo_dir = tmp_path / "models--org--demo"
     refs_dir = cache_repo_dir / "refs"
     refs_dir.mkdir(parents=True, exist_ok=True)
 
-    original_rglob = Path.rglob
+    original_scandir = os.scandir
 
-    def fake_rglob(self: Path, pattern: str):
-        if self == refs_dir:
+    def fake_scandir(path: str):
+        if path == os.fspath(refs_dir):
             raise OSError("boom")
-        return original_rglob(self, pattern)
+        return original_scandir(path)
 
-    monkeypatch.setattr(Path, "rglob", fake_rglob)
+    monkeypatch.setattr(os, "scandir", fake_scandir)
 
     assert _hf_cache_revision_map(cache_repo_dir) == {}
 
+
+
+def test_hf_cache_revision_map_returns_empty_mapping_when_entry_type_probe_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+
+    class _BrokenDirEntry:
+        name = "broken"
+
+        def is_dir(self) -> bool:
+            raise OSError("boom")
+
+        def is_file(self) -> bool:
+            raise AssertionError("is_file should not be reached after is_dir failure")
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter([_BrokenDirEntry()])
+
+    original_scandir = os.scandir
+
+    def fake_scandir(path: str):
+        if path == os.fspath(refs_dir):
+            return _FakeScandir()
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {}
+
+
+
+def test_hf_cache_revision_map_skips_blank_snapshot_ids(tmp_path: Path) -> None:
+    cache_repo_dir = tmp_path / "models--org--demo"
+    refs_dir = cache_repo_dir / "refs"
+    blank_ref = refs_dir / "heads" / "blank"
+    blank_ref.parent.mkdir(parents=True, exist_ok=True)
+    blank_ref.write_text("\n", encoding="utf-8")
+    valid_ref = refs_dir / "tags" / "stable"
+    valid_ref.parent.mkdir(parents=True, exist_ok=True)
+    valid_ref.write_text("def456\n", encoding="utf-8")
+
+    assert _hf_cache_revision_map(cache_repo_dir) == {"def456": "tags/stable"}
 
 
 def test_apply_registry_identity_metadata_rejects_missing_required_parts() -> None:
