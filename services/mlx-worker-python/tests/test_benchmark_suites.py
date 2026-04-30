@@ -146,6 +146,36 @@ def test_load_materialized_rows_respects_limit(tmp_path: Path) -> None:
     ]
 
 
+def test_benchmark_suite_catalog_reuses_in_memory_resolved_suite_for_identical_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetcher = FakeBenchmarkSuiteFetcher()
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
+
+    first = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    def fail_materialization(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("identical suite resolution should reuse the in-memory result")
+
+    monkeypatch.setattr(benchmark_suites, "_materialize_benchmark_suite", fail_materialization)
+
+    second = catalog.resolve_suite(
+        "smoke",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "2", "batch_factor": "2"},
+    )
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.prompt_batches == first.prompt_batches
+    assert second.cases == first.cases
+
+
 def test_benchmark_suite_catalog_cache_hit_reads_only_requested_prefix(tmp_path: Path) -> None:
     fetcher = FakeBenchmarkSuiteFetcher()
     catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fetcher)
