@@ -230,7 +230,7 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
         "lower_is_better"
     )
     assert rows_by_metric[f"{label}.dflash_rollback_count_sum"]["status"] == "warning"
-    assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "not_comparable"
+    assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "ok"
     assert report["summary"]["warning_count"] == 4
 
 
@@ -463,6 +463,64 @@ def test_report_loader_accepts_export_bundle_directory_fallback(tmp_path: Path) 
     payload = load_report_input(bundle_dir)
 
     assert payload["export_schema_version"] == "melix.benchmark_export.v1"
+
+
+def test_neutral_direction_ok_when_equal_not_comparable_when_changed() -> None:
+    baseline = {
+        "benchmark_context_rows": [
+            {
+                "suite": "smoke",
+                "context_length": 2,
+                "generation_length": 8,
+                "batch_size": 1,
+                "tokens_in": 2,
+                "tokens_out": 1,
+                "first_token_index": 1,
+                "dflash_block_size": 0,
+                "dflash_enabled": False,
+                "dflash_target_hidden_layers": 0,
+                "speculative_draft_model_configured": False,
+                "speculative_num_draft_tokens": 0,
+            }
+        ]
+    }
+    # Candidate identical to baseline — every neutral metric should be ok
+    report_equal = build_benchmark_evaluation_report(baseline=baseline, candidate=baseline)
+    rows = {row["metric"]: row for row in report_equal["rows"]}
+    label = "bench.context.smoke.ctx2.gen8.b1"
+    assert rows[f"{label}.tokens_in_mean"]["status"] == "ok"
+    assert rows[f"{label}.tokens_out_mean"]["status"] == "ok"
+    assert rows[f"{label}.first_token_index_mean"]["status"] == "ok"
+    assert rows[f"{label}.dflash_block_size_mean"]["status"] == "ok"
+    assert rows[f"{label}.dflash_enabled_rate"]["status"] == "ok"
+    assert rows[f"{label}.dflash_target_hidden_layers_mean"]["status"] == "ok"
+    assert rows[f"{label}.speculative_draft_model_configured_rate"]["status"] == "ok"
+    assert rows[f"{label}.speculative_num_draft_tokens_mean"]["status"] == "ok"
+    assert report_equal["summary"]["not_comparable_count"] == 0
+
+    # Candidate with changed neutral metric — should be not_comparable
+    candidate_changed = {
+        "benchmark_context_rows": [
+            {
+                "suite": "smoke",
+                "context_length": 2,
+                "generation_length": 8,
+                "batch_size": 1,
+                "tokens_in": 4,
+                "tokens_out": 1,
+                "first_token_index": 1,
+                "dflash_block_size": 0,
+                "dflash_enabled": False,
+                "dflash_target_hidden_layers": 0,
+                "speculative_draft_model_configured": False,
+                "speculative_num_draft_tokens": 0,
+            }
+        ]
+    }
+    report_changed = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate_changed)
+    rows_changed = {row["metric"]: row for row in report_changed["rows"]}
+    assert rows_changed[f"{label}.tokens_in_mean"]["status"] == "not_comparable"
+    assert report_changed["summary"]["not_comparable_count"] == 1
 
 
 def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:

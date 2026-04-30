@@ -295,7 +295,10 @@ def _build_metric_row(
         }
     delta = candidate_number - baseline_number
     delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
-    status = "not_comparable" if direction == "neutral" else "ok"
+    if direction == "neutral":
+        status = "ok" if delta == 0 else "not_comparable"
+    else:
+        status = "ok"
     if direction == "lower_is_better" and (
         (delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT)
         or (baseline_number == 0 and candidate_number > baseline_number)
