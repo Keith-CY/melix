@@ -229,21 +229,16 @@ class UploadReceiptPipeline:
             if descriptor.artifact_kind == "converted_model_bundle":
                 manifest_payload["target_format"] = str(source_manifest.get("target_format", ""))
                 manifest_payload["conversion_backend"] = str(source_manifest.get("conversion_backend", ""))
+            if descriptor.schema_version == "melix.derived_text_model.v1":
+                manifest_payload["derived_model_id"] = str(source_manifest.get("derived_model_id", ""))
+                manifest_payload["source_activation_job_id"] = str(source_manifest.get("job_id", ""))
+                manifest_payload["activation_mode"] = str(source_manifest.get("activation_mode", ""))
+            if export_artifact_kind == "merged_export":
                 if processor_config_files:
                     manifest_payload["distribution_contract"] = "merged_multimodal"
                     manifest_payload["processor_config_files"] = processor_config_files
                 else:
                     manifest_payload["distribution_contract"] = "merged_model"
-            if descriptor.schema_version == "melix.derived_text_model.v1":
-                manifest_payload["derived_model_id"] = str(source_manifest.get("derived_model_id", ""))
-                manifest_payload["source_activation_job_id"] = str(source_manifest.get("job_id", ""))
-                manifest_payload["activation_mode"] = str(source_manifest.get("activation_mode", ""))
-                if export_artifact_kind == "merged_export":
-                    if processor_config_files:
-                        manifest_payload["distribution_contract"] = "merged_multimodal"
-                        manifest_payload["processor_config_files"] = processor_config_files
-                    else:
-                        manifest_payload["distribution_contract"] = "merged_model"
 
         manifest_bytes = 0
         artifact_bytes = 0
