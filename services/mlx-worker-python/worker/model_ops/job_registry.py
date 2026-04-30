@@ -527,11 +527,18 @@ class ModelOpsJobRegistry:
             if export_artifact_kind != "merged_export":
                 continue
             raw_lineage = manifest.get("parent_lineage")
+            raw_processor_config_files = manifest.get("processor_config_files")
             publish = {
                 "job_id": job["job_id"],
                 "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ""))),
                 "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
                 "export_artifact_kind": export_artifact_kind,
+                "distribution_contract": str(manifest.get("distribution_contract") or ""),
+                "processor_config_files": (
+                    list(raw_processor_config_files)
+                    if isinstance(raw_processor_config_files, list)
+                    else []
+                ),
                 "parent_lineage": raw_lineage if isinstance(raw_lineage, dict) else {},
             }
             parent_lineage = publish["parent_lineage"]
@@ -582,6 +589,8 @@ class ModelOpsJobRegistry:
                     "publish_backend": publish["publish_backend"] if publish else "",
                     "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
                     "publish_parent_lineage": publish["parent_lineage"] if publish else {},
+                    "distribution_contract": publish["distribution_contract"] if publish else "",
+                    "processor_config_files": publish["processor_config_files"] if publish else [],
                     "published_state": "published" if publish else "not_published",
                     "status": "activated",
                 }
@@ -670,6 +679,12 @@ class ModelOpsJobRegistry:
             published_files = (
                 list(raw_published_files) if isinstance(raw_published_files, list) else []
             )
+            raw_processor_config_files = manifest.get("processor_config_files")
+            processor_config_files = (
+                list(raw_processor_config_files)
+                if isinstance(raw_processor_config_files, list)
+                else []
+            )
             publishes.append(
                 {
                     "job_id": job["job_id"],
@@ -678,6 +693,7 @@ class ModelOpsJobRegistry:
                     "published_url": published_url,
                     "published_ref": str(manifest.get("published_ref") or ""),
                     "published_files": published_files,
+                    "processor_config_files": processor_config_files,
                     "publish_backend": str(
                         manifest.get("upload_backend")
                         or manifest.get("publish_backend")

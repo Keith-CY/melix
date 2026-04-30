@@ -5,6 +5,45 @@ import logging
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
 
+def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
+    think_prefixes = tuple(
+        RequestStreamAssembler._THINK_OPEN[:index]
+        for index in range(1, len(RequestStreamAssembler._THINK_OPEN))
+    )
+    tool_prefixes = tuple(
+        RequestStreamAssembler._TOOL_OPEN[:index]
+        for index in range(1, len(RequestStreamAssembler._TOOL_OPEN))
+    )
+
+    tool_enabled = RequestStreamAssembler(
+        request_id="req-prefixes-tools",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    tool_disabled = RequestStreamAssembler(
+        request_id="req-prefixes-think-only",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    assert tool_enabled._structural_tag_prefixes == think_prefixes + tool_prefixes
+    assert tool_disabled._structural_tag_prefixes == think_prefixes
+
+
+def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-tool-first",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = '<tool_call>{"name":"search","arguments":{}}</tool_call><think>later</think>'
+
+    assert assembler._next_structural_tag() == (RequestStreamAssembler._TOOL_OPEN, 0)
+
+
 def test_stream_assembler_instances_do_not_share_request_state() -> None:
     assemblers = [
         RequestStreamAssembler(
@@ -198,6 +237,26 @@ def test_split_structural_tag_prefix_longer_than_one_character_is_not_public_con
     assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["hidden"]
 
 
+def test_split_tool_tag_prefix_longer_than_one_character_is_not_public_content() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-split-tool-tag-prefix",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="alpha<tool_ca")) == []
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text='alpha<tool_call>{"name":"search","arguments":{"q":"alpha"}}</tool_call>'
+        )
+    )
+
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["alpha"]
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+    assert [call.tool_name for call in calls] == ["search"]
+
+
 def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-truncated-reasoning",
@@ -301,3 +360,14 @@ def test_repeated_tool_calls_with_distinct_call_ids_are_emitted() -> None:
     assert [call.call_id for call in calls] == ["call-1", "call-2"]
     assert [call.tool_name for call in calls] == ["search", "search"]
     assert assembler.completed().metrics["duplicate_tool_delta_count"] == 0
+
+
+def test_first_json_delimiter_prefers_array_when_it_appears_first() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-array-first",
+        reasoning_enabled=False,
+        structured_output_mode="json_schema",
+        tool_parser_mode="",
+    )
+
+    assert assembler._first_json_delimiter("prefix [1, 2]{\"later\": true}") == 7

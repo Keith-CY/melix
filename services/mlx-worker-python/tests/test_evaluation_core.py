@@ -385,6 +385,77 @@ def test_plan_evaluation_samples_preserves_order_without_shuffle() -> None:
     ]
 
 
+def test_run_local_suite_only_loads_needed_prefix_without_shuffle(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev-prefix",
+        suite_id="mmlu",
+        samples=(
+            {"id": "1", "prompt": "2+2?", "expected": "4"},
+            {"id": "2", "prompt": "3+3?", "expected": "6"},
+            {"id": "3", "prompt": "4+4?", "expected": "8"},
+        ),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"}\n'
+        '{"id": "2", "input": {"text": "3+3?"}, "target": "6"}\n'
+        '{"id": "3", "input": {"text": "4+4?"}, "target": "8"\n',
+        encoding="utf-8",
+    )
+
+    backend = ScriptedEvaluationBackend(("Answer: 6",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=1,
+        seed=0,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert [sample.input_text for sample in run.samples] == ["3+3?"]
+    assert [sample.extracted_result for sample in run.samples] == ["6"]
+
+
+def test_run_local_suite_skips_dataset_parsing_for_zero_sample_request(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev-zero",
+        suite_id="mmlu",
+        samples=(({"id": "1", "prompt": "2+2?", "expected": "4"}),),
+    )
+    (dataset_root / "samples.jsonl").write_text(
+        '{"id": "1", "input": {"text": "2+2?"}, "target": "4"\n',
+        encoding="utf-8",
+    )
+
+    backend = ScriptedEvaluationBackend(())
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=0,
+        few_shot=0,
+        seed=7,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert run.samples == ()
+
+
 def test_run_local_suite_reuses_combined_sample_list_for_validators(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

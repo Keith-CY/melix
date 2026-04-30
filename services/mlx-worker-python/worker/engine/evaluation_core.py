@@ -118,7 +118,13 @@ class EvaluationCore:
         self._registry = registry
 
     @staticmethod
-    def _load_dataset_samples(samples_path: Path) -> list[dict[str, Any]]:
+    def _load_dataset_samples(
+        samples_path: Path,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit <= 0:
+            return []
         samples: list[dict[str, Any]] = []
         with samples_path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
@@ -126,6 +132,8 @@ class EvaluationCore:
                 if not line:
                     continue
                 samples.append(json.loads(line))
+                if limit is not None and len(samples) >= limit:
+                    break
         return samples
 
     def run_local_suite(
@@ -149,7 +157,6 @@ class EvaluationCore:
                 f"Dataset suite mismatch: expected {suite_id}, found {manifest['suite_id']}"
             )
 
-        samples = EvaluationCore._load_dataset_samples(dataset_root / "samples.jsonl")
         score_name, default_scoring_mode = _SUITE_SCORE_MODES.get(
             suite_id,
             ("typed_score_mean", str(manifest.get("scoring_mode") or "normalized_exact_match")),
@@ -196,6 +203,15 @@ class EvaluationCore:
             explicit_value=seed,
             parameters=parameters,
             key="seed",
+        )
+        prefix_sample_limit = self._dataset_sample_load_limit(
+            sample_size=sample_size,
+            few_shot=resolved_few_shot,
+            seed=resolved_seed,
+        )
+        samples = EvaluationCore._load_dataset_samples(
+            dataset_root / "samples.jsonl",
+            limit=prefix_sample_limit,
         )
         requested_scoring_mode = (
             scoring_mode
@@ -989,6 +1005,17 @@ class EvaluationCore:
         if normalized and normalized not in _CODE_EXEC_DISABLED_POLICIES:
             raise ValueError(f"Unsupported code_exec_policy '{normalized}' for suite {suite_id}")
         return normalized or "disabled"
+
+    @staticmethod
+    def _dataset_sample_load_limit(*, sample_size: int, few_shot: int, seed: int) -> int | None:
+        bounded_sample_size = max(sample_size, 0)
+        bounded_few_shot = max(few_shot, 0)
+        total_requested = bounded_sample_size + bounded_few_shot
+        if total_requested == 0:
+            return 0
+        if seed <= 0:
+            return total_requested
+        return None
 
     @staticmethod
     def _plan_evaluation_samples(
