@@ -374,6 +374,7 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
     assert built.manifest_payload["conversion_template"] == "existing_package"
     assert built.manifest_payload["preview_samples"] == [{"text": "alpha beta"}]
 
+
     with pytest.raises(ModelOperationError) as missing_uri:
         training_dataset_module._resolve_dataset_build_source(
             {},
@@ -602,3 +603,91 @@ def test_resolve_dataset_build_source_reuses_hf_package_sample_lists(
     assert resolved["samples"] is normalized_samples
     assert resolved["validation_samples"] is normalized_validation_samples
     assert resolved["hf_metadata"]["hf_valid_split"] == "validation"
+
+
+def test_build_training_dataset_artifact_streams_local_jsonl_without_bulk_row_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "alpaca-streamed.jsonl",
+        [
+            {
+                "instruction": "Translate to French.",
+                "input": "Hello world",
+                "output": "Bonjour le monde",
+            },
+            {
+                "instruction": "Summarize.",
+                "input": "A short article",
+                "output": "A concise summary",
+            },
+        ],
+    )
+
+    def fail_read_rows(path: Path, *, sample_limit: int) -> list[dict[str, object]]:
+        raise AssertionError(f"bulk row reader should not be used for {path} ({sample_limit=})")
+
+    def fail_convert_rows(rows: list[dict[str, object]], template: str) -> tuple[str, list[dict[str, object]]]:
+        raise AssertionError(f"bulk row converter should not be used for {template}")
+
+    monkeypatch.setattr(training_dataset_module, "_read_local_jsonl_rows", fail_read_rows)
+    monkeypatch.setattr(training_dataset_module, "_convert_local_rows", fail_convert_rows)
+
+    built = build_training_dataset_artifact(
+        {
+            "dataset_uri": str(dataset_path),
+            "template": "auto",
+            "preview_count": "1",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "streamed-package",
+        source_model_id="melix-dev-text",
+    )
+
+    assert built.manifest_payload["source_kind"] == "local_path"
+    assert built.manifest_payload["conversion_template"] == "alpaca"
+    assert built.manifest_payload["sample_count"] == 2
+    assert built.manifest_payload["preview_samples"] == [
+        {
+            "prompt": "Translate to French.\n\nInput:\nHello world",
+            "completion": "Bonjour le monde",
+        }
+    ]
+    assert (built.package_path / "samples.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "Translate to French.\\n\\nInput:\\nHello world", "completion": "Bonjour le monde"}\n'
+        '{"prompt": "Summarize.\\n\\nInput:\\nA short article", "completion": "A concise summary"}\n'
+    )
+
+
+def test_local_jsonl_helpers_cover_streaming_and_single_row_conversions(tmp_path: Path) -> None:
+    dataset_path = _write_jsonl(
+        tmp_path / "helpers.jsonl",
+        [
+            {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]},
+            {"prompt": "Question", "completion": "Answer"},
+        ],
+    )
+
+    assert training_dataset_module._read_local_jsonl_rows(dataset_path, sample_limit=0) == [
+        {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]},
+        {"prompt": "Question", "completion": "Answer"},
+    ]
+    assert training_dataset_module._convert_local_row(
+        {"messages": [{"role": "user", "content": "Hi"}]},
+        "chat_messages",
+    ) == {"messages": [{"role": "user", "content": "Hi"}]}
+    assert training_dataset_module._convert_local_row(
+        {"prompt": "Question", "completion": "Answer"},
+        "prompt_completion",
+    ) == {"prompt": "Question", "completion": "Answer"}
+
+    empty_jsonl = tmp_path / "empty-stream.jsonl"
+    empty_jsonl.write_text("\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError) as empty_exc:
+        training_dataset_module._resolve_local_training_samples(
+            empty_jsonl,
+            template="auto",
+            sample_limit=0,
+        )
+    assert empty_exc.value.code == "invalid_dataset_source"
