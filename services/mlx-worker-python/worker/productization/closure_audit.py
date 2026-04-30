@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -395,13 +396,12 @@ def _iter_probe_text_files(root: Path) -> list[Path]:
             continue
         if not candidate.exists():
             continue
-        for path in candidate.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix not in _TEXT_FILE_SUFFIXES:
-                continue
-            files.append(path)
-    return files
+        for current_root, _, filenames in os.walk(candidate):
+            for name in filenames:
+                if name.endswith(tuple(_TEXT_FILE_SUFFIXES)):
+                    files.append(Path(current_root) / name)
+    return sorted(files)
+
 
 
 def _evidence_sources_for_probe_gap(root: Path) -> tuple[str, ...]:
