@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from contextlib import ExitStack
 from dataclasses import dataclass
 from dataclasses import replace
 import os
@@ -95,13 +96,21 @@ class BuiltTrainingDatasetArtifact:
 
 
 def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as handle:
+    _write_duplicate_jsonl_rows((path,), rows)
+
+
+def _write_duplicate_jsonl_rows(paths: tuple[Path, ...], rows: list[dict[str, Any]]) -> None:
+    with ExitStack() as stack:
+        handles = [stack.enter_context(path.open("w", encoding="utf-8")) for path in paths]
         wrote_any = False
         for row in rows:
-            handle.write(json.dumps(row) + "\n")
+            line = json.dumps(row) + "\n"
+            for handle in handles:
+                handle.write(line)
             wrote_any = True
         if not wrote_any:
-            handle.write("\n")
+            for handle in handles:
+                handle.write("\n")
 
 
 def load_training_dataset_package(
@@ -477,8 +486,7 @@ def write_normalized_dataset_snapshot(
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
 
-    _write_jsonl_rows(samples_path, dataset.normalized_samples)
-    shutil.copyfile(samples_path, train_path)
+    _write_duplicate_jsonl_rows((samples_path, train_path), dataset.normalized_samples)
     if dataset.normalized_validation_samples:
         _write_jsonl_rows(valid_path, dataset.normalized_validation_samples)
     else:
