@@ -5,6 +5,7 @@ import json
 import io
 import time
 from collections.abc import Iterable, Iterator
+import os
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -44,25 +45,23 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
             request_rows=matrix_request_rows,
         )
     runs_root = jobs_root / "runs"
-    if runs_root.is_dir():
-        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_benchmark_run(
-                run_root,
-                summary_rows=summary_rows,
-                context_rows=context_rows,
-                batch_rows=batch_rows,
-                results=results,
-            )
+    for run_root in _iter_sorted_child_directories(runs_root):
+        _collect_benchmark_run(
+            run_root,
+            summary_rows=summary_rows,
+            context_rows=context_rows,
+            batch_rows=batch_rows,
+            results=results,
+        )
     for matrix_root in matrix_roots:
         matrix_runs_root = matrix_root / "matrix-runs"
-        if matrix_runs_root.is_dir():
-            for run_root in sorted(path for path in matrix_runs_root.iterdir() if path.is_dir()):
-                _collect_benchmark_matrix_run(
-                    run_root,
-                    jobs=matrix_jobs,
-                    summary_rows=matrix_summary_rows,
-                    request_rows=matrix_request_rows,
-                )
+        for run_root in _iter_sorted_child_directories(matrix_runs_root):
+            _collect_benchmark_matrix_run(
+                run_root,
+                jobs=matrix_jobs,
+                summary_rows=matrix_summary_rows,
+                request_rows=matrix_request_rows,
+            )
 
     return {
         "benchmark_jobs": summary_rows,
@@ -102,18 +101,17 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
         compare_samples=compare_samples,
     )
     runs_root = jobs_root / "runs"
-    if runs_root.is_dir():
-        for run_root in sorted(path for path in runs_root.iterdir() if path.is_dir()):
-            _collect_evaluation_run(
-                run_root,
-                jobs=jobs,
-                results=results,
-                summaries=summaries,
-                samples=samples,
-                compare_jobs=compare_jobs,
-                compare_summary_rows=compare_summary_rows,
-                compare_samples=compare_samples,
-            )
+    for run_root in _iter_sorted_child_directories(runs_root):
+        _collect_evaluation_run(
+            run_root,
+            jobs=jobs,
+            results=results,
+            summaries=summaries,
+            samples=samples,
+            compare_jobs=compare_jobs,
+            compare_summary_rows=compare_summary_rows,
+            compare_samples=compare_samples,
+        )
 
     return {
         "evaluation_jobs": jobs,
@@ -404,6 +402,23 @@ def _resolve_artifact_root(
     ):
         return fallback_root
     return jobs_root
+
+
+
+def _iter_sorted_child_directories(parent: Path) -> tuple[Path, ...]:
+    try:
+        names: list[str] = []
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                names.append(entry.name)
+    except OSError:
+        return ()
+    return tuple(parent / name for name in sorted(names))
 
 
 def _collect_benchmark_run(
