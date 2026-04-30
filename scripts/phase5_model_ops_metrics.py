@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from statistics import mean
 from tempfile import TemporaryDirectory
 from time import perf_counter
@@ -19,11 +20,17 @@ def build_service(root: Path) -> WorkerMaintenanceService:
 
 def artifact_size(path: Path) -> int:
     if path.is_dir():
-        return sum(
-            child.stat().st_size
-            for child in path.rglob("*")
-            if child.is_file()
-        )
+        total = 0
+        stack = [os.fspath(path)]
+        while stack:
+            current = stack.pop()
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.is_file():
+                        total += entry.stat().st_size
+        return total
     return path.stat().st_size
 
 
