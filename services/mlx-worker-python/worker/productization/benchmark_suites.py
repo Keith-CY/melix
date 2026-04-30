@@ -114,11 +114,12 @@ class BenchmarkSuiteCatalog:
 
         sample_size = _parse_positive_int(parameters.get("sample_size", ""), definition.default_sample_size)
         batch_factor = _parse_positive_int(parameters.get("batch_factor", ""), definition.default_batch_factor)
+        sample_hint = _materialized_sample_hint(sample_size=sample_size, batch_factor=batch_factor)
         materialized = _materialize_benchmark_suite(
             definition,
             cache_root=jobs_root / "datasets",
             fetch_json=self._hf_dataset_fetcher,
-            sample_hint=max(sample_size * batch_factor, 8),
+            sample_hint=sample_hint,
         )
         cases = tuple(
             _suite_cases(
@@ -346,7 +347,7 @@ def _materialize_benchmark_suite(
             "cache_key": cache_key,
             "cache_hit": True,
             "dataset_name": str(manifest.get("dataset_name", definition.dataset_name or "default")),
-            "rows": _load_materialized_rows(rows_path),
+            "rows": _load_materialized_rows(rows_path, limit=sample_hint),
         }
 
     dataset_name = definition.dataset_name or _resolve_dataset_name(definition, fetch_json)
@@ -551,7 +552,11 @@ def _resolve_dataset_name(
     return "default"
 
 
-def _load_materialized_rows(rows_path: Path) -> list[dict[str, Any]]:
+def _materialized_sample_hint(*, sample_size: int, batch_factor: int) -> int:
+    return max(sample_size * batch_factor, 8)
+
+
+def _load_materialized_rows(rows_path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with rows_path.open("r", encoding="utf-8") as handle:
         for raw_line in handle:
@@ -561,6 +566,8 @@ def _load_materialized_rows(rows_path: Path) -> list[dict[str, Any]]:
             row = json.loads(line)
             if isinstance(row, dict):
                 rows.append(row)
+                if limit is not None and len(rows) >= limit:
+                    break
     return rows
 
 
