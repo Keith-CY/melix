@@ -598,6 +598,41 @@ def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_f
 
 
 
+def test_registry_snapshot_reuses_single_plain_and_manifest_tree_walk_per_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    manifest_dir = root / "alpha-provider" / "AlphaModel" / "q4"
+    _write_registry_manifest(manifest_dir, model_id="alpha-provider/AlphaModel/q4")
+    plain_model_dir = root / "beta-local-a"
+    _write_model_config(plain_model_dir, {"model_type": "qwen3"})
+    _write_weights(plain_model_dir)
+    (plain_model_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+
+    snapshot = catalog.registry_snapshot()
+
+    discovered_ids = [model.model_id for model in snapshot.models]
+    resolved_root = os.fspath(root.resolve())
+    provider_dir = os.fspath((root / "alpha-provider").resolve())
+
+    assert discovered_ids == ["alpha-provider/AlphaModel/q4", "beta-local-a"]
+    assert scandir_calls.count(resolved_root) == 2
+    assert scandir_calls.count(provider_dir) == 1
+
+
+
 def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
     text_model = WorkerModelCatalog.dev_text_model(
         {
