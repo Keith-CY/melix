@@ -391,9 +391,89 @@ def test_catalog_scan_helpers_skip_invalid_huggingface_and_unreadable_directorie
     monkeypatch.setattr(Path, "iterdir", fake_iterdir)
 
     catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
-    assert catalog._scan_huggingface_cache_models(root=root) == []
+    assert list(catalog._scan_huggingface_cache_models(root=root)) == []
     assert unreadable_plain not in WorkerModelCatalog._iter_plain_local_model_dirs(root)
-    assert WorkerModelCatalog._iter_registry_manifest_paths(root) == []
+    assert list(WorkerModelCatalog._iter_registry_manifest_paths(root)) == []
+
+
+def test_scan_huggingface_cache_models_uses_os_scandir_without_glob_or_iterdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    cache_repo_dir = root / "models--mlx-community--Tiny"
+    snapshots_dir = cache_repo_dir / "snapshots"
+    refs_dir = cache_repo_dir / "refs"
+    snapshot_dir = snapshots_dir / "abc123"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    (snapshot_dir / "README.md").write_text("---\nlibrary_name: mlx\ntags:\n- mlx\n---\n", encoding="utf-8")
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_glob(self: Path, pattern: str):
+        if self in {root, snapshots_dir}:
+            raise AssertionError("expected os.scandir-based Hugging Face cache traversal")
+        return []
+
+    def fail_iterdir(self: Path):
+        if self == snapshots_dir:
+            raise AssertionError("expected os.scandir-based Hugging Face cache traversal")
+        return iter(())
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    catalog = WorkerModelCatalog.__new__(WorkerModelCatalog)
+
+    models = list(catalog._scan_huggingface_cache_models(root=root))
+
+    assert [model.model_id for model in models] == ["mlx-community/Tiny"]
+    assert os.fspath(root) in scandir_calls
+    assert os.fspath(snapshots_dir) in scandir_calls
+
+
+def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_first_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    manifest_dir = root / "alpha-provider" / "AlphaModel" / "q4"
+    _write_registry_manifest(manifest_dir, model_id="alpha-provider/AlphaModel/q4")
+    plain_a = root / "beta-local-a"
+    plain_b = root / "beta-local-b"
+    _write_model_config(plain_a, {"model_type": "qwen3"})
+    _write_model_config(plain_b, {"model_type": "qwen3"})
+
+    original_scandir = os.scandir
+    scandir_calls: list[str] = []
+
+    def tracking_scandir(path: str):
+        scandir_calls.append(path)
+        return original_scandir(path)
+
+    def fail_iterdir(self: Path):
+        if self == root or self == root / "alpha-provider":
+            raise AssertionError("expected os.scandir-based directory traversal")
+        return iter(())
+
+    monkeypatch.setattr(os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert plain_dirs == [plain_a.resolve(), plain_b.resolve()]
+    assert manifest_paths == [manifest_dir.resolve() / "manifest.json"]
+    assert os.fspath(root.resolve()) in scandir_calls
 
 
 

@@ -222,6 +222,24 @@ def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
     return f"{parts[0]}/{parts[1]}"
 
 
+def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> tuple[Path, ...]:
+    child_names: list[str] = []
+    try:
+        with os.scandir(os.fspath(root)) as entries:
+            for entry in entries:
+                if name_prefix is not None and not entry.name.startswith(name_prefix):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue
+                child_names.append(entry.name)
+    except OSError:
+        return ()
+    return tuple(root / name for name in sorted(child_names))
+
+
 def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
     refs_dir = cache_repo_dir / "refs"
     revisions: dict[str, str] = {}
@@ -1010,29 +1028,30 @@ class WorkerModelCatalog:
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
     ) -> None:
+        root_resolved = root.resolve()
         seen_paths: set[Path] = set()
         for model in self._scan_huggingface_cache_models(root=root):
-            resolved_path = Path(model.model_path).resolve()
+            resolved_path = Path(model.model_path)
             seen_paths.add(resolved_path)
             if model.model_id in discovered_models or model.model_id in self._seed_models:
                 continue
             self._apply_root_metadata(
                 model,
-                root=root,
+                resolved_root=root_resolved,
                 root_id=root_id,
                 root_order=root_order,
-                relative_path=resolved_path.relative_to(root.resolve()),
+                relative_path=resolved_path.relative_to(root_resolved),
             )
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
         for model_dir in self._iter_plain_local_model_dirs(root):
-            resolved_path = model_dir.resolve()
-            if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root.resolve(), resolved_path):
+            resolved_path = model_dir
+            if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
             if (resolved_path / "manifest.json").is_file():
                 continue
-            model_id = _local_model_id(root.resolve(), resolved_path)
+            model_id = _local_model_id(root_resolved, resolved_path)
             if model_id in discovered_models or model_id in self._seed_models:
                 continue
             if not _has_model_weight_files(resolved_path) or not _has_mlx_signal(model_dir=resolved_path, repo_id=model_id):
@@ -1046,19 +1065,16 @@ class WorkerModelCatalog:
             )
             self._apply_root_metadata(
                 model,
-                root=root,
+                resolved_root=root_resolved,
                 root_id=root_id,
                 root_order=root_order,
-                relative_path=resolved_path.relative_to(root.resolve()),
+                relative_path=resolved_path.relative_to(root_resolved),
             )
             discovered_models[model_id] = model
             accepted_model_ids.append(model_id)
 
-    def _scan_huggingface_cache_models(self, *, root: Path) -> list[common_pb2.ModelSpec]:
-        models: list[common_pb2.ModelSpec] = []
-        for cache_repo_dir in sorted(root.glob("models--*")):
-            if not cache_repo_dir.is_dir():
-                continue
+    def _scan_huggingface_cache_models(self, *, root: Path) -> Iterable[common_pb2.ModelSpec]:
+        for cache_repo_dir in _sorted_child_directories(root, name_prefix="models--"):
             repo_id = _hf_cache_repo_id(cache_repo_dir)
             if repo_id is None:
                 continue
@@ -1066,47 +1082,38 @@ class WorkerModelCatalog:
             if not snapshots_dir.is_dir():
                 continue
             revision_map = _hf_cache_revision_map(cache_repo_dir)
-            for snapshot_dir in sorted(path for path in snapshots_dir.iterdir() if path.is_dir()):
+            for snapshot_dir in _sorted_child_directories(snapshots_dir):
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
                 if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
                     continue
                 revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
-                models.append(
-                    self._raw_model_spec(
-                        model_id=repo_id,
-                        model_dir=snapshot_dir.resolve(),
-                        revision=revision,
-                        source_kind="hf_cache_snapshot",
-                        metadata={
-                            "melix.hf_repo_id": repo_id,
-                            "melix.hf_revision": revision,
-                        },
-                    )
+                yield self._raw_model_spec(
+                    model_id=repo_id,
+                    model_dir=snapshot_dir.resolve(),
+                    revision=revision,
+                    source_kind="hf_cache_snapshot",
+                    metadata={
+                        "melix.hf_repo_id": repo_id,
+                        "melix.hf_revision": revision,
+                    },
                 )
-        return models
 
     @staticmethod
-    def _iter_plain_local_model_dirs(root: Path) -> list[Path]:
-        model_dirs: list[Path] = []
+    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
         stack = [root.resolve()]
         while stack:
             current = stack.pop()
             if current.name in {"blobs", ".git", "__pycache__"}:
                 continue
             if (current / "config.json").is_file():
-                model_dirs.append(current)
+                yield current
                 continue
-            try:
-                children = sorted(path for path in current.iterdir() if path.is_dir())
-            except OSError:
-                continue
+            children = _sorted_child_directories(current)
             stack.extend(reversed(children))
-        return model_dirs
 
     @staticmethod
-    def _iter_registry_manifest_paths(root: Path) -> list[Path]:
-        manifest_paths: list[Path] = []
+    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
         stack = [root.resolve()]
         while stack:
             current = stack.pop()
@@ -1114,26 +1121,22 @@ class WorkerModelCatalog:
                 continue
             manifest_path = current / "manifest.json"
             if manifest_path.is_file():
-                manifest_paths.append(manifest_path)
+                yield manifest_path
                 continue
-            try:
-                children = sorted(path for path in current.iterdir() if path.is_dir())
-            except OSError:
-                continue
+            children = _sorted_child_directories(current)
             stack.extend(reversed(children))
-        return sorted(manifest_paths)
 
     @staticmethod
     def _apply_root_metadata(
         model: common_pb2.ModelSpec,
         *,
-        root: Path,
+        resolved_root: Path,
         root_id: str,
         root_order: int,
         relative_path: Path,
     ) -> None:
         model.ext["melix.registry_root_id"] = root_id
-        model.ext["melix.registry_root_path"] = str(root.resolve())
+        model.ext["melix.registry_root_path"] = str(resolved_root)
         model.ext["melix.registry_root_order"] = str(root_order)
         model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
 
