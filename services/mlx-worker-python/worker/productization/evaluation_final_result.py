@@ -543,11 +543,19 @@ def _materialize_evaluation_rows(
         **source_metadata,
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
-    samples_path.write_text(
-        "\n".join(json.dumps(sample) for sample in serialized_samples) + "\n",
-        encoding="utf-8",
-    )
+    _write_jsonl_rows(samples_path, serialized_samples)
     return MaterializedEvaluationDataset(package_path=package_path, cache_key=cache_key, cache_hit=False)
+
+
+def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        if not rows:
+            handle.write("\n")
+            return
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
 
 
 def _validate_field_mapping(field_mapping: EvaluationFieldMapping) -> None:

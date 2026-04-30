@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from worker.model_ops.errors import ModelOperationError
+from worker.productization import evaluation_final_result as evaluation_final_result_module
 from worker.productization.evaluation_final_result import (
     EvaluationFieldMapping,
     HFEvaluationDatasetSource,
@@ -19,6 +20,56 @@ from worker.productization.evaluation_final_result import (
     materialize_local_evaluation_dataset,
     score_final_result,
 )
+
+
+def test_write_jsonl_rows_streams_each_row_without_joining_the_full_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "streamed.jsonl"
+    writes: list[str] = []
+
+    class _Writer:
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+        def __enter__(self) -> _Writer:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> _Writer:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return _Writer()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    evaluation_final_result_module._write_jsonl_rows(
+        output_path,
+        [
+            {"id": "sample-1", "target": "Paris"},
+            {"id": "sample-2", "target": "Rome"},
+        ],
+    )
+
+    assert writes == [
+        '{"id": "sample-1", "target": "Paris"}',
+        "\n",
+        '{"id": "sample-2", "target": "Rome"}',
+        "\n",
+    ]
+
+
+def test_write_jsonl_rows_preserves_blank_line_contract_for_empty_inputs(tmp_path: Path) -> None:
+    output_path = tmp_path / "empty.jsonl"
+
+    evaluation_final_result_module._write_jsonl_rows(output_path, [])
+
+    assert output_path.read_text(encoding="utf-8") == "\n"
 
 
 def test_extract_final_result_prefers_last_fenced_json_block() -> None:
