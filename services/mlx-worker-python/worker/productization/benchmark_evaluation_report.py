@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
 from pathlib import Path
 from typing import Any
@@ -90,17 +91,24 @@ def build_benchmark_evaluation_report(
     baseline_metrics = _collect_metrics(baseline)
     candidate_metrics = _collect_metrics(candidate)
     metric_names = sorted(set(baseline_metrics) | set(candidate_metrics))
-    rows = [
-        _build_metric_row(
+    rows: list[dict[str, object]] = []
+    warning_count = 0
+    missing_count = 0
+    not_comparable_count = 0
+    for metric_name in metric_names:
+        row = _build_metric_row(
             metric_name=metric_name,
             baseline=baseline_metrics.get(metric_name),
             candidate=candidate_metrics.get(metric_name),
         )
-        for metric_name in metric_names
-    ]
-    warning_count = sum(1 for row in rows if row["status"] == "warning")
-    missing_count = sum(1 for row in rows if row["status"] == "missing")
-    not_comparable_count = sum(1 for row in rows if row["status"] == "not_comparable")
+        rows.append(row)
+        match row["status"]:
+            case "warning":
+                warning_count += 1
+            case "missing":
+                missing_count += 1
+            case "not_comparable":
+                not_comparable_count += 1
     status = "warning" if warning_count else "ok"
     if missing_count and status == "ok":
         status = "missing"
@@ -489,14 +497,21 @@ def _matrix_label(row: dict[str, object]) -> str:
     return ".".join(part.replace(" ", "_") for part in parts)
 
 
-def _report_rows(report: dict[str, object]) -> list[dict[str, object]]:
-    return [row for row in report.get("rows", []) if isinstance(row, dict)]
+def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
+    rows = report.get("rows", [])
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if isinstance(row, dict):
+            yield row
 
 
-def _dict_rows(value: object) -> list[dict[str, object]]:
+def _dict_rows(value: object) -> Iterator[dict[str, object]]:
     if not isinstance(value, list):
-        return []
-    return [row for row in value if isinstance(row, dict)]
+        return
+    for row in value:
+        if isinstance(row, dict):
+            yield row
 
 
 def _float_or_none(value: object) -> float | None:
