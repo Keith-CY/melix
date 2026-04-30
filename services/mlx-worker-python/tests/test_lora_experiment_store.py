@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from worker.productization import lora_experiment_store as lora_experiment_store_module
@@ -204,6 +205,58 @@ def test_load_index_uses_existing_index_and_rebuilds_when_missing(tmp_path: Path
 
     assert rebuilt == cached
     assert cached["runs"][0]["run_id"] == "model-ops-0001"
+
+
+def test_load_index_reuses_cached_index_without_reparsing_unchanged_file(tmp_path: Path, monkeypatch) -> None:
+    jobs_root = tmp_path / "model-ops"
+    store = LoraExperimentStore()
+    _write_run_record(
+        jobs_root,
+        run_id="model-ops-0001",
+        group_id="nightly-qwen",
+        manifest_path="/tmp/model-ops-0001/train_lora.adapter.json",
+        updated_at_unix_ms=1_000,
+    )
+
+    first_payload = store.load_index(jobs_root)
+    original_read_payload = LoraExperimentStore._read_payload
+
+    def _read_payload(path: Path) -> dict[str, object]:
+        if path == jobs_root / "train_lora" / LoraExperimentStore.index_record_name:
+            raise AssertionError("load_index should reuse an unchanged cached index")
+        return original_read_payload(path)
+
+    monkeypatch.setattr(LoraExperimentStore, "_read_payload", staticmethod(_read_payload))
+
+    second_payload = store.load_index(jobs_root)
+
+    assert second_payload == first_payload
+
+
+def test_load_index_invalidates_cached_index_when_index_file_changes(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "model-ops"
+    store = LoraExperimentStore()
+    _write_run_record(
+        jobs_root,
+        run_id="model-ops-0001",
+        group_id="nightly-qwen",
+        manifest_path="/tmp/model-ops-0001/train_lora.adapter.json",
+        updated_at_unix_ms=1_000,
+    )
+
+    cached_payload = store.load_index(jobs_root)
+    index_path = jobs_root / "train_lora" / LoraExperimentStore.index_record_name
+    original_stat = index_path.stat()
+    mutated_payload = {
+        **cached_payload,
+        "runs": [{**cached_payload["runs"][0], "run_id": "mutated-run-id"}],
+    }
+    index_path.write_text(json.dumps(mutated_payload, indent=2) + "\n", encoding="utf-8")
+    os.utime(index_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1_000_000))
+
+    refreshed_payload = store.load_index(jobs_root)
+
+    assert refreshed_payload["runs"][0]["run_id"] == "mutated-run-id"
 
 
 
