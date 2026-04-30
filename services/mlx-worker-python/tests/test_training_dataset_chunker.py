@@ -16,6 +16,7 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset_chunker import (
     ChunkStats,
     _split_messages_into_turns,
+    _split_words_into_k,
     _split_user_content_into_k,
     chunk_long_samples,
 )
@@ -294,6 +295,60 @@ def test_impossible_single_turn_short_circuits_before_trying_many_segment_counts
 
     assert exc.value.code == "chunk_size_too_small"
     assert tokenizer.render_calls == 3
+
+
+class _NoSplitTokenizer:
+    """Tokenizer stub that avoids calling ``content.split()`` itself."""
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        add_generation_prompt: bool = False,
+        return_dict: bool = False,
+    ) -> list[int]:
+        total = 0
+        for msg in messages:
+            content = msg.get("content", "") or ""
+            total += 5 + len(content)
+        if add_generation_prompt:
+            total += 5
+        return list(range(total))
+
+
+class _CountingContent(str):
+    def __new__(cls, value: str) -> "_CountingContent":
+        instance = super().__new__(cls, value)
+        instance.split_calls = 0
+        return instance
+
+    def split(self, *args: Any, **kwargs: Any) -> list[str]:
+        self.split_calls += 1
+        return super().split(*args, **kwargs)
+
+
+def test_split_words_into_k_matches_string_helper_output() -> None:
+    content = "alpha beta gamma delta epsilon zeta"
+
+    assert _split_words_into_k(content.split(), 3) == _split_user_content_into_k(content, 3)
+
+
+def test_chunking_reuses_presplit_user_words_across_k_attempts() -> None:
+    tokenizer = _NoSplitTokenizer()
+    user_content = _CountingContent("alpha beta gamma delta epsilon zeta eta theta iota kappa")
+    sample = {
+        "id": "presplit-reuse",
+        "messages": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": "reply"},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=35, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 2
+    assert user_content.split_calls == 1
 
 
 def test_non_assistant_terminated_sample_passes_through_unchanged() -> None:
