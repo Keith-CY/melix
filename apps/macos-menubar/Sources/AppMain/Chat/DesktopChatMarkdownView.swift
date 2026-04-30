@@ -249,6 +249,10 @@ enum DesktopChatMarkdownCodeSyntaxHighlighter {
                 result += segment
             } else {
                 result += build(lineText) { token in
+                    // Colour trailing comment delimiters (e.g. `let x = 1 // note`).
+                    if token.hasPrefix("//") || token.hasPrefix("#") {
+                        return .secondary
+                    }
                     if token.hasPrefix("\"") || token.hasPrefix("'") {
                         return .teal
                     }
@@ -1100,7 +1104,7 @@ private struct DesktopChatMarkdownRenderPlanView: View {
     var body: some View {
         if plan.usesLazyRendering {
             LazyVStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.blockSpacing) {
-                ForEach(plan.chunks, id: \.source) { chunk in
+                ForEach(Array(plan.chunks.enumerated()), id: \.offset) { _, chunk in
                     DesktopChatMarkdownBlocksView(blocks: chunk.blocks)
                 }
             }
