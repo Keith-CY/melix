@@ -89,6 +89,8 @@ class DeterministicVLMRuntime:
         self._decode_sessions: dict[str, VisionPrefillSession] = {}
         self._cache_lookups = 0
         self._cache_hits = 0
+        self._cache_l1_bytes = 0
+        self._cache_snapshot: cache_pb2.CacheSnapshot | None = None
         self._fast_path_controller = MultimodalFastPathController()
         self._last_fast_path_signature: tuple[str, ...] | None = None
 
@@ -162,12 +164,14 @@ class DeterministicVLMRuntime:
         if cache_hit:
             self._cache_hits += 1
         else:
-            self._cache_entries[cache_identity] = self._cache_entry(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                cache_identity=cache_identity,
-                scope_id=scope_id,
-                execution_ext=execution_ext,
+            self._record_cache_entry(
+                self._cache_entry(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    cache_identity=cache_identity,
+                    scope_id=scope_id,
+                    execution_ext=execution_ext,
+                )
             )
         block_table_id = f"vlm-block:{cache_identity[:16]}"
         block_table = self._block_table_for(
@@ -276,14 +280,15 @@ class DeterministicVLMRuntime:
         if cache_hit:
             self._cache_hits += 1
         else:
-            entry = self._cache_entry(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                cache_identity=cache_identity,
-                scope_id=scope_id,
-                execution_ext=execution_ext,
+            self._record_cache_entry(
+                self._cache_entry(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    cache_identity=cache_identity,
+                    scope_id=scope_id,
+                    execution_ext=execution_ext,
+                )
             )
-            self._cache_entries[cache_identity] = entry
         self._last_probe = replace(
             self._last_probe,
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
@@ -383,16 +388,30 @@ class DeterministicVLMRuntime:
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
-        total_l1_bytes = sum(entry.bytes_used for entry in self._cache_entries.values())
-        total_block_count = len(self._cache_entries)
         lookup_count = max(1, self._cache_lookups)
-        response.stats.l1_bytes = total_l1_bytes
-        response.stats.block_count = total_block_count
+        response.stats.l1_bytes = self._cache_l1_bytes
+        response.stats.block_count = len(self._cache_entries)
         response.stats.l1_hit_rate = self._cache_hits / lookup_count
-        response.stats.dedup_ratio = 1.0 - (total_block_count / lookup_count)
+        response.stats.dedup_ratio = 1.0 - (response.stats.block_count / lookup_count)
         response.stats.active_mode = common_pb2.CACHE_MODE_TIERED
         response.snapshot.stats.CopyFrom(response.stats)
+        snapshot = self._cache_snapshot_message()
+        response.snapshot.hot_prefixes.extend(snapshot.hot_prefixes)
+        response.snapshot.scopes.extend(snapshot.scopes)
+        return response
 
+    def _record_cache_entry(self, entry: VisionCacheEntry) -> None:
+        self._cache_entries[entry.cache_identity] = entry
+        self._cache_l1_bytes += entry.bytes_used
+        self._cache_snapshot = None
+
+    def _cache_snapshot_message(self) -> cache_pb2.CacheSnapshot:
+        if self._cache_snapshot is None:
+            self._cache_snapshot = self._build_cache_snapshot()
+        return self._cache_snapshot
+
+    def _build_cache_snapshot(self) -> cache_pb2.CacheSnapshot:
+        snapshot = cache_pb2.CacheSnapshot()
         scopes: dict[str, cache_pb2.CacheScopeSummary] = {}
         for entry in self._cache_entries.values():
             prefix = common_pb2.PrefixRef()
@@ -410,7 +429,7 @@ class DeterministicVLMRuntime:
             prefix.scope.reasoning_mode = entry.reasoning_mode
             prefix.scope.multimodal_adapter_hash = entry.multimodal_adapter_hash
             prefix.scope.scope_id = entry.scope_id
-            response.snapshot.hot_prefixes.append(prefix)
+            snapshot.hot_prefixes.append(prefix)
 
             if entry.scope_id not in scopes:
                 scope_summary = cache_pb2.CacheScopeSummary()
@@ -435,8 +454,8 @@ class DeterministicVLMRuntime:
             )
             scopes[entry.scope_id].hot_blocks.append(block)
 
-        response.snapshot.scopes.extend(scopes.values())
-        return response
+        snapshot.scopes.extend(scopes.values())
+        return snapshot
 
     def has_decode_session(self, decode_handle: str) -> bool:
         return decode_handle in self._decode_sessions

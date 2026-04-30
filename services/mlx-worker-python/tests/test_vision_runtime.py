@@ -1405,6 +1405,46 @@ def test_vlm_runtime_reuses_cache_for_identical_multimodal_requests() -> None:
     assert cache_stats.snapshot.hot_prefixes[0].scope.model_id == "melix-dev-vlm"
 
 
+def test_vlm_runtime_reuses_cached_snapshot_between_stats_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Describe the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"cache snapshot reuse payload",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+
+    prefix_ref_calls = 0
+    original_prefix_ref = common_pb2.PrefixRef
+
+    def counting_prefix_ref(*args, **kwargs):
+        nonlocal prefix_ref_calls
+        prefix_ref_calls += 1
+        return original_prefix_ref(*args, **kwargs)
+
+    monkeypatch.setattr("worker.runtime.deterministic_vlm_runtime.common_pb2.PrefixRef", counting_prefix_ref)
+
+    first_stats = runtime.cache_stats_response()
+    second_stats = runtime.cache_stats_response()
+
+    assert prefix_ref_calls == 1
+    assert first_stats == second_stats
+    assert second_stats.snapshot.hot_prefixes[0].scope.model_id == "melix-dev-vlm"
+
+
 def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
