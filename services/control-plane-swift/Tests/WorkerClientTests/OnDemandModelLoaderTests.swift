@@ -166,6 +166,43 @@ struct OnDemandModelLoaderTests {
         #expect(await swiftClient.loadRequestCount == 0)
     }
 
+    @Test("text-capable VLM models lazy-load through the Python VLM route")
+    func textCapableVLMModelsLazyLoadThroughThePythonVLMRoute() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        let swiftClient = LoaderTestingWorkerClient()
+        await swiftClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-vlm::swift",
+            estimatedResidentBytes: 4_096
+        )
+        let pythonClient = LoaderTestingWorkerClient()
+        await pythonClient.setLoadResponse(
+            ok: true,
+            handle: "melix-dev-vlm::python",
+            estimatedResidentBytes: 8_192
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: swiftClient,
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-vlm",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+
+        let loadRequest = try #require(await pythonClient.lastLoadModelRequest)
+        #expect(handle == "melix-dev-vlm::python")
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(await pythonClient.loadRequestCount == 1)
+        #expect(await swiftClient.loadRequestCount == 0)
+    }
+
     @Test("lazy load falls back to estimated resident bytes when runtime stats are unavailable")
     func lazyLoadFallsBackToEstimatedResidentBytesWhenRuntimeStatsAreUnavailable() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
@@ -198,6 +235,7 @@ struct OnDemandModelLoaderTests {
         let registry = WorkerRegistry(defaultTextClient: workerClient)
         let missingCatalog = ModelCatalog(seedModels: [])
         let nonTextCatalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let imageCatalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
         let metricsStore = MetricsStore()
 
         await #expect(throws: OnDemandModelLoadError.modelNotReady) {
@@ -213,6 +251,15 @@ struct OnDemandModelLoaderTests {
             try await OnDemandModelLoader.ensureTextModelReady(
                 modelID: "melix-dev-embed",
                 modelCatalog: nonTextCatalog,
+                workerRegistry: registry,
+                metricsStore: metricsStore
+            )
+        }
+
+        await #expect(throws: OnDemandModelLoadError.modelNotReady) {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-image",
+                modelCatalog: imageCatalog,
                 workerRegistry: registry,
                 metricsStore: metricsStore
             )

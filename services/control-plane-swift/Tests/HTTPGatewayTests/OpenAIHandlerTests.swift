@@ -709,6 +709,72 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Python VLM route")
+    func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughPythonVLMRoute() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeTokenEvent(requestID: "req-http-vlm-text", seq: 1, text: "vlm"),
+                makeCompletedEvent(
+                    requestID: "req-http-vlm-text",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "vlm"
+                ),
+            ],
+            loadModelHandle: "melix-dev-vlm::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-vlm-text" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let loadRequest = try #require(await vlmClient.lastLoadModelRequest)
+        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"content\":\"vlm\""))
+        #expect(payload.contains("data: [DONE]"))
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(await textClient.lastGenerateRequest == nil)
+    }
+
     @Test("model sparse-prefill policy is applied to generated worker requests")
     func modelSparsePrefillPolicyIsAppliedToGeneratedWorkerRequests() async throws {
         var model = warmModel()
