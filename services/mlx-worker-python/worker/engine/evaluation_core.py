@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 import re
+import threading
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -38,6 +39,22 @@ from worker.productization.evaluation_final_result import (
     EvaluationProfileDefinition,
     extract_final_result,
     score_final_result,
+)
+from worker.productization.event_extraction import (
+    EventExtractionPromptSpec,
+    RemoteEventExtractionTarget,
+    RemoteSemanticJudgeTarget,
+    SEMANTIC_JUDGE_PROMPT_HASH,
+    RemoteProviderHTTPError,
+    default_event_extraction_prompt_spec,
+    evaluate_event_extraction,
+    evaluate_event_extraction_semantic,
+    event_prompt_content_hash,
+    make_event_extraction_client,
+    make_semantic_judge_client,
+    normalize_event_fields,
+    prompt_example_dialogue_ids,
+    prompt_snapshot_payload,
 )
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
@@ -116,6 +133,7 @@ class EvaluationCore:
         self._store = store or EvaluationStore()
         self._queue_store = queue_store or BenchmarkQueueStore()
         self._registry = registry
+        self._job_id_lock = threading.Lock()
 
     @staticmethod
     def _load_dataset_samples(
@@ -149,7 +167,24 @@ class EvaluationCore:
         scoring_mode: str | None = None,
         code_exec_policy: str | None = None,
         parameters: dict[str, str] | None = None,
+        remote_target: Any | None = None,
     ) -> EvaluationRun:
+        requested_scoring_mode = (
+            scoring_mode
+            if scoring_mode is not None and scoring_mode != ""
+            else (parameters or {}).get("scoring_mode", "")
+        )
+        if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
+            return self._run_event_extraction_suite(
+                model_id=model_id,
+                suite_id=suite_id,
+                dataset_id=(parameters or {}).get("dataset_id", ""),
+                sample_size=sample_size,
+                scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
+                parameters=dict(parameters or {}),
+                remote_target=remote_target,
+            )
+
         dataset_root = Path(dataset_root).resolve()
         manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
         if manifest["suite_id"] != suite_id:
@@ -500,6 +535,714 @@ class EvaluationCore:
                 updated_at_unix_ms=int(time.time() * 1000),
             )
         return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
+
+    def _run_event_extraction_suite(
+        self,
+        *,
+        model_id: str,
+        suite_id: str,
+        dataset_id: str,
+        sample_size: int,
+        scoring_mode: str,
+        parameters: dict[str, str],
+        remote_target: Any | None,
+    ) -> EvaluationRun:
+        source_jsonl = parameters.get("event_source_jsonl") or parameters.get("evaluation_source_locator", "")
+        if not source_jsonl:
+            raise ValueError("event_extraction_weighted_f1 requires a local JSONL source.")
+        if remote_target is None or not getattr(remote_target, "api_key", ""):
+            raise ValueError("event_extraction_weighted_f1 requires a remote provider target.")
+
+        created_at_unix_ms = int(time.time() * 1000)
+        job_id = self._next_job_id()
+        output_root = (
+            self._jobs_root / "event-extraction" / job_id
+            if self._jobs_root is not None
+            else Path.cwd() / "event-extraction" / job_id
+        )
+        remote_model_id = str(getattr(remote_target, "model_id", "") or model_id)
+        safe_model_name = re.sub(r"[^A-Za-z0-9._-]+", "_", remote_model_id).strip("_") or "remote-model"
+        predictions_dir = output_root / "predictions"
+        reports_dir = output_root / "reports" / safe_model_name
+        predictions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        prediction_path = predictions_dir / f"{safe_model_name}.jsonl"
+        failure_path = predictions_dir / f"{safe_model_name}.failures.jsonl"
+        gold_subset_path = output_root / "gold_subset.jsonl"
+        summary_path = reports_dir / "event_eval_summary.json"
+        details_path = reports_dir / "event_eval_details.jsonl"
+        trace_path = reports_dir / "event_eval_dialogue_traces.jsonl"
+        row_audit_path = reports_dir / "event_eval_row_audit.jsonl"
+        semantic_summary_path = reports_dir / "event_eval_semantic_summary.json"
+        semantic_details_path = reports_dir / "event_eval_semantic_details.jsonl"
+        semantic_row_audit_path = reports_dir / "event_eval_semantic_row_audit.jsonl"
+        judge_audit_path = reports_dir / "event_eval_judge_audit.jsonl"
+        error_log_path = reports_dir / "event_eval_error.json"
+        prompt_snapshot_path = output_root / "prompt_snapshot.json"
+
+        rows = self._read_event_extraction_rows(Path(source_jsonl), sample_size=sample_size)
+        gold_subset_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        prompt_spec = self._event_extraction_prompt_spec(parameters)
+        overlapping_examples = sorted(
+            set(prompt_example_dialogue_ids(prompt_spec))
+            & {str(row.get("dialogue_id") or "").strip() for row in rows}
+        )
+        if overlapping_examples:
+            raise ValueError(
+                "event extraction prompt examples overlap evaluation rows: "
+                + ", ".join(overlapping_examples)
+            )
+        prompt_snapshot = prompt_snapshot_payload(prompt_spec)
+        prompt_snapshot_path.write_text(
+            json.dumps(prompt_snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        client = make_event_extraction_client(
+            RemoteEventExtractionTarget(
+                provider_kind=str(getattr(remote_target, "provider_kind", "")),
+                base_url=str(getattr(remote_target, "base_url", "")),
+                api_key=str(getattr(remote_target, "api_key", "")),
+                model_id=remote_model_id,
+                timeout_seconds=int(getattr(remote_target, "timeout_seconds", 0) or 60),
+                extra_body=self._remote_provider_extra_body(parameters),
+            ),
+            prompt_spec=prompt_spec,
+        )
+        rate_limit_per_minute = int(getattr(remote_target, "rate_limit_per_minute", 0) or 0)
+        min_interval_seconds = 60.0 / rate_limit_per_minute if rate_limit_per_minute > 0 else 0.0
+        last_request_started = 0.0
+        prediction_rows: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        dialogue_traces: list[dict[str, object]] = []
+        raw_response_dir = output_root / "raw-responses" / safe_model_name
+        raw_response_dir.mkdir(parents=True, exist_ok=True)
+
+        started_at = time.perf_counter()
+        events_written = 0
+        for line_number, row in enumerate(rows, start=1):
+            row_started_at = time.perf_counter()
+            dialogue_id = str(row.get("dialogue_id") or "")
+            dialogue = self._dialogue_lines(row.get("dialogue"))
+            throttle_sleep_ms = 0.0
+            if min_interval_seconds > 0 and last_request_started > 0:
+                elapsed = time.perf_counter() - last_request_started
+                if elapsed < min_interval_seconds:
+                    sleep_seconds = min_interval_seconds - elapsed
+                    time.sleep(sleep_seconds)
+                    throttle_sleep_ms = self._round_ms(sleep_seconds * 1_000.0)
+            last_request_started = time.perf_counter()
+            request_started_at = last_request_started
+            request_duration_ms = 0.0
+            try:
+                client_result = client.extract_events(dialogue, dialogue_id=dialogue_id)
+                request_duration_ms = self._round_ms((time.perf_counter() - request_started_at) * 1_000.0)
+                extracted_events, raw_response = client_result
+                raw_response_path = raw_response_dir / f"{line_number:04d}-{self._safe_path_component(dialogue_id)}.txt"
+                raw_response_path.write_text(
+                    raw_response,
+                    encoding="utf-8",
+                )
+            except Exception as exc:  # noqa: BLE001
+                request_duration_ms = self._round_ms((time.perf_counter() - request_started_at) * 1_000.0)
+                failure_record = {
+                    "dialogue_id": dialogue_id,
+                    "line_number": line_number,
+                    "event_index": None,
+                    "reason": str(exc),
+                }
+                provider_error_code = self._event_extraction_provider_error_code(exc)
+                if provider_error_code:
+                    failure_record["code"] = provider_error_code
+                failures.append(failure_record)
+                should_abort = self._should_abort_event_extraction_on_provider_error(exc)
+                dialogue_traces.append(
+                    self._event_extraction_dialogue_trace(
+                        dialogue_id=dialogue_id,
+                        line_number=line_number,
+                        status="aborted" if should_abort else "failed",
+                        row_started_at=row_started_at,
+                        throttle_sleep_ms=throttle_sleep_ms,
+                        request_duration_ms=request_duration_ms,
+                        normalization_duration_ms=0.0,
+                        dialogue=dialogue,
+                        request_body_bytes=0,
+                        response_body_bytes=0,
+                        raw_response="",
+                        raw_response_path=None,
+                        predicted_event_count=0,
+                        normalized_event_count=0,
+                        normalization_failure_count=0,
+                        error_code=provider_error_code or None,
+                        failure_reason=str(exc),
+                        provider_usage={},
+                    )
+                )
+                if should_abort:
+                    prediction_path.write_text(
+                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
+                        encoding="utf-8",
+                    )
+                    failure_path.write_text(
+                        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
+                        encoding="utf-8",
+                    )
+                    self._write_jsonl_rows(trace_path, dialogue_traces)
+                    error_payload = self._event_extraction_error_payload(
+                        exc=exc,
+                        failure_record=failure_record,
+                        remote_target=remote_target,
+                        remote_model_id=remote_model_id,
+                        output_root=output_root,
+                        prediction_path=prediction_path,
+                        failure_path=failure_path,
+                        trace_path=trace_path,
+                        rows_total=len(rows),
+                        rows_attempted=line_number,
+                        events_written=events_written,
+                    )
+                    error_log_path.write_text(
+                        json.dumps(error_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    raise RuntimeError(
+                        "event extraction aborted after remote provider "
+                        f"HTTP {getattr(exc, 'status_code', 'error')}; "
+                        f"error_log={error_log_path}"
+                    ) from exc
+                prediction_rows.append({"dialogue_id": dialogue_id, "dialogue": dialogue, "events": []})
+                continue
+
+            normalized_events: list[dict[str, object]] = []
+            normalization_failure_count = 0
+            normalization_started_at = time.perf_counter()
+            for event_index, event in enumerate(extracted_events):
+                try:
+                    normalized_events.append(normalize_event_fields(event))
+                    events_written += 1
+                except Exception as exc:  # noqa: BLE001
+                    normalization_failure_count += 1
+                    failures.append(
+                        {
+                            "dialogue_id": dialogue_id,
+                            "line_number": line_number,
+                            "event_index": event_index,
+                            "reason": str(exc),
+                        }
+                    )
+            normalization_duration_ms = self._round_ms((time.perf_counter() - normalization_started_at) * 1_000.0)
+            prediction_rows.append(
+                {
+                    "dialogue_id": dialogue_id,
+                    "dialogue": dialogue,
+                    "events": normalized_events,
+                }
+            )
+            dialogue_traces.append(
+                self._event_extraction_dialogue_trace(
+                    dialogue_id=dialogue_id,
+                    line_number=line_number,
+                    status="ok",
+                    row_started_at=row_started_at,
+                    throttle_sleep_ms=throttle_sleep_ms,
+                    request_duration_ms=request_duration_ms,
+                    normalization_duration_ms=normalization_duration_ms,
+                    dialogue=dialogue,
+                    request_body_bytes=self._client_result_int(client_result, "request_body_bytes"),
+                    response_body_bytes=self._client_result_int(client_result, "response_body_bytes"),
+                    raw_response=raw_response,
+                    raw_response_path=raw_response_path,
+                    predicted_event_count=len(extracted_events),
+                    normalized_event_count=len(normalized_events),
+                    normalization_failure_count=normalization_failure_count,
+                    error_code=None,
+                    failure_reason=None,
+                    provider_usage=self._client_result_provider_usage(client_result),
+                )
+            )
+
+        self._write_jsonl_rows(trace_path, dialogue_traces)
+        prediction_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in prediction_rows),
+            encoding="utf-8",
+        )
+        failure_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in failures),
+            encoding="utf-8",
+        )
+        summary = evaluate_event_extraction(
+            gold_jsonl=gold_subset_path,
+            pred_jsonl=prediction_path,
+            summary_output=summary_path,
+            details_output=details_path,
+            row_audit_output=row_audit_path,
+        )
+        summary["dialogue_diagnostics"] = self._event_extraction_dialogue_diagnostics(dialogue_traces)
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        semantic_summary: dict[str, object] | None = None
+        semantic_judge_target = self._semantic_judge_target(parameters)
+        if semantic_judge_target is not None:
+            semantic_summary = self._run_event_extraction_semantic_scoring(
+                gold_subset_path=gold_subset_path,
+                prediction_path=prediction_path,
+                semantic_summary_path=semantic_summary_path,
+                semantic_details_path=semantic_details_path,
+                semantic_row_audit_path=semantic_row_audit_path,
+                judge_audit_path=judge_audit_path,
+                judge_target=semantic_judge_target,
+                judge_remote_server_id=str(parameters.get("semantic_judge_remote_server_id") or "").strip(),
+                judge_model_id=semantic_judge_target.model_id,
+            )
+        duration_seconds = round(time.perf_counter() - started_at, 6)
+        overall_weighted_f1 = float(summary["summary"]["overall_weighted_f1"])
+        events_evaluated = int(summary["summary"]["events_evaluated"])
+        events_matched = int(summary["summary"]["events_matched"])
+        events_unmatched_gold = int(summary["summary"]["events_unmatched_gold"])
+        events_unmatched_pred = int(summary["summary"]["events_unmatched_pred"])
+        field_metrics = summary["field_metrics"]
+
+        job_parameters = dict(parameters)
+        job_parameters.pop("api_key", None)
+        job_parameters.pop("remote_api_key", None)
+        job_parameters.pop("eval_prompt_system_prompt", None)
+        job_parameters.pop("eval_prompt_examples_json", None)
+        job_parameters.pop("semantic_judge_api_key", None)
+        job_parameters.pop("semantic_judge_base_url", None)
+        job_parameters["dataset_root"] = str(Path(source_jsonl).resolve())
+        job_parameters["event_source_jsonl"] = str(Path(source_jsonl).resolve())
+        job_parameters["prediction_jsonl"] = str(prediction_path)
+        job_parameters["failure_jsonl"] = str(failure_path)
+        job_parameters["event_eval_summary"] = str(summary_path)
+        job_parameters["event_eval_details"] = str(details_path)
+        job_parameters["event_eval_dialogue_traces"] = str(trace_path)
+        job_parameters["event_eval_row_audit"] = str(row_audit_path)
+        if semantic_judge_target is not None:
+            job_parameters["event_eval_semantic_summary"] = str(semantic_summary_path)
+            job_parameters["event_eval_semantic_details"] = str(semantic_details_path)
+            job_parameters["event_eval_semantic_row_audit"] = str(semantic_row_audit_path)
+            job_parameters["event_eval_judge_audit"] = str(judge_audit_path)
+            job_parameters["semantic_judge_remote_server_id"] = str(
+                parameters.get("semantic_judge_remote_server_id") or ""
+            ).strip()
+            job_parameters["semantic_judge_model_id"] = semantic_judge_target.model_id
+            job_parameters["semantic_judge_prompt_hash"] = SEMANTIC_JUDGE_PROMPT_HASH
+        job_parameters["prompt_snapshot"] = str(prompt_snapshot_path)
+        job_parameters["prompt_id"] = prompt_spec.prompt_id
+        job_parameters["prompt_revision_id"] = prompt_spec.revision_id
+        job_parameters["prompt_content_hash"] = prompt_spec.content_hash
+        job_parameters["prompt_example_dialogue_ids"] = ",".join(prompt_example_dialogue_ids(prompt_spec))
+        job_parameters["effective_scoring_mode"] = "event_extraction_weighted_f1"
+        job_parameters["scoring_mode"] = "event_extraction_weighted_f1"
+        job_parameters.setdefault("remote_model_id", remote_model_id)
+
+        result_metrics = {
+            f"eval.{suite_id}.overall_weighted_f1": overall_weighted_f1,
+            f"eval.{suite_id}.events_evaluated": float(events_evaluated),
+            f"eval.{suite_id}.events_matched": float(events_matched),
+            f"eval.{suite_id}.events_unmatched_gold": float(events_unmatched_gold),
+            f"eval.{suite_id}.events_unmatched_pred": float(events_unmatched_pred),
+            f"eval.{suite_id}.events_written": float(events_written),
+            f"eval.{suite_id}.events_failed": float(len(failures)),
+            f"eval.{suite_id}.duration_seconds": duration_seconds,
+        }
+        result_units = {
+            f"eval.{suite_id}.overall_weighted_f1": "ratio",
+            f"eval.{suite_id}.events_evaluated": "count",
+            f"eval.{suite_id}.events_matched": "count",
+            f"eval.{suite_id}.events_unmatched_gold": "count",
+            f"eval.{suite_id}.events_unmatched_pred": "count",
+            f"eval.{suite_id}.events_written": "count",
+            f"eval.{suite_id}.events_failed": "count",
+            f"eval.{suite_id}.duration_seconds": "s",
+        }
+        if isinstance(semantic_summary, dict):
+            semantic_metric_name = f"eval.{suite_id}.semantic_overall_weighted_f1"
+            result_metrics[semantic_metric_name] = float(semantic_summary.get("overall_weighted_f1", 0.0))
+            result_units[semantic_metric_name] = "ratio"
+            semantic_status = str(semantic_summary.get("status") or "")
+            if semantic_status:
+                job_parameters["semantic_judge_status"] = semantic_status
+        if isinstance(field_metrics, dict):
+            for field_name, values in field_metrics.items():
+                if isinstance(values, dict):
+                    metric_name = f"eval.{suite_id}.{field_name}_f1"
+                    result_metrics[metric_name] = float(values.get("f1", 0.0))
+                    result_units[metric_name] = "ratio"
+
+        resolved_dataset_id = dataset_id or "top200"
+        job = build_evaluation_job_record(
+            job_id=job_id,
+            model_id=remote_model_id,
+            task_kind="text-generation",
+            source_repo=job_parameters.get("source_repo", ""),
+            suite_id=suite_id,
+            dataset_id=resolved_dataset_id,
+            sample_size=len(rows),
+            scoring_mode="event_extraction_weighted_f1",
+            parameters=job_parameters,
+            status="completed",
+            output_dir=str(output_root),
+            created_at_unix_ms=created_at_unix_ms,
+            updated_at_unix_ms=created_at_unix_ms,
+        )
+        result = build_evaluation_result_record(
+            job_id=job.job_id,
+            suite_id=suite_id,
+            dataset_id=resolved_dataset_id,
+            sample_size=len(rows),
+            primary_score_name="overall_weighted_f1",
+            primary_score_value=overall_weighted_f1,
+            extraction_success_count=max(len(rows) - len(failures), 0),
+            validation_success_count=events_matched,
+            scored_sample_count=events_evaluated,
+            failure_count=len(failures),
+            duration_seconds=duration_seconds,
+            metrics=result_metrics,
+            report_path=str(summary_path),
+            units=result_units,
+        )
+        persisted_paths: dict[str, Path] = {}
+        if self._jobs_root is not None:
+            queue_root = self._jobs_root / "queue"
+            self._queue_store.enqueue(
+                queue_root=queue_root,
+                record=BenchmarkQueueRecord(
+                    queue_item_id=job.job_id,
+                    job_kind="evaluation",
+                    model_id=remote_model_id,
+                    suite_ids=(suite_id,),
+                    parameters=job_parameters,
+                    status="queued",
+                    created_at_unix_ms=created_at_unix_ms,
+                    updated_at_unix_ms=created_at_unix_ms,
+                ),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="running",
+                updated_at_unix_ms=created_at_unix_ms + 1,
+            )
+            persisted_paths = self._store.persist_result(
+                jobs_root=self._jobs_root,
+                job=job,
+                result=result,
+                samples=(),
+            )
+            self._queue_store.transition(
+                queue_root=queue_root,
+                queue_item_id=job.job_id,
+                status="completed",
+                updated_at_unix_ms=int(time.time() * 1000),
+            )
+        return EvaluationRun(job=job, results=(result,), samples=(), persisted_paths=persisted_paths)
+
+    @staticmethod
+    def _event_extraction_provider_error_code(exc: Exception) -> str:
+        code = getattr(exc, "code", "")
+        return str(code) if code else ""
+
+    @staticmethod
+    def _write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+        path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _round_ms(value: float) -> float:
+        return round(float(value), 4)
+
+    @staticmethod
+    def _client_result_int(client_result: Any, field_name: str) -> int:
+        value = getattr(client_result, field_name, 0)
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return 0
+
+    @staticmethod
+    def _client_result_provider_usage(client_result: Any) -> dict[str, int]:
+        provider_usage = getattr(client_result, "provider_usage", {})
+        if not isinstance(provider_usage, dict):
+            return {}
+        normalized: dict[str, int] = {}
+        for key, value in provider_usage.items():
+            if not isinstance(key, str) or isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                normalized[key] = value
+            elif isinstance(value, float) and value.is_integer():
+                normalized[key] = int(value)
+        return normalized
+
+    @classmethod
+    def _event_extraction_dialogue_trace(
+        cls,
+        *,
+        dialogue_id: str,
+        line_number: int,
+        status: str,
+        row_started_at: float,
+        throttle_sleep_ms: float,
+        request_duration_ms: float,
+        normalization_duration_ms: float,
+        dialogue: list[str],
+        request_body_bytes: int,
+        response_body_bytes: int,
+        raw_response: str,
+        raw_response_path: Path | None,
+        predicted_event_count: int,
+        normalized_event_count: int,
+        normalization_failure_count: int,
+        error_code: str | None,
+        failure_reason: str | None,
+        provider_usage: dict[str, int],
+    ) -> dict[str, object]:
+        return {
+            "dialogue_id": dialogue_id,
+            "line_number": line_number,
+            "status": status,
+            "total_duration_ms": cls._round_ms((time.perf_counter() - row_started_at) * 1_000.0),
+            "request_duration_ms": request_duration_ms,
+            "throttle_sleep_ms": throttle_sleep_ms,
+            "normalization_duration_ms": normalization_duration_ms,
+            "dialogue_line_count": len(dialogue),
+            "dialogue_char_count": sum(len(line) for line in dialogue),
+            "request_body_bytes": request_body_bytes,
+            "response_body_bytes": response_body_bytes,
+            "raw_response_chars": len(raw_response),
+            "raw_response_path": str(raw_response_path) if raw_response_path is not None else None,
+            "predicted_event_count": predicted_event_count,
+            "normalized_event_count": normalized_event_count,
+            "normalization_failure_count": normalization_failure_count,
+            "error_code": error_code,
+            "failure_reason": failure_reason,
+            "provider_usage": provider_usage,
+        }
+
+    @classmethod
+    def _event_extraction_dialogue_diagnostics(cls, traces: list[dict[str, object]]) -> dict[str, object]:
+        status_counts = {"ok": 0, "failed": 0, "aborted": 0}
+        for trace in traces:
+            status = trace.get("status")
+            if isinstance(status, str) and status in status_counts:
+                status_counts[status] += 1
+
+        request_latencies = cls._numeric_trace_values(traces, "request_duration_ms")
+        total_latencies = cls._numeric_trace_values(traces, "total_duration_ms")
+        raw_response_chars = cls._numeric_trace_values(traces, "raw_response_chars")
+        throttle_sleep_values = cls._numeric_trace_values(traces, "throttle_sleep_ms")
+        provider_usage_totals: dict[str, int] = {}
+        for trace in traces:
+            usage = trace.get("provider_usage")
+            if not isinstance(usage, dict):
+                continue
+            for key, value in usage.items():
+                if not isinstance(key, str) or isinstance(value, bool):
+                    continue
+                if isinstance(value, int):
+                    provider_usage_totals[key] = provider_usage_totals.get(key, 0) + value
+                elif isinstance(value, float) and value.is_integer():
+                    provider_usage_totals[key] = provider_usage_totals.get(key, 0) + int(value)
+
+        slowest_dialogues = []
+        for trace in sorted(
+            traces,
+            key=lambda item: float(item.get("total_duration_ms") or 0.0),
+            reverse=True,
+        )[:5]:
+            slowest_dialogues.append(
+                {
+                    "dialogue_id": trace.get("dialogue_id", ""),
+                    "line_number": trace.get("line_number", 0),
+                    "duration_ms": trace.get("total_duration_ms", 0.0),
+                    "status": trace.get("status", ""),
+                }
+            )
+
+        return {
+            "dialogue_status_counts": status_counts,
+            "request_duration_ms": cls._latency_stats(request_latencies),
+            "total_duration_ms": cls._latency_stats(total_latencies),
+            "total_throttle_sleep_ms": cls._round_ms(sum(throttle_sleep_values)),
+            "raw_response_chars": {
+                "mean": cls._round_ms(sum(raw_response_chars) / len(raw_response_chars)) if raw_response_chars else 0.0,
+                "max": cls._round_ms(max(raw_response_chars)) if raw_response_chars else 0.0,
+            },
+            "provider_usage_totals": provider_usage_totals,
+            "slowest_dialogues": slowest_dialogues,
+        }
+
+    @staticmethod
+    def _semantic_judge_target(parameters: dict[str, str]) -> RemoteSemanticJudgeTarget | None:
+        remote_server_id = str(parameters.get("semantic_judge_remote_server_id") or "").strip()
+        if not remote_server_id:
+            return None
+        return RemoteSemanticJudgeTarget(
+            provider_kind=str(parameters.get("semantic_judge_provider_kind") or "").strip(),
+            base_url=str(parameters.get("semantic_judge_base_url") or "").strip(),
+            api_key=str(parameters.get("semantic_judge_api_key") or "").strip(),
+            model_id=str(parameters.get("semantic_judge_model_id") or "").strip(),
+            timeout_seconds=int(str(parameters.get("semantic_judge_timeout_seconds") or "60") or 60),
+            rate_limit_per_minute=int(str(parameters.get("semantic_judge_rate_limit_per_minute") or "0") or 0),
+        )
+
+    @staticmethod
+    def _run_event_extraction_semantic_scoring(
+        *,
+        gold_subset_path: Path,
+        prediction_path: Path,
+        semantic_summary_path: Path,
+        semantic_details_path: Path,
+        semantic_row_audit_path: Path,
+        judge_audit_path: Path,
+        judge_target: RemoteSemanticJudgeTarget,
+        judge_remote_server_id: str,
+        judge_model_id: str,
+    ) -> dict[str, object]:
+        try:
+            judge = make_semantic_judge_client(judge_target)
+            return evaluate_event_extraction_semantic(
+                gold_jsonl=gold_subset_path,
+                pred_jsonl=prediction_path,
+                summary_output=semantic_summary_path,
+                details_output=semantic_details_path,
+                row_audit_output=semantic_row_audit_path,
+                judge_audit_output=judge_audit_path,
+                judge=judge,
+                judge_remote_server_id=judge_remote_server_id,
+                judge_model_id=judge_model_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            semantic_summary = {
+                "status": "failed",
+                "scoring_mode": "event_extraction_semantic_weighted_f1",
+                "base_scoring_mode": "event_extraction_weighted_f1",
+                "overall_weighted_f1": 0.0,
+                "summary": {
+                    "overall_weighted_f1": 0.0,
+                    "events_evaluated": 0,
+                    "events_matched": 0,
+                    "events_unmatched_gold": 0,
+                    "events_unmatched_pred": 0,
+                },
+                "semantic_judge": {
+                    "judge_remote_server_id": judge_remote_server_id,
+                    "judge_model_id": judge_model_id,
+                    "judge_prompt_hash": SEMANTIC_JUDGE_PROMPT_HASH,
+                    "calls": 0,
+                    "cache_hits": 0,
+                    "failures": 1,
+                    "error_code": "semantic_judge_setup_failed",
+                    "failure_reason": str(exc),
+                },
+            }
+            semantic_summary_path.write_text(
+                json.dumps(semantic_summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            EvaluationCore._write_jsonl_rows(semantic_details_path, [])
+            EvaluationCore._write_jsonl_rows(semantic_row_audit_path, [])
+            EvaluationCore._write_jsonl_rows(
+                judge_audit_path,
+                [
+                    {
+                        "status": "failed",
+                        "source": "setup",
+                        "error_code": "semantic_judge_setup_failed",
+                        "failure_reason": str(exc),
+                    }
+                ],
+            )
+            return semantic_summary
+
+    @staticmethod
+    def _numeric_trace_values(traces: list[dict[str, object]], field_name: str) -> list[float]:
+        values: list[float] = []
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                values.append(float(value))
+        return values
+
+    @classmethod
+    def _latency_stats(cls, values: list[float]) -> dict[str, float]:
+        if not values:
+            return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        return {
+            "mean": cls._round_ms(sum(values) / len(values)),
+            "p50": cls._round_ms(cls._percentile(values, 50.0)),
+            "p95": cls._round_ms(cls._percentile(values, 95.0)),
+            "max": cls._round_ms(max(values)),
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        sorted_values = sorted(values)
+        if len(sorted_values) == 1:
+            return sorted_values[0]
+        index = (len(sorted_values) - 1) * (percentile / 100.0)
+        lower = int(index)
+        upper = min(lower + 1, len(sorted_values) - 1)
+        fraction = index - lower
+        return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * fraction
+
+    @staticmethod
+    def _should_abort_event_extraction_on_provider_error(exc: Exception) -> bool:
+        if not isinstance(exc, RemoteProviderHTTPError):
+            return False
+        return exc.status_code in {401, 403, 404, 429} or exc.status_code >= 500
+
+    @staticmethod
+    def _event_extraction_error_payload(
+        *,
+        exc: Exception,
+        failure_record: dict[str, object],
+        remote_target: Any,
+        remote_model_id: str,
+        output_root: Path,
+        prediction_path: Path,
+        failure_path: Path,
+        trace_path: Path,
+        rows_total: int,
+        rows_attempted: int,
+        events_written: int,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "code": EvaluationCore._event_extraction_provider_error_code(exc) or "remote_provider_error",
+            "message": str(exc),
+            "remote_server_id": str(getattr(remote_target, "remote_server_id", "") or ""),
+            "provider_kind": str(getattr(remote_target, "provider_kind", "") or ""),
+            "remote_model_id": remote_model_id,
+            "dialogue_id": failure_record.get("dialogue_id", ""),
+            "line_number": failure_record.get("line_number", 0),
+            "rows_total": rows_total,
+            "rows_attempted": rows_attempted,
+            "events_written": events_written,
+            "output_dir": str(output_root),
+            "prediction_jsonl": str(prediction_path),
+            "failure_jsonl": str(failure_path),
+            "event_eval_dialogue_traces": str(trace_path),
+        }
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            payload["status_code"] = int(status_code)
+        response_body = str(getattr(exc, "response_body", "") or "")
+        if response_body:
+            payload["provider_response_excerpt"] = response_body[:2048]
+        return payload
 
     def _run_compare_suite(
         self,
@@ -852,18 +1595,109 @@ class EvaluationCore:
             return run_root / "evaluation-result.json"
         return run_root / "evaluation-result.json"
 
+    @staticmethod
+    def _read_event_extraction_rows(path: Path, *, sample_size: int) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError(f"expected JSON object at {path}:{line_number}")
+                if not isinstance(row.get("dialogue_id"), str) or not row.get("dialogue_id"):
+                    raise ValueError(f"missing dialogue_id at {path}:{line_number}")
+                if not isinstance(row.get("events"), list):
+                    raise ValueError(f"events must be a list at {path}:{line_number}")
+                normalized = dict(row)
+                normalized["dialogue"] = EvaluationCore._dialogue_lines(row.get("dialogue"))
+                rows.append(normalized)
+                if sample_size > 0 and len(rows) >= sample_size:
+                    break
+        if not rows:
+            raise ValueError(f"event extraction source JSONL is empty: {path}")
+        return rows
+
+    @staticmethod
+    def _event_extraction_prompt_spec(parameters: dict[str, str]) -> EventExtractionPromptSpec:
+        system_prompt = str(parameters.get("eval_prompt_system_prompt") or "").strip()
+        if not system_prompt:
+            return default_event_extraction_prompt_spec()
+
+        examples_json = str(parameters.get("eval_prompt_examples_json") or "[]").strip() or "[]"
+        try:
+            parsed_examples = json.loads(examples_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"eval_prompt_examples_json must be valid JSON: {exc}") from exc
+        if not isinstance(parsed_examples, list):
+            raise ValueError("eval_prompt_examples_json must be a JSON array")
+        examples: list[dict[str, object]] = []
+        for index, example in enumerate(parsed_examples):
+            if not isinstance(example, dict):
+                raise ValueError(f"eval prompt example {index} must be a JSON object")
+            dialogue_id = str(example.get("dialogue_id") or "").strip()
+            if not dialogue_id:
+                raise ValueError(f"eval prompt example {index} is missing dialogue_id")
+            examples.append(example)
+
+        prompt_id = str(parameters.get("eval_prompt_id") or parameters.get("prompt_id") or "").strip()
+        revision_id = str(
+            parameters.get("eval_prompt_revision_id") or parameters.get("prompt_revision_id") or ""
+        ).strip()
+        content_hash = str(
+            parameters.get("eval_prompt_content_hash") or parameters.get("prompt_content_hash") or ""
+        ).strip()
+        if not content_hash:
+            content_hash = event_prompt_content_hash(system_prompt, examples)
+        return EventExtractionPromptSpec(
+            prompt_id=prompt_id or "custom.event-extraction.prompt",
+            revision_id=revision_id or "unknown",
+            title=str(parameters.get("eval_prompt_title") or parameters.get("prompt_title") or "").strip(),
+            system_prompt=system_prompt,
+            examples=tuple(examples),
+            content_hash=content_hash,
+        )
+
+    @staticmethod
+    def _remote_provider_extra_body(parameters: dict[str, str]) -> dict[str, object]:
+        raw_value = str(parameters.get("remote_provider_extra_body_json") or "").strip()
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"remote_provider_extra_body_json must be valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("remote_provider_extra_body_json must be a JSON object")
+        return parsed
+
+    @staticmethod
+    def _dialogue_lines(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        if isinstance(value, str):
+            return [line.strip() for line in value.splitlines() if line.strip()]
+        return []
+
+    @staticmethod
+    def _safe_path_component(value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "dialogue"
+
     def _next_job_id(self) -> str:
         if self._jobs_root is None:
             return "eval-local"
         runs_root = self._jobs_root / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
-        existing = sorted(
-            int(path.name.removeprefix("eval-"))
-            for path in runs_root.iterdir()
-            if path.is_dir() and path.name.startswith("eval-") and path.name.removeprefix("eval-").isdigit()
-        )
-        next_index = (existing[-1] + 1) if existing else 1
-        return f"eval-{next_index:04d}"
+        with self._job_id_lock:
+            next_index = 1
+            while True:
+                job_id = f"eval-{next_index:04d}"
+                try:
+                    (runs_root / job_id).mkdir(parents=False, exist_ok=False)
+                    return job_id
+                except FileExistsError:
+                    next_index += 1
 
     def _run_root(self, job_id: str) -> Path:
         if self._jobs_root is None:

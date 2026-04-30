@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 
@@ -426,6 +427,64 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 2)
         #expect(viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests == 6)
         #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
+    }
+
+    @Test("workspace server surface renders remote server picker and editor")
+    @MainActor
+    func workspaceServerSurfaceRendersRemoteServerPickerAndEditor() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "kimi",
+                title: "Kimi",
+                providerPreset: .kimi,
+                providerKind: "openai-compatible",
+                baseURL: "https://api.kimi.com/coding",
+                defaultModelID: "kimi-2.6",
+                timeoutSeconds: 60,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "kimi"),
+                apiKeyHint: "sk-k...7890",
+                healthStatus: "healthy"
+            ),
+            RemoteServer(
+                id: "gemini",
+                title: "Gemini",
+                providerPreset: .gemini,
+                providerKind: "gemini-generative-language",
+                baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                defaultModelID: "gemini-2.5-flash",
+                timeoutSeconds: 90,
+                rateLimitPerMinute: 3,
+                credentialRef: RemoteServerStore.credentialRef(for: "gemini"),
+                apiKeyHint: "AIza...cret",
+                healthStatus: "unknown"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: store)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+        viewModel.selectRemoteServer(id: "gemini")
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        view.frame = NSRect(x: 0, y: 0, width: 1200, height: 2600)
+        view.layoutSubtreeIfNeeded()
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Gemini"))
+        #expect(renderedTexts.contains("gemini-2.5-flash"))
+        #expect(renderedTexts.contains("https://generativelanguage.googleapis.com/v1beta"))
+        #expect(renderedTexts.contains("90"))
+        #expect(renderedTexts.contains("3"))
+        #expect(viewModel.selectedRemoteServerID == "gemini")
+        #expect(viewModel.remoteServerProviderPresetDraft == .gemini)
+        #expect(viewModel.isRemoteServerBaseURLEditable == false)
     }
 
     @Test("server workspace folds advanced serving defaults by default")
@@ -2846,6 +2905,48 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
+    }
+
+    @Test("workspace diagnostics renders semantic judge controls")
+    @MainActor
+    func workspaceDiagnosticsRendersSemanticJudgeControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12,
+                    credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                    apiKeyHint: "sk-j...udge"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+        viewModel.preferredDiagnosticsStage = .evaluation
+
+        let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
+        #expect(renderedTexts.contains("Judge • judge"))
+        #expect(renderedTexts.contains("judge-model"))
     }
 
     @Test("evaluation metric card view renders statistical evidence lines")

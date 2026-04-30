@@ -153,6 +153,7 @@ public actor ControlPlaneService {
     private let imageJobAdmissionController: any ImageJobAdmissionControlling
     private let workerRegistry: WorkerRegistry?
     private let requestCoordinator: RequestCoordinator?
+    private let remoteProviderClient: any RemoteProviderChatClient
     private let chatTranslator: ChatRequestTranslator
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
@@ -182,6 +183,7 @@ public actor ControlPlaneService {
         imageJobAdmissionController: (any ImageJobAdmissionControlling)? = nil,
         workerRegistry: WorkerRegistry? = nil,
         requestCoordinator: RequestCoordinator? = nil,
+        remoteProviderClient: any RemoteProviderChatClient = OpenAICompatibleRemoteProviderClient(),
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
@@ -236,6 +238,7 @@ public actor ControlPlaneService {
                 cacheMetadataStore: cacheMetadataStore
             )
         }
+        self.remoteProviderClient = remoteProviderClient
         self.chatTranslator = chatTranslator
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
@@ -270,6 +273,7 @@ public actor ControlPlaneService {
             "server-session-runtime",
             "image-jobs",
             "audio-assets",
+            "remote-provider-chat",
         ]
         if !mcpToolCatalog.sources.isEmpty || !mcpToolCatalog.configPath.isEmpty {
             response.features.append("mcp-tools")
@@ -312,6 +316,10 @@ public actor ControlPlaneService {
     public func startChat(
         _ request: ControlPlaneChatRequest
     ) async throws -> ControlPlaneChatExecution {
+        if let remoteTarget = request.remoteTarget {
+            return try await startRemoteChat(request, remoteTarget: remoteTarget)
+        }
+
         guard let requestCoordinator else {
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: request coordinator is not configured")
         }
@@ -413,6 +421,61 @@ public actor ControlPlaneService {
             stream: mappedChatStream(from: execution.stream),
             lifecycle: execution.lifecycle
         )
+    }
+
+    private func startRemoteChat(
+        _ request: ControlPlaneChatRequest,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget
+    ) async throws -> ControlPlaneChatExecution {
+        let remoteRequest = RemoteProviderChatRequest(
+            serverID: remoteTarget.serverID,
+            providerKind: remoteTarget.providerKind,
+            baseURL: remoteTarget.baseURL,
+            apiKey: remoteTarget.apiKey,
+            modelID: remoteTarget.modelID,
+            messages: request.messages.map { .init(role: $0.role, content: $0.content) },
+            stream: true,
+            timeoutSeconds: remoteTarget.timeoutSeconds
+        )
+        let remoteStream = try await remoteProviderClient.stream(remoteRequest)
+        return ControlPlaneChatExecution(
+            requestID: "remote-\(UUID().uuidString)",
+            modelID: remoteTarget.modelID,
+            stream: mappedRemoteChatStream(from: remoteStream)
+        )
+    }
+
+    private func mappedRemoteChatStream(
+        from stream: AsyncThrowingStream<RemoteProviderChatStreamEvent, Error>
+    ) -> AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> {
+        AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
+            let forwardTask = Task {
+                do {
+                    for try await event in stream {
+                        switch event {
+                        case .tokenDelta(let text):
+                            continuation.yield(.tokenDelta(text))
+                        case .usage(let promptTokens, let completionTokens):
+                            continuation.yield(.usage(promptTokens: promptTokens, completionTokens: completionTokens))
+                        case .completed(let finishReason, let assistantText):
+                            continuation.yield(
+                                .completed(
+                                    finishReason: finishReason,
+                                    assistantText: assistantText,
+                                    reasoningText: ""
+                                )
+                            )
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                forwardTask.cancel()
+            }
+        }
     }
 
     private func mappedChatStream(
@@ -1032,6 +1095,69 @@ public actor ControlPlaneService {
         }
     }
 
+    private func handleRunRemoteEvaluation(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_RunEvaluation,
+        workerClient: any ModelOperationsWorkerClientProtocol,
+        remoteServerID: String
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let remoteTarget = command.remoteTarget
+        let remoteModelID = remoteTarget.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard remoteTarget.providerKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Remote evaluation target is missing provider_kind.")
+        }
+        guard remoteTarget.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Remote evaluation target is missing base_url.")
+        }
+        guard remoteTarget.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Remote evaluation target is missing an API key.")
+        }
+        guard remoteModelID.isEmpty == false else {
+            return errorResponse(for: request, code: "invalid_argument", message: "Remote evaluation target is missing model_id.")
+        }
+
+        var workerRequest = Melix_Worker_V1_RunEvaluationRequest()
+        workerRequest.suiteID = command.suiteID
+        workerRequest.datasetID = command.datasetID
+        workerRequest.sampleSize = command.sampleSize
+        workerRequest.fewShot = command.fewShot
+        workerRequest.seed = command.seed
+        workerRequest.scoringMode = command.scoringMode
+        workerRequest.codeExecPolicy = command.codeExecPolicy
+        workerRequest.parameters = command.parameters
+        workerRequest.parameters["remote_server_id"] = remoteServerID
+        workerRequest.parameters["remote_model_id"] = remoteModelID
+        workerRequest.parameters["remote_provider_kind"] = remoteTarget.providerKind
+        workerRequest.taskKind = BenchmarkTaskKind.textGeneration.rawValue
+        workerRequest.sourceRepo = "remote:\(remoteTarget.providerKind)"
+        workerRequest.remoteTarget.remoteServerID = remoteServerID
+        workerRequest.remoteTarget.providerKind = remoteTarget.providerKind
+        workerRequest.remoteTarget.baseURL = remoteTarget.baseURL
+        workerRequest.remoteTarget.apiKey = remoteTarget.apiKey
+        workerRequest.remoteTarget.modelID = remoteModelID
+        workerRequest.remoteTarget.timeoutSeconds = remoteTarget.timeoutSeconds
+        workerRequest.remoteTarget.rateLimitPerMinute = remoteTarget.rateLimitPerMinute
+        copyEvaluationSourceAndProfile(from: command, to: &workerRequest)
+
+        do {
+            let workerResponse = try await workerClient.runEvaluation(request: workerRequest)
+            guard workerResponse.ok else {
+                return errorResponse(
+                    for: request,
+                    code: workerResponse.error.code.isEmpty ? "unknown" : workerResponse.error.code,
+                    message: workerResponse.error.message.isEmpty ? "Evaluation request failed." : workerResponse.error.message
+                )
+            }
+
+            var reply = Melix_Controlplane_V1_OpsReply()
+            reply.evaluationJob = makeEvaluationJobSummary(from: workerResponse.job)
+            reply.evaluationResults = workerResponse.results.map(makeEvaluationResultSummary)
+            return okResponse(for: request, ops: reply)
+        } catch {
+            return errorResponse(for: request, code: "unavailable", message: "Evaluation worker request failed: \(error)")
+        }
+    }
+
     private func handleRunBenchMatrix(
         request: Melix_Controlplane_V1_ControlPlaneRequest,
         command: Melix_Controlplane_V1_RunBenchMatrix
@@ -1196,6 +1322,16 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "unavailable", message: "Model operations worker is unavailable.")
         }
 
+        let requestedRemoteServerID = command.remoteTarget.remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if requestedRemoteServerID.isEmpty == false {
+            return await handleRunRemoteEvaluation(
+                request: request,
+                command: command,
+                workerClient: workerClient,
+                remoteServerID: requestedRemoteServerID
+            )
+        }
+
         let requestedModelID = command.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestedHFRepoID = command.hfRepoID.trimmingCharacters(in: .whitespacesAndNewlines)
         let evaluationModel: Melix_Controlplane_V1_ModelSummary
@@ -1294,6 +1430,36 @@ public actor ControlPlaneService {
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Evaluation worker request failed: \(error)")
         }
+    }
+
+    private func copyEvaluationSourceAndProfile(
+        from command: Melix_Controlplane_V1_RunEvaluation,
+        to workerRequest: inout Melix_Worker_V1_RunEvaluationRequest
+    ) {
+        switch command.source.kind {
+        case .none:
+            break
+        case .localCsv(let localCSV):
+            workerRequest.source.localCsv.path = localCSV.path
+        case .localJsonl(let localJSONL):
+            workerRequest.source.localJsonl.path = localJSONL.path
+        case .hfDataset(let hfDataset):
+            workerRequest.source.hfDataset.datasetPath = hfDataset.datasetPath
+            workerRequest.source.hfDataset.datasetName = hfDataset.datasetName
+            workerRequest.source.hfDataset.datasetRevision = hfDataset.datasetRevision
+            workerRequest.source.hfDataset.split = hfDataset.split
+        }
+        workerRequest.fieldMapping.systemPath = command.fieldMapping.systemPath
+        workerRequest.fieldMapping.inputTextPath = command.fieldMapping.inputTextPath
+        workerRequest.fieldMapping.targetPath = command.fieldMapping.targetPath
+        workerRequest.fieldMapping.sampleIDPath = command.fieldMapping.sampleIDPath
+        workerRequest.profile.profileType = command.profile.profileType
+        workerRequest.profile.resultKind = command.profile.resultKind
+        workerRequest.profile.extractionMode = command.profile.extractionMode
+        workerRequest.profile.scoringMode = command.profile.scoringMode
+        workerRequest.profile.threshold = command.profile.threshold
+        workerRequest.profile.outputSchemaJson = command.profile.outputSchemaJson
+        workerRequest.profile.ignoredPaths = command.profile.ignoredPaths
     }
 
     private func handleExportResults(

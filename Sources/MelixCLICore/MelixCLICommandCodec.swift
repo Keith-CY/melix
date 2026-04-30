@@ -64,6 +64,16 @@ public enum MelixCLICommandCodec {
             return "server.stop"
         case .serverSetIdlePolicy:
             return "server.set-idle-policy"
+        case .remoteServerList:
+            return "remote-server.list"
+        case .remoteServerAdd:
+            return "remote-server.add"
+        case .remoteServerUpdate:
+            return "remote-server.update"
+        case .remoteServerRemove:
+            return "remote-server.remove"
+        case .remoteServerTest:
+            return "remote-server.test"
         case .chatRun:
             return "chat.run"
         case .loraList:
@@ -106,6 +116,18 @@ public enum MelixCLICommandCodec {
             return "bench.matrix.export-requests-csv"
         case .evalRun:
             return "eval.run"
+        case .evalPromptList:
+            return "eval.prompt.list"
+        case .evalPromptShow:
+            return "eval.prompt.show"
+        case .evalPromptCreate:
+            return "eval.prompt.create"
+        case .evalPromptUpdate:
+            return "eval.prompt.update"
+        case .evalPromptFreeze:
+            return "eval.prompt.freeze"
+        case .evalPromptArchive:
+            return "eval.prompt.archive"
         case .evalCompare:
             return "eval.compare"
         case .evalList:
@@ -260,9 +282,34 @@ public enum MelixCLICommandCodec {
             appendPositiveUInt32("--light-sleep-after", value: options.lightSleepAfterSeconds, into: &arguments)
             appendPositiveUInt32("--deep-sleep-after", value: options.deepSleepAfterSeconds, into: &arguments)
             json = options.json
+        case .remoteServerList(let options):
+            arguments = ["remote-server", "list"]
+            json = options.json
+        case .remoteServerAdd(let options):
+            arguments = ["remote-server", "add"]
+            appendRemoteServerMutationOptions(options, into: &arguments)
+            json = options.json
+        case .remoteServerUpdate(let options):
+            arguments = ["remote-server", "update"]
+            appendRemoteServerMutationOptions(options, into: &arguments)
+            json = options.json
+        case .remoteServerRemove(let options):
+            arguments = ["remote-server", "remove"]
+            appendOption("--remote-server-id", value: options.remoteServerID, into: &arguments)
+            json = options.json
+        case .remoteServerTest(let options):
+            arguments = ["remote-server", "test"]
+            appendOption("--remote-server-id", value: options.remoteServerID, into: &arguments)
+            appendOption("--model", value: options.remoteModelID, into: &arguments)
+            json = options.json
         case .chatRun(let options):
             arguments = ["chat", "run"]
-            appendOption("--model-id", value: options.modelID, into: &arguments)
+            if options.remoteServerID.isEmpty == false {
+                appendOption("--remote-server-id", value: options.remoteServerID, into: &arguments)
+                appendOption("--model", value: options.remoteModelID, into: &arguments)
+            } else {
+                appendOption("--model-id", value: options.modelID, into: &arguments)
+            }
             appendOption("--message", value: options.message, into: &arguments)
             appendOption("--system", value: options.systemPrompt, into: &arguments)
             appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
@@ -365,7 +412,7 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .evalRun(let options):
             arguments = ["eval", "run"]
-            appendTarget(modelID: options.modelID, hfRepoID: options.hfRepoID, into: &arguments)
+            appendEvalTarget(options, into: &arguments)
             appendMultiOption("--suite", values: options.suites, into: &arguments)
             appendOption("--dataset-id", value: options.datasetID, into: &arguments)
             appendPositiveUInt32("--sample-size", value: options.sampleSize, into: &arguments)
@@ -376,6 +423,39 @@ public enum MelixCLICommandCodec {
                 into: &arguments
             )
             appendEvalParameters(options.parameters, into: &arguments)
+            appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
+            appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+            appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
+            appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
+            appendPositiveUInt32("--remote-parallelism", value: options.remoteParallelism, into: &arguments)
+            json = options.json
+        case .evalPromptList(let options):
+            arguments = ["eval", "prompt", "list"]
+            json = options.json
+        case .evalPromptShow(let options):
+            arguments = ["eval", "prompt", "show"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--revision-id", value: options.revisionID, into: &arguments)
+            json = options.json
+        case .evalPromptCreate(let options):
+            arguments = ["eval", "prompt", "create"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--title", value: options.title, into: &arguments)
+            appendOption("--system-prompt-file", value: options.systemPromptFile, into: &arguments)
+            json = options.json
+        case .evalPromptUpdate(let options):
+            arguments = ["eval", "prompt", "update"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--system-prompt-file", value: options.systemPromptFile, into: &arguments)
+            json = options.json
+        case .evalPromptFreeze(let options):
+            arguments = ["eval", "prompt", "freeze"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
+            appendOption("--revision-id", value: options.revisionID, into: &arguments)
+            json = options.json
+        case .evalPromptArchive(let options):
+            arguments = ["eval", "prompt", "archive"]
+            appendOption("--prompt-id", value: options.promptID, into: &arguments)
             json = options.json
         case .evalExportSummaryCSV(let options):
             arguments = ["eval", "export-summary-csv"]
@@ -412,12 +492,51 @@ public enum MelixCLICommandCodec {
         return arguments
     }
 
-    private static func appendTarget(modelID: String, hfRepoID: String, into arguments: inout [String]) {
+    private static func appendTarget(
+        modelID: String,
+        hfRepoID: String,
+        remoteServerID: String = "",
+        remoteModelID: String = "",
+        into arguments: inout [String]
+    ) {
         if modelID.isEmpty == false {
             arguments.append(contentsOf: ["--model-id", modelID])
         } else if hfRepoID.isEmpty == false {
             arguments.append(contentsOf: ["--repo-id", hfRepoID])
+        } else if remoteServerID.isEmpty == false {
+            arguments.append(contentsOf: ["--remote-server-id", remoteServerID])
+            appendOption("--remote-model", value: remoteModelID, into: &arguments)
         }
+    }
+
+    private static func appendEvalTarget(_ options: EvalRunOptions, into arguments: inout [String]) {
+        if options.modelID.isEmpty == false {
+            arguments.append(contentsOf: ["--model-id", options.modelID])
+        } else if options.hfRepoID.isEmpty == false {
+            arguments.append(contentsOf: ["--repo-id", options.hfRepoID])
+        } else {
+            let targets = options.remoteTargets.isEmpty
+                ? [EvalRemoteTargetOptions(remoteServerID: options.remoteServerID, remoteModelID: options.remoteModelID)]
+                : options.remoteTargets
+            for target in targets where target.remoteServerID.isEmpty == false {
+                arguments.append(contentsOf: ["--remote-server-id", target.remoteServerID])
+                appendOption("--remote-model", value: target.remoteModelID, into: &arguments)
+            }
+        }
+    }
+
+    private static func appendRemoteServerMutationOptions(
+        _ options: RemoteServerMutationOptions,
+        into arguments: inout [String]
+    ) {
+        appendOption("--remote-server-id", value: options.remoteServerID, into: &arguments)
+        appendOption("--title", value: options.title, into: &arguments)
+        appendOption("--provider", value: options.providerPreset?.rawValue, into: &arguments)
+        appendOption("--base-url", value: options.baseURL, into: &arguments)
+        appendOption("--model", value: options.defaultModelID, into: &arguments)
+        appendOption("--api-key", value: options.apiKey, into: &arguments)
+        appendPositiveUInt32("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
+        appendPositiveUInt32("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
     }
 
     private static func appendExportOptions(_ jobID: String, _ outputPath: String, into arguments: inout [String]) {
@@ -504,6 +623,7 @@ public enum MelixCLICommandCodec {
             ("few_shot", "--few-shot"),
             ("scoring_mode", "--scoring-mode"),
             ("code_exec_policy", "--code-exec-policy"),
+            ("remote_provider_extra_body_json", "--remote-extra-body-json"),
         ]
         for (key, option) in mapping {
             appendOption(option, value: parameters[key], into: &arguments)
