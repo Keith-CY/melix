@@ -26,6 +26,7 @@ from worker.model_ops.training_dataset_chunker import (
 )
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
+_NUMERIC_TOKEN_RE = re.compile(r"\d+")
 
 
 @dataclass(frozen=True)
@@ -618,8 +619,9 @@ def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
 
 
 def _checkpoint_order_key(path: Path) -> tuple[int, str]:
-    numeric_tokens = [int(token) for token in re.findall(r"\d+", str(path))]
-    return (numeric_tokens[-1] if numeric_tokens else -1, str(path))
+    path_text = str(path)
+    numeric_tokens = _NUMERIC_TOKEN_RE.findall(path_text)
+    return (int(numeric_tokens[-1]) if numeric_tokens else -1, path_text)
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:

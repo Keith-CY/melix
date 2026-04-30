@@ -13,7 +13,10 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 from worker.grpc_server import WorkerMaintenanceService
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
-from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.model_ops.lora_training_pipeline import (
+    LoRATrainingPipeline,
+    _latest_checkpoint_from_directory,
+)
 from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
     ActivationRequest,
@@ -23,6 +26,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingMetrics,
     TrainingRequest,
     TrainingResult,
+    _checkpoint_order_key,
 )
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
@@ -35,6 +39,31 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
+
+
+def test_checkpoint_order_key_uses_last_numeric_token() -> None:
+    older = Path("/tmp/model-ops-999/adapter/checkpoint-2/adapters.safetensors")
+    newer = Path("/tmp/model-ops-001/adapter/checkpoint-10/adapters.safetensors")
+
+    assert max((older, newer), key=_checkpoint_order_key) == newer
+    assert _checkpoint_order_key(Path("/tmp/melix/no-number/adapters.safetensors")) == (
+        -1,
+        "/tmp/melix/no-number/adapters.safetensors",
+    )
+
+
+def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: Path) -> None:
+    older = (
+        tmp_path / "model-ops-999" / "adapter" / "checkpoint-2" / "adapters.safetensors"
+    )
+    newer = (
+        tmp_path / "model-ops-001" / "adapter" / "checkpoint-10" / "adapters.safetensors"
+    )
+    for checkpoint in (older, newer):
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_bytes(b"weights")
+
+    assert _latest_checkpoint_from_directory(tmp_path) == newer.resolve()
 
 
 def _write_dataset_package(
