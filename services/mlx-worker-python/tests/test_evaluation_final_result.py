@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from worker.productization.evaluation_final_result import (
     HFEvaluationDatasetSource,
     EvaluationMaterializationRequest,
     EvaluationProfileDefinition,
+    _local_source_metadata,
     extract_final_result,
     materialize_hf_evaluation_dataset,
     materialize_local_evaluation_dataset,
@@ -138,6 +140,139 @@ def test_materialize_local_evaluation_dataset_requires_explicit_mapping_for_json
         )
 
     assert excinfo.value.code == "invalid_evaluation_source"
+
+
+def test_materialize_local_evaluation_dataset_builds_final_result_package_from_jsonl_with_blank_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"meta": {"sys": "Return the final answer only."}, "payload": {"question": "Capital of France?", "target": "Paris"}, "sample": {"id": "capital-1"}}),
+                "",
+                "  ",
+                json.dumps({"meta": {"sys": "Return the final answer only."}, "payload": {"question": "Capital of Italy?", "target": "Rome"}, "sample": {"id": "capital-2"}}),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def _forbid_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == source_path.resolve():
+            raise AssertionError("streaming JSONL loader should not call Path.read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    original_read_text = Path.read_text
+    monkeypatch.setattr(Path, "read_text", _forbid_read_text)
+
+    materialized = materialize_local_evaluation_dataset(
+        request=EvaluationMaterializationRequest(
+            source_kind="jsonl",
+            source_path=source_path,
+            profile=EvaluationProfileDefinition(
+                profile_type="final_result",
+                result_kind="text",
+                extraction_mode="heuristic_final",
+                scoring_mode="normalized_exact_match",
+                threshold=1.0,
+            ),
+            field_mapping=EvaluationFieldMapping(
+                system_path="meta.sys",
+                input_text_path="payload.question",
+                target_path="payload.target",
+                sample_id_path="sample.id",
+            ),
+            dataset_id="capital.dev.v1",
+            suite_id="capital",
+        ),
+        cache_root=tmp_path / "cache",
+    )
+
+    manifest = json.loads((materialized.package_path / "manifest.json").read_text(encoding="utf-8"))
+    samples = [
+        json.loads(line)
+        for line in (materialized.package_path / "samples.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert manifest["source_kind"] == "jsonl"
+    assert [sample["id"] for sample in samples] == ["capital-1", "capital-2"]
+    assert samples[1]["input"]["text"] == "Capital of Italy?"
+    assert samples[1]["target"] == "Rome"
+
+
+def test_local_source_metadata_reports_same_sha256_and_size_as_path_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source.jsonl"
+    payload = (
+        json.dumps({"prompt": "Capital of France?", "answer": "Paris"})
+        + "\n"
+        + json.dumps({"prompt": "Capital of Italy?", "answer": "Rome"})
+        + "\n"
+    )
+    source_path.write_text(payload, encoding="utf-8")
+
+    def _forbid_read_bytes(self: Path) -> bytes:
+        if self.resolve() == source_path.resolve():
+            raise AssertionError("streaming metadata hashing should not call Path.read_bytes")
+        return original_read_bytes(self)
+
+    original_read_bytes = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", _forbid_read_bytes)
+
+    metadata = _local_source_metadata(source_kind="jsonl", source_path=source_path)
+    expected_bytes = original_read_bytes(source_path)
+
+    assert metadata == {
+        "source_kind": "jsonl",
+        "source_path": str(source_path.resolve()),
+        "source_sha256": hashlib.sha256(expected_bytes).hexdigest(),
+        "source_size_bytes": len(expected_bytes),
+    }
+
+
+def test_materialize_local_evaluation_dataset_rejects_non_object_jsonl_rows_without_read_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text(json.dumps(["not", "an", "object"]) + "\n", encoding="utf-8")
+
+    def _forbid_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == source_path.resolve():
+            raise AssertionError("streaming JSONL loader should not call Path.read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    original_read_text = Path.read_text
+    monkeypatch.setattr(Path, "read_text", _forbid_read_text)
+
+    with pytest.raises(ModelOperationError) as excinfo:
+        materialize_local_evaluation_dataset(
+            request=EvaluationMaterializationRequest(
+                source_kind="jsonl",
+                source_path=source_path,
+                profile=EvaluationProfileDefinition(
+                    profile_type="final_result",
+                    result_kind="text",
+                    extraction_mode="heuristic_final",
+                    scoring_mode="normalized_exact_match",
+                    threshold=1.0,
+                ),
+                field_mapping=EvaluationFieldMapping(
+                    input_text_path="prompt",
+                    target_path="answer",
+                ),
+            ),
+            cache_root=tmp_path / "cache",
+        )
+
+    assert excinfo.value.code == "invalid_evaluation_source"
+    assert excinfo.value.message == "JSONL evaluation rows must be JSON objects."
 
 
 def test_materialize_local_evaluation_dataset_builds_final_result_package_from_csv(

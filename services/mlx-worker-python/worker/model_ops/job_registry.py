@@ -36,6 +36,8 @@ class ModelOpsJob:
     output_dir: str
     stage_history: list[tuple[str, float]] = field(default_factory=list)
     manifest_json: str = ""
+    manifest: dict[str, Any] = field(default_factory=dict)
+    manifest_cached: bool = False
     output_path: str = ""
     status: str = "running"
     error_code: str = ""
@@ -75,7 +77,10 @@ class ModelOpsJobRegistry:
 
     def attach_manifest(self, job_id: str, manifest_json: str) -> None:
         with self._lock:
-            self._jobs[job_id].manifest_json = manifest_json
+            job = self._jobs[job_id]
+            job.manifest_json = manifest_json
+            job.manifest = self._decode_manifest_json(manifest_json)
+            job.manifest_cached = True
 
     def complete(self, job_id: str, output_path: str) -> None:
         with self._lock:
@@ -156,9 +161,19 @@ class ModelOpsJobRegistry:
                 output_dir=str(output_dir),
                 stage_history=[("write_manifest", pct)],
                 manifest_json=json.dumps(payload, sort_keys=True),
+                manifest=payload,
+                manifest_cached=True,
                 output_path=str(manifest_path),
                 status="completed",
             )
+
+    @staticmethod
+    def _decode_manifest_json(manifest_json: str) -> dict[str, Any]:
+        try:
+            decoded = json.loads(manifest_json)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
 
     @staticmethod
     def _read_manifest_dict(path: Path) -> dict[str, Any]:
@@ -295,12 +310,10 @@ class ModelOpsJobRegistry:
 
         manifest: dict[str, Any] = {}
         if job.operation != "registry_snapshot" and job.manifest_json:
-            try:
-                decoded = json.loads(job.manifest_json)
-            except json.JSONDecodeError:
-                decoded = {}
-            if isinstance(decoded, dict):
-                manifest = decoded
+            if job.manifest_cached:
+                manifest = job.manifest
+            else:
+                manifest = ModelOpsJobRegistry._decode_manifest_json(job.manifest_json)
 
         return {
             "job_id": job.job_id,
@@ -514,11 +527,18 @@ class ModelOpsJobRegistry:
             if export_artifact_kind != "merged_export":
                 continue
             raw_lineage = manifest.get("parent_lineage")
+            raw_processor_config_files = manifest.get("processor_config_files")
             publish = {
                 "job_id": job["job_id"],
                 "target_repo": str(manifest.get("published_repo", manifest.get("target_repo", ""))),
                 "publish_backend": str(manifest.get("upload_backend", manifest.get("publish_backend", ""))),
                 "export_artifact_kind": export_artifact_kind,
+                "distribution_contract": str(manifest.get("distribution_contract") or ""),
+                "processor_config_files": (
+                    list(raw_processor_config_files)
+                    if isinstance(raw_processor_config_files, list)
+                    else []
+                ),
                 "parent_lineage": raw_lineage if isinstance(raw_lineage, dict) else {},
             }
             parent_lineage = publish["parent_lineage"]
@@ -569,6 +589,8 @@ class ModelOpsJobRegistry:
                     "publish_backend": publish["publish_backend"] if publish else "",
                     "publish_artifact_kind": publish["export_artifact_kind"] if publish else "",
                     "publish_parent_lineage": publish["parent_lineage"] if publish else {},
+                    "distribution_contract": publish["distribution_contract"] if publish else "",
+                    "processor_config_files": publish["processor_config_files"] if publish else [],
                     "published_state": "published" if publish else "not_published",
                     "status": "activated",
                 }
@@ -657,6 +679,12 @@ class ModelOpsJobRegistry:
             published_files = (
                 list(raw_published_files) if isinstance(raw_published_files, list) else []
             )
+            raw_processor_config_files = manifest.get("processor_config_files")
+            processor_config_files = (
+                list(raw_processor_config_files)
+                if isinstance(raw_processor_config_files, list)
+                else []
+            )
             publishes.append(
                 {
                     "job_id": job["job_id"],
@@ -665,6 +693,7 @@ class ModelOpsJobRegistry:
                     "published_url": published_url,
                     "published_ref": str(manifest.get("published_ref") or ""),
                     "published_files": published_files,
+                    "processor_config_files": processor_config_files,
                     "publish_backend": str(
                         manifest.get("upload_backend")
                         or manifest.get("publish_backend")

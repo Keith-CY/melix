@@ -5,7 +5,11 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from worker.productization.benchmark_export import (
+    _iter_jsonl_dict_rows,
+    _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
@@ -534,6 +538,101 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
 
 
+def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-context-rows.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            json.dumps(["ignored"]),
+            "   ",
+        ]) + "\n"
+    )
+    (tmp_path / "bench-batch-rows.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "batch"}),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+    matrix_root = tmp_path / "matrix-runs" / "bench-matrix-1"
+    matrix_root.mkdir(parents=True, exist_ok=True)
+    (matrix_root / "bench-matrix-job.json").write_text(json.dumps({"job_id": "bench-matrix-1"}) + "\n")
+    (matrix_root / "bench-matrix-summary.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "summary"}),
+            json.dumps(123),
+        ]) + "\n"
+    )
+    (matrix_root / "bench-matrix-requests.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "bench-matrix-1", "row_kind": "request"}),
+            json.dumps(False),
+        ]) + "\n"
+    )
+
+    result = collect_benchmark_artifacts(tmp_path)
+
+    assert result["benchmark_context_rows"] == [{"job_id": "bench-1", "row_kind": "context"}]
+    assert result["benchmark_batch_rows"] == [{"job_id": "bench-1", "row_kind": "batch"}]
+    assert result["benchmark_matrix_summary_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
+    assert result["benchmark_matrix_request_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
+
+
+def test_iter_jsonl_dict_rows_streams_rows_lazily(tmp_path: Path) -> None:
+    path = tmp_path / "streamed.jsonl"
+    path.write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            "not-json",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = _iter_jsonl_dict_rows(path)
+
+    assert next(rows) == {"job_id": "bench-1", "row_kind": "context"}
+    with pytest.raises(json.JSONDecodeError):
+        next(rows)
+
+
+def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
+    _write_eval_compare_fixtures(tmp_path)
+    (tmp_path / "evaluation-samples.jsonl").write_text(
+        "\n".join([
+            "",
+            json.dumps({"job_id": "eval-1", "sample_id": "kept"}),
+            json.dumps(["ignored"]),
+        ]) + "\n"
+    )
+    (tmp_path / "evaluation-compare-samples.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "sample_id": "sample-1",
+                "target_model_id": "melix-dev-text-lora-a",
+                "base_model_id": "melix-dev-text",
+                "suite_id": "mmlu",
+                "dataset_id": "mmlu.dev.v1",
+                "input_text": "2+2?",
+                "target": "4",
+                "base_extracted_result": "4",
+                "target_extracted_result": "4",
+                "base_raw_response": "4",
+                "target_raw_response": "4",
+                "base_typed_score": 1.0,
+                "target_typed_score": 1.0,
+                "outcome": "tie",
+            }),
+            json.dumps("ignored"),
+        ]) + "\n"
+    )
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert [sample["sample_id"] for sample in result["evaluation_compare_samples"]] == ["sample-1"]
+    assert [sample["sample_id"] for sample in result["evaluation_samples"]] == ["kept", "melix-dev-text-lora-a:sample-1"]
+
+
 def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path) -> None:
     _write_eval_fixtures(tmp_path)
 
@@ -1011,6 +1110,21 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["extraction_status"] == "extracted"
     assert rows[0]["validation_status"] == "validated"
     assert rows[0]["input_modalities"] == "text"
+
+
+def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
+    rows = (
+        {"job_id": f"eval-{index}", "typed_score": index / 10}
+        for index in range(3)
+    )
+
+    csv_text = _rows_to_csv(rows, ["job_id", "typed_score"])
+
+    assert list(csv.DictReader(io.StringIO(csv_text))) == [
+        {"job_id": "eval-0", "typed_score": "0.0"},
+        {"job_id": "eval-1", "typed_score": "0.1"},
+        {"job_id": "eval-2", "typed_score": "0.2"},
+    ]
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:

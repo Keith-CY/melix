@@ -1,5 +1,8 @@
 import MelixWorkerProtocol
 
+private let pythonWorkerGenerationStreamOwnerModeMissingCode = 0.0
+private let pythonWorkerGenerationStreamOwnerModeUnknownCode = -2.0
+
 func recordPythonWorkerStreamOwnershipMetrics(
     from stats: Melix_Worker_V1_RuntimeStats,
     metricsStore: MetricsStore
@@ -19,7 +22,11 @@ func recordPythonWorkerStreamOwnershipMetrics(
 }
 
 func pythonWorkerGenerationStreamOwnerModeCode(_ mode: String) -> Double {
-    switch mode {
+    let normalizedMode = mode.trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalizedMode.isEmpty || normalizedMode == "uninitialized" {
+        return pythonWorkerGenerationStreamOwnerModeMissingCode
+    }
+    switch normalizedMode {
     case "executor_owned":
         return 1
     case "executor_owned_no_stream":
@@ -27,6 +34,6 @@ func pythonWorkerGenerationStreamOwnerModeCode(_ mode: String) -> Double {
     case "executor_owned_stream_init_failed":
         return 3
     default:
-        return -1
+        return pythonWorkerGenerationStreamOwnerModeUnknownCode
     }
 }

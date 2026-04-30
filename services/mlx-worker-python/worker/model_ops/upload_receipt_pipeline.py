@@ -52,6 +52,11 @@ class PreparedPublishSource:
 
 _ADAPTER_EXPORT_KINDS = {"adapter", "adapter_export"}
 _MERGED_EXPORT_KINDS = {"merged", "merged_export", "converted_model_bundle"}
+_PROCESSOR_CONFIG_FILENAMES = frozenset({
+    "processor_config.json",
+    "preprocessor_config.json",
+    "image_processor.json",
+})
 
 
 class HuggingFacePublishBackend:
@@ -64,6 +69,7 @@ class HuggingFacePublishBackend:
         token: str = "",
         private: bool = False,
         commit_message: str = "",
+        published_files: list[str] | None = None,
     ) -> PublishResult:
         resolved_source_path = source_path.expanduser().resolve()
         command = [
@@ -106,7 +112,7 @@ class HuggingFacePublishBackend:
                 remote_ref = stripped
                 break
 
-        published_files = (
+        published_files = published_files or (
             sorted(
                 str(path.relative_to(resolved_source_path))
                 for path in resolved_source_path.rglob("*")
@@ -168,6 +174,9 @@ class UploadReceiptPipeline:
             target_repo=target_repo,
             export_artifact_kind=export_artifact_kind,
         )
+        processor_config_files = UploadReceiptPipeline._collect_processor_config_files(
+            prepared_source.published_files
+        )
         publish_result = self._publisher.publish(
             source_path=prepared_source.source_path,
             target_repo=target_repo,
@@ -175,6 +184,7 @@ class UploadReceiptPipeline:
             token=self._resolve_hf_token(request.ext),
             private=_bool_ext(request.ext, "hf_private"),
             commit_message=self._commit_message(descriptor, target_repo),
+            published_files=prepared_source.published_files,
         )
 
         manifest_payload = {
@@ -219,12 +229,15 @@ class UploadReceiptPipeline:
             if descriptor.artifact_kind == "converted_model_bundle":
                 manifest_payload["target_format"] = str(source_manifest.get("target_format", ""))
                 manifest_payload["conversion_backend"] = str(source_manifest.get("conversion_backend", ""))
-                manifest_payload["distribution_contract"] = "merged_model"
             if descriptor.schema_version == "melix.derived_text_model.v1":
                 manifest_payload["derived_model_id"] = str(source_manifest.get("derived_model_id", ""))
                 manifest_payload["source_activation_job_id"] = str(source_manifest.get("job_id", ""))
                 manifest_payload["activation_mode"] = str(source_manifest.get("activation_mode", ""))
-                if export_artifact_kind == "merged_export":
+            if export_artifact_kind == "merged_export":
+                if processor_config_files:
+                    manifest_payload["distribution_contract"] = "merged_multimodal"
+                    manifest_payload["processor_config_files"] = processor_config_files
+                else:
                     manifest_payload["distribution_contract"] = "merged_model"
 
         manifest_bytes = 0
@@ -494,6 +507,13 @@ class UploadReceiptPipeline:
             "calibration_sample_count": int(calibration.get("sample_count", 0) or 0),
             "smoke_test_passed": bool(compatibility.get("smoke_test_passed", False)),
         }
+
+    @staticmethod
+    def _collect_processor_config_files(published_files: list[str]) -> list[str]:
+        return sorted(
+            f for f in published_files
+            if Path(f).parent == Path(".") and Path(f).name in _PROCESSOR_CONFIG_FILENAMES
+        )
 
     @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:

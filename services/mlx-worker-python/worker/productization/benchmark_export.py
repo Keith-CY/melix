@@ -4,6 +4,7 @@ import csv
 import json
 import io
 import time
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -137,9 +138,8 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
 
 
 def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -167,17 +167,19 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        [_normalized_evaluation_sample_row(row) for row in rows],
+        (
+            _normalized_evaluation_sample_row(row)
+            for row in bundle.get("evaluation_samples", [])
+            if isinstance(row, dict)
+        ),
         _canonical_evaluation_sample_columns(),
     )
 
 
 def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "base_model_id",
@@ -198,9 +200,8 @@ def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)),
         [
             "job_id",
             "suite_id",
@@ -250,9 +251,8 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -277,23 +277,31 @@ def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_summary_columns(),
+    )
 
 
 def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_request_columns(),
+    )
 
 
 def write_export_bundle(jobs_root: Path, output_path: Path) -> Path:
@@ -415,19 +423,11 @@ def _collect_benchmark_run(
 
     context_path = run_root / "bench-context-rows.jsonl"
     if context_path.is_file():
-        for line in context_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    context_rows.append(row)
+        context_rows.extend(_iter_jsonl_dict_rows(context_path))
 
     batch_path = run_root / "bench-batch-rows.jsonl"
     if batch_path.is_file():
-        for line in batch_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    batch_rows.append(row)
+        batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
 
     for result_path in sorted(run_root.glob("bench-result-*.json")):
         if result_path.is_file():
@@ -447,22 +447,25 @@ def _collect_benchmark_matrix_run(
 
     summary_path = run_root / "bench-matrix-summary.jsonl"
     if summary_path.is_file():
-        for line in summary_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    summary_rows.append(row)
+        summary_rows.extend(_iter_jsonl_dict_rows(summary_path))
 
     requests_path = run_root / "bench-matrix-requests.jsonl"
     if requests_path.is_file():
-        for line in requests_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    request_rows.append(row)
+        request_rows.extend(_iter_jsonl_dict_rows(requests_path))
 
 
-def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
+def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            row = json.loads(stripped)
+            if isinstance(row, dict):
+                yield row
+
+
+def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -735,9 +738,7 @@ def _collect_evaluation_run(
 
     samples_path = run_root / "evaluation-samples.jsonl"
     if samples_path.is_file():
-        for line in samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                samples.append(json.loads(line))
+        samples.extend(_iter_jsonl_dict_rows(samples_path))
 
     compare_job_path = run_root / "evaluation-compare-job.json"
     if not compare_job_path.is_file():
@@ -757,17 +758,14 @@ def _collect_evaluation_run(
 
     compare_samples_path = run_root / "evaluation-compare-samples.jsonl"
     if compare_samples_path.is_file():
-        for line in compare_samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                sample = json.loads(line)
-                compare_samples.append(sample)
-                if isinstance(sample, dict):
-                    samples.append(
-                        _normalize_evaluation_compare_sample(
-                            sample,
-                            compare_job=compare_job,
-                        )
-                    )
+        for sample in _iter_jsonl_dict_rows(compare_samples_path):
+            compare_samples.append(sample)
+            samples.append(
+                _normalize_evaluation_compare_sample(
+                    sample,
+                    compare_job=compare_job,
+                )
+            )
 
 
 def _normalize_evaluation_compare_job(compare_job: dict[str, object]) -> dict[str, object]:

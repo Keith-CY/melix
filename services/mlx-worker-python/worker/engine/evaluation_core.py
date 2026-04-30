@@ -135,6 +135,17 @@ class EvaluationCore:
         self._registry = registry
         self._job_id_lock = threading.Lock()
 
+    @staticmethod
+    def _load_dataset_samples(samples_path: Path) -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        with samples_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                samples.append(json.loads(line))
+        return samples
+
     def run_local_suite(
         self,
         *,
@@ -173,11 +184,7 @@ class EvaluationCore:
                 f"Dataset suite mismatch: expected {suite_id}, found {manifest['suite_id']}"
             )
 
-        samples = [
-            json.loads(line)
-            for line in (dataset_root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        samples = EvaluationCore._load_dataset_samples(dataset_root / "samples.jsonl")
         score_name, default_scoring_mode = _SUITE_SCORE_MODES.get(
             suite_id,
             ("typed_score_mean", str(manifest.get("scoring_mode") or "normalized_exact_match")),
@@ -276,16 +283,17 @@ class EvaluationCore:
         job_parameters.update(runtime_evidence)
         if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
             EvaluationCore._validate_required_live_model(runtime_evidence, operation="evaluation")
+        combined_samples = [*few_shot_examples, *selected]
         self._validate_task_kind_against_dataset(
             dataset_id=str(manifest["dataset_id"]),
-            samples=list(few_shot_examples) + list(selected),
+            samples=combined_samples,
             manifest_input_modalities=manifest_input_modalities,
             task_kind=resolved_task_kind,
         )
         self._validate_live_multimodal_execution(
             loaded_model=loaded_model,
             manifest_input_modalities=manifest_input_modalities,
-            samples=list(few_shot_examples) + list(selected),
+            samples=combined_samples,
             task_kind=resolved_task_kind,
         )
         resolved_model_id = (
@@ -1829,7 +1837,7 @@ class EvaluationCore:
         few_shot: int,
         seed: int,
     ) -> tuple[tuple[dict[str, object], ...], list[dict[str, object]]]:
-        ordered = list(samples)
+        ordered = list(samples) if seed > 0 else samples
         if seed > 0:
             random.Random(seed).shuffle(ordered)
         bounded_sample_size = max(sample_size, 0)

@@ -801,6 +801,23 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         assert metrics["vision.vlm_first_token_ms"] >= 0
         assert metrics["vision.preprocess_peak_memory_bytes"] > 0
         assert metrics["vision.cache_memory_bytes"] > 0
+        assert "vision.image_feature_cache_hits" in metrics
+        assert "vision.image_feature_cache_misses" in metrics
+        assert metrics["vision.multimodal_decode_mode"] in {
+            "baseline",
+            "single_stream",
+            "image_cache_reuse",
+            "native_quantized",
+            "fallback",
+        }
+        assert "vision.multimodal_fallback_reason" in metrics
+        assert metrics["vision.multimodal_decode_sync_mode"] in {
+            "baseline",
+            "executor_stream",
+        }
+        assert metrics["vision.multi_image_scatter_mode"] in {"none", "per_sample"}
+        assert metrics["vision.quantized_load_mode"] in {"fallback", "native_quantized"}
+        assert "vision.quantized_load_fallback_reason" in metrics
     finally:
         remote_server.shutdown()
         remote_server.server_close()

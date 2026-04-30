@@ -3548,6 +3548,39 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("\t") == false)
     }
 
+    @Test("lora publishes show renders processor config lineage for merged_multimodal artifacts")
+    func loraPublishesShowRendersProcessorConfigLineage() async throws {
+        let client = StubControlPlaneXPCClient()
+        let manifest = #"""
+        {
+          "operation": "registry_snapshot",
+          "publishes": [
+            {
+              "job_id": "model-ops-0200",
+              "status": "published",
+              "export_artifact_kind": "merged_export",
+              "distribution_contract": "merged_multimodal",
+              "target_repo": "melix/models/melix-dev-vlm",
+              "source_artifact_kind": "derived_text_model",
+              "processor_config_files": ["processor_config.json"],
+              "published_files": ["manifest.json", "model.safetensors", "processor_config.json"]
+            }
+          ]
+        }
+        """#
+        await client.setModelOperationResult(makeModelOperationResult(manifestJSON: manifest))
+
+        let output = try await MelixCLIRunner(client: client).run(
+            .loraPublishesShow(.init(modelID: "melix-dev-text", jobID: "model-ops-0200"))
+        )
+
+        #expect(output.contains("Export kind: merged_export"))
+        #expect(output.contains("Distribution contract: merged_multimodal"))
+        #expect(output.contains("Processor configs (1)"))
+        #expect(output.contains("processor_config.json"))
+        #expect(output.contains("\t") == false)
+    }
+
     @Test("lora publishes show errors for an unknown job id and lists known ids")
     func loraPublishesShowErrorsForUnknownJob() async throws {
         let client = StubControlPlaneXPCClient()

@@ -178,11 +178,11 @@ private struct DesktopShellBannerView: View {
     private var bannerSeverityColor: Color {
         switch banner.severity {
         case .info:
-            return Color.blue
+            return MelixDesignTokens.StatusColor.info
         case .warning:
-            return Color.orange
+            return MelixDesignTokens.StatusColor.warning
         case .critical:
-            return Color.red
+            return MelixDesignTokens.StatusColor.error
         }
     }
 }
@@ -214,11 +214,11 @@ struct DesktopInlineNoticeCardView: View {
     private var accentColor: Color {
         switch notice.severity {
         case .info:
-            return .blue
+            return MelixDesignTokens.StatusColor.info
         case .warning:
-            return .orange
+            return MelixDesignTokens.StatusColor.warning
         case .critical:
-            return .red
+            return MelixDesignTokens.StatusColor.error
         }
     }
 
@@ -372,7 +372,7 @@ struct DesktopCommandCenterView: View {
                     if let lastError = viewModel?.lastError {
                         GroupBox("Latest Error") {
                             Text(lastError)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
                                 .lineLimit(3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -434,7 +434,7 @@ struct DesktopCommandCenterView: View {
                                     if !session.lastError.isEmpty {
                                         Text(session.lastError)
                                             .font(.caption)
-                                            .foregroundStyle(.red)
+                                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
                                     }
                                 }
                             }
@@ -460,7 +460,7 @@ struct DesktopCommandCenterView: View {
                                     Spacer()
                                     Text(entry.level.uppercased())
                                         .font(.caption2)
-                                        .foregroundStyle(entry.level == "error" ? .red : .secondary)
+                                        .foregroundStyle(entry.level == "error" ? MelixDesignTokens.StatusColor.error : .secondary)
                                 }
                                 Text(entry.message)
                                     .font(.body)
@@ -644,7 +644,7 @@ private struct DesktopServerSessionSidebar: View {
                                         Spacer()
                                         Text(session.lifecycleSummaryText)
                                             .font(.caption)
-                                            .foregroundStyle(session.isInteractiveReady ? .green : .secondary)
+                                            .foregroundStyle(session.isInteractiveReady ? MelixDesignTokens.StatusColor.success : .secondary)
                                     }
                                     Text("\(session.modelID) • \(session.listenerLabel)")
                                         .font(.caption)
@@ -654,7 +654,7 @@ private struct DesktopServerSessionSidebar: View {
                                 .padding(12)
                                 .background(
                                     viewModel.selectedServerSession?.id == session.id
-                                    ? Color.accentColor.opacity(0.14)
+                                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
                                     : Color.secondary.opacity(0.06),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
@@ -1272,7 +1272,7 @@ private struct DesktopServerSessionInspector: View {
                 if !session.lastError.isEmpty {
                     GroupBox("Error") {
                         Text(session.lastError)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -1434,7 +1434,7 @@ struct DesktopToolsCategorySidebarView: View {
                                 .padding(.vertical, 10)
                                 .background(
                                     selectedToolSection == section
-                                    ? Color.accentColor.opacity(0.14)
+                                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
                                     : Color.secondary.opacity(0.06),
                                     in: RoundedRectangle(cornerRadius: 12)
                                 )
@@ -1515,7 +1515,7 @@ struct DesktopDownloadsToolSectionView: View {
                                             .font(.headline)
                                         Text(entry.statusText)
                                             .font(.caption.weight(.semibold))
-                                            .foregroundStyle(entry.resumeReady ? .orange : .secondary)
+                                            .foregroundStyle(entry.resumeReady ? MelixDesignTokens.StatusColor.warning : .secondary)
                                     }
                                     Spacer()
                                     if entry.resumeReady {
@@ -2414,9 +2414,9 @@ struct DesktopTrainingToolSectionView: View {
         case .running:
             return MelixDesignTokens.accent
         case .succeeded:
-            return .green
+            return MelixDesignTokens.StatusColor.success
         case .failed:
-            return .orange
+            return MelixDesignTokens.StatusColor.error
         }
     }
 
@@ -2512,11 +2512,12 @@ enum DesktopTrainingWorkspaceDefaults {
 }
 
 enum DesktopLoRAVisualPolish {
-    static let pageBackgroundNSColor = NSColor.white
+    static let pageBackgroundColorSpec = MelixDesignTokens.Palette.backgroundBase
+    static let pageBackgroundNSColor = pageBackgroundColorSpec.nsColor
     static let pageBackgroundColor = Color(nsColor: pageBackgroundNSColor)
     static let sectionSurfaceOpacity = 0.04
     static let metricSurfaceOpacity = 0.032
-    static let selectedHistorySurfaceOpacity = 0.14
+    static let selectedHistorySurfaceOpacity = MelixDesignTokens.AccentOpacity.selected
     static let chartFillOpacity = 0.24
 }
 
@@ -3328,7 +3329,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                             .font(.headline)
                                         Spacer()
                                         Image(systemName: viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
+                                            .foregroundStyle(viewModel.selectedBenchmarkSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
                                     }
                                     Text("config \(suite.datasetName) • \(suite.defaultsText)")
                                         .font(.caption.weight(.semibold))
@@ -4399,7 +4400,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                             .font(.headline)
                                         Spacer()
                                         Image(systemName: viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? Color.accentColor : .secondary)
+                                            .foregroundStyle(viewModel.selectedEvaluationSuiteIDs.contains(suite.id) ? MelixDesignTokens.accent : .secondary)
                                     }
                                     Text("\(suite.scoreLabel) • \(suite.defaultsText)")
                                         .font(.caption.weight(.semibold))
@@ -4462,7 +4463,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     } label: {
                                         HStack {
                                             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                                                .foregroundStyle(isSelected ? MelixDesignTokens.accent : .secondary)
                                             Text(model.alias.isEmpty ? model.modelID : "\(model.alias) • \(model.modelID)")
                                                 .font(.caption)
                                                 .foregroundStyle(.primary)
@@ -5452,7 +5453,7 @@ struct DesktopAPIWorkspaceView: View {
                         .padding(.vertical, 10)
                         .background(
                             selectedSection == section
-                            ? Color.accentColor.opacity(0.14)
+                            ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
                             : Color.secondary.opacity(0.06),
                             in: RoundedRectangle(cornerRadius: 12)
                         )

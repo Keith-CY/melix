@@ -15,6 +15,9 @@ import pytest
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset_chunker import (
     ChunkStats,
+    _split_messages_into_turns,
+    _split_words_into_k,
+    _split_user_content_into_k,
     chunk_long_samples,
 )
 
@@ -52,6 +55,13 @@ def _words(count: int) -> str:
     return " ".join(f"w{i}" for i in range(count))
 
 
+class _TrackingStr(str):
+    """String subclass that fails if the chunker deep-copies message payloads."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "_TrackingStr":
+        raise AssertionError("message payload should not be deep-copied")
+
+
 def test_short_single_turn_sample_passes_through_unchanged() -> None:
     tokenizer = _FakeTokenizer()
     sample = {
@@ -73,6 +83,50 @@ def test_short_single_turn_sample_passes_through_unchanged() -> None:
     assert stats == ChunkStats(
         enabled=True, chunk_size=200, chunk_count=1, source_sample_count=1
     )
+
+
+def test_short_single_turn_passthrough_reuses_top_level_metadata_but_copies_messages() -> None:
+    tokenizer = _FakeTokenizer()
+    metadata = {"tags": ["short"]}
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    sample = {
+        "id": "short-copy-contract",
+        "metadata": metadata,
+        "tools": tools,
+        "messages": [
+            {"role": "user", "content": _words(5)},
+            {"role": "assistant", "content": "ok"},
+        ],
+    }
+
+    chunked, _ = chunk_long_samples([sample], chunk_size=200, tokenizer=tokenizer)
+
+    emitted = chunked[0]
+    assert emitted["metadata"] is metadata
+    assert emitted["tools"] is tools
+    assert emitted["messages"] == sample["messages"]
+    assert emitted["messages"] is not sample["messages"]
+    assert emitted["messages"][0] is not sample["messages"][0]
+
+
+def test_passthrough_without_extractable_pairs_reuses_top_level_metadata_but_copies_messages() -> None:
+    tokenizer = _FakeTokenizer()
+    metadata = {"tags": ["malformed"]}
+    sample = {
+        "id": "no-pairs-copy-contract",
+        "metadata": metadata,
+        "messages": [
+            {"role": "assistant", "content": "leading assistant"},
+        ],
+    }
+
+    chunked, _ = chunk_long_samples([sample], chunk_size=1, tokenizer=tokenizer)
+
+    emitted = chunked[0]
+    assert emitted["metadata"] is metadata
+    assert emitted["messages"] == sample["messages"]
+    assert emitted["messages"] is not sample["messages"]
+    assert emitted["messages"][0] is not sample["messages"][0]
 
 
 def test_long_single_turn_splits_into_multiple_chunks() -> None:
@@ -159,6 +213,37 @@ def test_multi_turn_exceeding_chunk_size_splits_at_message_boundaries() -> None:
     assert chunked[1]["id"] == "multi-over#chunk-1"
 
 
+
+def test_chunked_outputs_copy_message_dicts_without_deepcopying_string_payloads() -> None:
+    tokenizer = _FakeTokenizer()
+    metadata = {"tags": ["chunked"]}
+    user_content = _TrackingStr(_words(200))
+    sample = {
+        "id": "chunked-copy-contract",
+        "metadata": metadata,
+        "messages": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": _TrackingStr("ack")},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples(
+        [sample], chunk_size=80, tokenizer=tokenizer
+    )
+
+    assert stats.chunk_count == len(chunked) >= 2
+    for idx, emitted in enumerate(chunked):
+        assert emitted["id"] == f"chunked-copy-contract#chunk-{idx}"
+        assert emitted["metadata"] is metadata
+        assert emitted["messages"] is not sample["messages"]
+        for message, source_message in zip(
+            emitted["messages"], sample["messages"], strict=False
+        ):
+            assert message is not source_message
+    chunked[0]["messages"][0]["content"] = "mutated"
+    assert sample["messages"][0]["content"] == user_content
+
+
 def test_multi_turn_single_pair_exceeds_chunk_size_falls_through_to_segmentation() -> None:
     tokenizer = _FakeTokenizer()
     # Two turns; the first pair alone (200 words) exceeds the chunk_size,
@@ -209,6 +294,99 @@ def test_assistant_only_exceeding_chunk_size_raises_explicit_error() -> None:
 
     assert exc.value.code == "chunk_size_too_small"
     assert "giant-asst" in (exc.value.message or "")
+
+
+class _CountingTokenizer(_FakeTokenizer):
+    def __init__(self, *, overhead_per_message: int = 5) -> None:
+        super().__init__(overhead_per_message=overhead_per_message)
+        self.render_calls = 0
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        add_generation_prompt: bool = False,
+        return_dict: bool = False,
+    ) -> list[int]:
+        self.render_calls += 1
+        return super().apply_chat_template(
+            messages,
+            tools=tools,
+            add_generation_prompt=add_generation_prompt,
+            return_dict=return_dict,
+        )
+
+
+def test_impossible_single_turn_short_circuits_before_trying_many_segment_counts() -> None:
+    tokenizer = _CountingTokenizer()
+    sample = {
+        "id": "impossible-short-circuit",
+        "messages": [
+            {"role": "user", "content": _words(100)},
+            {"role": "assistant", "content": _words(200)},
+        ],
+    }
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([sample], chunk_size=205, tokenizer=tokenizer)
+
+    assert exc.value.code == "chunk_size_too_small"
+    assert tokenizer.render_calls == 3
+
+
+class _NoSplitTokenizer:
+    """Tokenizer stub that avoids calling ``content.split()`` itself."""
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        add_generation_prompt: bool = False,
+        return_dict: bool = False,
+    ) -> list[int]:
+        total = 0
+        for msg in messages:
+            content = msg.get("content", "") or ""
+            total += 5 + len(content)
+        if add_generation_prompt:
+            total += 5
+        return list(range(total))
+
+
+class _CountingContent(str):
+    def __new__(cls, value: str) -> "_CountingContent":
+        instance = super().__new__(cls, value)
+        instance.split_calls = 0
+        return instance
+
+    def split(self, *args: Any, **kwargs: Any) -> list[str]:
+        self.split_calls += 1
+        return super().split(*args, **kwargs)
+
+
+def test_split_words_into_k_matches_string_helper_output() -> None:
+    content = "alpha beta gamma delta epsilon zeta"
+
+    assert _split_words_into_k(content.split(), 3) == _split_user_content_into_k(content, 3)
+
+
+def test_chunking_reuses_presplit_user_words_across_k_attempts() -> None:
+    tokenizer = _NoSplitTokenizer()
+    user_content = _CountingContent("alpha beta gamma delta epsilon zeta eta theta iota kappa")
+    sample = {
+        "id": "presplit-reuse",
+        "messages": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": "reply"},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=35, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 2
+    assert user_content.split_calls == 1
 
 
 def test_non_assistant_terminated_sample_passes_through_unchanged() -> None:
@@ -382,3 +560,90 @@ def test_chunk_size_too_small_message_distinguishes_word_shortage() -> None:
 
     assert exc.value.code == "chunk_size_too_small"
     assert "few-words" in (exc.value.message or "")
+
+
+def test_invalid_messages_list_raises_invalid_dataset_package() -> None:
+    tokenizer = _FakeTokenizer()
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([{"id": "bad-messages", "messages": None}], chunk_size=10, tokenizer=tokenizer)
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert "non-empty 'messages' list" in (exc.value.message or "")
+
+
+def test_invalid_tools_type_raises_invalid_dataset_package() -> None:
+    tokenizer = _FakeTokenizer()
+    sample = {
+        "id": "bad-tools",
+        "tools": {"name": "lookup"},
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "ok"},
+        ],
+    }
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([sample], chunk_size=10, tokenizer=tokenizer)
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert "'tools' to be a list" in (exc.value.message or "")
+
+
+def test_non_string_user_content_raises_invalid_dataset_package() -> None:
+    class _ConstantLengthTokenizer(_FakeTokenizer):
+        def apply_chat_template(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            add_generation_prompt: bool = False,
+            return_dict: bool = False,
+        ) -> list[int]:
+            return list(range(50))
+
+    tokenizer = _ConstantLengthTokenizer()
+    sample = {
+        "id": "bad-user-content",
+        "messages": [
+            {"role": "user", "content": ["not", "a", "string"]},
+            {"role": "assistant", "content": "ok"},
+        ],
+    }
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([sample], chunk_size=20, tokenizer=tokenizer)
+
+    assert exc.value.code == "invalid_dataset_package"
+    assert "bad-user-content" in (exc.value.message or "")
+    assert "list" in (exc.value.message or "")
+
+
+def test_chunk_size_must_be_positive() -> None:
+    tokenizer = _FakeTokenizer()
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([], chunk_size=0, tokenizer=tokenizer)
+
+    assert exc.value.code == "invalid_argument"
+    assert "chunk_size must be >= 1" in (exc.value.message or "")
+
+
+def test_malformed_multi_turn_stops_pair_extraction_at_first_non_user_assistant_pair() -> None:
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": _words(20)},
+        {"role": "assistant", "content": "a1"},
+        {"role": "tool", "content": "unexpected"},
+        {"role": "assistant", "content": "a2"},
+    ]
+
+    system_prefix, pairs = _split_messages_into_turns(messages)
+
+    assert system_prefix == [messages[0]]
+    assert pairs == [(messages[1], messages[2])]
+
+
+def test_split_user_content_into_k_handles_trivial_and_word_shortage_cases() -> None:
+    assert _split_user_content_into_k("alpha beta", 1) == ["alpha beta"]
+    assert _split_user_content_into_k("alpha beta", 3) == ["alpha", "beta"]

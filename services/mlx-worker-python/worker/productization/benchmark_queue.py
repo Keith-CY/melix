@@ -59,13 +59,13 @@ class BenchmarkQueueStore:
         return record
 
     def list_records(self, *, queue_root: Path) -> list[BenchmarkQueueRecord]:
-        if not queue_root.exists():
+        if not queue_root.is_dir():
             return []
 
         records = [
-            BenchmarkQueueRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
-            for path in queue_root.glob("*.json")
-            if path.is_file()
+            self._load_record(path)
+            for path in queue_root.iterdir()
+            if path.suffix == ".json" and path.is_file()
         ]
         return sorted(records, key=lambda record: (record.created_at_unix_ms, record.queue_item_id))
 
@@ -78,8 +78,7 @@ class BenchmarkQueueStore:
         updated_at_unix_ms: int,
     ) -> BenchmarkQueueRecord:
         path = self._record_path(queue_root=queue_root, queue_item_id=queue_item_id)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        record = BenchmarkQueueRecord.from_dict(payload)
+        record = self._load_record(path)
         started_at_unix_ms = record.started_at_unix_ms
         if status == "running" and started_at_unix_ms == 0:
             started_at_unix_ms = updated_at_unix_ms
@@ -105,6 +104,10 @@ class BenchmarkQueueStore:
             json.dumps(record.to_dict(), indent=2) + "\n",
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _load_record(path: Path) -> BenchmarkQueueRecord:
+        return BenchmarkQueueRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def queue_snapshot(self, *, queue_root: Path) -> dict[str, object]:
         records = self.list_records(queue_root=queue_root)

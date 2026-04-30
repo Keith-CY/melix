@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -92,6 +92,10 @@ class BenchmarkSuiteCatalog:
             for definition in resolved_definitions
         }
         self._hf_dataset_fetcher = hf_dataset_fetcher or _fetch_hf_dataset_server_json
+        self._resolved_suite_cache: dict[
+            tuple[str, str, Path, int, int],
+            ResolvedBenchmarkSuite,
+        ] = {}
 
     def list_definitions(self) -> tuple[BenchmarkSuiteDefinition, ...]:
         return tuple(self._definitions.values())
@@ -114,11 +118,17 @@ class BenchmarkSuiteCatalog:
 
         sample_size = _parse_positive_int(parameters.get("sample_size", ""), definition.default_sample_size)
         batch_factor = _parse_positive_int(parameters.get("batch_factor", ""), definition.default_batch_factor)
+        cache_key = (definition.task_kind, definition.suite_id, jobs_root, sample_size, batch_factor)
+        cached_suite = self._resolved_suite_cache.get(cache_key)
+        if cached_suite is not None:
+            return cached_suite
+
+        sample_hint = _materialized_sample_hint(sample_size=sample_size, batch_factor=batch_factor)
         materialized = _materialize_benchmark_suite(
             definition,
             cache_root=jobs_root / "datasets",
             fetch_json=self._hf_dataset_fetcher,
-            sample_hint=max(sample_size * batch_factor, 8),
+            sample_hint=sample_hint,
         )
         cases = tuple(
             _suite_cases(
@@ -128,7 +138,7 @@ class BenchmarkSuiteCatalog:
                 batch_factor=batch_factor,
             )
         )
-        return ResolvedBenchmarkSuite(
+        resolved_suite = ResolvedBenchmarkSuite(
             task_kind=definition.task_kind,
             suite_id=definition.suite_id,
             title=definition.title,
@@ -150,6 +160,8 @@ class BenchmarkSuiteCatalog:
             prompt_batches=tuple(case.prompt for case in cases),
             cases=cases,
         )
+        self._resolved_suite_cache[cache_key] = replace(resolved_suite, cache_hit=True)
+        return resolved_suite
 
 
 def default_benchmark_suite_definitions() -> tuple[BenchmarkSuiteDefinition, ...]:
@@ -346,7 +358,7 @@ def _materialize_benchmark_suite(
             "cache_key": cache_key,
             "cache_hit": True,
             "dataset_name": str(manifest.get("dataset_name", definition.dataset_name or "default")),
-            "rows": _load_materialized_rows(rows_path),
+            "rows": _load_materialized_rows(rows_path, limit=sample_hint),
         }
 
     dataset_name = definition.dataset_name or _resolve_dataset_name(definition, fetch_json)
@@ -551,15 +563,22 @@ def _resolve_dataset_name(
     return "default"
 
 
-def _load_materialized_rows(rows_path: Path) -> list[dict[str, Any]]:
+def _materialized_sample_hint(*, sample_size: int, batch_factor: int) -> int:
+    return max(sample_size * batch_factor, 8)
+
+
+def _load_materialized_rows(rows_path: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for raw_line in rows_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        row = json.loads(line)
-        if isinstance(row, dict):
-            rows.append(row)
+    with rows_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+                if limit is not None and len(rows) >= limit:
+                    break
     return rows
 
 

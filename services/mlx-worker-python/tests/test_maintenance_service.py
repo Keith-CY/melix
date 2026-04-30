@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -16,7 +17,11 @@ from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
 
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
-from worker.model_ops.job_registry import ModelOpsJob, ModelOpsJobRegistry
+from worker.model_ops.job_registry import (
+    ModelOpsJob,
+    ModelOpsJobRegistry,
+    _runtime_mode_from_activation,
+)
 from worker.model_ops.hub_catalog import (
     HubCatalogError,
     HubModelCardRecord,
@@ -467,6 +472,7 @@ class FakePublishBackend:
         token: str = "",
         private: bool = False,
         commit_message: str = "",
+        published_files: list[str] | None = None,
     ) -> PublishResult:
         if self.failure is not None:
             raise self.failure
@@ -478,22 +484,25 @@ class FakePublishBackend:
                 "token": token,
                 "private": private,
                 "commit_message": commit_message,
+                "published_files": published_files,
             }
         )
-        if source_path.is_dir():
-            published_files = sorted(
+        if published_files is not None:
+            result_published_files = published_files
+        elif source_path.is_dir():
+            result_published_files = sorted(
                 str(path.relative_to(source_path))
                 for path in source_path.rglob("*")
                 if path.is_file()
             )
         else:
-            published_files = [source_path.name]
+            result_published_files = [source_path.name]
         return PublishResult(
             backend="huggingface_hub",
             target_repo=target_repo,
             target_url=f"https://huggingface.co/{target_repo}",
             remote_ref=f"{target_repo}@main",
-            published_files=published_files,
+            published_files=result_published_files,
         )
 
 
@@ -1312,6 +1321,51 @@ def test_hugging_face_publish_backend_adds_private_token_and_commit_message(
     assert result.published_files == ["adapter.safetensors", "config.json"]
 
 
+def test_hugging_face_publish_backend_uses_precomputed_published_files_without_rescanning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\nhttps://huggingface.co/melix/demo-adapter/commit/abc123\n",
+            stderr="",
+        )
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("publish() should not rescan when published_files is supplied")
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    result = HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+        published_files=["adapter.safetensors"],
+    )
+
+    assert seen["command"] == [
+        "hf",
+        "upload",
+        "melix/demo-adapter",
+        str(artifact_root.resolve()),
+        ".",
+        "--repo-type",
+        "model",
+        "--quiet",
+    ]
+    assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/abc123"
+    assert result.published_files == ["adapter.safetensors"]
+
+
 def test_hugging_face_publish_backend_falls_back_to_legacy_cli_when_hf_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1355,6 +1409,198 @@ def test_resolve_hf_cli_command_defaults_to_hf_when_no_binary_is_discovered(
     monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", lambda command: None)
 
     assert _resolve_hf_cli_command() == "hf"
+
+
+def test_hugging_face_publish_backend_maps_auth_and_generic_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = tmp_path / "artifact.gguf"
+    artifact_path.write_text("weights", encoding="utf-8")
+
+    responses = iter(
+        [
+            SimpleNamespace(returncode=1, stdout="", stderr="Not logged in to Hugging Face"),
+            SimpleNamespace(returncode=1, stdout="generic failure", stderr=""),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "worker.model_ops.upload_receipt_pipeline.subprocess.run",
+        lambda *args, **kwargs: next(responses),
+    )
+
+    with pytest.raises(ModelOperationError) as auth_error:
+        HuggingFacePublishBackend().publish(
+            source_path=artifact_path,
+            target_repo="melix/demo",
+            artifact_kind="model_export",
+        )
+    assert auth_error.value.code == "publish_auth_required"
+    assert "Not logged in" in auth_error.value.message
+
+    with pytest.raises(ModelOperationError) as generic_error:
+        HuggingFacePublishBackend().publish(
+            source_path=artifact_path,
+            target_repo="melix/demo",
+            artifact_kind="model_export",
+        )
+    assert generic_error.value.code == "publish_failed"
+    assert generic_error.value.message == "generic failure"
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "requested_kind", "expected_code", "expected_kind"),
+    [
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="",
+                manifest_path="",
+                source_model="melix-dev-text",
+                manifest_payload=None,
+            ),
+            "adapter_export",
+            "invalid_argument",
+            None,
+        ),
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="",
+                manifest_path="",
+                source_model="melix-dev-text",
+                manifest_payload=None,
+            ),
+            "merged_export",
+            "invalid_argument",
+            None,
+        ),
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="melix.derived_text_model.v1",
+                manifest_path="/tmp/model.json",
+                source_model="melix-dev-text",
+                manifest_payload={"activation_mode": "fused_derived_model"},
+            ),
+            "",
+            None,
+            "merged_export",
+        ),
+    ],
+)
+def test_upload_receipt_pipeline_resolve_export_artifact_kind_edges(
+    descriptor: SourceArtifactDescriptor,
+    requested_kind: str,
+    expected_code: str | None,
+    expected_kind: str | None,
+) -> None:
+    if expected_code is not None:
+        with pytest.raises(ModelOperationError) as error:
+            UploadReceiptPipeline._resolve_export_artifact_kind(
+                descriptor=descriptor,
+                requested_kind=requested_kind,
+            )
+        assert error.value.code == expected_code
+        return
+
+    assert (
+        UploadReceiptPipeline._resolve_export_artifact_kind(
+            descriptor=descriptor,
+            requested_kind=requested_kind,
+        )
+        == expected_kind
+    )
+
+
+def test_upload_receipt_pipeline_resolve_merged_publish_source_edges(tmp_path: Path) -> None:
+    converted_root = tmp_path / "converted"
+    converted_root.mkdir()
+    bundle_file = converted_root / "model.gguf"
+    bundle_file.write_text("weights", encoding="utf-8")
+    (converted_root / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    converted_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="converted_model_bundle",
+        schema_version="",
+        manifest_path=str(converted_root / "manifest.json"),
+        source_model="melix-dev-text",
+        manifest_payload={"artifact_kind": "converted_model_bundle"},
+    )
+    assert UploadReceiptPipeline._resolve_merged_publish_source(converted_descriptor, bundle_file) == converted_root
+
+    invalid_activation_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="derived_text_model",
+        schema_version="melix.derived_text_model.v1",
+        manifest_path=str(converted_root / "manifest.json"),
+        source_model="melix-dev-text",
+        manifest_payload={"activation_mode": "adapter_runtime", "derived_model_path": str(tmp_path / "missing")},
+    )
+    with pytest.raises(ModelOperationError) as invalid_activation:
+        UploadReceiptPipeline._resolve_merged_publish_source(invalid_activation_descriptor, bundle_file)
+    assert invalid_activation.value.code == "invalid_argument"
+
+    invalid_source_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="model",
+        schema_version="",
+        manifest_path="",
+        source_model="melix-dev-text",
+        manifest_payload=None,
+    )
+    with pytest.raises(ModelOperationError) as invalid_source:
+        UploadReceiptPipeline._resolve_merged_publish_source(invalid_source_descriptor, bundle_file)
+    assert invalid_source.value.code == "invalid_artifact"
+
+
+def test_upload_receipt_pipeline_resolve_source_artifact_and_linked_quantization_edges(tmp_path: Path) -> None:
+    pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
+
+    missing_request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={"artifact_path": str(tmp_path / "missing.gguf")},
+    )
+    with pytest.raises(ModelOperationError) as missing_artifact:
+        pipeline._resolve_source_artifact(missing_request)
+    assert missing_artifact.value.code == "invalid_artifact"
+
+    manifest_root = tmp_path / "manifest-root"
+    manifest_root.mkdir()
+    (manifest_root / "manifest.json").write_text("[]\n", encoding="utf-8")
+    non_dict_request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={"artifact_path": str(manifest_root), "artifact_kind": "model_export"},
+    )
+    descriptor = pipeline._resolve_source_artifact(non_dict_request)
+    assert descriptor.manifest_payload is None
+    assert descriptor.artifact_kind == "model_export"
+
+    linked_quantization = UploadReceiptPipeline._linked_quantization(
+        {
+            "artifact_kind": "quantized_model_bundle",
+            "artifact_path": "bundle",
+            "manifest_path": "bundle/manifest.json",
+            "source_model": "melix-dev-text",
+            "calibration": "bad",
+            "compatibility": "bad",
+            "quant_profile": "bad",
+        }
+    )
+    assert linked_quantization == {
+        "artifact_kind": "quantized_model_bundle",
+        "artifact_path": "bundle",
+        "manifest_path": "bundle/manifest.json",
+        "source_model": "melix-dev-text",
+        "quant_profile_id": "",
+        "calibration_sample_count": 0,
+        "smoke_test_passed": False,
+    }
 
 
 def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(tmp_path: Path) -> None:
@@ -1428,6 +1674,26 @@ def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(t
     finally:
         for key in monkeypatch_env:
             os.environ.pop(key, None)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["processor_config.json", "preprocessor_config.json", "image_processor.json"],
+)
+def test_collect_processor_config_files_detects_all_supported_names_at_root(filename: str) -> None:
+    files = [filename, "config.json", "model.safetensors", "tokenizer.json"]
+    result = UploadReceiptPipeline._collect_processor_config_files(files)
+    assert result == [filename]
+
+
+def test_collect_processor_config_files_ignores_nested_processor_configs() -> None:
+    files = [
+        "config.json",
+        "model.safetensors",
+        "adapters/processor_config.json",
+        "sub/preprocessor_config.json",
+    ]
+    assert UploadReceiptPipeline._collect_processor_config_files(files) == []
 
 
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
@@ -1928,6 +2194,11 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
         ]
     )
     assert publish_backend.calls[-1]["artifact_kind"] == "adapter_export"
+    assert publish_backend.calls[-1]["published_files"] == [
+        "adapter/adapter_config.json",
+        "adapter/adapters.safetensors",
+        "train_lora.adapter.json",
+    ]
     staged_source = publish_backend.calls[-1]["source_path"]
     assert isinstance(staged_source, Path)
     staged_manifest = json.loads((staged_source / "train_lora.adapter.json").read_text(encoding="utf-8"))
@@ -2007,6 +2278,133 @@ def test_upload_job_publishes_fused_derived_model_as_merged_export(tmp_path: Pat
     assert isinstance(published_source, Path)
     assert published_source.name == payload["derived_model_id"]
     assert payload["published_files"]
+
+
+def test_upload_job_publishes_merged_multimodal_model_with_processor_lineage(tmp_path: Path) -> None:
+    class MultimodalLoRARunner(DeterministicLoRARunner):
+        def activate_native(self, request: ActivationRequest) -> ActivationResult:
+            result = super().activate_native(request)
+            (request.derived_model_dir / "processor_config.json").write_text(
+                json.dumps({"processor_type": "melix-test-vlm"}) + "\n",
+                encoding="utf-8",
+            )
+            return result
+
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, runner=MultimodalLoRARunner(), publish_backend=publish_backend)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "melix-dev-vlm",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_manifest_path = activate_events[-1].completed.output_path
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-multimodal"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "merged_export",
+                    "artifact_path": activation_manifest_path,
+                    "artifact_manifest_path": activation_manifest_path,
+                    "target_repo": "melix/models/melix-dev-vlm",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_multimodal"
+    assert payload["processor_config_files"] == ["processor_config.json"]
+    assert "processor_config.json" in payload["published_files"]
+    assert publish_backend.calls[-1]["artifact_kind"] == "merged_export"
+
+
+def test_upload_job_publishes_converted_bundle_as_merged_multimodal_when_processor_config_present(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path, publish_backend=FakePublishBackend())
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    # convert emits the bundle directory as output_path, not the manifest file.
+    bundle_dir = Path(convert_events[-1].completed.output_path)
+    (bundle_dir / "processor_config.json").write_text(
+        '{"processor_type": "melix-test-vlm"}\n', encoding="utf-8"
+    )
+
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, publish_backend=publish_backend)
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-converted-multimodal"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_path": str(bundle_dir),
+                    "target_repo": "melix/models/melix-dev-vlm-converted",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_multimodal"
+    assert payload["processor_config_files"] == ["processor_config.json"]
+    assert "processor_config.json" in payload["published_files"]
 
 
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
@@ -2238,6 +2636,87 @@ def test_job_registry_snapshot_handles_invalid_manifests_and_non_numeric_ids() -
     assert payload["adapters"][0]["status"] == "completed"
 
 
+def test_job_registry_snapshot_reuses_cached_manifest_after_attach(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ModelOpsJobRegistry()
+    completed = registry.start("train_lora", "melix-dev-text", "/tmp/train")
+    manifest = json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"})
+    registry.attach_manifest(completed.job_id, manifest)
+    registry.complete(completed.job_id, "/tmp/train/train_lora.adapter.json")
+
+    def fail_manifest_decode(manifest_json: str) -> dict[str, object]:
+        raise AssertionError(f"snapshot should not reparse cached manifest: {manifest_json}")
+
+    monkeypatch.setattr(ModelOpsJobRegistry, "_decode_manifest_json", staticmethod(fail_manifest_decode))
+
+    payload = registry.snapshot()
+
+    assert payload["jobs"][0]["manifest"] == {"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}
+    assert payload["adapters"][0]["adapter_name"] == "adapter-a"
+
+
+def test_job_registry_snapshot_reuses_cached_manifest_after_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    manifest_path = jobs_root / "train_lora" / "model-ops-0007" / "train_lora.adapter.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-0007",
+                "operation": "train_lora",
+                "source_model": "melix-dev-text",
+                "adapter_name": "adapter-restored",
+                "adapter_set_hash": "hash-restored",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    registry = ModelOpsJobRegistry(jobs_root=jobs_root)
+
+    def fail_manifest_decode(manifest_json: str) -> dict[str, object]:
+        raise AssertionError(f"snapshot should not reparse restored manifest: {manifest_json}")
+
+    monkeypatch.setattr(ModelOpsJobRegistry, "_decode_manifest_json", staticmethod(fail_manifest_decode))
+
+    payload = registry.snapshot()
+
+    assert payload["jobs"][0]["manifest"] == {
+        "job_id": "model-ops-0007",
+        "operation": "train_lora",
+        "source_model": "melix-dev-text",
+        "adapter_name": "adapter-restored",
+        "adapter_set_hash": "hash-restored",
+    }
+    assert payload["adapters"][0]["adapter_name"] == "adapter-restored"
+
+
+def test_job_registry_helper_paths_cover_restore_and_runtime_edges(tmp_path: Path) -> None:
+    missing_manifest = tmp_path / "missing.json"
+    list_manifest = tmp_path / "list.json"
+    list_manifest.write_text("[]\n", encoding="utf-8")
+
+    assert ModelOpsJobRegistry._decode_manifest_json("[]") == {}
+    assert ModelOpsJobRegistry._read_manifest_dict(missing_manifest) == {}
+    assert ModelOpsJobRegistry._read_manifest_dict(list_manifest) == {}
+    assert ModelOpsJobRegistry._resolved_job_id(
+        Path("/tmp/train_lora/model-ops-0042/train_lora.adapter.json"), {}
+    ) == "model-ops-0042"
+    assert ModelOpsJobRegistry._resolved_job_id(Path("/tmp/train_lora/no-job-id/manifest.json"), {}) == ""
+    assert ModelOpsJobRegistry().resolve_derived_model_target() is None
+    assert ModelOpsJobRegistry._job_sort_key(
+        ModelOpsJob(
+            job_id="custom-job",
+            operation="train_lora",
+            source_model="melix-dev-text",
+            output_dir="/tmp/custom",
+        )
+    ) == 0
+    assert common_pb2.RuntimeMode.Name(_runtime_mode_from_activation(" adapter_backed_runtime ")) == "RUNTIME_MODE_ADAPTER_BACKED"
+
+
 def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     source_path, source_bytes = _write_download_source_file(tmp_path, size=1024)
@@ -2461,6 +2940,72 @@ def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models
     assert derived_model["published_state"] == "published"
     assert derived_model["publish_parent_lineage"]["source_job_id"] == activation_job.job_id
     assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
+
+
+def test_job_registry_snapshot_records_multimodal_publish_lineage_for_derived_models() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-vlm", "adapter_set_hash": "vlm-hash-b"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    activation_manifest_path = "/runtime/activate/melix-dev-vlm/manifest.json"
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-vlm",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_set_hash": "vlm-hash-b",
+                "derived_model_id": "melix-dev-vlm",
+                "derived_model_path": "/runtime/activate/melix-dev-vlm",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, activation_manifest_path)
+
+    publish_job = registry.start("upload", "melix-dev-text", "/runtime/upload")
+    registry.attach_manifest(
+        publish_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-vlm",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "distribution_contract": "merged_multimodal",
+                "processor_config_files": ["processor_config.json"],
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-vlm",
+                    "local_manifest_path": activation_manifest_path,
+                    "source_job_id": activation_job.job_id,
+                    "source_adapter_job_id": train_job.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-vlm",
+                },
+            }
+        ),
+    )
+    registry.complete(publish_job.job_id, "/runtime/upload/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+
+    publish = next(p for p in snapshot["publishes"] if p["job_id"] == publish_job.job_id)
+    assert publish["distribution_contract"] == "merged_multimodal"
+    assert publish["processor_config_files"] == ["processor_config.json"]
+
+    derived_model = snapshot["derived_models"][0]
+    assert derived_model["published_repo"] == "melix/models/melix-dev-vlm"
+    assert derived_model["distribution_contract"] == "merged_multimodal"
+    assert derived_model["processor_config_files"] == ["processor_config.json"]
+    assert derived_model["published_state"] == "published"
 
 
 def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_uploads() -> None:
@@ -3422,6 +3967,46 @@ def test_doctor_health_status_helpers_cover_healthy_and_unknown_states() -> None
     assert MaintenanceCore._doctor_health_status_label(maintenance_pb2.HEALTH_STATUS_UNSPECIFIED) == "unknown"
 
 
+def test_write_jsonl_rows_streams_each_row_without_joining_full_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_path = tmp_path / "bench-rows.jsonl"
+    writes: list[str] = []
+
+    class RecordingFile:
+        def __enter__(self) -> RecordingFile:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def write(self, chunk: str) -> int:
+            writes.append(chunk)
+            return len(chunk)
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> RecordingFile:
+        assert self == output_path
+        assert mode == "w"
+        assert kwargs.get("encoding") == "utf-8"
+        return RecordingFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    maintenance_core_module._write_jsonl_rows(
+        output_path,
+        [
+            {"suite": "smoke", "ttft_ms": 10.0},
+            {"suite": "latency", "ttft_ms": 20.0},
+        ],
+    )
+
+    assert writes == [
+        json.dumps({"suite": "smoke", "ttft_ms": 10.0}) + "\n",
+        json.dumps({"suite": "latency", "ttft_ms": 20.0}) + "\n",
+    ]
+
+
 def test_resolve_benchmark_loaded_model_reuses_existing_handle(tmp_path: Path) -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=DeterministicTextBackend()),
@@ -3487,6 +4072,170 @@ def test_benchmark_helper_defaults_cover_invalid_parameters_and_sparse_samples(t
     assert resolved_suite.sample_size == 1
     assert resolved_suite.batch_factor == 1
     assert MaintenanceCore._benchmark_max_output_tokens({"max_output_tokens": "oops"}) == 8
+    assert MaintenanceCore._vlm_fast_path_bench_metrics(suite_id="smoke", samples=[]) == []
+
+
+def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="single_stream",
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=8.0,
+                total_latency_ms=16.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_cache_reuse",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
+
+
+def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")
+
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="future_mode",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == -1.0
+    assert "unmapped categorical metric value" in caplog.text
+    assert "future_mode" in caplog.text
+
+
+def test_vlm_fast_path_bench_metrics_ignore_missing_probe_sentinels_in_cache_sums() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                image_feature_cache_hits=-1,
+                image_feature_cache_misses=-1,
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=8.0,
+                total_latency_ms=16.0,
+                completion_tokens=2,
+                image_feature_cache_hits=2,
+                image_feature_cache_misses=3,
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.image_feature_cache_hits"].value == 2.0
+    assert metrics_by_name["bench.smoke.image_feature_cache_misses"].value == 3.0
+
+
+def test_vlm_bench_sample_marks_missing_fast_path_probe(caplog) -> None:
+    class RuntimeWithoutProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithoutProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    caplog.set_level(logging.DEBUG, logger="worker.engine.maintenance_core")
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.image_feature_cache_hits == -1
+    assert sample.image_feature_cache_misses == -1
+    assert sample.multimodal_decode_mode == "not_reported"
+    assert "without a fast-path probe" in caplog.text
+
+
+def test_vlm_bench_sample_preserves_empty_success_fallback_reasons() -> None:
+    class RuntimeWithSuccessProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                multimodal_decode_mode="image_cache_reuse",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_stream",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithSuccessProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.multimodal_fallback_reason == ""
+    assert sample.quantized_load_fallback_reason == ""
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
@@ -5217,6 +5966,14 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
     ]
     assert "bench.smoke.image_ttft_ms" in metric_names
     assert "bench.smoke.vlm_tokens_per_second" in metric_names
+    assert "bench.smoke.image_feature_cache_hits" in metric_names
+    assert "bench.smoke.image_feature_cache_misses" in metric_names
+    assert "bench.smoke.multimodal_decode_mode" in metric_names
+    assert "bench.smoke.multimodal_fallback_reason" in metric_names
+    assert "bench.smoke.multimodal_decode_sync_mode" in metric_names
+    assert "bench.smoke.multi_image_scatter_mode" in metric_names
+    assert "bench.smoke.quantized_load_mode" in metric_names
+    assert "bench.smoke.quantized_load_fallback_reason" in metric_names
     assert "bench.smoke.ttft_ms" not in metric_names
 
     report_event = next(event for event in events if event.HasField("completed"))

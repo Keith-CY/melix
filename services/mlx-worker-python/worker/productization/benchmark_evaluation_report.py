@@ -61,6 +61,8 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "extracted_result_chars",
 )
 
+_NumericAggregate = tuple[float, int]
+
 
 def load_report_input(path: str | Path) -> dict[str, object]:
     input_path = Path(path)
@@ -293,7 +295,10 @@ def _build_metric_row(
         }
     delta = candidate_number - baseline_number
     delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
-    status = "not_comparable" if direction == "neutral" else "ok"
+    if direction == "neutral":
+        status = "ok" if round(delta, 6) == 0 else "not_comparable"
+    else:
+        status = "ok"
     if direction == "lower_is_better" and (
         (delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT)
         or (baseline_number == 0 and candidate_number > baseline_number)
@@ -383,15 +388,19 @@ def _collect_benchmark_probe_metrics(
     *,
     prefix: str,
 ) -> None:
-    values_by_label_and_key: dict[tuple[str, str], list[float]] = {}
+    aggregates_by_label_and_key: dict[tuple[str, str], _NumericAggregate] = {}
     for row in _dict_rows(rows):
         label = _benchmark_probe_label(row)
         for key in _REQUEST_PROBE_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
-                values_by_label_and_key.setdefault((label, key), []).append(value)
-    for (label, key), values in values_by_label_and_key.items():
-        suffix, value = _aggregate_probe_values(key, values)
+                aggregate_key = (label, key)
+                aggregates_by_label_and_key[aggregate_key] = _update_numeric_aggregate(
+                    aggregates_by_label_and_key.get(aggregate_key),
+                    value,
+                )
+    for (label, key), aggregate in aggregates_by_label_and_key.items():
+        suffix, value = _finalize_numeric_aggregate(key, aggregate)
         metrics[f"{prefix}.{label}.{key}_{suffix}"] = value
 
 
@@ -399,38 +408,62 @@ def _collect_evaluation_sample_probe_metrics(
     metrics: dict[str, object],
     rows: object,
 ) -> None:
-    values_by_suite_and_key: dict[tuple[str, str], list[float]] = {}
+    aggregates_by_suite_and_key: dict[tuple[str, str], _NumericAggregate] = {}
     failure_stage_counts: dict[tuple[str, str], int] = {}
     for row in _dict_rows(rows):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
         for key in _EVALUATION_SAMPLE_PROBE_KEYS:
             value = _float_or_none(row.get(key))
             if value is not None:
-                values_by_suite_and_key.setdefault((suite_id, key), []).append(value)
+                aggregate_key = (suite_id, key)
+                aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
+                    aggregates_by_suite_and_key.get(aggregate_key),
+                    value,
+                )
         failure_stage = str(row.get("failure_stage", "")).strip()
         if failure_stage:
             failure_stage_counts[(suite_id, failure_stage)] = (
                 failure_stage_counts.get((suite_id, failure_stage), 0) + 1
             )
-    for (suite_id, key), values in values_by_suite_and_key.items():
-        if values:
-            metrics[f"eval.sample.{suite_id}.{key}_mean"] = sum(values) / len(values)
+    for (suite_id, key), aggregate in aggregates_by_suite_and_key.items():
+        _, value = _finalize_numeric_aggregate(key, aggregate)
+        metrics[f"eval.sample.{suite_id}.{key}_mean"] = value
     for (suite_id, failure_stage), count in failure_stage_counts.items():
         metrics[f"eval.sample.{suite_id}.failure_stage.{failure_stage}.failure_count"] = float(count)
 
 
-def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
-    if not values:
+def _update_numeric_aggregate(
+    aggregate: _NumericAggregate | None,
+    value: float,
+) -> _NumericAggregate:
+    if aggregate is None:
+        return (value, 1)
+    return (aggregate[0] + value, aggregate[1] + 1)
+
+
+def _finalize_numeric_aggregate(
+    key: str,
+    aggregate: _NumericAggregate | None,
+) -> tuple[str, float]:
+    if aggregate is None:
         if key in _RATE_PROBE_KEYS:
-            return "rate", 0.0
+            return ("rate", 0.0)
         if key in _COUNT_PROBE_KEYS:
-            return "sum", 0.0
-        return "mean", 0.0
+            return ("sum", 0.0)
+        return ("mean", 0.0)
+    total, count = aggregate
     if key in _COUNT_PROBE_KEYS:
-        return "sum", sum(values)
+        return ("sum", total)
     if key in _RATE_PROBE_KEYS:
-        return "rate", sum(values) / len(values)
-    return "mean", sum(values) / len(values)
+        return ("rate", total / count)
+    return ("mean", total / count)
+
+
+def _aggregate_probe_values(key: str, values: list[float]) -> tuple[str, float]:
+    aggregate: _NumericAggregate | None = None
+    for value in values:
+        aggregate = _update_numeric_aggregate(aggregate, value)
+    return _finalize_numeric_aggregate(key, aggregate)
 
 
 def _benchmark_probe_label(row: dict[str, object]) -> str:

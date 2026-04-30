@@ -23,7 +23,6 @@ but cannot be made to fit raise ``ModelOperationError(code="chunk_size_too_small
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -129,6 +128,29 @@ def _split_messages_into_turns(
     return system_prefix, pairs
 
 
+def _split_words_into_k(words: list[str], k: int) -> list[str]:
+    """Split pre-tokenized ``words`` into ``k`` roughly equal segments.
+
+    Accepts a word list that has already been computed by the caller so the
+    chunk-search loop does not repeatedly re-split the same user content for
+    every candidate ``k``.
+    """
+
+    if k <= 1:
+        return [" ".join(words)]
+    if len(words) < k:
+        return words[:]  # caller detects len(segments) < k and retries
+    bucket_size = len(words) // k
+    extras = len(words) % k
+    segments: list[str] = []
+    start = 0
+    for bucket_idx in range(k):
+        length = bucket_size + (1 if bucket_idx < extras else 0)
+        segments.append(" ".join(words[start : start + length]))
+        start += length
+    return [s for s in segments if s]
+
+
 def _split_user_content_into_k(content: str, k: int) -> list[str]:
     """Split ``content`` into ``k`` roughly equal word-boundary segments.
 
@@ -147,18 +169,7 @@ def _split_user_content_into_k(content: str, k: int) -> list[str]:
 
     if k <= 1:
         return [content]
-    words = content.split()
-    if len(words) < k:
-        return words[:]  # caller detects len(segments) < k and retries
-    bucket_size = len(words) // k
-    extras = len(words) % k
-    segments: list[str] = []
-    start = 0
-    for bucket_idx in range(k):
-        length = bucket_size + (1 if bucket_idx < extras else 0)
-        segments.append(" ".join(words[start : start + length]))
-        start += length
-    return [s for s in segments if s]
+    return _split_words_into_k(content.split(), k)
 
 
 def _chunk_single_turn(
@@ -206,7 +217,18 @@ def _chunk_single_turn(
     # True ceiling: we can never split ``user_content`` into more segments
     # than it has words. Above that, no K can possibly produce a non-empty
     # segment per bucket.
-    word_count = len(user_content.split())
+    words = user_content.split()
+    word_count = len(words)
+    minimal_chunk = system_prefix + [{"role": "user", "content": ""}, assistant]
+    if _render_len(minimal_chunk, tokenizer, tools=tools) > chunk_size:
+        raise ModelOperationError(
+            code="chunk_size_too_small",
+            message=(
+                f"Cannot chunk sample {sample_id!r} within chunk_size={chunk_size}"
+                f" (full rendering is {full_len} tokens). The assistant message or"
+                " system prefix alone likely exceeds chunk_size."
+            ),
+        )
     k_floor = max(2, -(-full_len // chunk_size))
     if k_floor > word_count:
         raise ModelOperationError(
@@ -219,7 +241,7 @@ def _chunk_single_turn(
             ),
         )
     for k in range(k_floor, word_count + 1):
-        segments = _split_user_content_into_k(user_content, k)
+        segments = _split_words_into_k(words, k)
         if len(segments) < k:
             # User content has fewer words than buckets — caller must try a
             # smaller K. In practice this only fires when k > word_count,
@@ -245,6 +267,26 @@ def _chunk_single_turn(
     )
 
 
+def _copy_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Copy the message containers without deep-copying immutable string payloads."""
+
+    return [message.copy() for message in messages]
+
+
+def _passthrough_sample(sample: dict) -> dict:
+    """Return a passthrough sample with independent messages but shared top-level fields.
+
+    The chunker must not mutate the caller's messages list or nested message dicts,
+    but it also avoids deep-copying immutable-by-convention top-level payloads like
+    metadata or tool schemas on unchanged outputs.
+    """
+
+    out = {k: v for k, v in sample.items() if k != "messages"}
+    out["messages"] = _copy_messages(_extract_messages(sample))
+    return out
+
+
+
 def _chunk_sample(
     sample: dict,
     *,
@@ -268,13 +310,13 @@ def _chunk_sample(
     tools = _extract_tools(sample)
     messages = _extract_messages(sample)
     if _render_len(messages, tokenizer, tools=tools) <= chunk_size:
-        return [copy.deepcopy(sample)]
+        return [_passthrough_sample(sample)]
 
     sample_id = str(sample.get("id", ""))
     system_prefix, pairs = _split_messages_into_turns(messages)
 
     if not pairs:
-        return [copy.deepcopy(sample)]
+        return [_passthrough_sample(sample)]
 
     # Multi-turn: emit each (user, assistant) pair as its own chunk first.
     # If any chunk still overflows, fall through to single-turn segmentation
@@ -310,10 +352,11 @@ def _chunk_sample(
     chunks: list[dict] = []
     for idx, chunk in enumerate(chunked_messages):
         # Preserve any non-messages keys from the source sample (id, tools,
-        # metadata) via a shallow top-level copy, then deep-copy only the
-        # new messages so each chunk has an independent message list.
+        # metadata) via a shallow top-level copy, then copy only the message
+        # dict containers so each chunk has an independent message list
+        # without re-copying immutable string payloads.
         out = {k: v for k, v in sample.items() if k != "messages"}
-        out["messages"] = copy.deepcopy(chunk)
+        out["messages"] = _copy_messages(chunk)
         if sample_id:
             out["id"] = f"{sample_id}#chunk-{idx}"
         chunks.append(out)
@@ -329,9 +372,11 @@ def chunk_long_samples(
     """Chunk every sample in ``samples`` that exceeds ``chunk_size`` tokens.
 
     Returns ``(chunked_samples, stats)``. Samples that already fit pass
-    through as one chunk each (deep-copied so downstream mutations can't leak
-    back to the caller). Iterates ``samples`` exactly once so the caller can
-    pass a generator over a large JSONL file without materializing it.
+    through as one chunk each with a copied ``messages`` payload but shared
+    top-level immutable-by-convention fields, so downstream message mutations
+    can't leak back to the caller without deep-copying large metadata blobs.
+    Iterates ``samples`` exactly once so the caller can pass a generator over
+    a large JSONL file without materializing it.
     """
 
     if chunk_size < 1:

@@ -5712,6 +5712,7 @@ public actor MelixCLIRunner {
         let activationMode = (publish["activation_mode"] as? String) ?? ""
         let receiptPath = (publish["receipt_path"] as? String) ?? ""
         let publishedFiles = (publish["published_files"] as? [Any] ?? []).compactMap { $0 as? String }
+        let processorConfigFiles = (publish["processor_config_files"] as? [Any] ?? []).compactMap { $0 as? String }
 
         var lines: [String] = []
         lines.append("Publish: \(jobID)")
@@ -5763,6 +5764,13 @@ public actor MelixCLIRunner {
             lines.append("")
             lines.append("Published files (\(publishedFiles.count)):")
             for file in publishedFiles {
+                lines.append("  \(file)")
+            }
+        }
+        if !processorConfigFiles.isEmpty {
+            lines.append("")
+            lines.append("Processor configs (\(processorConfigFiles.count)):")
+            for file in processorConfigFiles {
                 lines.append("  \(file)")
             }
         }

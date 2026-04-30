@@ -30,4 +30,15 @@ class DeterministicRerankRuntime:
         family = loaded_model.get("rerank_family_adapter")
         if family is None:
             family = resolve_rerank_family(loaded_model.get("rerank_family_id", ""), backend)
-        return [family.score(backend, query, document) for document in documents]
+        query_tokens = backend.tokenize(query)
+        query_token_set = set(query_tokens)
+        return [
+            family.score(
+                backend,
+                query,
+                document,
+                query_tokens=query_tokens,
+                query_token_set=query_token_set,
+            )
+            for document in documents
+        ]
