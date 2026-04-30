@@ -148,6 +148,40 @@ def test_collect_probe_sources_stops_reading_after_all_probe_slots_are_filled(
         ]
 
 
+def test_load_milestone_statuses_streams_execution_index_without_read_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    execution_index = tmp_path / "execution-index.md"
+    execution_index.write_text(
+        "\n".join(
+            [
+                "# Execution Index",
+                "",
+                "- `M9.3` `docs/plans/m9.3.md`",
+                "  Status: completed. done.",
+                "- `M9.4` `docs/plans/m9.4.md`",
+                "  Status: pending. todo.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def fail_read_text(self: Path, *args, **kwargs) -> str:
+        if self == execution_index:
+            raise AssertionError("execution index parsing should not use Path.read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert closure_audit_module._load_milestone_statuses(execution_index) == {
+        "M9.3": "completed",
+        "M9.4": "pending",
+    }
+
+
 def test_closure_audit_helper_fallbacks_cover_policy_and_probe_edge_cases(tmp_path: Path) -> None:
     missing_index = tmp_path / "missing-execution-index.md"
     assert closure_audit_module._load_milestone_statuses(missing_index) == {}
