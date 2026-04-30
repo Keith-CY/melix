@@ -516,10 +516,8 @@ def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
 
 def _dict_rows(value: object) -> Iterator[dict[str, object]]:
     if not isinstance(value, list):
-        return
-    for row in value:
-        if isinstance(row, dict):
-            yield row
+        return iter(())
+    return (row for row in value if isinstance(row, dict))
 
 
 def _float_or_none(value: object) -> float | None:
