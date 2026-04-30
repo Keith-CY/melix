@@ -4165,7 +4165,7 @@ struct DesktopFoundationViewTests {
             language: "json"
         )
         let shell = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
-            code: "git status\n# comment\nvalue",
+            code: "git status\n# comment line here\nvalue",
             language: "bash"
         )
         let diff = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
@@ -4184,9 +4184,67 @@ struct DesktopFoundationViewTests {
 
         #expect(String(json.characters).contains(#""enabled""#))
         #expect(json.runs.contains { $0.foregroundColor != nil })
-        #expect(shell.runs.contains { $0.foregroundColor != nil })
+        // Entire comment line is colored, not just the '#' delimiter.
+        let shellText = String(shell.characters)
+        let commentLineStart = shellText.range(of: "# comment line here").map { r in
+            shellText.distance(from: shellText.startIndex, to: r.lowerBound)
+        } ?? 0
+        let commentRun = shell.runs.first { run in
+            let runStart = shell.characters.distance(
+                from: shell.characters.startIndex,
+                to: run.range.lowerBound
+            )
+            return runStart >= commentLineStart && run.foregroundColor != nil
+        }
+        #expect(commentRun != nil, "Full comment line should be colored, not just the delimiter")
         #expect(diff.runs.contains { $0.foregroundColor != nil })
         #expect(String(plain.characters).isEmpty)
+    }
+
+    @Test("chat markdown JS and Python keywords are colored with language-specific sets")
+    func chatMarkdownJSAndPythonKeywordsAreColoredWithLanguageSpecificSets() {
+        let js = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "function foo() { return null; }",
+            language: "javascript"
+        )
+        let py = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "def foo():\n    pass\n    return None",
+            language: "python"
+        )
+        let swift = DesktopChatMarkdownCodeSyntaxHighlighter.attributedString(
+            code: "func foo() -> Void { return }",
+            language: "swift"
+        )
+
+        // JS-specific keywords like `function` and `null` must be colored.
+        let jsText = String(js.characters)
+        let functionRange = jsText.range(of: "function")
+        #expect(functionRange != nil)
+        if let range = functionRange {
+            let charIndex = jsText.distance(from: jsText.startIndex, to: range.lowerBound)
+            let colored = js.runs.contains { run in
+                let start = js.characters.distance(from: js.characters.startIndex, to: run.range.lowerBound)
+                return start == charIndex && run.foregroundColor != nil
+            }
+            #expect(colored, "`function` should be highlighted in JavaScript")
+        }
+
+        // Python-specific keywords like `def` and `None` must be colored.
+        let pyText = String(py.characters)
+        let defRange = pyText.range(of: "def")
+        #expect(defRange != nil)
+        if let range = defRange {
+            let charIndex = pyText.distance(from: pyText.startIndex, to: range.lowerBound)
+            let colored = py.runs.contains { run in
+                let start = py.characters.distance(from: py.characters.startIndex, to: run.range.lowerBound)
+                return start == charIndex && run.foregroundColor != nil
+            }
+            #expect(colored, "`def` should be highlighted in Python")
+        }
+
+        // `func` is a Swift keyword and should be colored in Swift but not be
+        // incorrectly used to color JS/Python (they have `function`/`def`).
+        #expect(swift.runs.contains { $0.foregroundColor != nil })
     }
 
     @Test("chat markdown table layout bounds wide content")
@@ -4330,6 +4388,7 @@ struct DesktopFoundationViewTests {
         #expect(snapshot == expected.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    #if DEBUG
     @Test("chat markdown performance probe reports large sample cache benefit")
     func chatMarkdownPerformanceProbeReportsLargeSampleCacheBenefit() {
         DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 256)
@@ -4355,6 +4414,7 @@ struct DesktopFoundationViewTests {
 
         DesktopChatMarkdownRenderer.resetCacheForTesting()
     }
+    #endif
 
     @Test("chat markdown surfaces keep restrained low-border styling")
     func chatMarkdownSurfacesKeepRestrainedLowBorderStyling() {

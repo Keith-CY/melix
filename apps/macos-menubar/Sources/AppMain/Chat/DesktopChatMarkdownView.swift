@@ -179,6 +179,22 @@ enum DesktopChatMarkdownCodeSyntaxHighlighter {
         "switch", "throw", "throws", "true", "try", "var", "while",
     ]
 
+    private static let jsKeywords: Set<String> = [
+        "async", "await", "break", "case", "catch", "class", "const", "continue",
+        "debugger", "default", "delete", "do", "else", "export", "extends",
+        "false", "finally", "for", "function", "if", "import", "in", "instanceof",
+        "let", "new", "null", "of", "return", "static", "super", "switch", "this",
+        "throw", "true", "try", "typeof", "undefined", "var", "void", "while", "yield",
+    ]
+
+    private static let pythonKeywords: Set<String> = [
+        "and", "as", "assert", "async", "await", "break", "class", "continue",
+        "def", "del", "elif", "else", "except", "False", "finally", "for",
+        "from", "global", "if", "import", "in", "is", "lambda", "None",
+        "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+        "while", "with", "yield",
+    ]
+
     private static let shellKeywords: Set<String> = [
         "awk", "bun", "cd", "curl", "echo", "export", "git", "grep",
         "make", "mkdir", "rg", "sed", "swift", "xcrun",
@@ -192,8 +208,14 @@ enum DesktopChatMarkdownCodeSyntaxHighlighter {
         if ["sh", "shell", "bash", "zsh"].contains(normalized) {
             return highlightedWords(code, keywords: shellKeywords)
         }
-        if ["swift", "js", "javascript", "ts", "typescript", "py", "python"].contains(normalized) {
+        if ["swift"].contains(normalized) {
             return highlightedWords(code, keywords: swiftKeywords)
+        }
+        if ["js", "javascript", "ts", "typescript"].contains(normalized) {
+            return highlightedWords(code, keywords: jsKeywords)
+        }
+        if ["py", "python"].contains(normalized) {
+            return highlightedWords(code, keywords: pythonKeywords)
         }
         if ["diff", "patch"].contains(normalized) {
             return highlightedDiff(code)
@@ -217,21 +239,37 @@ enum DesktopChatMarkdownCodeSyntaxHighlighter {
         _ code: String,
         keywords: Set<String>
     ) -> AttributedString {
-        build(code) { token in
-            if token.hasPrefix("//") || token.hasPrefix("#") {
-                return .secondary
+        var result = AttributedString()
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for (index, lineText) in lines.enumerated() {
+            let trimmed = lineText.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("//") || trimmed.hasPrefix("#") {
+                var segment = AttributedString(lineText)
+                segment.foregroundColor = .secondary
+                result += segment
+            } else {
+                result += build(lineText) { token in
+                    // Colour trailing comment delimiters (e.g. `let x = 1 // note`).
+                    if token.hasPrefix("//") || token.hasPrefix("#") {
+                        return .secondary
+                    }
+                    if token.hasPrefix("\"") || token.hasPrefix("'") {
+                        return .teal
+                    }
+                    if keywords.contains(token) {
+                        return .purple
+                    }
+                    if token.first?.isNumber == true {
+                        return .orange
+                    }
+                    return nil
+                }
             }
-            if token.hasPrefix("\"") || token.hasPrefix("'") {
-                return .teal
+            if index < lines.count - 1 {
+                result += AttributedString("\n")
             }
-            if keywords.contains(token) {
-                return .purple
-            }
-            if token.first?.isNumber == true {
-                return .orange
-            }
-            return nil
         }
+        return result
     }
 
     private static func highlightedDiff(_ code: String) -> AttributedString {
@@ -372,6 +410,7 @@ private struct DesktopChatMarkdownSourceChunk: Equatable, Sendable {
     let isStable: Bool
 }
 
+#if DEBUG
 struct DesktopChatMarkdownPerformanceReport: Equatable, Sendable {
     let samples: [DesktopChatMarkdownPerformanceSample]
 }
@@ -445,6 +484,7 @@ enum DesktopChatMarkdownPerformanceProbe {
         return text
     }
 }
+#endif
 
 private enum DesktopChatMarkdownChunker {
     static func chunks(
@@ -829,6 +869,7 @@ private struct DesktopChatMarkdownBlockVisitor: MarkupVisitor {
 
     private mutating func listItem(from item: ListItem) -> DesktopChatMarkdownListItem {
         let childBlocks = item.children.flatMap { visit($0) }
+        // Leading paragraph becomes the marker label; all other children are kept as nested blocks.
         guard case .paragraph(let text) = childBlocks.first else {
             return DesktopChatMarkdownListItem(text: "", children: childBlocks)
         }
@@ -1041,9 +1082,13 @@ private extension DesktopChatMarkdownTableAlignment {
 
 struct DesktopChatMarkdownBodyView: View {
     let rawText: String
+    var isStreaming: Bool = false
 
     private var renderPlan: DesktopChatMarkdownRenderPlan {
-        DesktopChatMarkdownRenderer.renderPlan(from: rawText, mode: .streaming)
+        DesktopChatMarkdownRenderer.renderPlan(
+            from: rawText,
+            mode: isStreaming ? .streaming : .complete
+        )
     }
 
     var body: some View {
