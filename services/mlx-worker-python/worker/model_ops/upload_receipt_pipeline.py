@@ -59,6 +59,19 @@ _PROCESSOR_CONFIG_FILENAMES = frozenset({
 })
 
 
+def _collect_published_file_list(source_dir: Path) -> list[str]:
+    source_dir_str = os.fspath(source_dir)
+    published_files: list[str] = []
+    for root, _dirs, files in os.walk(source_dir_str):
+        files.sort()
+        relative_root = os.path.relpath(root, start=source_dir_str)
+        if relative_root == ".":
+            published_files.extend(files)
+        else:
+            published_files.extend(f"{relative_root}/{filename}" for filename in files)
+    return sorted(published_files)
+
+
 class HuggingFacePublishBackend:
     def publish(
         self,
@@ -114,7 +127,7 @@ class HuggingFacePublishBackend:
 
         if published_files is None:
             if resolved_source_path.is_dir():
-                published_files = self._collect_published_file_list(resolved_source_path)
+                published_files = _collect_published_file_list(resolved_source_path)
             else:
                 published_files = [resolved_source_path.name]
 
@@ -137,17 +150,7 @@ def _resolve_hf_cli_command() -> str:
 class UploadReceiptPipeline:
     @staticmethod
     def _collect_published_file_list(source_dir: Path) -> list[str]:
-        published_files: list[str] = []
-        for root, _dirs, files in os.walk(source_dir):
-            files.sort()
-            for filename in files:
-                published_files.append(
-                    os.path.relpath(
-                        os.path.join(root, filename),
-                        start=str(source_dir),
-                    )
-                )
-        return sorted(published_files)
+        return _collect_published_file_list(source_dir)
 
     def __init__(self, publisher: Any | None = None) -> None:
         self._publisher = publisher or HuggingFacePublishBackend()
