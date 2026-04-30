@@ -35,12 +35,19 @@ class BenchmarkQueueRecord:
 
     @staticmethod
     def from_dict(payload: dict[str, object]) -> BenchmarkQueueRecord:
+        raw_suite_ids = payload.get("suite_ids", ())
+        raw_parameters = payload.get("parameters", {})
+        parameter_items = (
+            raw_parameters.items()
+            if isinstance(raw_parameters, dict)
+            else dict(raw_parameters).items()
+        )
         return BenchmarkQueueRecord(
             queue_item_id=str(payload["queue_item_id"]),
             job_kind=str(payload["job_kind"]),
             model_id=str(payload["model_id"]),
-            suite_ids=tuple(str(item) for item in payload.get("suite_ids", [])),
-            parameters={str(key): str(value) for key, value in dict(payload.get("parameters", {})).items()},
+            suite_ids=tuple(map(str, raw_suite_ids)),
+            parameters={str(key): str(value) for key, value in parameter_items},
             status=str(payload["status"]),
             created_at_unix_ms=int(payload["created_at_unix_ms"]),
             updated_at_unix_ms=int(payload["updated_at_unix_ms"]),
