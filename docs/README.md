@@ -1,84 +1,112 @@
-# Melix Documentation Map
+# Melix Documentation
 
-This directory is the system of record for Melix product, architecture, protocol, and execution
-guidance.
+Welcome to the Melix documentation. This is the central reference for everything about the product — from first-time setup to deep protocol specifications.
 
-## Precedence
+---
 
-Use documents in this order when resolving ambiguity:
+## Start Here
 
-1. `../AGENTS.md`
-2. canonical specifications in `docs/`
-3. active runbooks and status documents in `docs/`
-4. historical execution plans in `docs/plans/`
-5. templates in `docs/templates/`
+If you're new to Melix, begin with these three documents in order:
 
-## Product And Status
+1. **[Getting Started](getting-started.md)** — Bootstrap the repo, start the local stack, and run your first CLI commands.
+2. **[Current Status](current-status.md)** — Understand what is shipped today, what works, and where the honest boundaries are.
+3. **[Phase Roadmap](phase-roadmap.md)** — See the original phase model and the current completion state.
 
-Start here if you need the current project story before the engineering archive:
+---
 
-- [`current-status.md`](current-status.md)
-- [`getting-started.md`](getting-started.md)
-- [`contributing.md`](contributing.md)
-- [`phase-roadmap.md`](phase-roadmap.md)
+## Guides & How-Tos
 
-## Operations And Runbooks
+Practical guides for common tasks:
 
-Use runbooks when you need executable procedures instead of narrative documentation:
+| Guide | What It Covers |
+|---|---|
+| [Getting Started](getting-started.md) | Fresh-checkout setup, first CLI flows, and the local stack |
+| [Contributing](contributing.md) | Workflow, verification commands, PR expectations, and coverage rules |
+| [Engineering Standards](engineering-standards.md) | Repository-wide coding, documentation, and tooling conventions |
 
-- [`runbooks/README.md`](runbooks/README.md)
-- [`runbooks/phase-1-local-stack.md`](runbooks/phase-1-local-stack.md)
-- [`runbooks/benchmark-matrix-evaluation-and-lora.md`](runbooks/benchmark-matrix-evaluation-and-lora.md)
-- [`runbooks/phase-8-lora-adapter-workflow.md`](runbooks/phase-8-lora-adapter-workflow.md)
-- [`runbooks/phase-8-local-install.md`](runbooks/phase-8-local-install.md)
-- [`runbooks/homebrew-install.md`](runbooks/homebrew-install.md)
-- [`runbooks/platform-packaging-targets.md`](runbooks/platform-packaging-targets.md)
-- [`runbooks/structured-streaming-reasoning-continuity.md`](runbooks/structured-streaming-reasoning-continuity.md)
-- [`runbooks/phase-8-release-gates.md`](runbooks/phase-8-release-gates.md)
-- [`runbooks/phase-8-product-acceptance.md`](runbooks/phase-8-product-acceptance.md)
+---
 
-## Examples
+## Runbooks
 
-- [`examples/pipelines/phase8-acceptance.pipeline.json`](examples/pipelines/phase8-acceptance.pipeline.json)
-  shows the v1 typed CLI pipeline form for the Phase 8 acceptance flow.
+Step-by-step operating procedures for specific workflows. Use these when you need executable instructions rather than narrative explanation.
+
+| Runbook | What It Covers |
+|---|---|
+| [Local Stack](runbooks/phase-1-local-stack.md) | Runtime layout, environment exports, and alternate startup modes |
+| [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
+| [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
+| [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
+| [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
+| [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew service, and preview app-bundle delivery options |
+| [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
+| [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
+| [Structured Streaming](runbooks/structured-streaming-reasoning-continuity.md) | Streaming and reasoning continuity behavior |
+| [All Runbooks →](runbooks/README.md) | Full runbook index |
+
+---
 
 ## Canonical Specifications
 
-These top-level specs remain canonical and should not be moved without an explicit migration task:
+These are the authoritative interface and architecture definitions. Do not move or rename them without an explicit migration task.
 
-- [`architecture-spec.md`](architecture-spec.md)
-- [`benchmark-evaluation-contract.md`](benchmark-evaluation-contract.md)
-- [`control-plane-protocol.md`](control-plane-protocol.md)
-- [`worker-rpc-schema.md`](worker-rpc-schema.md)
-- [`repo-skeleton.md`](repo-skeleton.md)
+| Specification | What It Defines |
+|---|---|
+| [Architecture Spec](architecture-spec.md) | System-wide architecture, component responsibilities, and runtime layout |
+| [Control Plane Protocol](control-plane-protocol.md) | The typed protocol between the control plane and worker surfaces |
+| [Worker RPC Schema](worker-rpc-schema.md) | RPC message shapes and worker communication contracts |
+| [Benchmark & Evaluation Contract](benchmark-evaluation-contract.md) | Benchmark and evaluation data formats, output contracts, and artifact shapes |
+| [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
 
-## Architecture And Decisions
+---
 
-- [`architecture/README.md`](architecture/README.md)
-- [`architecture/2026-04-01-server-session-desktop-shell.md`](architecture/2026-04-01-server-session-desktop-shell.md)
-- [`architecture/2026-04-02-service-first-sidecar-reuse.md`](architecture/2026-04-02-service-first-sidecar-reuse.md)
-- [`architecture/2026-04-18-turboquant-kv-cache-optimization.md`](architecture/2026-04-18-turboquant-kv-cache-optimization.md)
-- [`decisions/README.md`](decisions/README.md)
+## Architecture & Decisions
+
+Design rationale and architecture decision records:
+
+- [Architecture Overview](architecture/README.md)
+- [Server Session & Desktop Shell](architecture/2026-04-01-server-session-desktop-shell.md)
+- [Service-First Sidecar Reuse](architecture/2026-04-02-service-first-sidecar-reuse.md)
+- [TurboQuant KV Cache Optimization](architecture/2026-04-18-turboquant-kv-cache-optimization.md)
+- [Decision Records](decisions/README.md)
+
+---
+
+## Examples
+
+- [`examples/pipelines/phase8-acceptance.pipeline.json`](examples/pipelines/phase8-acceptance.pipeline.json) — The v1 typed CLI pipeline format used in the Phase 8 acceptance flow.
+
+---
 
 ## Historical Planning Archive
 
-The plan tree is intentionally large. Use these entry points before diving into individual child
-plans:
+The plan archive is intentionally large and serves as an engineering record. Use the entry points below before diving into individual plan files.
 
-- [`plans/2026-03-30-full-capability-roadmap-execution-index.md`](plans/2026-03-30-full-capability-roadmap-execution-index.md)
-- [`plans/2026-03-30-full-capability-roadmap.md`](plans/2026-03-30-full-capability-roadmap.md)
-- [`plans/2026-04-12-readme-and-docs-realignment.md`](plans/2026-04-12-readme-and-docs-realignment.md)
-- [`plans/2026-04-16-lora-capability-modules-and-commit-plan.md`](plans/2026-04-16-lora-capability-modules-and-commit-plan.md)
+| Entry Point | What It Contains |
+|---|---|
+| [Full Capability Execution Index](plans/2026-03-30-full-capability-roadmap-execution-index.md) | Milestone-level closure detail for the full capability roadmap |
+| [Full Capability Roadmap](plans/2026-03-30-full-capability-roadmap.md) | The original full capability plan |
+| [README & Docs Realignment](plans/2026-04-12-readme-and-docs-realignment.md) | Documentation restructure and alignment plan |
+| [LoRA Capability Modules](plans/2026-04-16-lora-capability-modules-and-commit-plan.md) | LoRA expansion breakdown and commit plan |
 
-## Engineering Standards
+> **Note:** The historical plan archive reflects engineering exploration, not a promise that every archived plan is equally product-ready. Treat `current-status.md` and active runbooks as the operational truth.
 
-Repository-wide engineering rules are defined in:
+---
 
-- [`engineering-standards.md`](engineering-standards.md)
+## Document Precedence
+
+When documents appear to conflict, resolve ambiguity in this order:
+
+1. `../AGENTS.md`
+2. Canonical specifications in `docs/`
+3. Active runbooks and status documents in `docs/`
+4. Historical execution plans in `docs/plans/`
+5. Templates in `docs/templates/`
+
+---
 
 ## Operating Constraints
 
-- Formal docs in this repository are written in English.
-- Melix naming is the only naming used in formal docs and examples.
-- Protocol schemas under `packages/protocol/schema` are the authoritative interface definitions.
+- All formal documents in this repository are written in English.
+- "Melix" is the only product name used in formal docs and examples.
+- Protocol schemas under `packages/protocol/schema` are the authoritative interface definitions — do not hand-edit generated outputs.
 - Generated protocol outputs are committed artifacts and must be regenerated when schemas change.

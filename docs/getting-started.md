@@ -1,18 +1,25 @@
-# Melix Getting Started
+# Getting Started with Melix
 
-This guide is the shortest path from a fresh checkout to a working local Melix development loop.
+This guide walks you from a fresh checkout to a fully running local Melix stack. Most people are up and running in under ten minutes.
 
-## Prerequisites
+---
 
-- macOS on Apple Silicon
-- `swift`
-- `python3`
-- `uv`
+## What You Need
 
-`make proto` builds and uses the pinned protobuf generators from the repository's locked Python and
-Swift dependencies, so no separate `protoc` or `protoc-gen-swift` installation is required.
+Before you begin, make sure your machine has:
 
-## Bootstrap The Repository
+| Requirement | Why |
+|---|---|
+| **macOS 15+** on **Apple Silicon** | Melix is built specifically for the Apple Silicon neural engine and runs natively on M-series Macs |
+| **Swift** | Powers the Melix CLI, control plane, and menubar app |
+| **Python 3.12+** | Powers the local model worker stack |
+| **[uv](https://docs.astral.sh/uv/)** | Fast Python environment and package manager used by Melix |
+
+> **No `protoc` needed.** `make proto` uses the pinned generators from the repository's locked dependencies — nothing extra to install.
+
+---
+
+## Step 1 — Bootstrap the Repository
 
 Install the locked Python environment and local build support:
 
@@ -20,13 +27,17 @@ Install the locked Python environment and local build support:
 make bootstrap
 ```
 
-Generate committed protocol artifacts:
+Then generate the committed protocol artifacts (the typed message definitions that the CLI, control plane, and worker all share):
 
 ```bash
 make proto
 ```
 
-Run the default repository verification gates:
+---
+
+## Step 2 — Run the Verification Gates
+
+Confirm everything is wired up correctly:
 
 ```bash
 make swift-test
@@ -34,95 +45,115 @@ make py-test
 make integration-test
 ```
 
-## Start The Deterministic Local Stack
+All three should pass on a clean checkout. If something fails, check [Current Status](current-status.md) for known local issues before digging in.
 
-Bring up the default local runtime stack:
+---
+
+## Step 3 — Start the Local Stack
+
+Bring up the default local runtime:
 
 ```bash
 bash scripts/dev_up.sh
 ```
 
-Inspect the current server snapshot:
+Verify the stack is running:
 
 ```bash
 swift run melix server snapshot --json
 ```
 
-Shut the stack down when you are done:
+You should see a JSON snapshot of the current server state. When you're done:
 
 ```bash
 bash scripts/dev_down.sh
 ```
 
-The deterministic path is the default repeatable development loop. For details on runtime layout,
-environment exports, and alternate startup modes, see
-[`docs/runbooks/phase-1-local-stack.md`](runbooks/phase-1-local-stack.md).
+For details on the runtime layout, environment exports, and alternate startup modes, see the [Local Stack Runbook](runbooks/phase-1-local-stack.md).
 
-## Start The Full macOS Operator Surface
+---
 
-If you want the backend stack plus the built macOS operator app:
+## Step 4 — Launch the Native macOS App *(optional)*
+
+If you want the full macOS operator experience alongside the backend stack:
 
 ```bash
 make swift-test
 bash scripts/dev_app_up.sh
 ```
 
-This path uses the already built Swift executables for the CLI, control plane, text worker, and
-menubar app instead of rebuilding on every launch.
+This starts the CLI, control plane, text worker, and menubar app using already-built Swift executables — no rebuild on every launch.
 
-## First CLI Checks
+---
 
-Once the local stack is running, these are good first checks:
+## First CLI Commands
+
+Once the stack is running, these are the essential first checks:
 
 ```bash
+# See all running server sessions and registered models
 swift run melix server snapshot --json
+
+# List trained LoRA adapters
 swift run melix lora list --json
+
+# List benchmark runs
 swift run melix bench list --json
+
+# List evaluation runs
 swift run melix eval list --json
 ```
 
-## LoRA, Benchmark, And Evaluation Quick Loop
+---
 
-Choose a local model ID from `melix server snapshot --json`, then run a minimal loop such as:
+## Your First LoRA + Benchmark Loop
+
+Pick a model ID from `melix server snapshot --json`, then run a minimal fine-tuning and evaluation loop:
 
 ```bash
+# Train a LoRA adapter on your dataset
 swift run melix lora train \
   --model-id <model-id> \
   --dataset-uri /absolute/path/to/dataset-package \
-  --adapter-name melix-dev-adapter \
-  --target-repo melix/adapters/melix-dev-adapter
+  --adapter-name my-adapter \
+  --target-repo melix/adapters/my-adapter
 
+# Activate the adapter as a named derived model
 swift run melix lora activate \
   --model-id <model-id> \
   --adapter-path /absolute/path/to/train_lora.adapter.json \
-  --alias melix-dev-derived
+  --alias my-derived-model
 
+# Run a quick benchmark
 swift run melix bench run \
   --model-id <model-id> \
   --suite smoke
 
+# Run an evaluation
 swift run melix eval run \
   --model-id <model-id> \
   --suite mmlu
 ```
 
-For the full operator flow, dataset expectations, matrix benchmark examples, CSV exports, and
-compare workflows, use these runbooks:
+For the full operator flow — dataset expectations, matrix benchmarks, CSV exports, and compare workflows — use these runbooks:
 
-- [`docs/runbooks/phase-8-lora-adapter-workflow.md`](runbooks/phase-8-lora-adapter-workflow.md)
-- [`docs/runbooks/benchmark-matrix-evaluation-and-lora.md`](runbooks/benchmark-matrix-evaluation-and-lora.md)
+- [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md)
+- [Benchmark, Matrix & Evaluation Runbook](runbooks/benchmark-matrix-evaluation-and-lora.md)
 
-## Install And Packaging Paths
+---
 
-If you want a local product-style install instead of the repository-local development loop, start
-with:
+## Installing Melix Locally
 
-- [`docs/runbooks/phase-8-local-install.md`](runbooks/phase-8-local-install.md)
-- [`docs/runbooks/homebrew-install.md`](runbooks/homebrew-install.md)
-- [`docs/runbooks/platform-packaging-targets.md`](runbooks/platform-packaging-targets.md)
+Prefer a product-style install over the repository development loop? These runbooks cover it:
 
-## Read Next
+- [Local Install Runbook](runbooks/phase-8-local-install.md) — Launch agent and persistent local service
+- [Homebrew Install](runbooks/homebrew-install.md) — Homebrew-based service management
+- [Packaging Targets](runbooks/platform-packaging-targets.md) — All delivery options at a glance
 
-- [`docs/current-status.md`](current-status.md)
-- [`docs/contributing.md`](contributing.md)
-- [`docs/README.md`](README.md)
+---
+
+## What to Read Next
+
+- [Current Status](current-status.md) — What's shipped today and where the honest limits are
+- [Contributing](contributing.md) — How to contribute to Melix
+- [Docs Map](README.md) — The full documentation index
