@@ -296,7 +296,7 @@ def _build_metric_row(
     delta = candidate_number - baseline_number
     delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
     if direction == "neutral":
-        status = "ok" if delta == 0 else "not_comparable"
+        status = "ok" if round(delta, 6) == 0 else "not_comparable"
     else:
         status = "ok"
     if direction == "lower_is_better" and (
