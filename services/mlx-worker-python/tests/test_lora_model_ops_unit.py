@@ -15,7 +15,15 @@ from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
-from worker.model_ops.lora_training_pipeline import _int_ext
+from worker.model_ops.lora_training_pipeline import (
+    _content_hash,
+    _int_ext,
+    _latest_checkpoint_from_directory,
+    _load_manifest_payload,
+    _resolve_resume_context,
+    _resolve_resume_path_from_manifest,
+    _validated_resume_path,
+)
 from worker.model_ops.mlx_lm_runner import MLXLMRunner
 from worker.model_ops.training_dataset import HFDatasetReference, load_training_dataset_package, materialize_hf_training_dataset_package
 
@@ -70,6 +78,104 @@ def _text_model(*, model_path: str = "models/plain-llama", quant_profile_id: str
 class _UnexpectedActivationRunner(MLXLMRunner):
     def activate(self, request):  # noqa: ANN001
         raise AssertionError("adapter_backed_runtime should not invoke fused activation")
+
+
+
+def test_content_hash_streams_file_chunks_without_read_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = tmp_path / "weights-a.bin"
+    second = tmp_path / "weights-b.bin"
+    first.write_bytes(b"a" * (1024 * 1024 + 17))
+    second.write_bytes(b"b" * (512 * 1024 + 9))
+
+    expected = __import__("hashlib").sha256(first.read_bytes() + second.read_bytes()).hexdigest()[:16]
+
+    def forbid_read_bytes(self: Path) -> bytes:  # pragma: no cover - exercised via monkeypatch
+        raise AssertionError("_content_hash should stream via open(), not read_bytes()")
+
+    monkeypatch.setattr(Path, "read_bytes", forbid_read_bytes)
+
+    assert _content_hash(first, second) == expected
+
+
+
+def test_load_manifest_payload_rejects_unreadable_and_non_object_json(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not-json}\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="Resume manifest is unreadable"):
+        _load_manifest_payload(broken)
+
+    non_object = tmp_path / "array.json"
+    non_object.write_text("[]\n", encoding="utf-8")
+    with pytest.raises(ModelOperationError, match="Resume manifest must be a JSON object"):
+        _load_manifest_payload(non_object)
+
+
+
+def test_latest_checkpoint_helpers_pick_latest_numeric_file_and_validate_errors(tmp_path: Path) -> None:
+    checkpoints = tmp_path / "checkpoints"
+    (checkpoints / "checkpoint-2").mkdir(parents=True)
+    (checkpoints / "checkpoint-10").mkdir(parents=True)
+    older = checkpoints / "checkpoint-2" / "adapters.safetensors"
+    newer = checkpoints / "checkpoint-10" / "adapters.safetensors"
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
+
+    assert _latest_checkpoint_from_directory(checkpoints) == newer.resolve()
+    assert _validated_resume_path(checkpoints, source_label="unit-test") == newer.resolve()
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    with pytest.raises(ModelOperationError, match="Resume directory does not contain adapter weights"):
+        _latest_checkpoint_from_directory(empty_dir)
+
+    with pytest.raises(ModelOperationError, match="Resume source from unit-test does not exist"):
+        _validated_resume_path(tmp_path / "missing.safetensors", source_label="unit-test")
+
+
+
+def test_resolve_resume_path_from_manifest_prefers_checkpoint_and_requires_weight_entries(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "resume.json"
+    checkpoint = tmp_path / "checkpoint-7" / "adapters.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"checkpoint")
+
+    resolved = _resolve_resume_path_from_manifest(
+        manifest_path,
+        {"latest_checkpoint_path": str(checkpoint), "weights_path": str(tmp_path / "ignored.safetensors")},
+    )
+    assert resolved == checkpoint.resolve()
+
+    with pytest.raises(ModelOperationError, match="Resume manifest does not expose a checkpoint or weights path"):
+        _resolve_resume_path_from_manifest(manifest_path, {})
+
+
+
+def test_resolve_resume_context_handles_manifest_directory_and_missing_sources(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "run-42" / "checkpoint-3" / "adapters.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"checkpoint")
+    manifest = tmp_path / "resume.json"
+    manifest.write_text(
+        json.dumps({"job_id": "run-42", "latest_checkpoint_path": str(checkpoint)}) + "\n",
+        encoding="utf-8",
+    )
+
+    manifest_context = _resolve_resume_context({"resume_manifest_path": str(manifest)})
+    assert manifest_context == {
+        "resume_source_path": checkpoint.resolve(),
+        "resume_manifest_path": manifest.resolve(),
+        "resume_source_job_id": "run-42",
+    }
+
+    directory_context = _resolve_resume_context({"resume_source_path": str(checkpoint.parent.parent)})
+    assert directory_context == {
+        "resume_source_path": checkpoint.resolve(),
+        "resume_manifest_path": None,
+        "resume_source_job_id": "",
+    }
+
+    with pytest.raises(ModelOperationError, match="Resume source does not exist"):
+        _resolve_resume_context({"resume_source_path": str(tmp_path / "missing")})
 
 
 
