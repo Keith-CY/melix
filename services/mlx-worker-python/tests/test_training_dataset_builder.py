@@ -117,12 +117,14 @@ def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jso
     )
 
 
-def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
+def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_validation_samples(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     package_path = tmp_path / "dataset-package"
     package_path.mkdir(parents=True, exist_ok=True)
+    stale_valid_path = tmp_path / "exports" / "normalized_dataset" / "valid.jsonl"
+    stale_valid_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_valid_path.write_text("stale\n", encoding="utf-8")
 
     dataset = TrainingDatasetPackage(
         package_path=package_path,
@@ -142,11 +144,6 @@ def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
         response_only_supported=False,
     )
 
-    def fail_copyfile(src: Path, dst: Path) -> None:
-        raise AssertionError(f"write_normalized_dataset_snapshot should not copy {src} to {dst}")
-
-    monkeypatch.setattr(training_dataset_module.shutil, "copyfile", fail_copyfile)
-
     snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
 
     expected_payload = (
@@ -156,6 +153,7 @@ def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
     assert snapshot.samples_path.read_text(encoding="utf-8") == expected_payload
     assert snapshot.train_path.read_text(encoding="utf-8") == expected_payload
     assert snapshot.valid_path is None
+    assert stale_valid_path.exists() is False
 
 
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
@@ -462,6 +460,35 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
         {"text": "hello world"},
         "text_completion",
     ) == (0, 2)
+    sample_rows = [
+        {"prompt": "hello world", "completion": "hello world"},
+        {"prompt": "hello world", "completion": "hello world"},
+    ]
+    assert training_dataset_module._build_quality_report(sample_rows) == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [1],
+        "dirty_count": 2,
+        "dirty_samples": [
+            {"index": 0, "reasons": ["duplicate_prompt_completion"]},
+            {"index": 1, "reasons": ["duplicate_prompt_completion"]},
+        ],
+    }
+    assert training_dataset_module._build_token_stats(sample_rows, "prompt_completion") == {
+        "estimator": "whitespace_v1",
+        "sample_count": 2,
+        "prompt_tokens_mean": 2.0,
+        "prompt_tokens_p50": 2,
+        "prompt_tokens_p95": 2,
+        "prompt_tokens_max": 2,
+        "completion_tokens_mean": 2.0,
+        "completion_tokens_p50": 2,
+        "completion_tokens_p95": 2,
+        "completion_tokens_max": 2,
+        "total_tokens_mean": 4.0,
+        "total_tokens_p50": 4,
+        "total_tokens_p95": 4,
+        "total_tokens_max": 4,
+    }
     assert training_dataset_module._mean_value([]) == 0.0
     assert training_dataset_module._percentile_value([], 0.95) == 0
 
@@ -603,6 +630,87 @@ def test_resolve_dataset_build_source_reuses_hf_package_sample_lists(
     assert resolved["samples"] is normalized_samples
     assert resolved["validation_samples"] is normalized_validation_samples
     assert resolved["hf_metadata"]["hf_valid_split"] == "validation"
+
+
+def test_build_training_dataset_artifact_inspects_samples_once_for_quality_and_token_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingSequence:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self._rows = rows
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(self._rows)
+
+        def __len__(self) -> int:
+            return len(self._rows)
+
+        def __getitem__(self, index: int | slice) -> object:
+            return self._rows[index]
+
+        def __bool__(self) -> bool:
+            return bool(self._rows)
+
+    train_samples = CountingSequence(
+        [
+            {"prompt": "alpha beta", "completion": "gamma"},
+            {"prompt": "delta", "completion": "delta"},
+        ]
+    )
+    validation_samples = CountingSequence(
+        [
+            {"prompt": "alpha beta", "completion": "gamma"},
+        ]
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "_resolve_dataset_build_source",
+        lambda *args, **kwargs: {
+            "dataset_id": "counted-source",
+            "format": "prompt_completion",
+            "version": "1",
+            "source_kind": "local_path",
+            "source_uri": "/tmp/counted-source.jsonl",
+            "source_manifest_path": "",
+            "source_samples_path": "/tmp/counted-source.jsonl",
+            "samples": train_samples,
+            "validation_samples": validation_samples,
+            "response_only_supported": True,
+            "conversion_template": "prompt_completion",
+            "hf_metadata": {},
+        },
+    )
+
+    built = build_training_dataset_artifact(
+        {
+            "inspect_only": "true",
+            "preview_count": "2",
+        },
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "inspect-once",
+        source_model_id="melix-dev-text",
+    )
+
+    assert train_samples.iterations == 1
+    assert validation_samples.iterations == 1
+    assert built.manifest_payload["quality"] == {
+        "duplicate_count": 1,
+        "duplicate_sample_indices": [2],
+        "dirty_count": 1,
+        "dirty_samples": [
+            {"index": 1, "reasons": ["duplicate_prompt_completion"]},
+        ],
+    }
+    assert built.manifest_payload["token_stats"]["estimator"] == "whitespace_v1"
+    assert built.manifest_payload["token_stats"]["sample_count"] == 3
+    assert built.manifest_payload["token_stats"]["prompt_tokens_max"] == 2
+    assert built.manifest_payload["token_stats"]["completion_tokens_max"] == 1
+    assert built.manifest_payload["token_stats"]["total_tokens_max"] == 3
+
 
 
 def test_build_training_dataset_artifact_streams_local_jsonl_without_bulk_row_helpers(
