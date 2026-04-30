@@ -513,10 +513,7 @@ class UploadReceiptPipeline:
 
     @staticmethod
     def _collect_processor_config_files(published_files: list[str]) -> list[str]:
-        return sorted(
-            f for f in published_files
-            if Path(f).parent == Path(".") and Path(f).name in _PROCESSOR_CONFIG_FILENAMES
-        )
+        return sorted(f for f in published_files if "/" not in f and f in _PROCESSOR_CONFIG_FILENAMES)
 
     @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:
