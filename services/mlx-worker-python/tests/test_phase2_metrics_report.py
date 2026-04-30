@@ -226,6 +226,12 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
             "active_kv_decode_model_avg_us": 0 if is_baseline else 300,
             "active_kv_decode_token_eval_avg_us": 0 if is_baseline else 650,
             "active_kv_decode_model_eval_sync_avg_us": 0 if is_baseline else 500,
+            "active_kv_decode_sample_avg_us": 0 if is_baseline else 70,
+            "active_kv_decode_token_id_avg_us": 0 if is_baseline else 30,
+            "active_kv_decode_detokenize_avg_us": 0 if is_baseline else 50,
+            "active_kv_decode_stream_yield_avg_us": 0 if is_baseline else 20,
+            "active_kv_decode_summary_avg_us": 0 if is_baseline else 45,
+            "active_kv_turboquant_candidate_avg_us": 0 if is_baseline else 30,
             "active_kv_fused_attention_avg_us": 0 if is_baseline else 250,
             "active_kv_fused_attention_route_avg_us": 0 if is_baseline else 300,
             "active_kv_decode_loop_total_us": 0 if is_baseline else 2_100,
@@ -258,6 +264,12 @@ def test_collect_direct_phase_two_metrics_repeats_decode_profiles_and_compares_b
     assert comparisons["affine_q4_vs_baseline"]["ttft_delta_ms"] == 2.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_token_eval_avg_us"] == 650.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_model_eval_sync_avg_us"] == 500.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_sample_avg_us"] == 70.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_token_id_avg_us"] == 30.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_detokenize_avg_us"] == 50.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_stream_yield_avg_us"] == 20.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_summary_avg_us"] == 45.0
+    assert comparisons["affine_q4_vs_baseline"]["active_kv_turboquant_candidate_avg_us"] == 30.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_fused_attention_avg_us"] == 250.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_fused_attention_route_avg_us"] == 300.0
     assert comparisons["affine_q4_vs_baseline"]["active_kv_decode_loop_total_us"] == 2100.0
@@ -692,6 +704,24 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
                     "swift_text.active_kv_decode_model_eval_sync_total_us": 1500,
                     "swift_text.active_kv_decode_model_eval_sync_call_count": 3,
                     "swift_text.active_kv_decode_model_eval_sync_avg_us": 500,
+                    "swift_text.active_kv_decode_sample_total_us": 700,
+                    "swift_text.active_kv_decode_sample_call_count": 10,
+                    "swift_text.active_kv_decode_sample_avg_us": 70,
+                    "swift_text.active_kv_decode_token_id_total_us": 300,
+                    "swift_text.active_kv_decode_token_id_call_count": 10,
+                    "swift_text.active_kv_decode_token_id_avg_us": 30,
+                    "swift_text.active_kv_decode_detokenize_total_us": 500,
+                    "swift_text.active_kv_decode_detokenize_call_count": 10,
+                    "swift_text.active_kv_decode_detokenize_avg_us": 50,
+                    "swift_text.active_kv_decode_stream_yield_total_us": 200,
+                    "swift_text.active_kv_decode_stream_yield_call_count": 10,
+                    "swift_text.active_kv_decode_stream_yield_avg_us": 20,
+                    "swift_text.active_kv_decode_summary_total_us": 45,
+                    "swift_text.active_kv_decode_summary_call_count": 1,
+                    "swift_text.active_kv_decode_summary_avg_us": 45,
+                    "swift_text.active_kv_turboquant_candidate_total_us": 30,
+                    "swift_text.active_kv_turboquant_candidate_call_count": 1,
+                    "swift_text.active_kv_turboquant_candidate_avg_us": 30,
                     "swift_text.active_kv_fused_attention_total_us": 750,
                     "swift_text.active_kv_fused_attention_call_count": 3,
                     "swift_text.active_kv_fused_attention_avg_us": 250,
@@ -758,6 +788,12 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert baseline["active_kv_quantization_ratio"] == 0
     assert baseline["active_kv_estimated_memory_savings_pct"] == 0
     assert baseline["active_kv_decode_model_eval_sync_total_us"] == 0
+    assert baseline["active_kv_decode_sample_total_us"] == 0
+    assert baseline["active_kv_decode_token_id_total_us"] == 0
+    assert baseline["active_kv_decode_detokenize_total_us"] == 0
+    assert baseline["active_kv_decode_stream_yield_total_us"] == 0
+    assert baseline["active_kv_decode_summary_total_us"] == 0
+    assert baseline["active_kv_turboquant_candidate_total_us"] == 0
     assert baseline["active_kv_fused_attention_total_us"] == 0
     assert baseline["active_kv_fused_attention_active_lane_total"] == 0
     assert baseline["active_kv_fused_attention_launched_lane_total"] == 0
@@ -776,6 +812,24 @@ def test_measure_decode_probe_does_not_leak_active_kv_metrics_into_baseline(tmp_
     assert active["active_kv_decode_model_eval_sync_total_us"] == 1500
     assert active["active_kv_decode_model_eval_sync_call_count"] == 3
     assert active["active_kv_decode_model_eval_sync_avg_us"] == 500
+    assert active["active_kv_decode_sample_total_us"] == 700
+    assert active["active_kv_decode_sample_call_count"] == 10
+    assert active["active_kv_decode_sample_avg_us"] == 70
+    assert active["active_kv_decode_token_id_total_us"] == 300
+    assert active["active_kv_decode_token_id_call_count"] == 10
+    assert active["active_kv_decode_token_id_avg_us"] == 30
+    assert active["active_kv_decode_detokenize_total_us"] == 500
+    assert active["active_kv_decode_detokenize_call_count"] == 10
+    assert active["active_kv_decode_detokenize_avg_us"] == 50
+    assert active["active_kv_decode_stream_yield_total_us"] == 200
+    assert active["active_kv_decode_stream_yield_call_count"] == 10
+    assert active["active_kv_decode_stream_yield_avg_us"] == 20
+    assert active["active_kv_decode_summary_total_us"] == 45
+    assert active["active_kv_decode_summary_call_count"] == 1
+    assert active["active_kv_decode_summary_avg_us"] == 45
+    assert active["active_kv_turboquant_candidate_total_us"] == 30
+    assert active["active_kv_turboquant_candidate_call_count"] == 1
+    assert active["active_kv_turboquant_candidate_avg_us"] == 30
     assert active["active_kv_fused_attention_total_us"] == 750
     assert active["active_kv_fused_attention_call_count"] == 3
     assert active["active_kv_fused_attention_avg_us"] == 250
