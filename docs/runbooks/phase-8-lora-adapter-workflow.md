@@ -315,6 +315,14 @@ Expected publish behavior:
 - registry snapshots show adapter and merged publish lineage so operators can confirm which local artifact produced each remote repo
 - `swift run melix lora list` now includes published repo and publish artifact kind in the operator-readable table
 
+Melix sets `distribution_contract` in the upload receipt to distinguish three artifact categories:
+
+- `adapter_only` — adapter package (weights + config, no base model)
+- `merged_model` — fused text-only derived model directory
+- `merged_multimodal` — fused multimodal derived model directory containing processor config files (`processor_config.json`, `preprocessor_config.json`, or `image_processor.json`); `processor_config_files` lists the detected configs so the bundle can be reloaded without missing preprocess metadata
+
+When publishing a fused multimodal model, Melix detects processor config files on disk and records them in the receipt automatically — no operator flag is needed. Use `melix lora publishes show --job-id JOB_ID` to confirm `distribution_contract` and `processor_config_files` after a publish.
+
 ### Inspect Publish History
 
 Every completed upload is surfaced as a `publishes` entry in the registry snapshot, parallel to

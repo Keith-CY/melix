@@ -1676,6 +1676,26 @@ def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(t
             os.environ.pop(key, None)
 
 
+@pytest.mark.parametrize(
+    "filename",
+    ["processor_config.json", "preprocessor_config.json", "image_processor.json"],
+)
+def test_collect_processor_config_files_detects_all_supported_names_at_root(filename: str) -> None:
+    files = [filename, "config.json", "model.safetensors", "tokenizer.json"]
+    result = UploadReceiptPipeline._collect_processor_config_files(files)
+    assert result == [filename]
+
+
+def test_collect_processor_config_files_ignores_nested_processor_configs() -> None:
+    files = [
+        "config.json",
+        "model.safetensors",
+        "adapters/processor_config.json",
+        "sub/preprocessor_config.json",
+    ]
+    assert UploadReceiptPipeline._collect_processor_config_files(files) == []
+
+
 def test_quantize_job_fails_when_active_requests_hold_the_same_model(tmp_path: Path) -> None:
     registry = WorkerRegistry(model_catalog=WorkerModelCatalog())
     registry.start_request("req-active", runtime_kind="text")
@@ -2260,6 +2280,133 @@ def test_upload_job_publishes_fused_derived_model_as_merged_export(tmp_path: Pat
     assert payload["published_files"]
 
 
+def test_upload_job_publishes_merged_multimodal_model_with_processor_lineage(tmp_path: Path) -> None:
+    class MultimodalLoRARunner(DeterministicLoRARunner):
+        def activate_native(self, request: ActivationRequest) -> ActivationResult:
+            result = super().activate_native(request)
+            (request.derived_model_dir / "processor_config.json").write_text(
+                json.dumps({"processor_type": "melix-test-vlm"}) + "\n",
+                encoding="utf-8",
+            )
+            return result
+
+    dataset_dir = _write_training_dataset_package(tmp_path)
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, runner=MultimodalLoRARunner(), publish_backend=publish_backend)
+
+    train_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-dev-adapter",
+                    "dataset_uri": str(dataset_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+    adapter_manifest_path = train_events[-1].completed.output_path
+    activate_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "activate"),
+                generate_manifest=True,
+                ext={
+                    "operation": "activate_adapter",
+                    "artifact_path": adapter_manifest_path,
+                    "derived_model_alias": "melix-dev-vlm",
+                },
+            ),
+            context=None,
+        )
+    )
+    activation_manifest_path = activate_events[-1].completed.output_path
+
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-multimodal"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_kind": "merged_export",
+                    "artifact_path": activation_manifest_path,
+                    "artifact_manifest_path": activation_manifest_path,
+                    "target_repo": "melix/models/melix-dev-vlm",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_multimodal"
+    assert payload["processor_config_files"] == ["processor_config.json"]
+    assert "processor_config.json" in payload["published_files"]
+    assert publish_backend.calls[-1]["artifact_kind"] == "merged_export"
+
+
+def test_upload_job_publishes_converted_bundle_as_merged_multimodal_when_processor_config_present(
+    tmp_path: Path,
+) -> None:
+    service = build_service(tmp_path, publish_backend=FakePublishBackend())
+
+    convert_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "convert"),
+                generate_manifest=True,
+            ),
+            context=None,
+        )
+    )
+    # convert emits the bundle directory as output_path, not the manifest file.
+    bundle_dir = Path(convert_events[-1].completed.output_path)
+    (bundle_dir / "processor_config.json").write_text(
+        '{"processor_type": "melix-test-vlm"}\n', encoding="utf-8"
+    )
+
+    publish_backend = FakePublishBackend()
+    service = build_service(tmp_path, publish_backend=publish_backend)
+    upload_events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "upload-converted-multimodal"),
+                generate_manifest=True,
+                ext={
+                    "operation": "upload",
+                    "artifact_path": str(bundle_dir),
+                    "target_repo": "melix/models/melix-dev-vlm-converted",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(
+        next(event.manifest for event in upload_events if event.HasField("manifest")).manifest_json
+    )
+
+    assert upload_events[-1].completed.output_path.endswith("upload.receipt.json")
+    assert payload["export_artifact_kind"] == "merged_export"
+    assert payload["distribution_contract"] == "merged_multimodal"
+    assert payload["processor_config_files"] == ["processor_config.json"]
+    assert "processor_config.json" in payload["published_files"]
+
+
 def test_registry_snapshot_includes_discovered_model_registry_payload(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry-root"
     _write_registry_manifest(
@@ -2793,6 +2940,72 @@ def test_job_registry_snapshot_records_merged_publish_lineage_for_derived_models
     assert derived_model["published_state"] == "published"
     assert derived_model["publish_parent_lineage"]["source_job_id"] == activation_job.job_id
     assert derived_model["publish_parent_lineage"]["source_adapter_job_id"] == train_job.job_id
+
+
+def test_job_registry_snapshot_records_multimodal_publish_lineage_for_derived_models() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-vlm", "adapter_set_hash": "vlm-hash-b"}),
+    )
+    registry.complete(train_job.job_id, adapter_manifest_path)
+
+    activation_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    activation_manifest_path = "/runtime/activate/melix-dev-vlm/manifest.json"
+    registry.attach_manifest(
+        activation_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-vlm",
+                "adapter_manifest_path": adapter_manifest_path,
+                "adapter_set_hash": "vlm-hash-b",
+                "derived_model_id": "melix-dev-vlm",
+                "derived_model_path": "/runtime/activate/melix-dev-vlm",
+                "activation_duration_ms": 321.0,
+                "source_adapter_job_id": train_job.job_id,
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(activation_job.job_id, activation_manifest_path)
+
+    publish_job = registry.start("upload", "melix-dev-text", "/runtime/upload")
+    registry.attach_manifest(
+        publish_job.job_id,
+        json.dumps(
+            {
+                "published_repo": "melix/models/melix-dev-vlm",
+                "upload_backend": "huggingface_hub",
+                "export_artifact_kind": "merged_export",
+                "distribution_contract": "merged_multimodal",
+                "processor_config_files": ["processor_config.json"],
+                "parent_lineage": {
+                    "local_artifact_path": "/runtime/activate/melix-dev-vlm",
+                    "local_manifest_path": activation_manifest_path,
+                    "source_job_id": activation_job.job_id,
+                    "source_adapter_job_id": train_job.job_id,
+                    "activation_mode": "fused_derived_model",
+                    "derived_model_id": "melix-dev-vlm",
+                },
+            }
+        ),
+    )
+    registry.complete(publish_job.job_id, "/runtime/upload/upload.receipt.json")
+
+    snapshot = registry.snapshot()
+
+    publish = next(p for p in snapshot["publishes"] if p["job_id"] == publish_job.job_id)
+    assert publish["distribution_contract"] == "merged_multimodal"
+    assert publish["processor_config_files"] == ["processor_config.json"]
+
+    derived_model = snapshot["derived_models"][0]
+    assert derived_model["published_repo"] == "melix/models/melix-dev-vlm"
+    assert derived_model["distribution_contract"] == "merged_multimodal"
+    assert derived_model["processor_config_files"] == ["processor_config.json"]
+    assert derived_model["published_state"] == "published"
 
 
 def test_job_registry_snapshot_emits_publishes_section_for_adapter_and_merged_uploads() -> None:
