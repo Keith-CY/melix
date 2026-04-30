@@ -328,15 +328,16 @@ def _load_milestone_statuses(execution_index_path: Path) -> dict[str, str]:
         return statuses
 
     current_milestone = ""
-    for raw_line in execution_index_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line.startswith("- `M9."):
-            current_milestone = line.split("`", 2)[1]
-            continue
-        if current_milestone and line.startswith("Status:"):
-            status = line.split(":", 1)[1].strip().split(".", 1)[0].split()[0].lower()
-            statuses[current_milestone] = status
-            current_milestone = ""
+    with execution_index_path.open(encoding="utf-8") as execution_index_file:
+        for raw_line in execution_index_file:
+            line = raw_line.strip()
+            if line.startswith("- `M9."):
+                current_milestone = line.split("`", 2)[1]
+                continue
+            if current_milestone and line.startswith("Status:"):
+                status = line.split(":", 1)[1].strip().split(".", 1)[0].split()[0].lower()
+                statuses[current_milestone] = status
+                current_milestone = ""
     return statuses
 
 
