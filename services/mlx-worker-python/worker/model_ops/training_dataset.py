@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from itertools import chain
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -388,8 +387,7 @@ def build_training_dataset_artifact(
         )
         validation_strategy = "deterministic_ratio"
 
-    quality = _build_quality_report(chain(source_train_samples, source_validation_samples))
-    token_stats = _build_token_stats(
+    quality, token_stats = _build_quality_and_token_stats(
         chain(source_train_samples, source_validation_samples),
         source["format"],
     )
@@ -496,6 +494,8 @@ def write_normalized_dataset_snapshot(
     if dataset.normalized_validation_samples:
         _write_jsonl_rows(valid_path, dataset.normalized_validation_samples)
     else:
+        if valid_path.exists():
+            valid_path.unlink()
         valid_path = None
 
     return NormalizedDatasetSnapshot(
@@ -1236,10 +1236,23 @@ def _deterministic_validation_split(
 
 
 def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    quality, _ = _build_quality_and_token_stats(samples, "")
+    return quality
+
+
+def _build_quality_and_token_stats(
+    samples: Iterable[dict[str, Any]],
+    format_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     seen: set[bytes] = set()
     duplicate_indices: list[int] = []
     dirty_samples: list[dict[str, Any]] = []
+    prompt_tokens: list[int] = []
+    completion_tokens: list[int] = []
+    total_tokens: list[int] = []
+    sample_count = 0
     for index, sample in enumerate(samples):
+        sample_count += 1
         sample_digest = _canonical_sample_digest(sample)
         if sample_digest in seen:
             duplicate_indices.append(index)
@@ -1248,42 +1261,40 @@ def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
         reasons = _dirty_sample_reasons(sample)
         if reasons:
             dirty_samples.append({"index": index, "reasons": reasons})
-    return {
-        "duplicate_count": len(duplicate_indices),
-        "duplicate_sample_indices": duplicate_indices[:10],
-        "dirty_count": len(dirty_samples),
-        "dirty_samples": dirty_samples[:10],
-    }
-
-
-def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
-    prompt_tokens: list[int] = []
-    completion_tokens: list[int] = []
-    total_tokens: list[int] = []
-    sample_count = 0
-    for sample in samples:
-        sample_count += 1
         prompt_count, completion_count = _sample_token_counts(sample, format_name)
         prompt_tokens.append(prompt_count)
         completion_tokens.append(completion_count)
         total_tokens.append(prompt_count + completion_count)
 
-    return {
-        "estimator": "whitespace_v1",
-        "sample_count": sample_count,
-        "prompt_tokens_mean": _mean_value(prompt_tokens),
-        "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
-        "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
-        "prompt_tokens_max": max(prompt_tokens, default=0),
-        "completion_tokens_mean": _mean_value(completion_tokens),
-        "completion_tokens_p50": _percentile_value(completion_tokens, 0.50),
-        "completion_tokens_p95": _percentile_value(completion_tokens, 0.95),
-        "completion_tokens_max": max(completion_tokens, default=0),
-        "total_tokens_mean": _mean_value(total_tokens),
-        "total_tokens_p50": _percentile_value(total_tokens, 0.50),
-        "total_tokens_p95": _percentile_value(total_tokens, 0.95),
-        "total_tokens_max": max(total_tokens, default=0),
-    }
+    return (
+        {
+            "duplicate_count": len(duplicate_indices),
+            "duplicate_sample_indices": duplicate_indices[:10],
+            "dirty_count": len(dirty_samples),
+            "dirty_samples": dirty_samples[:10],
+        },
+        {
+            "estimator": "whitespace_v1",
+            "sample_count": sample_count,
+            "prompt_tokens_mean": _mean_value(prompt_tokens),
+            "prompt_tokens_p50": _percentile_value(prompt_tokens, 0.50),
+            "prompt_tokens_p95": _percentile_value(prompt_tokens, 0.95),
+            "prompt_tokens_max": max(prompt_tokens, default=0),
+            "completion_tokens_mean": _mean_value(completion_tokens),
+            "completion_tokens_p50": _percentile_value(completion_tokens, 0.50),
+            "completion_tokens_p95": _percentile_value(completion_tokens, 0.95),
+            "completion_tokens_max": max(completion_tokens, default=0),
+            "total_tokens_mean": _mean_value(total_tokens),
+            "total_tokens_p50": _percentile_value(total_tokens, 0.50),
+            "total_tokens_p95": _percentile_value(total_tokens, 0.95),
+            "total_tokens_max": max(total_tokens, default=0),
+        },
+    )
+
+
+def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
+    _, token_stats = _build_quality_and_token_stats(samples, format_name)
+    return token_stats
 
 
 def _sample_token_counts(sample: dict[str, Any], format_name: str) -> tuple[int, int]:
