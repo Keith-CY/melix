@@ -132,7 +132,8 @@ swift run melix bench run \
 # Run an evaluation
 swift run melix eval run \
   --model-id <model-id> \
-  --suite mmlu
+  --suite mmlu \
+  --dataset-id mmlu.dev.v1
 ```
 
 For the full operator flow — dataset expectations, matrix benchmarks, CSV exports, and compare workflows — use these runbooks:
