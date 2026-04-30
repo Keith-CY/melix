@@ -4,7 +4,7 @@ import csv
 import json
 import io
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -138,9 +138,8 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
 
 
 def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -168,17 +167,19 @@ def build_evaluation_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        [_normalized_evaluation_sample_row(row) for row in rows],
+        (
+            _normalized_evaluation_sample_row(row)
+            for row in bundle.get("evaluation_samples", [])
+            if isinstance(row, dict)
+        ),
         _canonical_evaluation_sample_columns(),
     )
 
 
 def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "base_model_id",
@@ -199,9 +200,8 @@ def build_evaluation_compare_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("evaluation_compare_samples", []) if isinstance(row, dict)),
         [
             "job_id",
             "suite_id",
@@ -251,9 +251,8 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)]
     return _rows_to_csv(
-        rows,
+        (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
         [
             "job_id",
             "model_id",
@@ -278,23 +277,31 @@ def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_context_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_row_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_row_columns(),
+    )
 
 
 def build_benchmark_matrix_summary_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_summary_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_summary_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_summary_columns(),
+    )
 
 
 def build_benchmark_matrix_requests_csv(bundle: dict[str, object]) -> str:
-    rows = [row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)]
-    return _rows_to_csv(rows, _canonical_benchmark_matrix_request_columns())
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_matrix_request_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_matrix_request_columns(),
+    )
 
 
 def write_export_bundle(jobs_root: Path, output_path: Path) -> Path:
@@ -458,7 +465,7 @@ def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
                 yield row
 
 
-def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
+def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
