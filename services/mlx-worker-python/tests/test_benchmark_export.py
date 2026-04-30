@@ -9,6 +9,7 @@ import pytest
 
 from worker.productization.benchmark_export import (
     _iter_jsonl_dict_rows,
+    _iter_sorted_child_directories,
     _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
@@ -536,6 +537,21 @@ def test_collect_benchmark_artifacts_reads_matrix_run_history_from_matrix_runs_d
     assert [job["job_id"] for job in result["benchmark_matrix_jobs"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_summary_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
     assert [row["job_id"] for row in result["benchmark_matrix_request_rows"]] == ["bench-matrix-1", "bench-matrix-2"]
+
+
+def test_iter_sorted_child_directories_returns_sorted_directories(tmp_path: Path) -> None:
+    parent = tmp_path / "artifacts"
+    (parent / "b_dir").mkdir(parents=True)
+    (parent / "a_dir").mkdir(parents=True)
+    (parent / "c_file").write_text("x")
+    (parent / "a_file.txt").write_text("x")
+
+    # ensure non-directories are ignored and ordering is lexical
+    assert [path.name for path in _iter_sorted_child_directories(parent)] == ["a_dir", "b_dir"]
+
+
+def test_iter_sorted_child_directories_nonexistent_root_returns_empty() -> None:
+    assert _iter_sorted_child_directories(Path("/tmp/this-path-should-not-exist-12345")) == ()
 
 
 def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
