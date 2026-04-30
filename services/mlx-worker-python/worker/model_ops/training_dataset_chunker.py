@@ -249,14 +249,13 @@ def _chunk_single_turn(
             # smaller K. In practice this only fires when k > word_count,
             # which the guard above already rejects.
             continue
-        chunks = [
-            system_prefix + [{"role": "user", "content": seg}, assistant]
-            for seg in segments
-        ]
-        if all(
-            _render_len(chunk, tokenizer, tools=tools) <= chunk_size
-            for chunk in chunks
-        ):
+        chunks: list[list[dict[str, str]]] = []
+        for segment in segments:
+            chunk = system_prefix + [{"role": "user", "content": segment}, assistant]
+            if _render_len(chunk, tokenizer, tools=tools) > chunk_size:
+                break
+            chunks.append(chunk)
+        else:
             return chunks
 
     raise ModelOperationError(
