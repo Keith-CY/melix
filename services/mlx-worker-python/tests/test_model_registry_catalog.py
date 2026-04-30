@@ -682,17 +682,20 @@ def test_is_hf_cache_pruned_subtree_returns_false_for_paths_outside_root(tmp_pat
     assert _is_hf_cache_pruned_subtree(root, outside_snapshot_dir) is False
 
 
-def test_registry_snapshot_reuses_single_plain_and_manifest_tree_walk_per_root(
+def test_registry_snapshot_reuses_single_tree_walk_for_plain_manifest_and_hf_cache_repos(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "root"
     manifest_dir = root / "alpha-provider" / "AlphaModel" / "q4"
     _write_registry_manifest(manifest_dir, model_id="alpha-provider/AlphaModel/q4")
-    plain_model_dir = root / "beta-local-a"
-    _write_model_config(plain_model_dir, {"model_type": "qwen3"})
-    _write_weights(plain_model_dir)
-    (plain_model_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    hf_snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    _write_model_config(hf_snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(hf_snapshot_dir)
+    (hf_snapshot_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    hf_refs_dir = hf_snapshot_dir.parent.parent / "refs"
+    hf_refs_dir.mkdir(parents=True, exist_ok=True)
+    (hf_refs_dir / "main").write_text("abc123\n", encoding="utf-8")
 
     original_scandir = os.scandir
     scandir_calls: list[str] = []
@@ -710,10 +713,14 @@ def test_registry_snapshot_reuses_single_plain_and_manifest_tree_walk_per_root(
     discovered_ids = [model.model_id for model in snapshot.models]
     resolved_root = os.fspath(root.resolve())
     provider_dir = os.fspath((root / "alpha-provider").resolve())
+    hf_cache_dir = os.fspath((root / "models--mlx-community--Tiny").resolve())
+    hf_snapshots_dir = os.fspath((root / "models--mlx-community--Tiny" / "snapshots").resolve())
 
-    assert discovered_ids == ["alpha-provider/AlphaModel/q4", "beta-local-a"]
-    assert scandir_calls.count(resolved_root) == 2
+    assert discovered_ids == ["alpha-provider/AlphaModel/q4", "mlx-community/Tiny"]
+    assert scandir_calls.count(resolved_root) == 1
     assert scandir_calls.count(provider_dir) == 1
+    assert hf_cache_dir not in scandir_calls
+    assert hf_snapshots_dir in scandir_calls
 
 
 

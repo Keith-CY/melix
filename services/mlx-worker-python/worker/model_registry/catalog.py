@@ -974,7 +974,7 @@ class WorkerModelCatalog:
                 continue
 
             accepted_model_ids: list[str] = []
-            manifest_paths, plain_local_model_dirs = self._scan_registry_root_tree(root)
+            manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
             for manifest_path in manifest_paths:
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
@@ -1001,6 +1001,7 @@ class WorkerModelCatalog:
                 root_id=root_id,
                 root_order=index,
                 plain_local_model_dirs=plain_local_model_dirs,
+                hf_cache_repo_dirs=hf_cache_repo_dirs,
                 discovered_models=discovered_models,
                 accepted_model_ids=accepted_model_ids,
             )
@@ -1076,10 +1077,11 @@ class WorkerModelCatalog:
         plain_local_model_dirs: Iterable[Path],
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
+        hf_cache_repo_dirs: Iterable[Path] | None = None,
     ) -> None:
         root_resolved = root.resolve()
         seen_paths: set[Path] = set()
-        for model in self._scan_huggingface_cache_models(root=root):
+        for model in self._scan_huggingface_cache_models(root=root, cache_repo_dirs=hf_cache_repo_dirs):
             resolved_path = Path(model.model_path)
             seen_paths.add(resolved_path)
             if model.model_id in discovered_models or model.model_id in self._seed_models:
@@ -1122,8 +1124,18 @@ class WorkerModelCatalog:
             discovered_models[model_id] = model
             accepted_model_ids.append(model_id)
 
-    def _scan_huggingface_cache_models(self, *, root: Path) -> Iterable[common_pb2.ModelSpec]:
-        for cache_repo_dir in _sorted_child_directories(root, name_prefix="models--"):
+    def _scan_huggingface_cache_models(
+        self,
+        *,
+        root: Path,
+        cache_repo_dirs: Iterable[Path] | None = None,
+    ) -> Iterable[common_pb2.ModelSpec]:
+        resolved_cache_repo_dirs = (
+            tuple(cache_repo_dirs)
+            if cache_repo_dirs is not None
+            else _sorted_child_directories(root, name_prefix="models--")
+        )
+        for cache_repo_dir in resolved_cache_repo_dirs:
             repo_id = _hf_cache_repo_id(cache_repo_dir)
             if repo_id is None:
                 continue
@@ -1154,8 +1166,14 @@ class WorkerModelCatalog:
 
     @staticmethod
     def _scan_registry_root_tree(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+        manifest_paths, plain_local_model_dirs, _ = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+        return manifest_paths, plain_local_model_dirs
+
+    @staticmethod
+    def _scan_registry_root_tree_with_hf_repos(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...], tuple[Path, ...]]:
         manifest_paths: list[Path] = []
         plain_local_model_dirs: list[Path] = []
+        hf_cache_repo_dirs: list[Path] = []
         resolved_root = root.resolve()
         stack = [resolved_root]
         while stack:
@@ -1178,6 +1196,11 @@ class WorkerModelCatalog:
                                 has_config = True
                                 continue
                             if entry.is_dir():
+                                child_path = current / entry.name
+                                if current == resolved_root and entry.name.startswith("models--"):
+                                    if _hf_cache_repo_id(child_path) is not None:
+                                        hf_cache_repo_dirs.append(child_path)
+                                        continue
                                 child_names.append(entry.name)
                         except OSError:
                             continue
@@ -1190,7 +1213,7 @@ class WorkerModelCatalog:
                 plain_local_model_dirs.append(current)
                 continue
             stack.extend(current / name for name in sorted(child_names, reverse=True))
-        return tuple(manifest_paths), tuple(plain_local_model_dirs)
+        return tuple(manifest_paths), tuple(plain_local_model_dirs), tuple(sorted(hf_cache_repo_dirs))
 
     @staticmethod
     def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
