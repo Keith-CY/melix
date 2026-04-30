@@ -15,6 +15,7 @@ from worker.model_registry.catalog import (
     _default_embedding_family_for_backend,
     _gemma4_index_has_vision_weights,
     _has_mlx_signal,
+    _has_model_weight_files,
     _hf_cache_repo_id,
     _hf_cache_revision,
     _hf_cache_revision_map,
@@ -120,6 +121,126 @@ def test_has_mlx_signal_returns_false_without_repo_hint_or_metadata(tmp_path: Pa
     model_dir = tmp_path / "plain-transformers-model"
     model_dir.mkdir()
     assert _has_mlx_signal(model_dir=model_dir, repo_id="google/bert-base") is False
+
+
+
+def test_has_model_weight_files_uses_os_scandir_single_pass_without_path_glob_or_iterdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "hf-snapshot"
+    model_dir.mkdir()
+
+    class _FakeDirEntry:
+        def __init__(self, name: str, *, is_file_result: bool) -> None:
+            self.name = name
+            self._is_file_result = is_file_result
+
+        def is_file(self) -> bool:
+            return self._is_file_result
+
+    scandir_calls: list[str] = []
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(
+                [
+                    _FakeDirEntry("config.json", is_file_result=True),
+                    _FakeDirEntry("model.safetensors", is_file_result=True),
+                ]
+            )
+
+    def fake_scandir(path: str):
+        scandir_calls.append(path)
+        assert path == os.fspath(model_dir)
+        return _FakeScandir()
+
+    def fail_iterdir(self: Path):
+        if self == model_dir:
+            raise AssertionError("expected os.scandir single-pass directory scan")
+        return iter(())
+
+    def fail_glob(self: Path, pattern: str):
+        if self == model_dir:
+            raise AssertionError("expected os.scandir single-pass directory scan")
+        return []
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert _has_model_weight_files(model_dir) is True
+    assert scandir_calls == [os.fspath(model_dir)]
+
+
+
+def test_has_model_weight_files_returns_false_when_scandir_raises_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "unreadable-model"
+    model_dir.mkdir()
+
+    original_scandir = os.scandir
+
+    def fake_scandir(path: str):
+        if path == os.fspath(model_dir):
+            raise OSError("boom")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _has_model_weight_files(model_dir) is False
+
+
+
+def test_has_model_weight_files_skips_unreadable_candidate_entries_and_finds_later_valid_weight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "partially-unreadable-model"
+    model_dir.mkdir()
+    unreadable_weight = model_dir / "broken.safetensors"
+    unreadable_weight.write_bytes(b"broken")
+    valid_weight = model_dir / "model.npz"
+    valid_weight.write_bytes(b"weights")
+
+    class _FakeDirEntry:
+        def __init__(self, name: str, *, error: OSError | None = None, is_file_result: bool = False) -> None:
+            self.name = name
+            self._error = error
+            self._is_file_result = is_file_result
+
+        def is_file(self) -> bool:
+            if self._error is not None:
+                raise self._error
+            return self._is_file_result
+
+    class _FakeScandir:
+        def __enter__(self) -> _FakeScandir:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(
+                [
+                    _FakeDirEntry(unreadable_weight.name, error=OSError("boom")),
+                    _FakeDirEntry(valid_weight.name, is_file_result=True),
+                ]
+            )
+
+    def fake_scandir(path: str):
+        assert path == os.fspath(model_dir)
+        return _FakeScandir()
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
+    assert _has_model_weight_files(model_dir) is True
 
 
 

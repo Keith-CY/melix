@@ -160,9 +160,19 @@ def _load_model_config_payload(
 def _has_model_weight_files(model_dir: Path) -> bool:
     if (model_dir / "model.safetensors.index.json").is_file():
         return True
-    return any(path.is_file() for path in model_dir.glob("*.safetensors")) or any(
-        path.is_file() for path in model_dir.glob("*.npz")
-    )
+    try:
+        with os.scandir(os.fspath(model_dir)) as entries:
+            for entry in entries:
+                if not entry.name.endswith((".safetensors", ".npz")):
+                    continue
+                try:
+                    if entry.is_file():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
 
 
 def _read_text_prefix(path: Path, *, max_chars: int = 16_384) -> str:
