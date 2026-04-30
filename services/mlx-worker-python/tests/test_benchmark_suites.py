@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,35 @@ def test_benchmark_suite_catalog_materializes_curated_hf_suite_and_reuses_cache(
     assert len(first.prompt_batches) == 2
     assert first.prompt_batches[0] == "Say hi.\n\nSay bye."
     assert first.metadata()["dataset_uri"].startswith("hf://HuggingFaceH4/ultrachat_200k")
+
+
+def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows_path = tmp_path / "rows.jsonl"
+    rows_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"prompt": "Say hi."}),
+                "",
+                json.dumps(["ignored", "list"]),
+                json.dumps({"prompt": "Say bye."}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == rows_path:
+            raise AssertionError("rows loader should stream from disk instead of calling read_text")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    assert benchmark_suites._load_materialized_rows(rows_path) == [
+        {"prompt": "Say hi."},
+        {"prompt": "Say bye."},
+    ]
 
 
 def test_benchmark_suite_catalog_raises_typed_error_for_unknown_suite(tmp_path: Path) -> None:
