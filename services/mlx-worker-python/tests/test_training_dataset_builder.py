@@ -8,6 +8,8 @@ import pytest
 from worker.model_ops import training_dataset as training_dataset_module
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset import (
+    HFDatasetReference,
+    ResolvedTrainingDatasetPackage,
     TrainingDatasetPackage,
     build_training_dataset_artifact,
     load_training_dataset_package,
@@ -497,3 +499,106 @@ def test_build_training_dataset_artifact_loads_existing_package_and_helper_branc
             field_name="validation_ratio",
         )
     assert float_range_exc.value.code == "invalid_dataset_source"
+
+
+def test_resolve_dataset_build_source_reuses_existing_package_sample_lists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized_samples = [{"text": "alpha beta"}]
+    normalized_validation_samples = [{"text": "gamma delta"}]
+    package_path = tmp_path / "existing-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    package = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="existing-package",
+        format="text_completion",
+        sample_count=1,
+        version="1",
+        normalized_samples=normalized_samples,
+        normalized_validation_samples=normalized_validation_samples,
+        validation_sample_count=1,
+        response_only_supported=False,
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "load_training_dataset_package",
+        lambda dataset_uri, sample_limit=0: package,
+    )
+
+    resolved = training_dataset_module._resolve_dataset_build_source(
+        {"dataset_uri": str(tmp_path / "existing-package"), "template": "existing_package"},
+        jobs_root=tmp_path / "jobs",
+        hf_dataset_fetcher=None,
+        sample_limit=0,
+    )
+
+    assert resolved["samples"] is normalized_samples
+    assert resolved["validation_samples"] is normalized_validation_samples
+
+
+def test_resolve_dataset_build_source_reuses_hf_package_sample_lists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalized_samples = [
+        {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]}
+    ]
+    normalized_validation_samples = [
+        {"messages": [{"role": "user", "content": "Bye"}, {"role": "assistant", "content": "Goodbye"}]}
+    ]
+    package = TrainingDatasetPackage(
+        package_path=tmp_path / "hf-package",
+        manifest_path=tmp_path / "hf-package" / "manifest.json",
+        samples_path=tmp_path / "hf-package" / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="hf-package",
+        format="chat_messages",
+        sample_count=1,
+        version="1",
+        normalized_samples=normalized_samples,
+        normalized_validation_samples=normalized_validation_samples,
+        validation_sample_count=1,
+        response_only_supported=True,
+    )
+    reference = HFDatasetReference(
+        dataset_path="HuggingFaceH4/ultrachat_200k",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        valid_split="validation",
+        chat_feature="messages",
+        prompt_feature="",
+        completion_feature="",
+        text_feature="",
+    )
+    resolved_package = ResolvedTrainingDatasetPackage(
+        package=package,
+        source_kind="hf_dataset",
+        dataset_uri="hf://HuggingFaceH4/ultrachat_200k",
+        materialized_package_path=package.package_path,
+        cache_key="demo-key",
+        cache_hit=True,
+        hf_reference=reference,
+    )
+
+    monkeypatch.setattr(
+        training_dataset_module,
+        "resolve_training_dataset_package",
+        lambda request_ext, jobs_root, hf_dataset_fetcher, sample_limit=0: resolved_package,
+    )
+
+    resolved = training_dataset_module._resolve_dataset_build_source(
+        {"hf_dataset_path": "HuggingFaceH4/ultrachat_200k", "template": "source_schema"},
+        jobs_root=tmp_path / "jobs",
+        hf_dataset_fetcher=None,
+        sample_limit=0,
+    )
+
+    assert resolved["samples"] is normalized_samples
+    assert resolved["validation_samples"] is normalized_validation_samples
+    assert resolved["hf_metadata"]["hf_valid_split"] == "validation"
