@@ -7,8 +7,10 @@ import pytest
 
 from worker.productization.benchmark_evaluation_report import (
     _aggregate_probe_values,
+    _dict_rows,
     _finalize_numeric_aggregate,
     _markdown_cell,
+    _report_rows,
     _update_numeric_aggregate,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
@@ -249,6 +251,19 @@ def test_aggregate_probe_values_handles_empty_inputs() -> None:
     assert _aggregate_probe_values("prefill_ms", []) == ("mean", 0.0)
     assert _aggregate_probe_values("cache_hit", []) == ("rate", 0.0)
     assert _aggregate_probe_values("speculative_fallback_count", []) == ("sum", 0.0)
+
+
+def test_row_iterators_filter_invalid_entries_without_materializing_copies() -> None:
+    report = {"rows": [{"metric": "bench.smoke.ttft_ms"}, "skip", {"metric": "eval.mmlu.score"}]}
+    payload = [{"suite_id": "mmlu"}, None, {"suite_id": "gsm8k"}]
+
+    assert tuple(_report_rows(report)) == (
+        {"metric": "bench.smoke.ttft_ms"},
+        {"metric": "eval.mmlu.score"},
+    )
+    assert tuple(_dict_rows(payload)) == ({"suite_id": "mmlu"}, {"suite_id": "gsm8k"})
+    assert tuple(_report_rows({"rows": "not-a-list"})) == ()
+    assert tuple(_dict_rows("not-a-list")) == ()
 
 
 def test_report_builder_reports_missing_metrics_and_non_numeric_status() -> None:
