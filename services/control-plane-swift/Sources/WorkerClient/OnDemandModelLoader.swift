@@ -154,6 +154,8 @@ enum OnDemandModelLoader {
         }
 
         let capabilityClass = normalizedIdentifier(model.settings.ext["melix.capability.class"])
+        // Model summaries can come from built-ins, registry scans, or workers; each path
+        // may populate a different VLM identity field.
         let isVLM = modelKind == "vlm"
             || capabilityClass == "vlm"
             || model.capabilityClass == .modelCapabilityVlm
@@ -176,16 +178,17 @@ enum OnDemandModelLoader {
         _ values: [String],
         fallback: String?
     ) -> Set<String> {
-        var identifiers = Set(values.map(normalizedIdentifier).filter { !$0.isEmpty })
-        if let fallback {
-            identifiers.formUnion(
-                fallback
-                    .split(separator: ",")
-                    .map { normalizedIdentifier(String($0)) }
-                    .filter { !$0.isEmpty }
-            )
+        let identifiers = Set(values.map(normalizedIdentifier).filter { !$0.isEmpty })
+        guard identifiers.isEmpty, let fallback else {
+            return identifiers
         }
-        return identifiers
+        // Capability ext values use unquoted comma-separated identifier tokens.
+        return Set(
+            fallback
+                .split(separator: ",")
+                .map { normalizedIdentifier(String($0)) }
+                .filter { !$0.isEmpty }
+        )
     }
 
     private static func normalizedIdentifier(_ value: String?) -> String {

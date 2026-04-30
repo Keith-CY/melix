@@ -7981,15 +7981,17 @@ struct ControlPlaneServiceTests {
                 messages: [.init(role: "user", content: "hello")]
             )
         )
+
+        _ = try await Array(execution.stream)
+
         let loadRequest = try #require(await vlmClient.lastLoadModelRequest)
         let generated = try #require(await vlmClient.lastGenerateRequest)
         let model = await modelCatalog.model(id: "melix-dev-vlm")
 
-        _ = try await Array(execution.stream)
-
         #expect(loadRequest.model.modelID == "melix-dev-vlm")
         #expect(loadRequest.model.modelKind == "vlm")
         #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        // ScriptedChatWorkerClient echoes the loaded handle; loader tests cover suffixed Python handles.
         #expect(generated.execution.modelHandle == "melix-dev-vlm")
         #expect(model?.state == .modelWarm)
         #expect(await textClient.lastGenerateRequest == nil)

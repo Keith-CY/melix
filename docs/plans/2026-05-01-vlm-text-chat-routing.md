@@ -17,6 +17,9 @@ request reaches the worker.
 ## Scope
 
 - Update the text serving readiness gate so text-generating VLM summaries pass.
+- Treat structured `supportedModalities` and `supportedTasks` as authoritative
+  when they are present; use legacy `melix.capability.*` ext metadata only as a
+  fallback for summaries that do not populate the structured fields.
 - Keep embeddings, rerank, OCR-only, image, speech, and transcription models out
   of the text chat path.
 - Cover the loader and HTTP gateway paths with focused Swift tests.
