@@ -80,19 +80,7 @@ enum RegistrySnapshotSync {
     }
 
     static func publicMetadata(from metadata: [String: String]) -> [String: String]? {
-        let filtered = metadata.reduce(into: [String: String]()) { partial, item in
-            let (key, rawValue) = item
-            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else {
-                return
-            }
-            guard key.hasPrefix("melix.registry_")
-                || key == "melix.model_path"
-                || key == "melix.model_path_missing" else {
-                return
-            }
-            partial[key] = value
-        }
+        let filtered = ModelCatalogPresentation.publicRegistryMetadata(from: metadata)
         return filtered.isEmpty ? nil : filtered
     }
 

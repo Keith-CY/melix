@@ -426,15 +426,17 @@ public struct OpenAIHandler: Sendable {
             metricsStore: metricsStore,
             rescan: true
         )
-        let models = await modelCatalog.listModels().map { model in
-            OpenAIModelDescriptor(
-                id: model.modelID,
-                object: "model",
-                ownedBy: "melix",
-                melixState: model.state.melixString,
-                metadata: RegistrySnapshotSync.publicMetadata(from: model.settings.ext)
-            )
-        }
+        let models = await modelCatalog.listModels()
+            .filter(ModelCatalogPresentation.isUserVisible)
+            .map { model in
+                OpenAIModelDescriptor(
+                    id: model.modelID,
+                    object: "model",
+                    ownedBy: "melix",
+                    melixState: model.state.melixString,
+                    metadata: ModelCatalogPresentation.publicAPIMetadata(for: model)
+                )
+            }
 
         let response = OpenAIModelsResponse(object: "list", data: models)
         return try encodedJSONResponse(response)

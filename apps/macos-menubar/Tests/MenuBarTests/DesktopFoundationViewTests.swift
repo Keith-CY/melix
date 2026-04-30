@@ -2867,7 +2867,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Evaluation"))
         #expect(renderedTexts.contains("Catalog Model"))
         #expect(renderedTexts.contains("Hugging Face Repo"))
-        #expect(renderedTexts.contains("Melix Dev Text • melix-dev-text"))
+        #expect(renderedTexts.contains("Melix Text • melix-dev-text"))
         #expect(renderedTexts.contains("3"))
         #expect(renderedTexts.contains("Partial Prefix"))
         #expect(renderedTexts.contains("Enabled"))

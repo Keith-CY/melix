@@ -162,7 +162,7 @@ struct DesktopImageWorkspace: View {
                     )
                 ) {
                     ForEach(availableImageModels, id: \.modelID) { model in
-                        Text(model.modelID).tag(model.modelID)
+                        Text(model.displayNameWithID).tag(model.modelID)
                     }
                 }
                 .frame(maxWidth: 320)
