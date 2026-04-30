@@ -88,6 +88,22 @@ struct DesktopChatMarkdownRenderPlan: Equatable, Sendable {
     }
 }
 
+struct DesktopChatMarkdownIdentifiedRenderChunk: Identifiable, Equatable, Sendable {
+    let id: String
+    let chunk: DesktopChatMarkdownRenderChunk
+}
+
+struct DesktopChatMarkdownIdentifiedBlock: Identifiable, Equatable, Sendable {
+    let id: String
+    let block: DesktopChatMarkdownBlock
+}
+
+struct DesktopChatMarkdownIdentifiedListItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let offset: Int
+    let item: DesktopChatMarkdownListItem
+}
+
 struct DesktopChatMarkdownCodeBlockPresentation: Equatable, Sendable {
     let languageBadge: String
     let copyAccessibilityLabel: String
@@ -167,6 +183,117 @@ enum DesktopChatMarkdownCodeLanguage {
             return "Plain Text"
         default:
             return normalized.uppercased()
+        }
+    }
+}
+
+enum DesktopChatMarkdownStableIdentity {
+    static func identifiedChunks(_ chunks: [DesktopChatMarkdownRenderChunk]) -> [DesktopChatMarkdownIdentifiedRenderChunk] {
+        uniqued(chunks, baseID: { $0.stableIdentityComponent }).map { entry in
+            DesktopChatMarkdownIdentifiedRenderChunk(id: entry.id, chunk: entry.value)
+        }
+    }
+
+    static func identifiedBlocks(_ blocks: [DesktopChatMarkdownBlock]) -> [DesktopChatMarkdownIdentifiedBlock] {
+        uniqued(blocks, baseID: { $0.stableIdentityComponent }).map { entry in
+            DesktopChatMarkdownIdentifiedBlock(id: entry.id, block: entry.value)
+        }
+    }
+
+    static func identifiedListItems(_ items: [DesktopChatMarkdownListItem]) -> [DesktopChatMarkdownIdentifiedListItem] {
+        uniqued(items, baseID: { $0.stableIdentityComponent }).map { entry in
+            DesktopChatMarkdownIdentifiedListItem(id: entry.id, offset: entry.offset, item: entry.value)
+        }
+    }
+
+    private static func uniqued<Value>(
+        _ values: [Value],
+        baseID: (Value) -> String
+    ) -> [(id: String, offset: Int, value: Value)] {
+        var occurrences: [String: Int] = [:]
+        return values.enumerated().map { offset, value in
+            let base = baseID(value)
+            let occurrence = occurrences[base, default: 0]
+            occurrences[base] = occurrence + 1
+            return (id: "\(base)#\(occurrence)", offset: offset, value: value)
+        }
+    }
+
+    fileprivate static func hash(_ components: [String]) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for component in components {
+            for byte in component.utf8 {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
+            hash ^= 0xff
+            hash &*= 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
+    }
+}
+
+private extension DesktopChatMarkdownRenderChunk {
+    var stableIdentityComponent: String {
+        DesktopChatMarkdownStableIdentity.hash(
+            ["chunk", source, "\(isStable)"] + blocks.map(\.stableIdentityComponent)
+        )
+    }
+}
+
+private extension DesktopChatMarkdownBlock {
+    var stableIdentityComponent: String {
+        switch self {
+        case .paragraph(let text):
+            return DesktopChatMarkdownStableIdentity.hash(["paragraph", text])
+        case .heading(let level, let text):
+            return DesktopChatMarkdownStableIdentity.hash(["heading", "\(level)", text])
+        case .blockQuote(let children):
+            return DesktopChatMarkdownStableIdentity.hash(
+                ["quote"] + children.map(\.stableIdentityComponent)
+            )
+        case .unorderedList(let items):
+            return DesktopChatMarkdownStableIdentity.hash(
+                ["unordered"] + items.map(\.stableIdentityComponent)
+            )
+        case .orderedList(let start, let items):
+            return DesktopChatMarkdownStableIdentity.hash(
+                ["ordered", "\(start)"] + items.map(\.stableIdentityComponent)
+            )
+        case .codeBlock(let language, let code):
+            return DesktopChatMarkdownStableIdentity.hash(["code", language, code])
+        case .table(let header, let alignments, let rows):
+            return DesktopChatMarkdownStableIdentity.hash(
+                ["table"]
+                    + header
+                    + alignments.map(\.stableIdentityComponent)
+                    + rows.flatMap { ["row"] + $0 }
+            )
+        case .thematicBreak:
+            return DesktopChatMarkdownStableIdentity.hash(["thematicBreak"])
+        }
+    }
+}
+
+private extension DesktopChatMarkdownListItem {
+    var stableIdentityComponent: String {
+        DesktopChatMarkdownStableIdentity.hash(
+            ["listItem", text] + children.map(\.stableIdentityComponent)
+        )
+    }
+}
+
+private extension DesktopChatMarkdownTableAlignment {
+    var stableIdentityComponent: String {
+        switch self {
+        case .none:
+            return "none"
+        case .leading:
+            return "leading"
+        case .center:
+            return "center"
+        case .trailing:
+            return "trailing"
         }
     }
 }
@@ -1104,8 +1231,8 @@ private struct DesktopChatMarkdownRenderPlanView: View {
     var body: some View {
         if plan.usesLazyRendering {
             LazyVStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.blockSpacing) {
-                ForEach(Array(plan.chunks.enumerated()), id: \.offset) { _, chunk in
-                    DesktopChatMarkdownBlocksView(blocks: chunk.blocks)
+                ForEach(DesktopChatMarkdownStableIdentity.identifiedChunks(plan.chunks)) { item in
+                    DesktopChatMarkdownBlocksView(blocks: item.chunk.blocks)
                 }
             }
         } else {
@@ -1119,8 +1246,8 @@ private struct DesktopChatMarkdownBlocksView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.blockSpacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(DesktopChatMarkdownStableIdentity.identifiedBlocks(blocks)) { item in
+                blockView(item.block)
             }
         }
     }
@@ -1179,8 +1306,8 @@ private struct DesktopChatMarkdownBlocksView: View {
 
     private func unorderedListView(_ items: [DesktopChatMarkdownListItem]) -> some View {
         VStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.listRowSpacing) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                listRow(marker: "•", item: item)
+            ForEach(DesktopChatMarkdownStableIdentity.identifiedListItems(items)) { item in
+                listRow(marker: "•", item: item.item)
             }
         }
     }
@@ -1190,8 +1317,8 @@ private struct DesktopChatMarkdownBlocksView: View {
         items: [DesktopChatMarkdownListItem]
     ) -> some View {
         VStack(alignment: .leading, spacing: DesktopChatMarkdownLayoutMetrics.listRowSpacing) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                listRow(marker: "\(start + index).", item: item)
+            ForEach(DesktopChatMarkdownStableIdentity.identifiedListItems(items)) { item in
+                listRow(marker: "\(start + item.offset).", item: item.item)
             }
         }
     }

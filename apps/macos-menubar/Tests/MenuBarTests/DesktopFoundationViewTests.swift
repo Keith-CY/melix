@@ -4184,19 +4184,10 @@ struct DesktopFoundationViewTests {
 
         #expect(String(json.characters).contains(#""enabled""#))
         #expect(json.runs.contains { $0.foregroundColor != nil })
-        // Entire comment line is colored, not just the '#' delimiter.
-        let shellText = String(shell.characters)
-        let commentLineStart = shellText.range(of: "# comment line here").map { r in
-            shellText.distance(from: shellText.startIndex, to: r.lowerBound)
-        } ?? 0
-        let commentRun = shell.runs.first { run in
-            let runStart = shell.characters.distance(
-                from: shell.characters.startIndex,
-                to: run.range.lowerBound
-            )
-            return runStart >= commentLineStart && run.foregroundColor != nil
-        }
-        #expect(commentRun != nil, "Full comment line should be colored, not just the delimiter")
+        #expect(
+            attributedString(shell, hasColoredRunCovering: "# comment line here"),
+            "Full comment line should be colored, not just the delimiter"
+        )
         #expect(diff.runs.contains { $0.foregroundColor != nil })
         #expect(String(plain.characters).isEmpty)
     }
@@ -4245,6 +4236,46 @@ struct DesktopFoundationViewTests {
         // `func` is a Swift keyword and should be colored in Swift but not be
         // incorrectly used to color JS/Python (they have `function`/`def`).
         #expect(swift.runs.contains { $0.foregroundColor != nil })
+    }
+
+    @Test("chat markdown stable identities avoid positional render ids")
+    func chatMarkdownStableIdentitiesAvoidPositionalRenderIDs() {
+        let chunks = [
+            DesktopChatMarkdownRenderChunk(
+                source: "duplicate",
+                blocks: [.paragraph("repeat")],
+                isStable: true
+            ),
+            DesktopChatMarkdownRenderChunk(
+                source: "duplicate",
+                blocks: [.paragraph("repeat")],
+                isStable: true
+            ),
+        ]
+        let blocks: [DesktopChatMarkdownBlock] = [
+            .paragraph("repeat"),
+            .paragraph("repeat"),
+            .heading(level: 2, text: "Title"),
+            .unorderedList([
+                DesktopChatMarkdownListItem(text: "child"),
+            ]),
+        ]
+        let firstBlockIDs = DesktopChatMarkdownStableIdentity.identifiedBlocks(blocks).map(\.id)
+        let secondBlockIDs = DesktopChatMarkdownStableIdentity.identifiedBlocks(blocks).map(\.id)
+        let items = [
+            DesktopChatMarkdownListItem(text: "same"),
+            DesktopChatMarkdownListItem(text: "same"),
+            DesktopChatMarkdownListItem(text: "different"),
+        ]
+        let identifiedItems = DesktopChatMarkdownStableIdentity.identifiedListItems(items)
+        let chunkIDs = DesktopChatMarkdownStableIdentity.identifiedChunks(chunks).map(\.id)
+        let itemIDs = identifiedItems.map(\.id)
+
+        #expect(Set(chunkIDs).count == chunkIDs.count)
+        #expect(firstBlockIDs == secondBlockIDs)
+        #expect(Set(firstBlockIDs).count == firstBlockIDs.count)
+        #expect(Set(itemIDs).count == itemIDs.count)
+        #expect(identifiedItems.map(\.offset) == [0, 1, 2])
     }
 
     @Test("chat markdown table layout bounds wide content")
@@ -4309,6 +4340,31 @@ struct DesktopFoundationViewTests {
         #expect(secondPlan.chunks.count == firstPlan.chunks.count)
         #expect(secondStats.chunkHitCount > firstStats.chunkHitCount)
         #expect(secondStats.chunkMissCount - firstStats.chunkMissCount <= 1)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting()
+    }
+
+    @Test("chat markdown complete render plans cache the tail chunk")
+    func chatMarkdownCompleteRenderPlansCacheTheTailChunk() {
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        let source = chatMarkdownLongStreamingSample(sectionCount: 48) + "\n\nComplete tail"
+
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+        let firstCompleteStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .complete)
+        let secondCompleteStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(secondCompleteStats.chunkHitCount > firstCompleteStats.chunkHitCount)
+        #expect(secondCompleteStats.chunkMissCount == firstCompleteStats.chunkMissCount)
+
+        DesktopChatMarkdownRenderer.resetCacheForTesting(capacity: 64)
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .streaming)
+        let firstStreamingStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+        _ = DesktopChatMarkdownRenderer.renderPlan(from: source, mode: .streaming)
+        let secondStreamingStats = DesktopChatMarkdownRenderer.cacheStatsForTesting()
+
+        #expect(secondStreamingStats.chunkHitCount > firstStreamingStats.chunkHitCount)
+        #expect(secondStreamingStats.chunkMissCount > firstStreamingStats.chunkMissCount)
 
         DesktopChatMarkdownRenderer.resetCacheForTesting()
     }
@@ -7038,6 +7094,33 @@ private func chatMarkdownFixture(named name: String) throws -> String {
 private func chatMarkdownBlockSnapshot(_ blocks: [DesktopChatMarkdownBlock]) -> String {
     blocks.flatMap { chatMarkdownBlockSnapshotLines($0, indent: 0) }
         .joined(separator: "\n")
+}
+
+private func attributedString(
+    _ attributed: AttributedString,
+    hasColoredRunCovering substring: String
+) -> Bool {
+    let plainText = String(attributed.characters)
+    guard let range = plainText.range(of: substring) else {
+        return false
+    }
+    let substringStart = plainText.distance(from: plainText.startIndex, to: range.lowerBound)
+    let substringEnd = plainText.distance(from: plainText.startIndex, to: range.upperBound)
+
+    return attributed.runs.contains { run in
+        guard run.foregroundColor != nil else {
+            return false
+        }
+        let runStart = attributed.characters.distance(
+            from: attributed.characters.startIndex,
+            to: run.range.lowerBound
+        )
+        let runEnd = attributed.characters.distance(
+            from: attributed.characters.startIndex,
+            to: run.range.upperBound
+        )
+        return runStart <= substringStart && runEnd >= substringEnd
+    }
 }
 
 private func chatMarkdownLongStreamingSample(sectionCount: Int) -> String {
