@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import pytest
@@ -387,6 +388,61 @@ def test_train_lora_produces_adapter_package_and_expanded_modules(tmp_path: Path
         "model.layers.0.mlp.gate_proj",
         "model.layers.1.mlp.gate_proj",
     ]
+
+
+def test_train_lora_persists_response_only_boundary_metrics_when_present(tmp_path: Path) -> None:
+    class ResponseOnlyMetricsRunner(SuccessfulRunner):
+        def train_native(self, request: TrainingRequest) -> TrainingResult:
+            base = super().train_native(request)
+            return replace(
+                base,
+                metrics=replace(
+                    base.metrics,
+                    response_only_boundary_sample_count=2,
+                    response_only_boundary_min=4,
+                    response_only_boundary_max=9,
+                    response_only_boundary_mean=6.5,
+                ),
+            )
+
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset-response-only-boundary",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "Question?"},
+                    {"role": "assistant", "content": "Answer."},
+                ]
+            }
+        ],
+    )
+    service = _build_service(tmp_path, ResponseOnlyMetricsRunner())
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="melix-dev-text",
+                output_dir=str(tmp_path / "train-response-only-boundary"),
+                generate_manifest=True,
+                ext={
+                    "operation": "train_lora",
+                    "adapter_name": "melix-boundary-adapter",
+                    "dataset_uri": str(dataset_dir),
+                    "response_only": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    payload = json.loads(next(event.manifest for event in events if event.HasField("manifest")).manifest_json)
+
+    assert payload["response_only"] is True
+    assert payload["response_only_boundary_sample_count"] == 2
+    assert payload["response_only_boundary_min"] == 4
+    assert payload["response_only_boundary_max"] == 9
+    assert payload["response_only_boundary_mean"] == 6.5
+
 
 
 def test_train_lora_records_resume_manifest_metadata_and_reuses_checkpoint_path(tmp_path: Path) -> None:

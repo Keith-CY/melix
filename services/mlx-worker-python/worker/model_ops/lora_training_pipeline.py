@@ -261,10 +261,16 @@ def _int_ext(ext: dict[str, str], key: str) -> int:
     return int(raw_value)
 
 
+_CONTENT_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+
 def _content_hash(*paths: Path) -> str:
     digest = hashlib.sha256()
     for path in paths:
-        digest.update(path.read_bytes())
+        with path.open("rb") as handle:
+            while chunk := handle.read(_CONTENT_HASH_CHUNK_SIZE):
+                digest.update(chunk)
     return digest.hexdigest()[:16]
 
 
