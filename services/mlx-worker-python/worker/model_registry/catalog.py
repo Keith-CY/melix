@@ -1164,15 +1164,32 @@ class WorkerModelCatalog:
                 continue
             if _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
-            manifest_path = current / "manifest.json"
-            if manifest_path.is_file():
-                manifest_paths.append(manifest_path)
+            try:
+                with os.scandir(os.fspath(current)) as entries:
+                    child_names: list[str] = []
+                    has_manifest = False
+                    has_config = False
+                    for entry in entries:
+                        try:
+                            if entry.name == "manifest.json" and entry.is_file():
+                                has_manifest = True
+                                continue
+                            if entry.name == "config.json" and entry.is_file():
+                                has_config = True
+                                continue
+                            if entry.is_dir():
+                                child_names.append(entry.name)
+                        except OSError:
+                            continue
+            except OSError:
                 continue
-            if (current / "config.json").is_file():
+            if has_manifest:
+                manifest_paths.append(current / "manifest.json")
+                continue
+            if has_config:
                 plain_local_model_dirs.append(current)
                 continue
-            children = _sorted_child_directories(current)
-            stack.extend(reversed(children))
+            stack.extend(current / name for name in sorted(child_names, reverse=True))
         return tuple(manifest_paths), tuple(plain_local_model_dirs)
 
     @staticmethod
