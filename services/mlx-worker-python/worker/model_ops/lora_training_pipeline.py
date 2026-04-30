@@ -23,6 +23,9 @@ from worker.model_ops.training_dataset import (
 from worker.productization.lora_experiment_store import LoraExperimentStore
 
 
+_NUMERIC_TOKEN_RE = re.compile(r"\d+")
+
+
 @dataclass(frozen=True)
 class LoRATrainingPipelineResult:
     manifest: dict[str, Any]
@@ -363,8 +366,8 @@ def _latest_checkpoint_from_directory(path: Path) -> Path:
         )
 
     def order_key(candidate: str) -> tuple[int, str]:
-        numbers = [int(value) for value in re.findall(r"\d+", candidate)]
-        return (numbers[-1] if numbers else -1, candidate)
+        numbers = _NUMERIC_TOKEN_RE.findall(candidate)
+        return (int(numbers[-1]) if numbers else -1, candidate)
 
     return Path(max(checkpoint_candidates, key=order_key)).resolve()
 
