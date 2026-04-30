@@ -553,13 +553,14 @@ def _resolve_dataset_name(
 
 def _load_materialized_rows(rows_path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for raw_line in rows_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        row = json.loads(line)
-        if isinstance(row, dict):
-            rows.append(row)
+    with rows_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
     return rows
 
 
