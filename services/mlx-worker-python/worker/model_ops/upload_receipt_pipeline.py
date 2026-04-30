@@ -64,6 +64,7 @@ class HuggingFacePublishBackend:
         token: str = "",
         private: bool = False,
         commit_message: str = "",
+        published_files: list[str] | None = None,
     ) -> PublishResult:
         resolved_source_path = source_path.expanduser().resolve()
         command = [
@@ -106,7 +107,7 @@ class HuggingFacePublishBackend:
                 remote_ref = stripped
                 break
 
-        published_files = (
+        published_files = published_files or (
             sorted(
                 str(path.relative_to(resolved_source_path))
                 for path in resolved_source_path.rglob("*")
@@ -175,6 +176,7 @@ class UploadReceiptPipeline:
             token=self._resolve_hf_token(request.ext),
             private=_bool_ext(request.ext, "hf_private"),
             commit_message=self._commit_message(descriptor, target_repo),
+            published_files=prepared_source.published_files,
         )
 
         manifest_payload = {

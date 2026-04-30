@@ -472,6 +472,7 @@ class FakePublishBackend:
         token: str = "",
         private: bool = False,
         commit_message: str = "",
+        published_files: list[str] | None = None,
     ) -> PublishResult:
         if self.failure is not None:
             raise self.failure
@@ -483,22 +484,25 @@ class FakePublishBackend:
                 "token": token,
                 "private": private,
                 "commit_message": commit_message,
+                "published_files": published_files,
             }
         )
-        if source_path.is_dir():
-            published_files = sorted(
+        if published_files is not None:
+            result_published_files = published_files
+        elif source_path.is_dir():
+            result_published_files = sorted(
                 str(path.relative_to(source_path))
                 for path in source_path.rglob("*")
                 if path.is_file()
             )
         else:
-            published_files = [source_path.name]
+            result_published_files = [source_path.name]
         return PublishResult(
             backend="huggingface_hub",
             target_repo=target_repo,
             target_url=f"https://huggingface.co/{target_repo}",
             remote_ref=f"{target_repo}@main",
-            published_files=published_files,
+            published_files=result_published_files,
         )
 
 
@@ -1317,6 +1321,51 @@ def test_hugging_face_publish_backend_adds_private_token_and_commit_message(
     assert result.published_files == ["adapter.safetensors", "config.json"]
 
 
+def test_hugging_face_publish_backend_uses_precomputed_published_files_without_rescanning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "publish"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "adapter.safetensors").write_text("weights", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="\nhttps://huggingface.co/melix/demo-adapter/commit/abc123\n",
+            stderr="",
+        )
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("publish() should not rescan when published_files is supplied")
+
+    monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.subprocess.run", fake_subprocess_run)
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    result = HuggingFacePublishBackend().publish(
+        source_path=artifact_root,
+        target_repo="melix/demo-adapter",
+        artifact_kind="adapter",
+        published_files=["adapter.safetensors"],
+    )
+
+    assert seen["command"] == [
+        "hf",
+        "upload",
+        "melix/demo-adapter",
+        str(artifact_root.resolve()),
+        ".",
+        "--repo-type",
+        "model",
+        "--quiet",
+    ]
+    assert result.remote_ref == "https://huggingface.co/melix/demo-adapter/commit/abc123"
+    assert result.published_files == ["adapter.safetensors"]
+
+
 def test_hugging_face_publish_backend_falls_back_to_legacy_cli_when_hf_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1360,6 +1409,198 @@ def test_resolve_hf_cli_command_defaults_to_hf_when_no_binary_is_discovered(
     monkeypatch.setattr("worker.model_ops.upload_receipt_pipeline.shutil.which", lambda command: None)
 
     assert _resolve_hf_cli_command() == "hf"
+
+
+def test_hugging_face_publish_backend_maps_auth_and_generic_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = tmp_path / "artifact.gguf"
+    artifact_path.write_text("weights", encoding="utf-8")
+
+    responses = iter(
+        [
+            SimpleNamespace(returncode=1, stdout="", stderr="Not logged in to Hugging Face"),
+            SimpleNamespace(returncode=1, stdout="generic failure", stderr=""),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "worker.model_ops.upload_receipt_pipeline.subprocess.run",
+        lambda *args, **kwargs: next(responses),
+    )
+
+    with pytest.raises(ModelOperationError) as auth_error:
+        HuggingFacePublishBackend().publish(
+            source_path=artifact_path,
+            target_repo="melix/demo",
+            artifact_kind="model_export",
+        )
+    assert auth_error.value.code == "publish_auth_required"
+    assert "Not logged in" in auth_error.value.message
+
+    with pytest.raises(ModelOperationError) as generic_error:
+        HuggingFacePublishBackend().publish(
+            source_path=artifact_path,
+            target_repo="melix/demo",
+            artifact_kind="model_export",
+        )
+    assert generic_error.value.code == "publish_failed"
+    assert generic_error.value.message == "generic failure"
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "requested_kind", "expected_code", "expected_kind"),
+    [
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="",
+                manifest_path="",
+                source_model="melix-dev-text",
+                manifest_payload=None,
+            ),
+            "adapter_export",
+            "invalid_argument",
+            None,
+        ),
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="",
+                manifest_path="",
+                source_model="melix-dev-text",
+                manifest_payload=None,
+            ),
+            "merged_export",
+            "invalid_argument",
+            None,
+        ),
+        (
+            SourceArtifactDescriptor(
+                artifact_path="/tmp/model.gguf",
+                artifact_kind="model",
+                schema_version="melix.derived_text_model.v1",
+                manifest_path="/tmp/model.json",
+                source_model="melix-dev-text",
+                manifest_payload={"activation_mode": "fused_derived_model"},
+            ),
+            "",
+            None,
+            "merged_export",
+        ),
+    ],
+)
+def test_upload_receipt_pipeline_resolve_export_artifact_kind_edges(
+    descriptor: SourceArtifactDescriptor,
+    requested_kind: str,
+    expected_code: str | None,
+    expected_kind: str | None,
+) -> None:
+    if expected_code is not None:
+        with pytest.raises(ModelOperationError) as error:
+            UploadReceiptPipeline._resolve_export_artifact_kind(
+                descriptor=descriptor,
+                requested_kind=requested_kind,
+            )
+        assert error.value.code == expected_code
+        return
+
+    assert (
+        UploadReceiptPipeline._resolve_export_artifact_kind(
+            descriptor=descriptor,
+            requested_kind=requested_kind,
+        )
+        == expected_kind
+    )
+
+
+def test_upload_receipt_pipeline_resolve_merged_publish_source_edges(tmp_path: Path) -> None:
+    converted_root = tmp_path / "converted"
+    converted_root.mkdir()
+    bundle_file = converted_root / "model.gguf"
+    bundle_file.write_text("weights", encoding="utf-8")
+    (converted_root / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    converted_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="converted_model_bundle",
+        schema_version="",
+        manifest_path=str(converted_root / "manifest.json"),
+        source_model="melix-dev-text",
+        manifest_payload={"artifact_kind": "converted_model_bundle"},
+    )
+    assert UploadReceiptPipeline._resolve_merged_publish_source(converted_descriptor, bundle_file) == converted_root
+
+    invalid_activation_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="derived_text_model",
+        schema_version="melix.derived_text_model.v1",
+        manifest_path=str(converted_root / "manifest.json"),
+        source_model="melix-dev-text",
+        manifest_payload={"activation_mode": "adapter_runtime", "derived_model_path": str(tmp_path / "missing")},
+    )
+    with pytest.raises(ModelOperationError) as invalid_activation:
+        UploadReceiptPipeline._resolve_merged_publish_source(invalid_activation_descriptor, bundle_file)
+    assert invalid_activation.value.code == "invalid_argument"
+
+    invalid_source_descriptor = SourceArtifactDescriptor(
+        artifact_path=str(bundle_file),
+        artifact_kind="model",
+        schema_version="",
+        manifest_path="",
+        source_model="melix-dev-text",
+        manifest_payload=None,
+    )
+    with pytest.raises(ModelOperationError) as invalid_source:
+        UploadReceiptPipeline._resolve_merged_publish_source(invalid_source_descriptor, bundle_file)
+    assert invalid_source.value.code == "invalid_artifact"
+
+
+def test_upload_receipt_pipeline_resolve_source_artifact_and_linked_quantization_edges(tmp_path: Path) -> None:
+    pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
+
+    missing_request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={"artifact_path": str(tmp_path / "missing.gguf")},
+    )
+    with pytest.raises(ModelOperationError) as missing_artifact:
+        pipeline._resolve_source_artifact(missing_request)
+    assert missing_artifact.value.code == "invalid_artifact"
+
+    manifest_root = tmp_path / "manifest-root"
+    manifest_root.mkdir()
+    (manifest_root / "manifest.json").write_text("[]\n", encoding="utf-8")
+    non_dict_request = maintenance_pb2.ConvertModelRequest(
+        source_model="melix-dev-text",
+        ext={"artifact_path": str(manifest_root), "artifact_kind": "model_export"},
+    )
+    descriptor = pipeline._resolve_source_artifact(non_dict_request)
+    assert descriptor.manifest_payload is None
+    assert descriptor.artifact_kind == "model_export"
+
+    linked_quantization = UploadReceiptPipeline._linked_quantization(
+        {
+            "artifact_kind": "quantized_model_bundle",
+            "artifact_path": "bundle",
+            "manifest_path": "bundle/manifest.json",
+            "source_model": "melix-dev-text",
+            "calibration": "bad",
+            "compatibility": "bad",
+            "quant_profile": "bad",
+        }
+    )
+    assert linked_quantization == {
+        "artifact_kind": "quantized_model_bundle",
+        "artifact_path": "bundle",
+        "manifest_path": "bundle/manifest.json",
+        "source_model": "melix-dev-text",
+        "quant_profile_id": "",
+        "calibration_sample_count": 0,
+        "smoke_test_passed": False,
+    }
 
 
 def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(tmp_path: Path) -> None:
@@ -1933,6 +2174,11 @@ def test_upload_job_publishes_adapter_bundle_to_hugging_face(tmp_path: Path) -> 
         ]
     )
     assert publish_backend.calls[-1]["artifact_kind"] == "adapter_export"
+    assert publish_backend.calls[-1]["published_files"] == [
+        "adapter/adapter_config.json",
+        "adapter/adapters.safetensors",
+        "train_lora.adapter.json",
+    ]
     staged_source = publish_backend.calls[-1]["source_path"]
     assert isinstance(staged_source, Path)
     staged_manifest = json.loads((staged_source / "train_lora.adapter.json").read_text(encoding="utf-8"))
