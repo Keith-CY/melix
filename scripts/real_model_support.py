@@ -327,11 +327,15 @@ def _is_deterministic_development_model(model_id: str) -> bool:
 def _has_recognized_model_weight_files(path: Path) -> bool:
     if not path.is_dir():
         return False
-    for child in path.iterdir():
-        if not child.is_file():
-            continue
-        if child.name in _REAL_MODEL_WEIGHT_FILENAMES:
-            return True
-        if child.suffix.lower() in _REAL_MODEL_WEIGHT_SUFFIXES:
-            return True
+    with os.scandir(path) as entries:
+        for entry in entries:
+            try:
+                if not entry.is_file():
+                    continue
+            except OSError:
+                continue
+            if entry.name in _REAL_MODEL_WEIGHT_FILENAMES:
+                return True
+            if entry.name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
+                return True
     return False
