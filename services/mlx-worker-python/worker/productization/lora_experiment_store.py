@@ -101,18 +101,32 @@ class LoraExperimentStore:
 
         groups: list[dict[str, Any]] = []
         for group_id, group_runs in grouped_runs.items():
-            latest_run = max(
-                group_runs,
-                key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("run_id", ""))),
+            latest_run = group_runs[0]
+            latest_key = (
+                int(latest_run.get("updated_at_unix_ms", 0)),
+                str(latest_run.get("run_id", "")),
             )
-            best_run = min(
-                group_runs,
-                key=lambda item: (
-                    _best_loss_value(item) if _best_loss_value(item) is not None else float("inf"),
-                    -int(item.get("updated_at_unix_ms", 0)),
-                ),
-            )
+            best_run = latest_run
             best_loss = _best_loss_value(best_run)
+            best_key = (
+                best_loss if best_loss is not None else float("inf"),
+                -latest_key[0],
+            )
+            for run in group_runs[1:]:
+                run_updated_at = int(run.get("updated_at_unix_ms", 0))
+                run_key_latest = (run_updated_at, str(run.get("run_id", "")))
+                if run_key_latest > latest_key:
+                    latest_run = run
+                    latest_key = run_key_latest
+                run_loss = _best_loss_value(run)
+                run_key = (
+                    run_loss if run_loss is not None else float("inf"),
+                    -run_updated_at,
+                )
+                if run_key < best_key:
+                    best_run = run
+                    best_loss = run_loss
+                    best_key = run_key
             groups.append(
                 {
                     "group_id": group_id,

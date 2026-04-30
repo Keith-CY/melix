@@ -117,6 +117,44 @@ def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Pa
     assert payload["groups"][0]["best_known_adapter"]["latest_checkpoint_path"].endswith("checkpoint-1/adapters.safetensors")
 
 
+def test_build_group_payloads_evaluates_best_loss_once_per_run(monkeypatch) -> None:
+    runs = [
+        {
+            "run_id": "model-ops-0001",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 1_000,
+            "loss_best": 0.42,
+        },
+        {
+            "run_id": "model-ops-0002",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 2_000,
+            "loss_best": 0.37,
+        },
+        {
+            "run_id": "model-ops-0003",
+            "group_id": "nightly-qwen",
+            "updated_at_unix_ms": 3_000,
+        },
+    ]
+    call_count = 0
+    original_best_loss = lora_experiment_store_module._best_loss_value
+
+    def tracked_best_loss(item: dict[str, object]) -> float | None:
+        nonlocal call_count
+        call_count += 1
+        return original_best_loss(item)
+
+    monkeypatch.setattr(lora_experiment_store_module, "_best_loss_value", tracked_best_loss)
+
+    groups = LoraExperimentStore()._build_group_payloads(runs)
+
+    assert call_count == len(runs)
+    assert groups[0]["latest_run_id"] == "model-ops-0003"
+    assert groups[0]["best_run_id"] == "model-ops-0002"
+    assert groups[0]["best_loss"] == 0.37
+
+
 def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path: Path) -> None:
     jobs_root = tmp_path / "model-ops"
     _write_manifest(
