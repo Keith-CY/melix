@@ -485,6 +485,101 @@ def test_vlm_runtime_load_model_exposes_family_capabilities() -> None:
     assert loaded_model["multimodal_adapter_hash"] == "vision-family-paligemma-v1"
 
 
+def test_vlm_render_prompt_reuses_prepared_prompt_metadata() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(paligemma_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Summarize the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"render prompt image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        mime_type="image/png",
+                        filename="render-prompt.png",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    snapshot = runtime.last_probe_snapshot()
+
+    assert prepared.prompt_text == "Summarize the image."
+    assert snapshot.cache_identity
+    assert snapshot.cache_scope_id
+    assert snapshot.cache_hit is False
+    assert loaded_model["_vision_family_config"].family_id == "paligemma-v1"
+
+
+def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(paligemma_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Summarize the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"phase aware image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        mime_type="image/png",
+                        filename="phase-aware.png",
+                    ),
+                ),
+            ],
+        )
+    ]
+    call_counts = {
+        "family_config": 0,
+        "cache_identity": 0,
+        "prompt_token_count": 0,
+    }
+    original_family_config = runtime._family_config
+    original_cache_identity = runtime._cache_identity
+    original_prompt_token_count = runtime.prompt_token_count
+
+    def counted_family_config(model):
+        call_counts["family_config"] += 1
+        return original_family_config(model)
+
+    def counted_cache_identity(prepared_request, model, execution_ext=None):
+        call_counts["cache_identity"] += 1
+        return original_cache_identity(prepared_request, model, execution_ext=execution_ext)
+
+    def counted_prompt_token_count(prepared_request, loaded_model=None, family_config=None):
+        call_counts["prompt_token_count"] += 1
+        return original_prompt_token_count(
+            prepared_request,
+            loaded_model=loaded_model,
+            family_config=family_config,
+        )
+
+    monkeypatch.setattr(runtime, "_family_config", counted_family_config)
+    monkeypatch.setattr(runtime, "_cache_identity", counted_cache_identity)
+    monkeypatch.setattr(runtime, "prompt_token_count", counted_prompt_token_count)
+
+    session = runtime.prefill("prefill-reuse", loaded_model, messages)
+    events = list(runtime.decode_tokens(loaded_model, session.decode_handle, None, Event()))
+
+    assert session.cache_hit is False
+    assert session.prompt_tokens > 0
+    assert "_vision_family_config" in loaded_model
+    assert call_counts == {
+        "family_config": 2,
+        "cache_identity": 1,
+        "prompt_token_count": 1,
+    }
+    assert len(events) == 1
+    assert events[0].text == "Image content: phase aware image\nPrompt: Summarize the image."
+
+
 def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None:
     with pytest.raises(ValueError, match="Unsupported vision family adapter"):
         resolve_vision_family_config({"vision_family_id": "unknown-family"})
