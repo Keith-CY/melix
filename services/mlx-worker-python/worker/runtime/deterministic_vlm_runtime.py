@@ -74,6 +74,15 @@ class VisionPrefillSession:
     block_table: common_pb2.BlockTable
 
 
+@dataclass(frozen=True)
+class PreparedVisionPrompt:
+    prepared_request: PreparedVisionRequest
+    family_config: object
+    prompt_tokens: int
+    cache_identity: str
+    scope_id: str
+
+
 class DeterministicVLMRuntime:
     runtime_name = "deterministic-vlm"
 
@@ -118,27 +127,28 @@ class DeterministicVLMRuntime:
         execution_ext: dict[str, str] | None = None,
     ) -> PreparedVisionRequest:
         _ = template_kwargs
-        prepared = self._family_config(loaded_model).shape_request(prepare_vision_request(messages))
-        cache_identity, scope_id = self._cache_identity(
-            prepared,
-            loaded_model,
+        prompt = self._prepare_prompt(
+            messages,
+            loaded_model=loaded_model,
             execution_ext=execution_ext,
         )
-        self._record_fast_path_probe(loaded_model, prepared)
+        self._record_fast_path_probe(loaded_model, prompt.prepared_request)
         self._last_probe = replace(
             self._last_probe,
-            cache_identity=cache_identity,
-            cache_scope_id=scope_id,
-            cache_hit=cache_identity in self._cache_entries,
+            cache_identity=prompt.cache_identity,
+            cache_scope_id=prompt.scope_id,
+            cache_hit=prompt.cache_identity in self._cache_entries,
         )
-        return prepared
+        return prompt.prepared_request
 
     def prompt_token_count(
         self,
         prepared_request: PreparedVisionRequest,
         loaded_model=None,
+        family_config: object | None = None,
     ) -> int:
-        return self._family_config(loaded_model).prompt_token_count(prepared_request)
+        config = family_config if family_config is not None else self._family_config(loaded_model)
+        return config.prompt_token_count(prepared_request)
 
     def prefill(
         self,
@@ -147,17 +157,15 @@ class DeterministicVLMRuntime:
         messages,
         execution_ext: dict[str, str] | None = None,
     ) -> VisionPrefillSession:
-        prepared_request = self.render_prompt(
+        prompt = self._prepare_prompt(
             messages,
             loaded_model=loaded_model,
             execution_ext=execution_ext,
         )
-        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
-        cache_identity, scope_id = self._cache_identity(
-            prepared_request,
-            loaded_model,
-            execution_ext=execution_ext,
-        )
+        prepared_request = prompt.prepared_request
+        prompt_tokens = prompt.prompt_tokens
+        cache_identity = prompt.cache_identity
+        scope_id = prompt.scope_id
         self._ensure_fast_path_probe(loaded_model, prepared_request)
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
@@ -170,6 +178,7 @@ class DeterministicVLMRuntime:
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
+                    token_length=prompt_tokens,
                     execution_ext=execution_ext,
                 )
             )
@@ -523,10 +532,11 @@ class DeterministicVLMRuntime:
         prepared_request: PreparedVisionRequest,
         cache_identity: str,
         scope_id: str,
+        token_length: int | None = None,
         execution_ext: dict[str, str] | None = None,
     ) -> VisionCacheEntry:
         prompt_bytes = len(prepared_request.prompt_text.encode("utf-8"))
-        token_length = self.prompt_token_count(prepared_request)
+        token_length = token_length if token_length is not None else self.prompt_token_count(prepared_request)
         bytes_used = max(
             64,
             prepared_request.preprocess_input_bytes + prompt_bytes + (token_length * 8),
@@ -669,9 +679,41 @@ class DeterministicVLMRuntime:
     def _family_config(self, loaded_model) -> object:
         metadata: dict[str, str] = {}
         if isinstance(loaded_model, dict):
+            cached_config = loaded_model.get("_vision_family_config")
+            if cached_config is not None:
+                return cached_config
             metadata = {
                 key: value
                 for key, value in loaded_model.items()
                 if isinstance(value, str) and value
             }
-        return resolve_vision_family_config(metadata)
+        config = resolve_vision_family_config(metadata)
+        if isinstance(loaded_model, dict):
+            loaded_model["_vision_family_config"] = config
+        return config
+
+    def _prepare_prompt(
+        self,
+        messages,
+        loaded_model=None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> PreparedVisionPrompt:
+        family_config = self._family_config(loaded_model)
+        prepared_request = family_config.shape_request(prepare_vision_request(messages))
+        cache_identity, scope_id = self._cache_identity(
+            prepared_request,
+            loaded_model,
+            execution_ext=execution_ext,
+        )
+        prompt_tokens = self.prompt_token_count(
+            prepared_request,
+            loaded_model=loaded_model,
+            family_config=family_config,
+        )
+        return PreparedVisionPrompt(
+            prepared_request=prepared_request,
+            family_config=family_config,
+            prompt_tokens=prompt_tokens,
+            cache_identity=cache_identity,
+            scope_id=scope_id,
+        )
