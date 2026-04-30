@@ -61,14 +61,19 @@ _PROCESSOR_CONFIG_FILENAMES = frozenset({
 
 def _collect_published_file_list(source_dir: Path) -> list[str]:
     source_dir_str = os.fspath(source_dir)
+    pending: list[tuple[str, str]] = [(source_dir_str, "")]
     published_files: list[str] = []
-    for root, _dirs, files in os.walk(source_dir_str):
-        files.sort()
-        relative_root = os.path.relpath(root, start=source_dir_str)
-        if relative_root == ".":
-            published_files.extend(files)
-        else:
-            published_files.extend(f"{relative_root}/{filename}" for filename in files)
+    while pending:
+        current_dir, relative_dir = pending.pop()
+        with os.scandir(current_dir) as entries:
+            for entry in entries:
+                relative_path = entry.name if not relative_dir else f"{relative_dir}/{entry.name}"
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((entry.path, relative_path))
+                elif entry.is_file(follow_symlinks=False):
+                    published_files.append(relative_path)
+                elif not entry.is_dir(follow_symlinks=True):
+                    published_files.append(relative_path)
     return sorted(published_files)
 
 

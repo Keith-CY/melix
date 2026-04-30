@@ -1695,6 +1695,30 @@ def test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts(t
     ]
 
 
+def test_upload_receipt_pipeline_collect_published_file_list_preserves_symlink_rules(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    (source_root / "weights.bin").write_text("weights", encoding="utf-8")
+    target_file = source_root / "target.txt"
+    target_file.write_text("target", encoding="utf-8")
+    (source_root / "file-link.txt").symlink_to(target_file)
+    nested_root = source_root / "nested"
+    nested_root.mkdir()
+    (nested_root / "config.json").write_text("{}", encoding="utf-8")
+    (source_root / "dir-link").symlink_to(nested_root, target_is_directory=True)
+    (source_root / "broken-link").symlink_to(source_root / "missing.bin")
+
+    assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
+        "broken-link",
+        "file-link.txt",
+        "nested/config.json",
+        "target.txt",
+        "weights.bin",
+    ]
+
+
 def test_prepare_publish_source_uses_collected_file_list_for_directory(tmp_path: Path) -> None:
     pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
     source_root = tmp_path / "source"
