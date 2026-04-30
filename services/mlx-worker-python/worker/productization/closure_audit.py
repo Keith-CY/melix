@@ -368,6 +368,8 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
     }
     candidate_files = sorted(_iter_probe_text_files(root))
     for file_path in candidate_files:
+        if _probe_sources_complete(probe_sources):
+            break
         relative_path = file_path.relative_to(root).as_posix()
         contents = file_path.read_text(encoding="utf-8", errors="ignore")
         for probe_name, matches in probe_sources.items():
@@ -376,6 +378,10 @@ def _collect_probe_sources(root: Path) -> dict[str, list[str]]:
             if probe_name in contents:
                 matches.append(relative_path)
     return probe_sources
+
+
+def _probe_sources_complete(probe_sources: dict[str, list[str]]) -> bool:
+    return all(len(matches) >= 3 for matches in probe_sources.values())
 
 
 def _iter_probe_text_files(root: Path) -> list[Path]:
