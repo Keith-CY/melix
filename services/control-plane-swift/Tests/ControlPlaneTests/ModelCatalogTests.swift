@@ -7,6 +7,72 @@ import MelixWorkerProtocol
 
 @Suite("Model Catalog")
 struct ModelCatalogTests {
+    @Test("presentation filters internal models and projects public metadata")
+    func presentationFiltersInternalModelsAndProjectsPublicMetadata() async throws {
+        var internalByVisibility = ModelCatalog.devTextModel()
+        internalByVisibility.settings.ext["melix.visibility"] = " internal "
+        #expect(ModelCatalogPresentation.isUserVisible(internalByVisibility) == false)
+
+        var internalByKind = ModelCatalog.devTextModel()
+        internalByKind.kind = " model_operations "
+        #expect(ModelCatalogPresentation.isUserVisible(internalByKind) == false)
+
+        var internalByCapability = ModelCatalog.devTextModel()
+        internalByCapability.kind = "text"
+        internalByCapability.capabilityClass = .modelCapabilityModelOperations
+        #expect(ModelCatalogPresentation.isUserVisible(internalByCapability) == false)
+
+        var fallbackName = ModelCatalog.devTextModel()
+        fallbackName.settings.alias = "  "
+        #expect(ModelCatalogPresentation.displayName(for: fallbackName) == "melix-dev-text")
+
+        var registryBacked = ModelCatalog.devTextModel()
+        registryBacked.modelID = "registry-text"
+        registryBacked.settings.alias = "Registry Text"
+        registryBacked.settings.ext["melix.registry_provider_id"] = "hf-mirror"
+        registryBacked.settings.ext["melix.model_path"] = "/tmp/registry/model"
+        registryBacked.settings.ext["melix.model_path_missing"] = "true"
+        registryBacked.settings.ext["unrelated"] = "ignore"
+        let metadata = try #require(ModelCatalogPresentation.publicAPIMetadata(for: registryBacked))
+        #expect(metadata["melix.display_name"] == "Registry Text")
+        #expect(metadata["melix.kind"] == "text")
+        #expect(metadata["melix.capability.class"] == "text")
+        #expect(metadata["melix.capability.supported_tasks"] == "generate")
+        #expect(metadata["melix.capability.supported_modalities"] == "text")
+        #expect(metadata["melix.registry_provider_id"] == "hf-mirror")
+        #expect(metadata["melix.model_path"] == "/tmp/registry/model")
+        #expect(metadata["melix.model_path_missing"] == "true")
+        #expect(metadata["unrelated"] == nil)
+
+        let legacyMetadata = try #require(RegistrySnapshotSync.publicMetadata(from: registryBacked.settings.ext))
+        #expect(legacyMetadata["melix.model_path"] == "/tmp/registry/model")
+    }
+
+    @Test("presentation maps capability classes to public identifiers")
+    func presentationMapsCapabilityClassesToPublicIdentifiers() async throws {
+        let cases: [(Melix_Controlplane_V1_ModelCapabilityClass, String, String)] = [
+            (.modelCapabilityEmbedding, "embedding", "embedding"),
+            (.modelCapabilityRerank, "rerank", "rerank"),
+            (.modelCapabilityModelOperations, "model_ops", "model_operations"),
+            (.modelCapabilityMultimodal, "multimodal", "multimodal"),
+            (.modelCapabilityOcr, "ocr", "ocr"),
+            (.modelCapabilityVlm, "vlm", "vlm"),
+            (.modelCapabilityTranscription, "transcription", "transcription"),
+            (.modelCapabilitySpeech, "speech", "speech"),
+            (.modelCapabilityImageGeneration, "image", "image_generation"),
+            (.unspecified, "custom_kind", "custom_kind"),
+            (.UNRECOGNIZED(999), "unknown_kind", "unknown_kind"),
+        ]
+
+        for (capability, kind, identifier) in cases {
+            var model = ModelCatalog.devTextModel()
+            model.kind = kind
+            model.capabilityClass = capability
+            model.settings.ext.removeValue(forKey: "melix.capability.class")
+            #expect(ModelCatalogPresentation.capabilityIdentifier(for: model) == identifier)
+        }
+    }
+
     @Test("phase five development seed models expose typed capabilities and routes")
     func phaseFiveSeedModelsExposeTypedCapabilitiesAndRoutes() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

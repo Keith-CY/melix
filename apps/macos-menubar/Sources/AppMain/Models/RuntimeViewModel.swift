@@ -161,6 +161,16 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         modelID
     }
 
+    public var displayName: String {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedAlias.isEmpty ? modelID : trimmedAlias
+    }
+
+    public var displayNameWithID: String {
+        let name = displayName
+        return name == modelID ? modelID : "\(name) • \(modelID)"
+    }
+
     public var isLoaded: Bool {
         switch state {
         case .modelWarm, .modelPinned:
@@ -7193,6 +7203,7 @@ public final class RuntimeViewModel {
         serverStateText = Self.serverStateText(snapshot.serverState)
         statusTitle = "Melix \(serverStateText)"
         models = snapshot.models
+            .filter(ModelCatalogPresentation.isUserVisible)
             .sorted { $0.modelID < $1.modelID }
             .map(makeRuntimeModelRow)
         applyImageDefaultsProjection()
