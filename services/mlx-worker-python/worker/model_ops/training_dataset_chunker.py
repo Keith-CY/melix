@@ -207,6 +207,16 @@ def _chunk_single_turn(
     # than it has words. Above that, no K can possibly produce a non-empty
     # segment per bucket.
     word_count = len(user_content.split())
+    minimal_chunk = system_prefix + [{"role": "user", "content": ""}, assistant]
+    if _render_len(minimal_chunk, tokenizer, tools=tools) > chunk_size:
+        raise ModelOperationError(
+            code="chunk_size_too_small",
+            message=(
+                f"Cannot chunk sample {sample_id!r} within chunk_size={chunk_size}"
+                f" (full rendering is {full_len} tokens). The assistant message or"
+                " system prefix alone likely exceeds chunk_size."
+            ),
+        )
     k_floor = max(2, -(-full_len // chunk_size))
     if k_floor > word_count:
         raise ModelOperationError(

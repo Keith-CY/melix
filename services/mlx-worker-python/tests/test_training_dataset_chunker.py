@@ -257,6 +257,45 @@ def test_assistant_only_exceeding_chunk_size_raises_explicit_error() -> None:
     assert "giant-asst" in (exc.value.message or "")
 
 
+class _CountingTokenizer(_FakeTokenizer):
+    def __init__(self, *, overhead_per_message: int = 5) -> None:
+        super().__init__(overhead_per_message=overhead_per_message)
+        self.render_calls = 0
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        add_generation_prompt: bool = False,
+        return_dict: bool = False,
+    ) -> list[int]:
+        self.render_calls += 1
+        return super().apply_chat_template(
+            messages,
+            tools=tools,
+            add_generation_prompt=add_generation_prompt,
+            return_dict=return_dict,
+        )
+
+
+def test_impossible_single_turn_short_circuits_before_trying_many_segment_counts() -> None:
+    tokenizer = _CountingTokenizer()
+    sample = {
+        "id": "impossible-short-circuit",
+        "messages": [
+            {"role": "user", "content": _words(100)},
+            {"role": "assistant", "content": _words(200)},
+        ],
+    }
+
+    with pytest.raises(ModelOperationError) as exc:
+        chunk_long_samples([sample], chunk_size=205, tokenizer=tokenizer)
+
+    assert exc.value.code == "chunk_size_too_small"
+    assert tokenizer.render_calls == 3
+
+
 def test_non_assistant_terminated_sample_passes_through_unchanged() -> None:
     """Chunker does not invent assistant messages.
 
