@@ -86,21 +86,46 @@ def _normalized_generation_config_value(value: object) -> str | None:
     return None
 
 
+def _load_json_dict_file(
+    path: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, object]:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        if json_cache is not None:
+            json_cache.pop(path, None)
+        return {}
+
+    if json_cache is not None:
+        cached_entry = json_cache.get(path)
+        if cached_entry is not None:
+            cached_mtime_ns, cached_size, cached_payload = cached_entry
+            if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+                return cached_payload
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+    if json_cache is not None:
+        json_cache[path] = (stat_result.st_mtime_ns, stat_result.st_size, payload)
+    return payload
+
+
 def _merge_generation_config_metadata(
     model_dir: Path,
     *,
     ext: dict[str, str],
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> None:
     generation_config_path = model_dir / "generation_config.json"
-    if not generation_config_path.is_file():
-        return
-
-    try:
-        payload = json.loads(generation_config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-
-    if not isinstance(payload, dict):
+    payload = _load_json_dict_file(generation_config_path, json_cache=json_cache)
+    if not payload:
         return
 
     recognized_values = {
@@ -123,15 +148,13 @@ def _merge_generation_config_metadata(
         ext[_GENERATION_CONFIG_SOURCE_KEY] = str(generation_config_path)
 
 
-def _load_model_config_payload(model_dir: Path) -> dict[str, object]:
+def _load_model_config_payload(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, object]:
     config_path = model_dir / "config.json"
-    if not config_path.is_file():
-        return {}
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return _load_json_dict_file(config_path, json_cache=json_cache)
 
 
 def _has_model_weight_files(model_dir: Path) -> bool:
@@ -591,7 +614,12 @@ def _is_gemma4_vlm_config(config_payload: Mapping[str, object] | None) -> bool:
     return False
 
 
-def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object] | None) -> str:
+def _gemma4_execution_mode(
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> str:
     config_payload = dict(config_payload or {})
     vision_config = config_payload.get("vision_config")
     if isinstance(vision_config, Mapping) and len(vision_config) > 0:
@@ -602,20 +630,19 @@ def _gemma4_execution_mode(model_dir: Path, config_payload: Mapping[str, object]
         key in config_payload and config_payload.get(key) not in (None, "", [], {})
         for key in ("image_token_id", "boi_token_id", "eoi_token_id")
     )
-    if has_multimodal_marker and _gemma4_index_has_vision_weights(model_dir):
+    if has_multimodal_marker and _gemma4_index_has_vision_weights(model_dir, json_cache=json_cache):
         return ""
     return "text_backed"
 
 
-def _gemma4_index_has_vision_weights(model_dir: Path) -> bool:
+def _gemma4_index_has_vision_weights(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> bool:
     index_path = model_dir / "model.safetensors.index.json"
-    if not index_path.is_file():
-        return False
-    try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
+    payload = _load_json_dict_file(index_path, json_cache=json_cache)
+    if not payload:
         return False
     weight_map = payload.get("weight_map")
     if not isinstance(weight_map, dict):
@@ -632,6 +659,7 @@ def _vlm_capability_metadata(
     model_dir: Path,
     metadata: dict[str, str] | None = None,
     config_payload: Mapping[str, object] | None = None,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> dict[str, str]:
     metadata = dict(metadata or {})
     config_payload = dict(config_payload or {})
@@ -655,7 +683,11 @@ def _vlm_capability_metadata(
             or resolved_family.multimodal_adapter_hash
         ),
     }
-    execution_mode = _gemma4_execution_mode(model_dir, config_payload) if family_id == "gemma4-v1" else ""
+    execution_mode = (
+        _gemma4_execution_mode(model_dir, config_payload, json_cache=json_cache)
+        if family_id == "gemma4-v1"
+        else ""
+    )
     if execution_mode:
         ext["melix.vlm.execution_mode"] = execution_mode
     return ext
@@ -743,6 +775,7 @@ class WorkerModelCatalog:
         self._models = dict(self._seed_models)
         self._overlay_models: dict[str, common_pb2.ModelSpec] = {}
         self._registry_lock = threading.RLock()
+        self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
         self._active_registry_roots = tuple(self._configured_registry_roots())
         self._last_registry_snapshot = self._refresh_registry_snapshot(self._active_registry_roots)
@@ -1094,8 +1127,8 @@ class WorkerModelCatalog:
         model.ext["melix.registry_root_order"] = str(root_order)
         model.ext["melix.registry_relative_path"] = os.fspath(relative_path)
 
-    @staticmethod
     def _raw_model_spec(
+        self,
         *,
         model_id: str,
         model_dir: Path,
@@ -1103,13 +1136,17 @@ class WorkerModelCatalog:
         source_kind: str,
         metadata: dict[str, str],
     ) -> common_pb2.ModelSpec:
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
         runtime_model_path = str(model_dir)
         ext = {
             **metadata,
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
-        config_payload = _load_model_config_payload(model_dir)
+        config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
@@ -1128,9 +1165,10 @@ class WorkerModelCatalog:
                     model_dir=model_dir,
                     metadata=ext,
                     config_payload=config_payload,
+                    json_cache=json_cache,
                 )
             )
-        _merge_generation_config_metadata(model_dir, ext=ext)
+        _merge_generation_config_metadata(model_dir, ext=ext, json_cache=json_cache)
         return common_pb2.ModelSpec(
             model_id=model_id,
             model_path=runtime_model_path,
@@ -1144,16 +1182,16 @@ class WorkerModelCatalog:
             ext=ext,
         )
 
-    @staticmethod
     def _parse_registry_manifest(
+        self,
         manifest_path: Path,
     ) -> tuple[str, common_pb2.ModelSpec] | None:
-        try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-
-        if not isinstance(payload, dict):
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
+        payload = _load_json_dict_file(manifest_path, json_cache=json_cache)
+        if not payload:
             return None
 
         model_id = _normalized(str(payload.get("model_id", "")))
@@ -1199,7 +1237,7 @@ class WorkerModelCatalog:
             normalized_ext["melix.model_path_missing"] = "true"
         else:
             normalized_ext.pop("melix.model_path_missing", None)
-        config_payload = _load_model_config_payload(runtime_model_dir)
+        config_payload = _load_model_config_payload(runtime_model_dir, json_cache=json_cache)
         normalized_ext.update(dflash_draft_metadata(config_payload))
         model_kind = (
             "vlm"
@@ -1222,6 +1260,7 @@ class WorkerModelCatalog:
                     model_dir=runtime_model_dir,
                     metadata=normalized_ext,
                     config_payload=config_payload,
+                    json_cache=json_cache,
                 )
             )
         if model_kind == "image":
@@ -1232,7 +1271,11 @@ class WorkerModelCatalog:
                     default_task_kind=normalized_ext.get("melix.image.task_kind", "text-to-image"),
                 )
             )
-        _merge_generation_config_metadata(runtime_model_dir, ext=normalized_ext)
+        _merge_generation_config_metadata(
+            runtime_model_dir,
+            ext=normalized_ext,
+            json_cache=json_cache,
+        )
 
         return model_id, common_pb2.ModelSpec(
             model_id=model_id,

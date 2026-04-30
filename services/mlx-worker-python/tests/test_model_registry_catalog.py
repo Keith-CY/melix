@@ -335,6 +335,88 @@ def test_registry_snapshot_discovers_mlx_models_from_default_huggingface_cache(t
     assert "melix.registry_descriptor_path" not in model.ext
 
 
+def test_registry_snapshot_rescan_reuses_cached_json_payloads_for_unchanged_registry_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Tiny" / "4bit"
+    _write_registry_manifest(variant_dir, model_id="mlx-community/Tiny/4bit")
+    _write_model_config(variant_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    (variant_dir / "generation_config.json").write_text(
+        json.dumps({"temperature": 0.2, "top_p": 0.9}) + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    manifest_path = variant_dir / "manifest.json"
+    config_path = variant_dir / "config.json"
+    generation_path = variant_dir / "generation_config.json"
+    original_read_text = Path.read_text
+    read_counts: dict[Path, int] = {
+        manifest_path: 0,
+        config_path: 0,
+        generation_path: 0,
+    }
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self in read_counts:
+            read_counts[self] += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    catalog.registry_snapshot(rescan=True)
+    catalog.registry_snapshot(rescan=True)
+
+    assert read_counts == {
+        manifest_path: 0,
+        config_path: 0,
+        generation_path: 0,
+    }
+
+
+def test_registry_snapshot_rescan_invalidates_cached_manifest_payload_when_file_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Tiny" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Tiny/4bit",
+        max_context=8192,
+    )
+    _write_model_config(variant_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    manifest_path = variant_dir / "manifest.json"
+    original_read_text = Path.read_text
+    manifest_reads = 0
+
+    def tracking_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal manifest_reads
+        if self == manifest_path:
+            manifest_reads += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Tiny/4bit",
+        max_context=16384,
+    )
+
+    snapshot = catalog.registry_snapshot(rescan=True)
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    assert discovered["mlx-community/Tiny/4bit"].max_context == 16384
+    assert manifest_reads == 1
+
+
 def test_scan_huggingface_cache_models_reads_ref_files_once_per_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / "root"
     cache_repo_dir = root / "models--mlx-community--Tiny"
