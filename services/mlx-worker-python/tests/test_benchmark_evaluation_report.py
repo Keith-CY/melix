@@ -523,6 +523,48 @@ def test_neutral_direction_ok_when_equal_not_comparable_when_changed() -> None:
     assert report_changed["summary"]["not_comparable_count"] == 1
 
 
+def test_eval_sample_neutral_metrics_ok_when_equal_not_comparable_when_changed() -> None:
+    baseline = {
+        "evaluation_samples": [
+            {
+                "suite_id": "mmlu",
+                "inference_ms": 10.0,
+                "extraction_ms": 5.0,
+                "validation_ms": 2.0,
+                "scoring_ms": 1.0,
+                "raw_response_chars": 1,
+                "extracted_result_chars": 1,
+            }
+        ]
+    }
+    # Identical candidate — neutral eval-sample metrics should be ok
+    report_equal = build_benchmark_evaluation_report(baseline=baseline, candidate=baseline)
+    rows = {row["metric"]: row for row in report_equal["rows"]}
+    assert rows["eval.sample.mmlu.raw_response_chars_mean"]["status"] == "ok"
+    assert rows["eval.sample.mmlu.extracted_result_chars_mean"]["status"] == "ok"
+    assert report_equal["summary"]["not_comparable_count"] == 0
+
+    # Candidate with changed neutral metric — should be not_comparable
+    candidate_changed = {
+        "evaluation_samples": [
+            {
+                "suite_id": "mmlu",
+                "inference_ms": 10.0,
+                "extraction_ms": 5.0,
+                "validation_ms": 2.0,
+                "scoring_ms": 1.0,
+                "raw_response_chars": 3,
+                "extracted_result_chars": 1,
+            }
+        ]
+    }
+    report_changed = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate_changed)
+    rows_changed = {row["metric"]: row for row in report_changed["rows"]}
+    assert rows_changed["eval.sample.mmlu.raw_response_chars_mean"]["status"] == "not_comparable"
+    assert rows_changed["eval.sample.mmlu.extracted_result_chars_mean"]["status"] == "ok"
+    assert report_changed["summary"]["not_comparable_count"] == 1
+
+
 def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
     report = build_benchmark_evaluation_report(
         baseline=_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
