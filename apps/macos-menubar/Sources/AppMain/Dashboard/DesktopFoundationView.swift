@@ -182,8 +182,11 @@ struct DesktopModelsTabView: View {
             if let primaryModel = viewModel.primaryModel {
                 MelixSectionCard("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(primaryModel.modelID)
+                        Text(primaryModel.displayName)
                             .font(.headline)
+                        Text(primaryModel.modelID)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             TextField(
                                 "Alias",
@@ -1134,7 +1137,7 @@ private struct DesktopResidencyRowsSection: View {
                 ForEach(models, id: \RuntimeModelRow.id) { (model: RuntimeModelRow) in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(model.modelID)
+                            Text(model.displayName)
                                 .font(.headline)
                             Spacer()
                             Text(model.stateText)
@@ -1168,9 +1171,9 @@ struct DesktopToolsTabView: View {
             if let primaryModel = viewModel.primaryModel {
                 MelixSectionCard("Primary Model") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(primaryModel.modelID)
+                        Text(primaryModel.displayName)
                             .font(.headline)
-                        Text(primaryModel.alias.isEmpty ? primaryModel.kind : primaryModel.alias)
+                        Text("\(primaryModel.modelID) • \(primaryModel.kind)")
                             .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
                             Text("Quant Profile")

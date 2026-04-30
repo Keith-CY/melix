@@ -152,7 +152,16 @@ Expected evidence fields:
 - `active_kv_kernel_path`
 - `active_kv_prefill_quantize_us`
 - `active_kv_decode_model_avg_us`
+- `active_kv_decode_model_eval_sync_avg_us`
+- `active_kv_decode_sample_avg_us`
+- `active_kv_decode_token_id_avg_us`
+- `active_kv_decode_detokenize_avg_us`
+- `active_kv_decode_stream_yield_avg_us`
+- `active_kv_decode_summary_avg_us`
+- `active_kv_turboquant_candidate_avg_us`
 - `active_kv_decode_quantize_avg_us`
+- `active_kv_fused_attention_avg_us`
+- `active_kv_cache_update_avg_us`
 - `active_kv_estimated_fp16_bytes`
 - `active_kv_estimated_quantized_bytes`
 - `active_kv_estimated_memory_savings_pct`
@@ -170,6 +179,16 @@ Expected gate fields:
 - `observed_runtime_routes`
 - `observed_runtime_block_reasons`
 - `fallback_count`
+- `candidate_dispatch_count`
+- `candidate_eligibility_check_count`
+- `decode_sample_total_us`
+- `decode_token_id_total_us`
+- `decode_detokenize_total_us`
+- `decode_stream_yield_total_us`
+- `decode_summary_total_us`
+- `turboquant_candidate_total_us`
+- `fused_attention_total_us`
+- `cache_update_total_us`
 - `decode_quantize_total_us`
 - `estimated_memory_savings_pct`
 - `worker_tps_overhead_pct`
@@ -213,19 +232,28 @@ Expected comparison fields:
 - `wall_tps_overhead_pct`
 - `ttft_delta_ms`
 - `total_ms_delta`
+- `active_kv_decode_sample_avg_us`
+- `active_kv_decode_token_id_avg_us`
+- `active_kv_decode_detokenize_avg_us`
+- `active_kv_decode_stream_yield_avg_us`
+- `active_kv_decode_summary_avg_us`
+- `active_kv_turboquant_candidate_avg_us`
+- `active_kv_fused_attention_avg_us`
+- `active_kv_cache_update_avg_us`
 - `active_kv_decode_quantize_share_pct`
 - `active_kv_estimated_memory_savings_pct`
 
 The comparison block is the release-gate evidence for before/after active-KV optimization.
 
-For the current decode-guard post-run, `decode_affine_q4` and
+For the current decode hot-path probe run, `decode_affine_q4` and
 `decode_turboquant_q4` both report `active_kv_decode_quantize_total_us = 0`
-across all five repeats. The fused TurboQuant candidate still reports
-`active_kv_kernel_path = "fallback"`, `active_kv_runtime_route = "blocked"`,
-and `active_kv_runtime_block_reason = "attention_hook_unavailable"`. The
-end-to-end throughput overhead remains about 46 percent, so the remaining
-optimization target is the quantized attention model call and fused kernel path,
-not decode-loop quantization maintenance.
+across all five repeats. The fused TurboQuant runtime route is connected
+(`active_kv_kernel_path = "tq_mse_single"`, `active_kv_runtime_route = "routed"`,
+and `active_kv_fallback_count = 0`), but the release gate can still fail on
+throughput overhead. Inspect the per-bucket fields before selecting the next
+optimization; in the 2026-05-01 local probe the largest buckets were model
+completion/eval-sync, fused attention, and cache update, while detokenization and
+stream yield were not material bottlenecks.
 
 For any future fused TurboQuant claim, `decode_turboquant_q4` must report:
 

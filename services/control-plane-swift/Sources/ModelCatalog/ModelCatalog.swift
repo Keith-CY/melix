@@ -1067,7 +1067,7 @@ public actor ModelCatalog {
         model.quantProfileID = "dev-q4"
         model.maxContext = 8192
         model.features = ["chat", "adaptive_thinking"]
-        model.settings.alias = "Melix Dev Text"
+        model.settings.alias = "Melix Text"
         model.settings.pinOnLoad = false
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.defaultAccelerationMode = .baseline
@@ -1151,7 +1151,7 @@ public actor ModelCatalog {
         model.quantProfileID = "dev-f16"
         model.maxContext = 8192
         model.features = ["embeddings"]
-        model.settings.alias = "Melix Dev Embed"
+        model.settings.alias = "Melix Embed"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext["embedding_backend_id"] = resolvedBackendID
         model.settings.ext["embedding_family_id"] = resolvedFamilyID
@@ -1210,7 +1210,7 @@ public actor ModelCatalog {
         model.quantProfileID = "dev-f16"
         model.maxContext = 8192
         model.features = ["rerank"]
-        model.settings.alias = "Melix Dev Rerank"
+        model.settings.alias = "Melix Rerank"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext["rerank_backend_id"] = resolvedBackendID
         model.settings.ext["rerank_family_id"] = resolvedFamilyID
@@ -1237,7 +1237,8 @@ public actor ModelCatalog {
         model.quantProfileID = "dev-ops"
         model.maxContext = 0
         model.features = ["quantize", "download", "upload"]
-        model.settings.alias = "Melix Dev Model Ops"
+        model.settings.alias = "Melix Model Operations"
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         return withSynchronizedResidency(model)
     }
@@ -1252,7 +1253,7 @@ public actor ModelCatalog {
         model.features = ["ocr", "vision"]
         model.supportedModalities = ["image"]
         model.supportedTasks = ["ocr"]
-        model.settings.alias = "Melix Dev OCR"
+        model.settings.alias = "Melix OCR"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
         model.settings.ext["ocr_prompt_template"] = "OCR instruction: {prompt}"
@@ -1275,7 +1276,7 @@ public actor ModelCatalog {
         model.capabilityClass = .modelCapabilityVlm
         model.routeClass = .workerRoutePythonVlm
         model.features = ["vision", "chat"]
-        model.settings.alias = "Melix Dev VLM"
+        model.settings.alias = "Melix Vision"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext["vision_family_id"] = familyID
         model.settings.ext["vision_prompt_profile_id"] = "llava-chatml-v1"
@@ -1299,7 +1300,7 @@ public actor ModelCatalog {
         model.features = ["audio", "transcription"]
         model.supportedModalities = ["audio"]
         model.supportedTasks = ["transcribe"]
-        model.settings.alias = "Melix Dev Transcription"
+        model.settings.alias = "Melix Whisper"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext.merge(
             audioMetadata(
@@ -1325,7 +1326,7 @@ public actor ModelCatalog {
         model.features = ["audio", "speech"]
         model.supportedModalities = ["text", "audio"]
         model.supportedTasks = ["speak"]
-        model.settings.alias = "Melix Dev Speech"
+        model.settings.alias = "Melix Voice"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext.merge(
             audioMetadata(
@@ -1504,7 +1505,7 @@ public actor ModelCatalog {
         model.capabilityClass = .modelCapabilityImageGeneration
         model.routeClass = workerRouteClass(for: capabilityAdapter.routeKind)
         model.features = capabilityAdapter.supportedTasks + ["artifact_jobs"]
-        model.settings.alias = "Melix Dev Image"
+        model.settings.alias = "Melix Image"
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.ext["melix.image.backend_id"] = "deterministic"
         model.settings.ext["melix.image.family_id"] = detected.familyID

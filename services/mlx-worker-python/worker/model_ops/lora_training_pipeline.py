@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -349,18 +350,23 @@ def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> 
 
 
 def _latest_checkpoint_from_directory(path: Path) -> Path:
-    checkpoint_candidates = list(path.rglob("*.safetensors"))
+    checkpoint_candidates: list[str] = []
+    for root, _, files in os.walk(path):
+        for filename in files:
+            if filename.endswith(".safetensors"):
+                checkpoint_candidates.append(os.path.join(root, filename))
+
     if not checkpoint_candidates:
         raise ModelOperationError(
             code="invalid_resume_source",
             message=f"Resume directory does not contain adapter weights: {path}",
         )
 
-    def order_key(candidate: Path) -> tuple[int, str]:
-        numbers = [int(value) for value in re.findall(r"\d+", str(candidate))]
-        return (numbers[-1] if numbers else -1, str(candidate))
+    def order_key(candidate: str) -> tuple[int, str]:
+        numbers = [int(value) for value in re.findall(r"\d+", candidate)]
+        return (numbers[-1] if numbers else -1, candidate)
 
-    return max(checkpoint_candidates, key=order_key).resolve()
+    return Path(max(checkpoint_candidates, key=order_key)).resolve()
 
 
 def _validated_resume_path(path: Path, *, source_label: str) -> Path:

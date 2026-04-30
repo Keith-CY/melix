@@ -962,7 +962,8 @@ class WorkerModelCatalog:
                 continue
 
             accepted_model_ids: list[str] = []
-            for manifest_path in self._iter_registry_manifest_paths(root):
+            manifest_paths, plain_local_model_dirs = self._scan_registry_root_tree(root)
+            for manifest_path in manifest_paths:
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
                     continue
@@ -987,6 +988,7 @@ class WorkerModelCatalog:
                 root=root,
                 root_id=root_id,
                 root_order=index,
+                plain_local_model_dirs=plain_local_model_dirs,
                 discovered_models=discovered_models,
                 accepted_model_ids=accepted_model_ids,
             )
@@ -1059,6 +1061,7 @@ class WorkerModelCatalog:
         root: Path,
         root_id: str,
         root_order: int,
+        plain_local_model_dirs: Iterable[Path],
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
     ) -> None:
@@ -1079,7 +1082,7 @@ class WorkerModelCatalog:
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
-        for model_dir in self._iter_plain_local_model_dirs(root):
+        for model_dir in plain_local_model_dirs:
             resolved_path = model_dir
             if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
                 continue
@@ -1138,20 +1141,9 @@ class WorkerModelCatalog:
                 )
 
     @staticmethod
-    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
-        stack = [root.resolve()]
-        while stack:
-            current = stack.pop()
-            if current.name in {"blobs", ".git", "__pycache__"}:
-                continue
-            if (current / "config.json").is_file():
-                yield current
-                continue
-            children = _sorted_child_directories(current)
-            stack.extend(reversed(children))
-
-    @staticmethod
-    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
+    def _scan_registry_root_tree(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+        manifest_paths: list[Path] = []
+        plain_local_model_dirs: list[Path] = []
         stack = [root.resolve()]
         while stack:
             current = stack.pop()
@@ -1159,10 +1151,24 @@ class WorkerModelCatalog:
                 continue
             manifest_path = current / "manifest.json"
             if manifest_path.is_file():
-                yield manifest_path
+                manifest_paths.append(manifest_path)
+                continue
+            if (current / "config.json").is_file():
+                plain_local_model_dirs.append(current)
                 continue
             children = _sorted_child_directories(current)
             stack.extend(reversed(children))
+        return tuple(manifest_paths), tuple(plain_local_model_dirs)
+
+    @staticmethod
+    def _iter_plain_local_model_dirs(root: Path) -> Iterable[Path]:
+        _, plain_local_model_dirs = WorkerModelCatalog._scan_registry_root_tree(root)
+        yield from plain_local_model_dirs
+
+    @staticmethod
+    def _iter_registry_manifest_paths(root: Path) -> Iterable[Path]:
+        manifest_paths, _ = WorkerModelCatalog._scan_registry_root_tree(root)
+        yield from manifest_paths
 
     @staticmethod
     def _apply_root_metadata(

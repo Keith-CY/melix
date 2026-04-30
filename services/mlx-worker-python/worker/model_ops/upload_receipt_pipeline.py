@@ -112,15 +112,12 @@ class HuggingFacePublishBackend:
                 remote_ref = stripped
                 break
 
-        published_files = published_files or (
-            sorted(
-                str(path.relative_to(resolved_source_path))
-                for path in resolved_source_path.rglob("*")
-                if path.is_file()
-            )
-            if resolved_source_path.is_dir()
-            else [resolved_source_path.name]
-        )
+        if published_files is None:
+            if resolved_source_path.is_dir():
+                published_files = self._collect_published_file_list(resolved_source_path)
+            else:
+                published_files = [resolved_source_path.name]
+
         return PublishResult(
             backend="huggingface_hub",
             target_repo=target_repo,
@@ -138,6 +135,20 @@ def _resolve_hf_cli_command() -> str:
 
 
 class UploadReceiptPipeline:
+    @staticmethod
+    def _collect_published_file_list(source_dir: Path) -> list[str]:
+        published_files: list[str] = []
+        for root, _dirs, files in os.walk(source_dir):
+            files.sort()
+            for filename in files:
+                published_files.append(
+                    os.path.relpath(
+                        os.path.join(root, filename),
+                        start=str(source_dir),
+                    )
+                )
+        return sorted(published_files)
+
     def __init__(self, publisher: Any | None = None) -> None:
         self._publisher = publisher or HuggingFacePublishBackend()
 
@@ -278,20 +289,12 @@ class UploadReceiptPipeline:
             )
         if export_artifact_kind == "merged_export":
             merged_source = self._resolve_merged_publish_source(descriptor, source_path)
-            published_files = sorted(
-                str(path.relative_to(merged_source))
-                for path in merged_source.rglob("*")
-                if path.is_file()
-            )
+            published_files = self._collect_published_file_list(merged_source)
             return PreparedPublishSource(source_path=merged_source, published_files=published_files)
 
         if descriptor.artifact_kind != "adapter" or descriptor.manifest_payload is None:
             if source_path.is_dir():
-                published_files = sorted(
-                    str(path.relative_to(source_path))
-                    for path in source_path.rglob("*")
-                    if path.is_file()
-                )
+                published_files = self._collect_published_file_list(source_path)
             else:
                 published_files = [source_path.name]
             return PreparedPublishSource(source_path=source_path, published_files=published_files)
@@ -510,10 +513,7 @@ class UploadReceiptPipeline:
 
     @staticmethod
     def _collect_processor_config_files(published_files: list[str]) -> list[str]:
-        return sorted(
-            f for f in published_files
-            if Path(f).parent == Path(".") and Path(f).name in _PROCESSOR_CONFIG_FILENAMES
-        )
+        return sorted(f for f in published_files if "/" not in f and f in _PROCESSOR_CONFIG_FILENAMES)
 
     @staticmethod
     def _write_manifest(path: Path, payload: dict[str, Any]) -> int:

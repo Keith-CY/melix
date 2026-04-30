@@ -60,6 +60,33 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-vlm")
     }
 
+    @Test("start hides internal model operations and uses friendly model aliases")
+    @MainActor
+    func startHidesInternalModelOperationsAndUsesFriendlyModelAliases() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var modelOps = ModelCatalog.devModelOpsModel()
+        modelOps.settings.ext["melix.visibility"] = "internal"
+        let snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [
+                ModelCatalog.devTextModel(),
+                modelOps,
+                ModelCatalog.devImageModel(),
+            ]
+        )
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.models.map(\.modelID) == ["melix-dev-image", "melix-dev-text"])
+        #expect(viewModel.models.first { $0.modelID == "melix-dev-text" }?.alias == "Melix Text")
+        #expect(viewModel.models.first { $0.modelID == "melix-dev-image" }?.alias == "Melix Image")
+        #expect(viewModel.models.allSatisfy { !$0.alias.contains("Dev") })
+        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-text"])
+        #expect(viewModel.imageModels.map(\.modelID) == ["melix-dev-image"])
+    }
+
     @Test("remote server draft saves through app store and clears the API key field")
     @MainActor
     func remoteServerDraftSavesThroughAppStoreAndClearsTheAPIKeyField() throws {
@@ -10068,7 +10095,7 @@ private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> Run
         stateText: "state",
         actionTitle: "action",
         maxContext: 8192,
-        alias: "Melix Dev Text",
+        alias: "Melix Text",
         typeOverrideText: "",
         memoryPolicyText: "Evictable",
         diskStreamingModeText: "Disabled",

@@ -450,7 +450,12 @@ class DownloadPipeline:
 
     @staticmethod
     def _directory_size(path: Path) -> int:
-        return sum(file_path.stat().st_size for file_path in path.rglob("*") if file_path.is_file())
+        total_bytes = 0
+        for root, _dirs, filenames in os.walk(os.fspath(path)):
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                total_bytes += os.path.getsize(file_path)
+        return total_bytes
 
     @staticmethod
     def _load_model_config_payload(model_dir: Path) -> dict[str, Any]:

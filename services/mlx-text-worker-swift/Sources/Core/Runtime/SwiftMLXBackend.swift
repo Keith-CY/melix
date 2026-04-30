@@ -1873,8 +1873,20 @@ private func makePreparedDecodeEvents(
             var decodeTokenEvalCallCount = 0
             var decodeModelEvalSyncTotalMicros = 0
             var decodeModelEvalSyncCallCount = 0
+            var decodeSampleTotalMicros = 0
+            var decodeSampleCallCount = 0
+            var decodeTokenIDTotalMicros = 0
+            var decodeTokenIDCallCount = 0
+            var decodeDetokenizeTotalMicros = 0
+            var decodeDetokenizeCallCount = 0
+            var decodeStreamYieldTotalMicros = 0
+            var decodeStreamYieldCallCount = 0
+            var turboQuantCandidateTotalMicros = 0
+            var turboQuantCandidateCallCount = 0
             var decodeQuantizeTotalMicros = 0
             var prefillQuantizeMicros = decodeState.prefillQuantizeMicros
+            let shouldRecordActiveKVDecodeProbe =
+                normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
 
             let additionalEOSTokenIds = Set(
                 context.configuration.extraEOSTokens.compactMap {
@@ -1921,15 +1933,32 @@ private func makePreparedDecodeEvents(
                     break
                 }
 
-                let tokenEvalStartedAt = Date.timeIntervalSinceReferenceDate
+                let tokenEvalStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
+                let sampleStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
                 let token = sampleNextToken(
                     logits: output.logits,
                     processor: &processor,
                     sampler: sampler
                 )
+                if shouldRecordActiveKVDecodeProbe {
+                    decodeSampleCallCount += 1
+                    decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+                }
+
+                let tokenIDStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
                 let tokenID = token.item(Int.self)
-                decodeTokenEvalCallCount += 1
-                decodeTokenEvalTotalMicros += elapsedMicros(since: tokenEvalStartedAt)
+                if shouldRecordActiveKVDecodeProbe {
+                    decodeTokenIDCallCount += 1
+                    decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
+                    decodeTokenEvalCallCount += 1
+                    decodeTokenEvalTotalMicros += elapsedMicros(since: tokenEvalStartedAt)
+                }
 
                 if tokenID == context.tokenizer.unknownTokenId
                     || tokenID == context.tokenizer.eosTokenId
@@ -1939,9 +1968,24 @@ private func makePreparedDecodeEvents(
                 }
 
                 generatedTokenCount += 1
+                let detokenizeStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
                 detokenizer.append(token: tokenID)
-                if let chunk = detokenizer.next() {
+                let chunk = detokenizer.next()
+                if shouldRecordActiveKVDecodeProbe {
+                    decodeDetokenizeCallCount += 1
+                    decodeDetokenizeTotalMicros += elapsedMicros(since: detokenizeStartedAt)
+                }
+                if let chunk {
+                    let yieldStartedAt = shouldRecordActiveKVDecodeProbe
+                        ? Date.timeIntervalSinceReferenceDate
+                        : 0
                     continuation.yield(.chunk(chunk))
+                    if shouldRecordActiveKVDecodeProbe {
+                        decodeStreamYieldCallCount += 1
+                        decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
+                    }
                 }
 
                 if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
@@ -1951,20 +1995,31 @@ private func makePreparedDecodeEvents(
                 let nextInput = LMInput.Text(tokens: token)
                 if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
                     turboQuantCandidateEligibilityCheckCount += 1
+                    let candidateStartedAt = shouldRecordActiveKVDecodeProbe
+                        ? Date.timeIntervalSinceReferenceDate
+                        : 0
                     didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
                         cache: cache,
                         acceleration: acceleration,
                         candidateProbeEnabled: turboQuantCandidateProbeEnabled
                     )
+                    if shouldRecordActiveKVDecodeProbe {
+                        turboQuantCandidateCallCount += 1
+                        turboQuantCandidateTotalMicros += elapsedMicros(since: candidateStartedAt)
+                    }
                 }
-                let modelStartedAt = Date.timeIntervalSinceReferenceDate
+                let modelStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
                 output = context.model(
                     nextInput[text: .newAxis],
                     cache: cache.isEmpty ? nil : cache,
                     state: output.state
                 )
-                decodeModelCallCount += 1
-                decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                if shouldRecordActiveKVDecodeProbe {
+                    decodeModelCallCount += 1
+                    decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                }
                 if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
                     enabled: shouldForceModelEvalProbe,
                     logits: output.logits
@@ -1992,6 +2047,9 @@ private func makePreparedDecodeEvents(
 
             let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
             let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            let summaryStartedAt = shouldRecordActiveKVDecodeProbe
+                ? Date.timeIntervalSinceReferenceDate
+                : nil
             let activeKVProbe = makeActiveKVProbeSummary(
                 cache: cache,
                 acceleration: acceleration,
@@ -2002,6 +2060,17 @@ private func makePreparedDecodeEvents(
                 decodeTokenEvalCallCount: decodeTokenEvalCallCount,
                 decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
                 decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
+                decodeSampleTotalMicros: decodeSampleTotalMicros,
+                decodeSampleCallCount: decodeSampleCallCount,
+                decodeTokenIDTotalMicros: decodeTokenIDTotalMicros,
+                decodeTokenIDCallCount: decodeTokenIDCallCount,
+                decodeDetokenizeTotalMicros: decodeDetokenizeTotalMicros,
+                decodeDetokenizeCallCount: decodeDetokenizeCallCount,
+                decodeStreamYieldTotalMicros: decodeStreamYieldTotalMicros,
+                decodeStreamYieldCallCount: decodeStreamYieldCallCount,
+                decodeSummaryStartedAt: summaryStartedAt,
+                turboQuantCandidateTotalMicros: turboQuantCandidateTotalMicros,
+                turboQuantCandidateCallCount: turboQuantCandidateCallCount,
                 decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
                 decodeLoopTotalMicros: decodeLoopTotalMicros,
                 decodeTokenCount: generatedTokenCount,
@@ -2105,6 +2174,17 @@ private func makeActiveKVProbeSummary(
     decodeTokenEvalCallCount: Int,
     decodeModelEvalSyncTotalMicros: Int,
     decodeModelEvalSyncCallCount: Int,
+    decodeSampleTotalMicros: Int = 0,
+    decodeSampleCallCount: Int = 0,
+    decodeTokenIDTotalMicros: Int = 0,
+    decodeTokenIDCallCount: Int = 0,
+    decodeDetokenizeTotalMicros: Int = 0,
+    decodeDetokenizeCallCount: Int = 0,
+    decodeStreamYieldTotalMicros: Int = 0,
+    decodeStreamYieldCallCount: Int = 0,
+    decodeSummaryStartedAt: TimeInterval? = nil,
+    turboQuantCandidateTotalMicros: Int = 0,
+    turboQuantCandidateCallCount: Int = 0,
     decodeQuantizeTotalMicros: Int,
     decodeLoopTotalMicros: Int,
     decodeTokenCount: Int,
@@ -2156,6 +2236,18 @@ private func makeActiveKVProbeSummary(
         decodeTokenEvalCallCount: decodeTokenEvalCallCount,
         decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
         decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
+        decodeSampleTotalMicros: decodeSampleTotalMicros,
+        decodeSampleCallCount: decodeSampleCallCount,
+        decodeTokenIDTotalMicros: decodeTokenIDTotalMicros,
+        decodeTokenIDCallCount: decodeTokenIDCallCount,
+        decodeDetokenizeTotalMicros: decodeDetokenizeTotalMicros,
+        decodeDetokenizeCallCount: decodeDetokenizeCallCount,
+        decodeStreamYieldTotalMicros: decodeStreamYieldTotalMicros,
+        decodeStreamYieldCallCount: decodeStreamYieldCallCount,
+        decodeSummaryTotalMicros: decodeSummaryStartedAt.map(elapsedMicros) ?? 0,
+        decodeSummaryCallCount: decodeSummaryStartedAt == nil ? 0 : 1,
+        turboQuantCandidateTotalMicros: turboQuantCandidateTotalMicros,
+        turboQuantCandidateCallCount: turboQuantCandidateCallCount,
         decodeQuantizeTotalMicros: decodeQuantizeTotalMicros,
         decodeLoopTotalMicros: decodeLoopTotalMicros,
         decodeTokenCount: decodeTokenCount,

@@ -42,6 +42,14 @@ def test_models_endpoint_reports_the_discovered_dev_model_before_first_text_requ
         assert payload["object"] == "list"
         model_rows = {item["id"]: item for item in payload["data"]}
         assert model_rows["melix-dev-text"]["melix_state"] == "discovered"
+        assert "melix-dev-model-ops" not in model_rows
+        assert model_rows["melix-dev-text"]["metadata"]["melix.display_name"] == "Melix Text"
+        assert model_rows["melix-dev-text"]["metadata"]["melix.kind"] == "text"
+        assert (
+            model_rows["melix-dev-text"]["metadata"]["melix.capability.supported_tasks"]
+            == "generate"
+        )
+        assert "melix.model_path" not in model_rows["melix-dev-text"]["metadata"]
     finally:
         stack.stop()
 

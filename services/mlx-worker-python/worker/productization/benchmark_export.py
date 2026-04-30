@@ -319,13 +319,14 @@ def build_comparison_table(runs: list[dict[str, object]]) -> str:
 
     all_metric_names: list[str] = []
     seen: set[str] = set()
+    metric_values_by_run: list[dict[str, float]] = []
     for run in runs:
-        for result in run.get("benchmark_results", []):
-            for metric in result.get("metrics", []):
-                name = metric.get("name", "")
-                if name and name not in seen:
-                    all_metric_names.append(name)
-                    seen.add(name)
+        metric_values = _collect_metric_values(run)
+        metric_values_by_run.append(metric_values)
+        for name in metric_values:
+            if name not in seen:
+                all_metric_names.append(name)
+                seen.add(name)
 
     if not all_metric_names:
         return ""
@@ -337,8 +338,8 @@ def build_comparison_table(runs: list[dict[str, object]]) -> str:
     rows: list[str] = []
     for metric_name in all_metric_names:
         cells: list[str] = []
-        for run in runs:
-            value = _find_metric_value(run, metric_name)
+        for metric_values in metric_values_by_run:
+            value = metric_values.get(metric_name)
             cells.append(f"{value:.2f}" if value is not None else "-")
         rows.append(f"| {metric_name} | " + " | ".join(cells) + " |")
 
@@ -358,15 +359,15 @@ def _run_label(run: dict[str, object], index: int) -> str:
     return f"run-{index}"
 
 
-def _find_metric_value(
-    run: dict[str, object],
-    metric_name: str,
-) -> float | None:
+def _collect_metric_values(run: dict[str, object]) -> dict[str, float]:
+    metric_values: dict[str, float] = {}
     for result in run.get("benchmark_results", []):
         for metric in result.get("metrics", []):
-            if metric.get("name") == metric_name:
-                return float(metric["value"])
-    return None
+            name = metric.get("name", "")
+            if not name or name in metric_values:
+                continue
+            metric_values[name] = float(metric["value"])
+    return metric_values
 
 
 def _resolve_artifact_root(
@@ -421,6 +422,33 @@ def _iter_sorted_child_directories(parent: Path) -> tuple[Path, ...]:
     return tuple(parent / name for name in sorted(names))
 
 
+def _iter_sorted_matching_files(parent: Path, *, prefix: str, suffix: str) -> tuple[Path, ...]:
+    try:
+        names: list[str] = []
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                name = entry.name
+                if not name.startswith(prefix) or not name.endswith(suffix):
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                names.append(name)
+    except OSError:
+        return ()
+    return tuple(parent / name for name in sorted(names))
+
+
+def _load_json_object(path: Path) -> dict[str, object]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"expected JSON object in {path}")
+    return payload
+
+
 def _collect_benchmark_run(
     run_root: Path,
     *,
@@ -432,9 +460,9 @@ def _collect_benchmark_run(
     summary_path = run_root / "bench-summary.json"
     job_path = run_root / "bench-job.json"
     if summary_path.is_file():
-        summary_rows.append(json.loads(summary_path.read_text(encoding="utf-8")))
+        summary_rows.append(_load_json_object(summary_path))
     elif job_path.is_file():
-        summary_rows.append(json.loads(job_path.read_text(encoding="utf-8")))
+        summary_rows.append(_load_json_object(job_path))
 
     context_path = run_root / "bench-context-rows.jsonl"
     if context_path.is_file():
@@ -444,9 +472,8 @@ def _collect_benchmark_run(
     if batch_path.is_file():
         batch_rows.extend(_iter_jsonl_dict_rows(batch_path))
 
-    for result_path in sorted(run_root.glob("bench-result-*.json")):
-        if result_path.is_file():
-            results.append(json.loads(result_path.read_text(encoding="utf-8")))
+    for result_path in _iter_sorted_matching_files(run_root, prefix="bench-result-", suffix=".json"):
+        results.append(_load_json_object(result_path))
 
 
 def _collect_benchmark_matrix_run(
@@ -458,7 +485,7 @@ def _collect_benchmark_matrix_run(
 ) -> None:
     job_path = run_root / "bench-matrix-job.json"
     if job_path.is_file():
-        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+        jobs.append(_load_json_object(job_path))
 
     summary_path = run_root / "bench-matrix-summary.jsonl"
     if summary_path.is_file():
@@ -738,16 +765,16 @@ def _collect_evaluation_run(
 ) -> None:
     job_path = run_root / "evaluation-job.json"
     if job_path.is_file():
-        jobs.append(json.loads(job_path.read_text(encoding="utf-8")))
+        jobs.append(_load_json_object(job_path))
 
     result_path = run_root / "evaluation-result.json"
     if result_path.is_file():
-        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result = _load_json_object(result_path)
         results.append(result)
 
     summary_path = run_root / "evaluation-summary.json"
     if summary_path.is_file():
-        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+        summaries.append(_load_json_object(summary_path))
     elif job_path.is_file() and result_path.is_file():
         summaries.append(_build_evaluation_summary_row(jobs[-1], results[-1]))
 
@@ -759,13 +786,13 @@ def _collect_evaluation_run(
     if not compare_job_path.is_file():
         return
 
-    compare_job = json.loads(compare_job_path.read_text(encoding="utf-8"))
+    compare_job = _load_json_object(compare_job_path)
     compare_jobs.append(compare_job)
     jobs.append(_normalize_evaluation_compare_job(compare_job))
 
     compare_summary_path = run_root / "evaluation-compare-summary.json"
     if compare_summary_path.is_file():
-        compare_summary_payload = json.loads(compare_summary_path.read_text(encoding="utf-8"))
+        compare_summary_payload = _load_json_object(compare_summary_path)
         for summary in _compare_target_summaries(compare_summary_payload):
             results.append(_normalize_evaluation_compare_result(summary))
             summaries.append(_normalize_evaluation_compare_summary_row(compare_job, summary))

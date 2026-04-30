@@ -1633,6 +1633,52 @@ def test_upload_receipt_pipeline_resolve_source_artifact_and_linked_quantization
     }
 
 
+def test_upload_receipt_pipeline_collect_published_file_list_filters_and_sorts(tmp_path: Path) -> None:
+    source_root = tmp_path / "model"
+    source_root.mkdir()
+    (source_root / "aa.bin").write_text("weights", encoding="utf-8")
+    nested_root = source_root / "sub"
+    nested_root.mkdir()
+    (nested_root / "zz.bin").write_text("meta", encoding="utf-8")
+    nested_root.joinpath("aa.bin").write_text("meta2", encoding="utf-8")
+    (source_root / "README.md").write_text("meta", encoding="utf-8")
+
+    files = UploadReceiptPipeline._collect_published_file_list(source_root)
+    assert files == [
+        "README.md",
+        "aa.bin",
+        "sub/aa.bin",
+        "sub/zz.bin",
+    ]
+
+
+def test_prepare_publish_source_uses_collected_file_list_for_directory(tmp_path: Path) -> None:
+    pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "a.bin").write_text("artifact", encoding="utf-8")
+    nested_root = source_root / "nested"
+    nested_root.mkdir()
+    (nested_root / "b.bin").write_text("artifact", encoding="utf-8")
+
+    descriptor = SourceArtifactDescriptor(
+        artifact_path=str(source_root),
+        artifact_kind="model",
+        schema_version="",
+        manifest_path="",
+        source_model="melix-dev-text",
+        manifest_payload=None,
+    )
+    prepared = pipeline._prepare_publish_source(
+        descriptor,
+        receipt_dir=tmp_path / "receipt",
+        target_repo="melix/dev",
+        export_artifact_kind="model_export",
+    )
+    assert prepared.source_path == source_root
+    assert prepared.published_files == ["a.bin", "nested/b.bin"]
+
+
 def test_upload_receipt_pipeline_requires_target_repo_and_valid_adapter_bundle(tmp_path: Path) -> None:
     pipeline = UploadReceiptPipeline(publisher=FakePublishBackend())
 
