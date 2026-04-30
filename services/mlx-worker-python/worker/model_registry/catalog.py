@@ -308,7 +308,19 @@ def _is_hf_cache_snapshot_dir(root: Path, model_dir: Path) -> bool:
         relative_parts = model_dir.relative_to(root).parts
     except ValueError:
         return False
-    return len(relative_parts) >= 3 and relative_parts[0].startswith("models--") and relative_parts[1] == "snapshots"
+    if len(relative_parts) < 3 or relative_parts[1] != "snapshots":
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
+
+
+def _is_hf_cache_pruned_subtree(root: Path, current: Path) -> bool:
+    try:
+        relative_parts = current.relative_to(root).parts
+    except ValueError:
+        return False
+    if len(relative_parts) < 2 or relative_parts[1] not in {"snapshots", "refs"}:
+        return False
+    return _hf_cache_repo_id(root / relative_parts[0]) is not None
 
 
 def _local_model_id(root: Path, model_dir: Path) -> str:
@@ -1144,10 +1156,13 @@ class WorkerModelCatalog:
     def _scan_registry_root_tree(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
         manifest_paths: list[Path] = []
         plain_local_model_dirs: list[Path] = []
-        stack = [root.resolve()]
+        resolved_root = root.resolve()
+        stack = [resolved_root]
         while stack:
             current = stack.pop()
             if current.name in {"blobs", ".git", "__pycache__"}:
+                continue
+            if _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
             manifest_path = current / "manifest.json"
             if manifest_path.is_file():
