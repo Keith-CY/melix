@@ -3307,7 +3307,7 @@ class MaintenanceCore:
             else:
                 default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
                 values.append(max(1, len(default_prompt.split())))
-        return tuple(dict.fromkeys(sorted(values)))
+        return tuple(sorted(set(values)))
 
     @staticmethod
     def _benchmark_batch_sizes(parameters: dict[str, str]) -> tuple[int, ...]:
@@ -3331,7 +3331,7 @@ class MaintenanceCore:
                     values.append(1)
             else:
                 values.append(1)
-        return tuple(dict.fromkeys(sorted(values)))
+        return tuple(sorted(set(values)))
 
     def _suite_prompt_for_context(self, suite: ResolvedBenchmarkSuite, *, context_length: int) -> str:
         prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
