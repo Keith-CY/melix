@@ -125,7 +125,7 @@ struct DesktopModelsTabView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
-            MelixSectionCard("Model Registry") {
+            DesktopRegistryBroadsheetSection("Model Registry") {
                 VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
                     HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.md) {
                         DesktopRegistryTextField(
@@ -153,6 +153,7 @@ struct DesktopModelsTabView: View {
                         .toggleStyle(.checkbox)
                         Button("Search", action: searchHubModelsAction())
                             .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
                             .fixedSize(horizontal: true, vertical: false)
                     }
 
@@ -180,7 +181,7 @@ struct DesktopModelsTabView: View {
             DesktopRegistryRootsSectionView(viewModel: viewModel)
 
             if let primaryModel = viewModel.primaryModel {
-                MelixSectionCard("Model Settings") {
+                DesktopRegistryBroadsheetSection("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(primaryModel.displayName)
                             .font(.headline)
@@ -508,6 +509,26 @@ private struct DesktopRegistrySecureField: View {
     }
 }
 
+private struct DesktopRegistryBroadsheetSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+            Text(title).melixSectionLabel()
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, MelixDesignTokens.Spacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct DesktopModelRegistryEntriesView: View {
     let viewModel: RuntimeViewModel
 
@@ -537,7 +558,7 @@ struct DesktopModelRegistryEntriesView: View {
     }
 
     private var registryList: some View {
-        MelixSectionCard("Unified Model List") {
+        DesktopRegistryBroadsheetSection("Unified Model List") {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
                 if entries.isEmpty {
                     Text("No registry entries.")
@@ -562,7 +583,7 @@ struct DesktopModelRegistryEntriesView: View {
     }
 
     private var modelCard: some View {
-        MelixSectionCard("Model Card") {
+        DesktopRegistryInspectorPane("Model Card") {
             if let card = selectedCard {
                 DesktopHubModelCardContent(card: card)
             } else if let entry = entries.first {
@@ -641,6 +662,32 @@ struct DesktopModelRegistryEntriesView: View {
     }
 }
 
+private struct DesktopRegistryInspectorPane<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            Text(title).melixSectionLabel()
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, MelixDesignTokens.Spacing.md)
+        .padding(.vertical, MelixDesignTokens.Spacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color.secondary.opacity(MelixDesignTokens.StrokeOpacity.interactive))
+                .frame(width: 1)
+        }
+    }
+}
+
 private struct DesktopRegistryEntryRowView: View {
     let entry: RuntimeRegistryEntryState
     let localModel: RuntimeModelRow?
@@ -651,11 +698,11 @@ private struct DesktopRegistryEntryRowView: View {
     let toggleLoad: (() -> Void)?
 
     var body: some View {
-        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.md) {
-            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
                 HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
                     Text(entry.title)
-                        .font(.headline)
+                        .font(.callout.weight(.semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     DesktopRegistryBadgeView(
@@ -706,33 +753,58 @@ private struct DesktopRegistryEntryRowView: View {
 
             Spacer(minLength: MelixDesignTokens.Spacing.md)
 
-            VStack(alignment: .trailing, spacing: MelixDesignTokens.Spacing.sm) {
+            VStack(alignment: .trailing, spacing: MelixDesignTokens.Spacing.xs) {
                 if let latencyProfile {
                     Button("Latency Profile", action: latencyProfile)
                         .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 if let localModel, let toggleLoad {
                     Button(localModel.actionTitle, action: toggleLoad)
                         .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 if let inspect {
                     Button("Details", action: inspect)
                         .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 if let download {
                     Button("Download", action: download)
                         .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .disabled(!entry.canDownload)
                         .fixedSize(horizontal: true, vertical: false)
                 }
             }
         }
-        .padding(MelixDesignTokens.Spacing.md)
+        .padding(.horizontal, MelixDesignTokens.Spacing.md)
+        .padding(.vertical, MelixDesignTokens.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .melixSelection(isSelected)
+        .desktopRegistryRowBackground(isSelected)
+    }
+}
+
+private struct DesktopRegistryRowBackground: ViewModifier {
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                isSelected
+                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                    : Color.secondary.opacity(DesktopRegistryVisuals.rowSurfaceOpacity),
+                in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
+            )
+    }
+}
+
+private extension View {
+    func desktopRegistryRowBackground(_ isSelected: Bool) -> some View {
+        modifier(DesktopRegistryRowBackground(isSelected: isSelected))
     }
 }
 
@@ -886,7 +958,7 @@ private struct DesktopRegistryRunSuitabilityEvidenceView: View {
             if !recommendedAction.isEmpty {
                 Text("Recommended action: \(recommendedAction)")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             if gated {
@@ -897,15 +969,15 @@ private struct DesktopRegistryRunSuitabilityEvidenceView: View {
             ForEach(reasons.prefix(4), id: \.self) { reason in
                 Text(reason)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(MelixDesignTokens.Spacing.sm)
         .background(
-            Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
-            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+            Color.secondary.opacity(DesktopRegistryVisuals.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
         )
     }
 }
@@ -919,15 +991,15 @@ private struct DesktopRegistryMetricTileView: View {
             Text(title).melixSectionLabel()
             Text(value.isEmpty ? "unknown" : value)
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.primary.opacity(0.72))
                 .lineLimit(2)
                 .truncationMode(.middle)
         }
         .padding(MelixDesignTokens.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
-            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+            Color.secondary.opacity(DesktopRegistryVisuals.metricSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
         )
     }
 }
@@ -942,7 +1014,7 @@ private struct DesktopRegistryTokenListView: View {
                 Text(title).melixSectionLabel()
                 Text(values.joined(separator: ", "))
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
         }
@@ -980,13 +1052,17 @@ private struct DesktopRegistryMetadataChipView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(
-                Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
+                Color.secondary.opacity(DesktopRegistryVisuals.chipSurfaceOpacity),
                 in: Capsule()
             )
     }
 }
 
 private enum DesktopRegistryVisuals {
+    static let rowSurfaceOpacity = 0.032
+    static let metricSurfaceOpacity = 0.032
+    static let chipSurfaceOpacity = 0.035
+
     static func fitColor(_ text: String) -> Color {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch normalized {
@@ -1022,7 +1098,7 @@ private struct DesktopRegistryRootsSectionView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        MelixSectionCard("Registry Roots") {
+        DesktopRegistryBroadsheetSection("Registry Roots") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
