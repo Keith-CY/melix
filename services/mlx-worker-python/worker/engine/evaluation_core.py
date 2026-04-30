@@ -248,16 +248,17 @@ class EvaluationCore:
         job_parameters.update(runtime_evidence)
         if EvaluationCore._truthy_parameter(job_parameters, "require_live_model"):
             EvaluationCore._validate_required_live_model(runtime_evidence, operation="evaluation")
+        combined_samples = [*few_shot_examples, *selected]
         self._validate_task_kind_against_dataset(
             dataset_id=str(manifest["dataset_id"]),
-            samples=list(few_shot_examples) + list(selected),
+            samples=combined_samples,
             manifest_input_modalities=manifest_input_modalities,
             task_kind=resolved_task_kind,
         )
         self._validate_live_multimodal_execution(
             loaded_model=loaded_model,
             manifest_input_modalities=manifest_input_modalities,
-            samples=list(few_shot_examples) + list(selected),
+            samples=combined_samples,
             task_kind=resolved_task_kind,
         )
         resolved_model_id = (
@@ -997,7 +998,7 @@ class EvaluationCore:
         few_shot: int,
         seed: int,
     ) -> tuple[tuple[dict[str, object], ...], list[dict[str, object]]]:
-        ordered = list(samples)
+        ordered = list(samples) if seed > 0 else samples
         if seed > 0:
             random.Random(seed).shuffle(ordered)
         bounded_sample_size = max(sample_size, 0)

@@ -362,6 +362,86 @@ def test_load_dataset_samples_streams_jsonl_and_skips_blank_lines(tmp_path: Path
     ]
 
 
+def test_plan_evaluation_samples_preserves_order_without_shuffle() -> None:
+    samples = [
+        {"id": "first"},
+        {"id": "second"},
+        {"id": "third"},
+    ]
+
+    few_shot_examples, selected = EvaluationCore._plan_evaluation_samples(
+        samples=samples,
+        sample_size=-5,
+        few_shot=2,
+        seed=0,
+    )
+
+    assert few_shot_examples == ({"id": "first"}, {"id": "second"})
+    assert selected == []
+    assert samples == [
+        {"id": "first"},
+        {"id": "second"},
+        {"id": "third"},
+    ]
+
+
+def test_run_local_suite_reuses_combined_sample_list_for_validators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev",
+        suite_id="mmlu",
+        samples=(
+            {"prompt": "2+2?", "expected": "4"},
+            {"prompt": "3+3?", "expected": "6"},
+        ),
+    )
+    backend = ScriptedEvaluationBackend(("Answer: 4", "Answer: 6"))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    validator_sample_ids: list[int] = []
+    original_task_kind_validator = EvaluationCore._validate_task_kind_against_dataset
+    original_live_validator = EvaluationCore._validate_live_multimodal_execution
+
+    def capture_task_kind_validator(**kwargs: object) -> None:
+        validator_sample_ids.append(id(kwargs["samples"]))
+        original_task_kind_validator(**kwargs)
+
+    def capture_live_validator(**kwargs: object) -> None:
+        validator_sample_ids.append(id(kwargs["samples"]))
+        original_live_validator(**kwargs)
+
+    monkeypatch.setattr(
+        EvaluationCore,
+        "_validate_task_kind_against_dataset",
+        staticmethod(capture_task_kind_validator),
+    )
+    monkeypatch.setattr(
+        EvaluationCore,
+        "_validate_live_multimodal_execution",
+        staticmethod(capture_live_validator),
+    )
+
+    runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=2,
+        few_shot=1,
+        seed=0,
+        scoring_mode="multiple_choice_accuracy",
+        code_exec_policy="disabled",
+    )
+
+    assert len(validator_sample_ids) == 2
+    assert validator_sample_ids[0] == validator_sample_ids[1]
+
+
 def test_run_local_suite_streams_samples_jsonl_without_read_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
