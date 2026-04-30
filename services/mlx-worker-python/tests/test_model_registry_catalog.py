@@ -599,6 +599,32 @@ def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_f
 
 
 
+def test_registry_root_tree_detects_descriptors_during_single_scandir_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    manifest_dir = root / "manifest-model"
+    config_dir = root / "plain-model"
+    _write_registry_manifest(manifest_dir, model_id="manifest-model")
+    _write_model_config(config_dir, {"model_type": "qwen3"})
+
+    original_is_file = Path.is_file
+
+    def fail_descriptor_is_file(self: Path) -> bool:
+        if self.name in {"manifest.json", "config.json"}:
+            raise AssertionError("expected descriptor detection from os.scandir entries")
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", fail_descriptor_is_file)
+
+    manifest_paths, plain_dirs = WorkerModelCatalog._scan_registry_root_tree(root)
+
+    assert manifest_paths == (manifest_dir.resolve() / "manifest.json",)
+    assert plain_dirs == (config_dir.resolve(),)
+
+
+
 def test_registry_root_tree_prunes_hf_cache_snapshot_and_refs_subtrees(tmp_path: Path) -> None:
     root = tmp_path / "root"
     snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
