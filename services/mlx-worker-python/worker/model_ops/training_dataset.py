@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from dataclasses import replace
 import os
@@ -91,6 +92,16 @@ class BuiltTrainingDatasetArtifact:
     validation_sample_count: int
     format: str
     inspect_only: bool
+
+
+def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        wrote_any = False
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+            wrote_any = True
+        if not wrote_any:
+            handle.write("\n")
 
 
 def load_training_dataset_package(
@@ -421,16 +432,10 @@ def build_training_dataset_artifact(
     manifest_payload["schema_version"] = "melix.training_dataset_package.v1"
     manifest_path = package_path / "manifest.json"
     samples_path = package_path / "samples.jsonl"
-    samples_path.write_text(
-        "\n".join(json.dumps(sample) for sample in train_samples) + "\n",
-        encoding="utf-8",
-    )
+    _write_jsonl_rows(samples_path, train_samples)
     valid_path = package_path / "valid.jsonl"
     if validation_samples:
-        valid_path.write_text(
-            "\n".join(json.dumps(sample) for sample in validation_samples) + "\n",
-            encoding="utf-8",
-        )
+        _write_jsonl_rows(valid_path, validation_samples)
     elif valid_path.exists():
         valid_path.unlink()
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
@@ -472,18 +477,10 @@ def write_normalized_dataset_snapshot(
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
 
-    serialized_samples = [json.dumps(sample) for sample in dataset.normalized_samples]
-    samples_path.write_text("\n".join(serialized_samples) + "\n", encoding="utf-8")
-    train_path.write_text("\n".join(serialized_samples) + "\n", encoding="utf-8")
+    _write_jsonl_rows(samples_path, dataset.normalized_samples)
+    shutil.copyfile(samples_path, train_path)
     if dataset.normalized_validation_samples:
-        serialized_validation_samples = [
-            json.dumps(sample)
-            for sample in dataset.normalized_validation_samples
-        ]
-        valid_path.write_text(
-            "\n".join(serialized_validation_samples) + "\n",
-            encoding="utf-8",
-        )
+        _write_jsonl_rows(valid_path, dataset.normalized_validation_samples)
     else:
         valid_path = None
 
@@ -584,15 +581,9 @@ def materialize_hf_training_dataset_package(
         "text_feature": resolved_reference.text_feature,
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
-    samples_path.write_text(
-        "\n".join(json.dumps(sample) for sample in serialized_samples) + "\n",
-        encoding="utf-8",
-    )
+    _write_jsonl_rows(samples_path, serialized_samples)
     if serialized_validation_samples:
-        (package_path / "valid.jsonl").write_text(
-            "\n".join(json.dumps(sample) for sample in serialized_validation_samples) + "\n",
-            encoding="utf-8",
-        )
+        _write_jsonl_rows(package_path / "valid.jsonl", serialized_validation_samples)
     return MaterializedTrainingDatasetPackage(
         package_path=package_path,
         cache_key=cache_key,

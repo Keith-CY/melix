@@ -601,6 +601,40 @@ def test_materialize_hf_training_dataset_rejects_empty_validation_split(tmp_path
     assert exc.value.code == "hf_dataset_fetch_failed"
 
 
+def test_materialize_hf_training_dataset_writes_validation_split_jsonl(tmp_path: Path) -> None:
+    reference = HFDatasetReference(
+        dataset_path="melix/demo-hf",
+        dataset_name="default",
+        dataset_revision="main",
+        train_split="train",
+        chat_feature="",
+        prompt_feature="p",
+        completion_feature="c",
+        text_feature="",
+        valid_split="validation",
+    )
+
+    def fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        if endpoint != "rows":
+            return {"splits": [{"split": "train", "config": "default"}]}
+        if params["split"] == "validation":
+            return {"rows": [{"row": {"p": "holdout", "c": "answer"}}]}
+        return {"rows": [{"row": {"p": "hello", "c": "world"}}]}
+
+    package = materialize_hf_training_dataset_package(
+        reference,
+        cache_root=tmp_path / "datasets",
+        fetch_json=fetcher,
+    )
+
+    assert (package.package_path / "samples.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "hello", "completion": "world"}\n'
+    )
+    assert (package.package_path / "valid.jsonl").read_text(encoding="utf-8") == (
+        '{"prompt": "holdout", "completion": "answer"}\n'
+    )
+
+
 def test_hf_dataset_helpers_cover_paging_and_direct_chat_paths(tmp_path: Path) -> None:
     reference = HFDatasetReference(
         dataset_path="melix/demo-hf",
