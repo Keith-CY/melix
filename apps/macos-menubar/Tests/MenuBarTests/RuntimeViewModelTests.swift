@@ -3012,6 +3012,27 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["hub.local_fit_estimated_resident_bytes"] == 70_200_000_000)
     }
 
+    @Test("model registry entries and non timing registry probes use cached value state")
+    func modelRegistryEntriesAndNonTimingRegistryProbesUseCachedValueState() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repoRoot.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        #expect(source.contains("func record(name: String, value: Double)"))
+        #expect(source.contains("public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []"))
+        #expect(source.contains("public var modelRegistryEntries: [RuntimeRegistryEntryState] {") == false)
+        #expect(source.contains("registry.unified_entry_count\", valueMs") == false)
+        #expect(source.contains("hub.local_fit_estimated_resident_bytes\", valueMs") == false)
+        #expect(source.contains("registry.blocked_download_attempt_count\", valueMs") == false)
+    }
+
     @Test("blocked hub download is prevented while heavy remains allowed")
     @MainActor
     func blockedHubDownloadIsPreventedWhileHeavyRemainsAllowed() async throws {

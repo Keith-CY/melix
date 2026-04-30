@@ -935,6 +935,27 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedHubModelCard == nil)
     }
 
+    @Test("model registry local card does not label model state as a recommendation")
+    @MainActor
+    func modelRegistryLocalCardDoesNotLabelModelStateAsRecommendation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [
+            makeMenuBarModelSummary(modelID: "melix-local-warm", state: .modelWarm),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let view = hostView(DesktopModelRegistryEntriesView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Recommended action: Warm") == false)
+        #expect(renderedTexts.contains("Recommended action: warm") == false)
+    }
+
     @Test("model registry covers cache missing managed blocked unknown and gated branches")
     @MainActor
     func modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches() async throws {
@@ -1003,6 +1024,14 @@ struct DesktopFoundationViewTests {
         card.pipelineTag = unknown.pipelineTag
         card.mlxCompatible = true
         card.localFitStatus = "unknown"
+        card.localFitReasons = [
+            "MLX-compatible Hub metadata found.",
+            "No artifact size metadata",
+            "Local memory probe is unavailable.",
+            "Quantization metadata is missing.",
+            "Sibling file sizes are incomplete.",
+            "README size hint was not model-specific.",
+        ]
         card.gated = true
         card.recommendedAction = "inspect_metadata"
         await client.configureHubModelCard(card)
@@ -1046,6 +1075,7 @@ struct DesktopFoundationViewTests {
         #expect(gatedView.subviews.isEmpty == false)
         #expect(viewModel.selectedHubModelCard?.gated == true)
         #expect(viewModel.selectedHubModelCard?.runSuitabilityText == "Unknown")
+        #expect(viewModel.selectedHubModelCard?.localFitReasons.count == 6)
 
         let rows = viewModel.desktopFoundationState.models
         await registryView.applyLatencyProfile(to: rows.first { $0.modelID == "melix-warm" })

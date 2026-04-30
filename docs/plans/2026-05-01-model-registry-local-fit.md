@@ -25,9 +25,9 @@ The worker evaluates each `HubModelSummary` and `HubModelCard` with the same rul
 
 1. Reject non-MLX models as `blocked`.
 2. Reject Melix-unsupported pipeline tags as `blocked`.
-3. Reject gated repositories as `blocked` until access is available.
-4. Estimate artifact bytes from Hub storage or sibling file sizes, then README/model-card size hints as a fallback.
-5. Estimate resident bytes from artifact bytes or safetensors parameter count and quantization tags.
+3. Reject hard-gated repositories as `blocked` until access is available; Hub `gated="auto"` remains a soft-access signal and does not block download by itself.
+4. Estimate artifact bytes from Hub storage or weight/config sibling file sizes, then explicit README/model-card model-size hints as a fallback.
+5. Estimate resident bytes from artifact bytes or safetensors parameter count and quantization tags, including FP32/float32/f32 as four bytes per parameter.
 6. Return `unknown` when size metadata is missing.
 7. Return `heavy` when estimated resident bytes exceed 60% of probed local memory.
 8. Return `good` when metadata is MLX-compatible and estimated resident bytes fit the comfort budget.
@@ -121,3 +121,27 @@ overall:
 - `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: 100.00% (0/0 changed executable lines)
 - `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: 100.00% (11/11)
 - Total: 100.00% (81/81)
+
+Review-request follow-up on 2026-05-01:
+
+- Hub sibling-size estimation now ignores sibling records that omit `rfilename` or are not weight/config artifacts.
+- FP32 parameter metadata is estimated at four bytes per parameter.
+- `gated="auto"` is treated as a soft Hub access state rather than a hard local-fit block.
+- README/model-card size fallback only accepts explicit model-size hints, avoiding batch/context/vocab-size matches.
+- Registry count/byte probes use generic metric values instead of timing-only `valueMs`.
+- `RuntimeViewModel` caches unified registry entries and refreshes them when local models, managed downloads, or Hub results change.
+- Hub search/card download gating now shares one local-fit protocol implementation.
+- Local/managed registry cards no longer render state text as a recommended action.
+- Run-suitability evidence reports when additional reasons are hidden instead of silently truncating.
+- CLI human output now uses `local_fit_status` and formats resident bytes with binary units while JSON remains numeric.
+- The Hugging Face publish backend shares the same deterministic published-file collector as upload receipts, restoring the maintenance-service test path.
+
+Review follow-up verification:
+
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_hub_catalog.py -q`: 20 passed.
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_maintenance_service.py -q`: 157 passed.
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --filter 'MelixCLIRunnerTests'`: 145 tests passed.
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`: 368 tests passed.
+- `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" COVERAGE_FILE=/tmp/model-registry-review-python.coverage uv run --project services/mlx-worker-python coverage run --source=services/mlx-worker-python/worker,services/mlx-worker-python/tests -m pytest services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_maintenance_service.py -q && PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" COVERAGE_FILE=/tmp/model-registry-review-python.coverage uv run --project services/mlx-worker-python coverage json -o /tmp/model-registry-review-python-coverage.json && python3 scripts/python_changed_line_coverage.py --coverage-json /tmp/model-registry-review-python-coverage.json services/mlx-worker-python/worker/model_ops/hub_catalog.py services/mlx-worker-python/worker/engine/maintenance_core.py services/mlx-worker-python/worker/model_ops/upload_receipt_pipeline.py services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_maintenance_service.py`: 98.78% changed-line coverage (81/82).
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --enable-code-coverage --filter 'MelixCLIRunnerTests' && python3 scripts/swift_changed_line_coverage.py --binary .build/arm64-apple-macosx/debug/melixPackageTests.xctest/Contents/MacOS/melixPackageTests --profdata .build/arm64-apple-macosx/debug/codecov/default.profdata Sources/MelixCLICore/MelixCLI.swift tests/MelixCLITests/MelixCLIRunnerTests.swift`: 95.45% changed-line coverage (21/22).
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests' && python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: 100.00% changed-line coverage (89/89).

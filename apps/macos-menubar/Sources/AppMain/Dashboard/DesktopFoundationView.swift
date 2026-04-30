@@ -403,7 +403,7 @@ struct DesktopModelsTabView: View {
     func applyLatencyProfile(to model: RuntimeModelRow) async {
         await viewModel.updateModelSettings(
             modelID: model.modelID,
-            alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
+            alias: model.alias.isEmpty ? DesktopModelRegistryDefaults.latencyProfileAlias : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
             diskStreamingMode: "disabled",
@@ -621,7 +621,7 @@ struct DesktopModelRegistryEntriesView: View {
         }
         await viewModel.updateModelSettings(
             modelID: model.modelID,
-            alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
+            alias: model.alias.isEmpty ? DesktopModelRegistryDefaults.latencyProfileAlias : model.alias,
             pinOnLoad: true,
             memoryPolicy: "pinned",
             diskStreamingMode: "disabled",
@@ -891,7 +891,7 @@ private struct DesktopRegistryEntryCardContent: View {
                 statusText: entry.runSuitabilityText,
                 reasons: localFitReasons,
                 gated: false,
-                recommendedAction: entry.statusText
+                recommendedAction: ""
             )
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: MelixDesignTokens.Spacing.sm)], spacing: MelixDesignTokens.Spacing.sm) {
@@ -971,6 +971,12 @@ private struct DesktopRegistryRunSuitabilityEvidenceView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+            }
+            if reasons.count > 4 {
+                Text("\(reasons.count - 4) more run-suitability reasons hidden.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1058,6 +1064,29 @@ private struct DesktopRegistryMetadataChipView: View {
     }
 }
 
+private enum DesktopModelRegistryDefaults {
+    static let latencyProfileAlias = "Melix Text Turbo"
+}
+
+private enum DesktopRegistrySourceKind {
+    case local
+    case managedDownload
+    case huggingFace
+    case unknown
+
+    init(text: String) {
+        self = .unknown
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "local" {
+            self = .local
+        } else if normalized == "managed download" {
+            self = .managedDownload
+        } else if normalized == "hugging face" {
+            self = .huggingFace
+        }
+    }
+}
+
 private enum DesktopRegistryVisuals {
     static let rowSurfaceOpacity = 0.032
     static let metricSurfaceOpacity = 0.032
@@ -1080,15 +1109,14 @@ private enum DesktopRegistryVisuals {
     }
 
     static func sourceColor(_ text: String) -> Color {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        switch normalized {
-        case "local":
+        switch DesktopRegistrySourceKind(text: text) {
+        case .local:
             return MelixDesignTokens.StatusColor.success
-        case "managed download":
+        case .managedDownload:
             return MelixDesignTokens.StatusColor.warning
-        case "hugging face":
+        case .huggingFace:
             return MelixDesignTokens.StatusColor.info
-        default:
+        case .unknown:
             return .secondary
         }
     }

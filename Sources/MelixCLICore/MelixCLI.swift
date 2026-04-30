@@ -5253,11 +5253,11 @@ public actor MelixCLIRunner {
                 model.pipelineTag,
                 model.mlxCompatible ? "mlx" : "generic",
                 model.localFitStatus.isEmpty ? "unknown" : model.localFitStatus,
-                String(model.estimatedResidentBytes),
+                formatBinaryBytes(model.estimatedResidentBytes),
                 model.recommendedAction,
             ].joined(separator: "\t")
         }
-        return (["repo_id\tpipeline_tag\tcompatibility\tlocal_fit\testimated_resident_bytes\trecommended_action"] + lines)
+        return (["repo_id\tpipeline_tag\tcompatibility\tlocal_fit_status\testimated_resident_bytes\trecommended_action"] + lines)
             .joined(separator: "\n") + "\n"
     }
 
@@ -5271,12 +5271,26 @@ public actor MelixCLIRunner {
             "local_fit_status=\(card.localFitStatus.isEmpty ? "unknown" : card.localFitStatus)",
             "local_fit_reasons=\(card.localFitReasons.joined(separator: " | "))",
             "estimated_artifact_bytes=\(card.estimatedArtifactBytes)",
-            "estimated_resident_bytes=\(card.estimatedResidentBytes)",
+            "estimated_resident_bytes=\(formatBinaryBytes(card.estimatedResidentBytes))",
             "parameter_count=\(card.parameterCount)",
             "quantization_summary=\(card.quantizationSummary)",
             "gated=\(card.gated ? "true" : "false")",
             "recommended_action=\(card.recommendedAction)",
         ].joined(separator: "\n") + "\n"
+    }
+
+    private func formatBinaryBytes(_ bytes: UInt64) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var value = Double(bytes)
+        var unitIndex = 0
+        while value >= 1024.0 && unitIndex < units.count - 1 {
+            value /= 1024.0
+            unitIndex += 1
+        }
+        guard unitIndex > 0 else {
+            return "\(bytes) B"
+        }
+        return String(format: "%.2f %@", locale: Locale(identifier: "en_US_POSIX"), value, units[unitIndex])
     }
 
     private func renderRegistryRoots(_ roots: [String]) -> String {

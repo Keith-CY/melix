@@ -10,8 +10,12 @@ public actor MenuBarMetricsStore {
 
     public init() {}
 
+    public func record(name: String, value: Double) {
+        values[name] = value
+    }
+
     public func record(name: String, valueMs: Double) {
-        values[name] = valueMs
+        record(name: name, value: valueMs)
     }
 
     public func snapshot() -> [String: Double] {
@@ -369,7 +373,17 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     }
 }
 
-public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendable {
+public protocol RuntimeHubModelFitProviding {
+    var localFitStatus: String { get }
+}
+
+public extension RuntimeHubModelFitProviding {
+    var canDownload: Bool {
+        localFitStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "blocked"
+    }
+}
+
+public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendable, RuntimeHubModelFitProviding {
     public let id: String
     public let repoID: String
     public let author: String
@@ -425,10 +439,6 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
         self.recommendedAction = recommendedAction
     }
 
-    public var canDownload: Bool {
-        localFitStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "blocked"
-    }
-
     public var sizeText: String {
         if estimatedArtifactBytesText == "0 B" && estimatedResidentBytesText == "0 B" {
             return ""
@@ -443,7 +453,7 @@ public struct RuntimeHubModelSearchResultState: Identifiable, Equatable, Sendabl
     }
 }
 
-public struct RuntimeHubModelCardState: Equatable, Sendable {
+public struct RuntimeHubModelCardState: Equatable, Sendable, RuntimeHubModelFitProviding {
     public let repoID: String
     public let author: String
     public let modelName: String
@@ -500,9 +510,6 @@ public struct RuntimeHubModelCardState: Equatable, Sendable {
         self.recommendedAction = recommendedAction
     }
 
-    public var canDownload: Bool {
-        localFitStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "blocked"
-    }
 }
 
 public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
@@ -1596,7 +1603,9 @@ public final class RuntimeViewModel {
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
-    public private(set) var models: [RuntimeModelRow] = []
+    public private(set) var models: [RuntimeModelRow] = [] {
+        didSet { refreshModelRegistryEntries() }
+    }
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
@@ -1611,20 +1620,18 @@ public final class RuntimeViewModel {
     public private(set) var daemonInstanceID = ""
     public private(set) var features: [String] = []
     public private(set) var selectedModelInfo: RuntimeModelInfoState?
-    public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = []
+    public private(set) var modelHubSearchResults: [RuntimeHubModelSearchResultState] = [] {
+        didSet { refreshModelRegistryEntries() }
+    }
     public private(set) var selectedHubModelCard: RuntimeHubModelCardState?
     public private(set) var modelHubNextCursor = ""
     public private(set) var modelHubTokenHint = ""
     public private(set) var lastModelOperation: RuntimeModelOperationState?
     public private(set) var loraWorkflowStatus: RuntimeLoraWorkflowStatusState?
-    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = []
-    public var modelRegistryEntries: [RuntimeRegistryEntryState] {
-        Self.makeModelRegistryEntries(
-            models: models,
-            downloadQueue: downloadQueue,
-            hubResults: modelHubSearchResults
-        )
+    public private(set) var downloadQueue: [RuntimeDownloadQueueEntryState] = [] {
+        didSet { refreshModelRegistryEntries() }
     }
+    public private(set) var modelRegistryEntries: [RuntimeRegistryEntryState] = []
     public private(set) var lastDoctorReport: RuntimeDoctorReportState?
     public private(set) var lastBenchReport: RuntimeBenchReportState?
     public private(set) var benchmarkHistory: [RuntimeBenchmarkHistoryEntryState] = []
@@ -4851,7 +4858,7 @@ public final class RuntimeViewModel {
             if card.estimatedResidentBytes > 0 {
                 await metrics.record(
                     name: "hub.local_fit_estimated_resident_bytes",
-                    valueMs: Double(card.estimatedResidentBytes)
+                    value: Double(card.estimatedResidentBytes)
                 )
             }
         } catch {
@@ -4885,7 +4892,7 @@ public final class RuntimeViewModel {
         if let blockedReasons = blockedHubFitReasons(repoID: normalizedRepoID) {
             let reasonText = blockedReasons.isEmpty ? "" : " \(blockedReasons.joined(separator: " "))"
             recordLocalError("Download blocked: \(normalizedRepoID) is not suitable for local Melix runtime.\(reasonText)")
-            await metrics.record(name: "registry.blocked_download_attempt_count", valueMs: 1)
+            await metrics.record(name: "registry.blocked_download_attempt_count", value: 1)
             notifyStateChanged()
             return
         }
@@ -4981,12 +4988,12 @@ public final class RuntimeViewModel {
     private func recordRegistryProbeMetrics(maxHubResidentBytes: UInt64) async {
         await metrics.record(
             name: "registry.unified_entry_count",
-            valueMs: Double(modelRegistryEntries.count)
+            value: Double(modelRegistryEntries.count)
         )
         if maxHubResidentBytes > 0 {
             await metrics.record(
                 name: "hub.local_fit_estimated_resident_bytes",
-                valueMs: Double(maxHubResidentBytes)
+                value: Double(maxHubResidentBytes)
             )
         }
     }
@@ -10292,6 +10299,14 @@ public final class RuntimeViewModel {
             quantizationSummary: card.quantizationSummary,
             gated: card.gated,
             recommendedAction: card.recommendedAction
+        )
+    }
+
+    private func refreshModelRegistryEntries() {
+        modelRegistryEntries = Self.makeModelRegistryEntries(
+            models: models,
+            downloadQueue: downloadQueue,
+            hubResults: modelHubSearchResults
         )
     }
 

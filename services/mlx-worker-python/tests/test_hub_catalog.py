@@ -329,6 +329,149 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
 
 
+def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:
+    payload = [
+        {
+            "id": "mlx-community/malformed-siblings",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [
+                {"size": 9 * 1024 * 1024 * 1024},
+                {"rfilename": "", "size": 7 * 1024 * 1024 * 1024},
+                {"rfilename": "README.md", "size": 3 * 1024 * 1024 * 1024},
+                {"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024},
+            ],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="malformed", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.estimated_artifact_bytes == 1024 * 1024 * 1024
+    assert model.local_fit_status == "good"
+
+
+def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> None:
+    payload = [
+        {
+            "id": "mlx-community/fp32-large",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "fp32"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "config.json"}],
+            "safetensors": {"total": 10_000_000_000},
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="fp32", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.local_fit_status == "heavy"
+    assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
+
+
+def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
+    payload = [
+        {
+            "id": "mlx-community/auto-gated",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "gated": "auto",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="auto-gated", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.gated is False
+    assert model.local_fit_status == "good"
+    assert model.recommended_action == "download"
+
+
+def test_search_models_ignores_non_model_size_hints_in_readme_text() -> None:
+    payload = [
+        {
+            "id": "mlx-community/context-size-only",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "README.md"}],
+            "description": "Recommended batch size: 4 GB. Context size: 128 KB.",
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="context-size", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    assert model.estimated_artifact_bytes == 0
+    assert model.local_fit_status == "unknown"
+
+
+def test_search_models_marks_gated_true_and_unsupported_pipeline_as_blocked() -> None:
+    payload = [
+        {
+            "id": "mlx-community/hard-gated",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "gated": True,
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        },
+        {
+            "id": "mlx-community/audio-only",
+            "author": "mlx-community",
+            "pipeline_tag": "automatic-speech-recognition",
+            "tags": ["mlx"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024 * 1024 * 1024}],
+            "cardData": {},
+        },
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="blocked", page_size=10, cursor="", mlx_only=True)
+
+    hard_gated, unsupported = page.items
+    assert hard_gated.local_fit_status == "blocked"
+    assert hard_gated.recommended_action == "request_access"
+    assert hard_gated.gated is True
+    assert unsupported.local_fit_status == "blocked"
+    assert unsupported.recommended_action == "unavailable"
+    assert any("Unsupported Melix pipeline tag" in reason for reason in unsupported.local_fit_reasons)
+
+
 def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> None:
     payload = [
         {

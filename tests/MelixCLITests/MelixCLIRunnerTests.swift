@@ -27,6 +27,8 @@ struct MelixCLIRunnerTests {
         model.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         model.pipelineTag = "text-generation"
         model.mlxCompatible = true
+        model.localFitStatus = "good"
+        model.estimatedResidentBytes = 5_670_000_000
         result.models = [model]
         await client.setHubSearchResult(result)
 
@@ -34,8 +36,9 @@ struct MelixCLIRunnerTests {
             .modelHubSearch(.init(query: "qwen3.5", pageSize: 5, cursor: "", mlxOnly: true, json: false))
         )
 
-        #expect(output.contains("repo_id\tpipeline_tag\tcompatibility"))
+        #expect(output.contains("repo_id\tpipeline_tag\tcompatibility\tlocal_fit_status\testimated_resident_bytes"))
         #expect(output.contains("mlx-community/Qwen3.5-0.8B-OptiQ-4bit\ttext-generation\tmlx"))
+        #expect(output.contains("good\t5.28 GB"))
     }
 
     @Test("model hub show renders typed model cards")
@@ -47,6 +50,7 @@ struct MelixCLIRunnerTests {
         card.modelName = "Qwen3.5-0.8B-OptiQ-4bit"
         card.pipelineTag = "text-generation"
         card.mlxCompatible = true
+        card.estimatedResidentBytes = 5_670_000_000
         await client.setHubModelCard(card)
 
         let output = try await MelixCLIRunner(client: client).run(
@@ -56,6 +60,7 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("repo_id=mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
         #expect(output.contains("author=mlx-community"))
         #expect(output.contains("mlx_compatible=true"))
+        #expect(output.contains("estimated_resident_bytes=5.28 GB"))
     }
 
     @Test("model download forwards the expected download operation payload")

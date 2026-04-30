@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from worker.productization.device_identity import collect_device_identity
+
+
+MEMORY_COMFORT_BUDGET_FACTOR = 0.60
+RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 
 
 @dataclass(frozen=True)
@@ -27,7 +31,7 @@ class HubModelSummaryRecord:
     sibling_files: list[str]
     last_modified: str
     local_fit_status: str = "unknown"
-    local_fit_reasons: list[str] | None = None
+    local_fit_reasons: list[str] = field(default_factory=list)
     estimated_artifact_bytes: int = 0
     estimated_resident_bytes: int = 0
     parameter_count: int = 0
@@ -59,7 +63,7 @@ class HubModelCardRecord:
     base_models: list[str]
     last_modified: str
     local_fit_status: str = "unknown"
-    local_fit_reasons: list[str] | None = None
+    local_fit_reasons: list[str] = field(default_factory=list)
     estimated_artifact_bytes: int = 0
     estimated_resident_bytes: int = 0
     parameter_count: int = 0
@@ -420,7 +424,7 @@ def _local_fit_evidence(
             "recommended_action": "inspect_metadata",
         }
 
-    memory_budget_bytes = int(max(local_memory_gb, 0.0) * (1024 ** 3) * 0.60)
+    memory_budget_bytes = int(max(local_memory_gb, 0.0) * (1024 ** 3) * MEMORY_COMFORT_BUDGET_FACTOR)
     if memory_budget_bytes > 0 and estimated_resident_bytes > memory_budget_bytes:
         reasons.append("Estimated resident bytes exceed the memory comfort budget.")
         return {
@@ -477,7 +481,7 @@ def _sibling_file_bytes(value: Any) -> int:
         if not isinstance(item, dict):
             continue
         filename = _string(item.get("rfilename"))
-        if filename and not _is_weight_or_config_file(filename):
+        if not filename or not _is_weight_or_config_file(filename):
             continue
         size = _int(item.get("size"))
         if size <= 0 and isinstance(item.get("lfs"), dict):
@@ -493,19 +497,30 @@ def _is_weight_or_config_file(filename: str) -> bool:
 
 def _size_hint_bytes(payload: dict[str, Any]) -> int:
     card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
+    direct_card_hint = _size_hint_from_text(_string(card_data.get("model_size")), allow_bare=True)
+    if direct_card_hint > 0:
+        return direct_card_hint
+
     text = "\n".join(
         _string(value)
         for value in (
             payload.get("description"),
             payload.get("readme"),
             card_data.get("description"),
-            card_data.get("model_size"),
         )
         if _string(value)
     )
     if not text:
         return 0
-    match = re.search(r"(?:model\s+size|size)\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)", text, re.IGNORECASE)
+    return _size_hint_from_text(text, allow_bare=False)
+
+
+def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
+    if allow_bare:
+        pattern = r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
+    else:
+        pattern = r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b"
+    match = re.search(pattern, text, re.IGNORECASE)
     if not match:
         return 0
     value = float(match.group(1))
@@ -533,11 +548,13 @@ def _estimated_resident_bytes(
     parameter_count: int,
     tags: list[str],
 ) -> int:
+    overhead = RESIDENT_MEMORY_OVERHEAD_FACTOR
     if artifact_bytes > 0:
-        return math.ceil(artifact_bytes * 1.35)
+        return math.ceil(artifact_bytes * overhead)
     if parameter_count <= 0:
         return 0
-    return math.ceil(parameter_count * _bytes_per_parameter(tags) * 1.35)
+    parameter_bytes = parameter_count * _bytes_per_parameter(tags)
+    return math.ceil(parameter_bytes * overhead)
 
 
 def _bytes_per_parameter(tags: list[str]) -> float:
@@ -551,6 +568,8 @@ def _bytes_per_parameter(tags: list[str]) -> float:
         return 0.5
     if "8bit" in joined or "8-bit" in joined:
         return 1.0
+    if "fp32" in joined or "float32" in joined or "f32" in joined:
+        return 4.0
     if "bf16" in joined or "fp16" in joined or "float16" in joined:
         return 2.0
     return 2.0
@@ -565,6 +584,7 @@ def _quantization_summary(tags: list[str]) -> str:
         ("8-bit", {"8bit", "8-bit"}),
         ("mixed-precision", {"mixed-precision", "mixed_precision"}),
         ("optiq", {"optiq"}),
+        ("fp32", {"fp32", "float32", "f32"}),
         ("bf16", {"bf16"}),
         ("fp16", {"fp16", "float16"}),
     ]
@@ -576,7 +596,7 @@ def _gated(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return value.strip().lower() not in {"", "false", "none", "no", "0"}
+        return value.strip().lower() not in {"", "false", "none", "no", "0", "auto"}
     return False
 
 
