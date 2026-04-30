@@ -4508,9 +4508,17 @@ public actor MelixCLIRunner {
             return "No hub models found.\n"
         }
         let lines = result.models.map { model in
-            "\(model.repoID)\t\(model.pipelineTag)\t\(model.mlxCompatible ? "mlx" : "generic")"
+            [
+                model.repoID,
+                model.pipelineTag,
+                model.mlxCompatible ? "mlx" : "generic",
+                model.localFitStatus.isEmpty ? "unknown" : model.localFitStatus,
+                String(model.estimatedResidentBytes),
+                model.recommendedAction,
+            ].joined(separator: "\t")
         }
-        return (["repo_id\tpipeline_tag\tcompatibility"] + lines).joined(separator: "\n") + "\n"
+        return (["repo_id\tpipeline_tag\tcompatibility\tlocal_fit\testimated_resident_bytes\trecommended_action"] + lines)
+            .joined(separator: "\n") + "\n"
     }
 
     private func renderHubModelCard(_ card: Melix_Controlplane_V1_HubModelCard) -> String {
@@ -4520,6 +4528,14 @@ public actor MelixCLIRunner {
             "model_name=\(card.modelName)",
             "pipeline_tag=\(card.pipelineTag)",
             "mlx_compatible=\(card.mlxCompatible ? "true" : "false")",
+            "local_fit_status=\(card.localFitStatus.isEmpty ? "unknown" : card.localFitStatus)",
+            "local_fit_reasons=\(card.localFitReasons.joined(separator: " | "))",
+            "estimated_artifact_bytes=\(card.estimatedArtifactBytes)",
+            "estimated_resident_bytes=\(card.estimatedResidentBytes)",
+            "parameter_count=\(card.parameterCount)",
+            "quantization_summary=\(card.quantizationSummary)",
+            "gated=\(card.gated ? "true" : "false")",
+            "recommended_action=\(card.recommendedAction)",
         ].joined(separator: "\n") + "\n"
     }
 
@@ -4613,6 +4629,14 @@ public actor MelixCLIRunner {
                     "downloads": NSNumber(value: model.downloads),
                     "likes": NSNumber(value: model.likes),
                     "mlx_compatible": model.mlxCompatible,
+                    "local_fit_status": model.localFitStatus,
+                    "local_fit_reasons": model.localFitReasons,
+                    "estimated_artifact_bytes": NSNumber(value: model.estimatedArtifactBytes),
+                    "estimated_resident_bytes": NSNumber(value: model.estimatedResidentBytes),
+                    "parameter_count": NSNumber(value: model.parameterCount),
+                    "quantization_summary": model.quantizationSummary,
+                    "gated": model.gated,
+                    "recommended_action": model.recommendedAction,
                 ]
             },
         ]
@@ -4628,6 +4652,14 @@ public actor MelixCLIRunner {
             "mlx_compatible": card.mlxCompatible,
             "tags": card.tags,
             "base_models": card.baseModels,
+            "local_fit_status": card.localFitStatus,
+            "local_fit_reasons": card.localFitReasons,
+            "estimated_artifact_bytes": NSNumber(value: card.estimatedArtifactBytes),
+            "estimated_resident_bytes": NSNumber(value: card.estimatedResidentBytes),
+            "parameter_count": NSNumber(value: card.parameterCount),
+            "quantization_summary": card.quantizationSummary,
+            "gated": card.gated,
+            "recommended_action": card.recommendedAction,
         ]
     }
 

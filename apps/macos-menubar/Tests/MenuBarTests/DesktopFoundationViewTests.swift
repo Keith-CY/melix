@@ -710,7 +710,8 @@ struct DesktopFoundationViewTests {
             DesktopModelsTabView(
                 foundation: viewModel.desktopFoundationState,
                 viewModel: viewModel
-            )
+            ),
+            size: CGSize(width: 1_200, height: 1_600)
         )
 
         #expect(view.subviews.isEmpty == false)
@@ -727,6 +728,13 @@ struct DesktopFoundationViewTests {
         model.modelName = "Qwen3.5-0.8B-OptiQ-4bit"
         model.pipelineTag = "text-generation"
         model.mlxCompatible = true
+        model.localFitStatus = "good"
+        model.localFitReasons = ["Estimated resident bytes are within the memory comfort budget."]
+        model.estimatedArtifactBytes = 4_200_000_000
+        model.estimatedResidentBytes = 5_670_000_000
+        model.parameterCount = 7_000_000_000
+        model.quantizationSummary = "4-bit"
+        model.recommendedAction = "download"
         searchResult.models = [model]
         await client.configureHubSearchResult(searchResult)
         let viewModel = RuntimeViewModel(client: client)
@@ -738,14 +746,80 @@ struct DesktopFoundationViewTests {
             DesktopModelsTabView(
                 foundation: viewModel.desktopFoundationState,
                 viewModel: viewModel
-            )
+            ),
+            size: CGSize(width: 1_200, height: 1_600)
         )
         let renderedTexts = renderedTextValues(in: view)
+        let registryView = DesktopModelRegistryEntriesView(viewModel: viewModel)
 
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("qwen3.5"))
         #expect(renderedTexts.contains("main"))
+        #expect(registryView.entries.contains(where: {
+            $0.repoID == model.repoID && $0.runSuitabilityText == "Good"
+        }))
         #expect(viewModel.modelHubSearchResults.count == 1)
+    }
+
+    @Test("models tab renders Hub model card run suitability evidence")
+    @MainActor
+    func modelsTabRendersHubModelCardRunSuitabilityEvidence() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        var model = Melix_Controlplane_V1_HubModelSummary()
+        model.repoID = "mlx-community/Qwen3.5-72B-4bit"
+        model.author = "mlx-community"
+        model.modelName = "Qwen3.5-72B-4bit"
+        model.pipelineTag = "text-generation"
+        model.mlxCompatible = true
+        model.localFitStatus = "heavy"
+        model.localFitReasons = ["Estimated resident bytes exceed the memory comfort budget."]
+        model.estimatedArtifactBytes = 52_000_000_000
+        model.estimatedResidentBytes = 70_200_000_000
+        model.parameterCount = 72_000_000_000
+        model.quantizationSummary = "4-bit"
+        model.recommendedAction = "review_risk"
+        searchResult.models = [model]
+        await client.configureHubSearchResult(searchResult)
+
+        var card = Melix_Controlplane_V1_HubModelCard()
+        card.repoID = model.repoID
+        card.author = model.author
+        card.modelName = model.modelName
+        card.summary = "Large MLX model card"
+        card.pipelineTag = model.pipelineTag
+        card.mlxCompatible = true
+        card.tags = ["mlx", "4-bit"]
+        card.baseModels = ["Qwen/Qwen3.5-72B"]
+        card.localFitStatus = model.localFitStatus
+        card.localFitReasons = model.localFitReasons
+        card.estimatedArtifactBytes = model.estimatedArtifactBytes
+        card.estimatedResidentBytes = model.estimatedResidentBytes
+        card.parameterCount = model.parameterCount
+        card.quantizationSummary = model.quantizationSummary
+        card.recommendedAction = model.recommendedAction
+        await client.configureHubModelCard(card)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelHubSearchQuery = "qwen72"
+        await viewModel.searchModelHub()
+        await viewModel.inspectHubModel(repoID: model.repoID)
+
+        let registryView = DesktopModelRegistryEntriesView(viewModel: viewModel)
+        let hosted = hostView(registryView)
+        let selectedCard = try #require(registryView.selectedCard)
+
+        #expect(hosted.subviews.isEmpty == false || registryView.entries.isEmpty == false)
+        #expect(registryView.entries.contains(where: {
+            $0.repoID == model.repoID && $0.runSuitabilityText == "Heavy" && $0.canDownload
+        }))
+        #expect(selectedCard.runSuitabilityText == "Heavy")
+        #expect(selectedCard.localFitReasons == ["Estimated resident bytes exceed the memory comfort budget."])
+        #expect(selectedCard.estimatedArtifactBytesText != "0 B")
+        #expect(selectedCard.estimatedResidentBytesText != "0 B")
+        #expect(selectedCard.parameterCountText == "72.0B params")
+        #expect(selectedCard.quantizationSummary == "4-bit")
     }
 
     @Test("models tab exposes explicit disk streaming picker options")

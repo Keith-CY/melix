@@ -3854,6 +3854,17 @@ struct ControlPlaneServiceTests {
             model.libraryName = "transformers"
             model.siblingFiles = ["README.md", "config.json"]
             model.lastModified = "2025-01-26T19:49:28Z"
+            model.localFitStatus = "good"
+            model.localFitReasons = [
+                "MLX-compatible Hub metadata found.",
+                "Estimated resident bytes are within the memory comfort budget.",
+            ]
+            model.estimatedArtifactBytes = 4_200_000_000
+            model.estimatedResidentBytes = 5_670_000_000
+            model.parameterCount = 7_000_000_000
+            model.quantizationSummary = "4-bit"
+            model.gated = false
+            model.recommendedAction = "download"
             response.models = [model]
             return response
         }())
@@ -3887,6 +3898,17 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.hubSearch.models[0].pipelineTag == "text-generation")
         #expect(response.ops.hubSearch.models[0].mlxCompatible)
         #expect(response.ops.hubSearch.models[0].siblingFiles == ["README.md", "config.json"])
+        #expect(response.ops.hubSearch.models[0].localFitStatus == "good")
+        #expect(response.ops.hubSearch.models[0].localFitReasons == [
+            "MLX-compatible Hub metadata found.",
+            "Estimated resident bytes are within the memory comfort budget.",
+        ])
+        #expect(response.ops.hubSearch.models[0].estimatedArtifactBytes == 4_200_000_000)
+        #expect(response.ops.hubSearch.models[0].estimatedResidentBytes == 5_670_000_000)
+        #expect(response.ops.hubSearch.models[0].parameterCount == 7_000_000_000)
+        #expect(response.ops.hubSearch.models[0].quantizationSummary == "4-bit")
+        #expect(response.ops.hubSearch.models[0].gated == false)
+        #expect(response.ops.hubSearch.models[0].recommendedAction == "download")
     }
 
     @Test("execute handles ops.get_hub_model_card through the model-operations worker")
@@ -3909,6 +3931,17 @@ struct ControlPlaneServiceTests {
             response.card.siblingFiles = ["README.md", "config.json", "model.safetensors"]
             response.card.baseModels = ["Qwen/Qwen2.5-7B-Instruct"]
             response.card.lastModified = "2025-01-26T19:49:28Z"
+            response.card.localFitStatus = "heavy"
+            response.card.localFitReasons = [
+                "MLX-compatible Hub metadata found.",
+                "Estimated resident bytes exceed the memory comfort budget.",
+            ]
+            response.card.estimatedArtifactBytes = 52_000_000_000
+            response.card.estimatedResidentBytes = 70_200_000_000
+            response.card.parameterCount = 72_000_000_000
+            response.card.quantizationSummary = "4-bit"
+            response.card.gated = false
+            response.card.recommendedAction = "review_risk"
             return response
         }())
         let service = ControlPlaneService(
@@ -3933,6 +3966,17 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.hubModelCard.mlxCompatible)
         #expect(response.ops.hubModelCard.baseModels == ["Qwen/Qwen2.5-7B-Instruct"])
         #expect(response.ops.hubModelCard.siblingFiles == ["README.md", "config.json", "model.safetensors"])
+        #expect(response.ops.hubModelCard.localFitStatus == "heavy")
+        #expect(response.ops.hubModelCard.localFitReasons == [
+            "MLX-compatible Hub metadata found.",
+            "Estimated resident bytes exceed the memory comfort budget.",
+        ])
+        #expect(response.ops.hubModelCard.estimatedArtifactBytes == 52_000_000_000)
+        #expect(response.ops.hubModelCard.estimatedResidentBytes == 70_200_000_000)
+        #expect(response.ops.hubModelCard.parameterCount == 72_000_000_000)
+        #expect(response.ops.hubModelCard.quantizationSummary == "4-bit")
+        #expect(response.ops.hubModelCard.gated == false)
+        #expect(response.ops.hubModelCard.recommendedAction == "review_risk")
     }
 
     @Test("execute returns unavailable for hub ops when the model-operations worker is missing")

@@ -2415,6 +2415,128 @@ struct RuntimeViewModelTests {
         #expect(retrying.isActive)
     }
 
+    @Test("model registry entries merge local managed download and hub fit state")
+    @MainActor
+    func modelRegistryEntriesMergeLocalManagedDownloadAndHubFitState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-local-text", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "model-ops-0045",
+                            sourceModel: "mlx-community/downloading-4bit",
+                            status: "running",
+                            stage: "download",
+                            pct: 0.5,
+                            outputDir: "/tmp/melix-downloads/downloading-4bit",
+                            outputPath: "/tmp/melix-downloads/downloading-4bit/model.safetensors",
+                            partialPath: "/tmp/melix-downloads/downloading-4bit/model.safetensors.partial",
+                            statePath: "/tmp/melix-downloads/downloading-4bit/download.state.json",
+                            selectedMirror: "https://huggingface.co",
+                            downloadedBytes: 2_048,
+                            totalBytes: 4_096,
+                            resumeReady: false
+                        )
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        var heavyModel = Melix_Controlplane_V1_HubModelSummary()
+        heavyModel.repoID = "mlx-community/Qwen3.5-72B-4bit"
+        heavyModel.author = "mlx-community"
+        heavyModel.modelName = "Qwen3.5-72B-4bit"
+        heavyModel.pipelineTag = "text-generation"
+        heavyModel.mlxCompatible = true
+        heavyModel.localFitStatus = "heavy"
+        heavyModel.localFitReasons = ["Estimated resident bytes exceed the memory comfort budget."]
+        heavyModel.estimatedArtifactBytes = 52_000_000_000
+        heavyModel.estimatedResidentBytes = 70_200_000_000
+        heavyModel.parameterCount = 72_000_000_000
+        heavyModel.quantizationSummary = "4-bit"
+        heavyModel.recommendedAction = "review_risk"
+        searchResult.models = [heavyModel]
+        await client.configureHubSearchResult(searchResult)
+
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        viewModel.modelHubSearchQuery = "qwen"
+        await viewModel.searchModelHub()
+
+        #expect(viewModel.modelRegistryEntries.map(\.sourceText) == [
+            "Local",
+            "Managed Download",
+            "Hugging Face",
+        ])
+        let hubEntry = try #require(viewModel.modelRegistryEntries.first { $0.repoID == heavyModel.repoID })
+        #expect(hubEntry.runSuitabilityText == "Heavy")
+        #expect(hubEntry.canDownload)
+        #expect(hubEntry.sizeText.contains("resident"))
+        #expect(await metrics.snapshot()["registry.unified_entry_count"] == 3)
+        #expect(await metrics.snapshot()["hub.local_fit_estimated_resident_bytes"] == 70_200_000_000)
+    }
+
+    @Test("blocked hub download is prevented while heavy remains allowed")
+    @MainActor
+    func blockedHubDownloadIsPreventedWhileHeavyRemainsAllowed() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        var blockedModel = Melix_Controlplane_V1_HubModelSummary()
+        blockedModel.repoID = "plain/standard-llm"
+        blockedModel.author = "plain"
+        blockedModel.modelName = "standard-llm"
+        blockedModel.pipelineTag = "text-generation"
+        blockedModel.mlxCompatible = false
+        blockedModel.localFitStatus = "blocked"
+        blockedModel.localFitReasons = ["No MLX compatibility signal"]
+        blockedModel.recommendedAction = "unavailable"
+        var heavyModel = Melix_Controlplane_V1_HubModelSummary()
+        heavyModel.repoID = "mlx-community/Qwen3.5-72B-4bit"
+        heavyModel.author = "mlx-community"
+        heavyModel.modelName = "Qwen3.5-72B-4bit"
+        heavyModel.pipelineTag = "text-generation"
+        heavyModel.mlxCompatible = true
+        heavyModel.localFitStatus = "heavy"
+        heavyModel.localFitReasons = ["Estimated resident bytes exceed the memory comfort budget."]
+        heavyModel.estimatedResidentBytes = 70_200_000_000
+        heavyModel.recommendedAction = "review_risk"
+        searchResult.models = [blockedModel, heavyModel]
+        await client.configureHubSearchResult(searchResult)
+
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await viewModel.start()
+        viewModel.modelHubSearchQuery = "qwen"
+        await viewModel.searchModelHub()
+
+        await viewModel.downloadHubModel(repoID: blockedModel.repoID)
+
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+        #expect(viewModel.lastError?.contains("Download blocked") == true)
+        #expect(await metrics.snapshot()["registry.blocked_download_attempt_count"] == 1)
+
+        await viewModel.downloadHubModel(repoID: heavyModel.repoID)
+
+        #expect(await client.recordedModelOperationRequests.contains {
+            $0.operation == "download" && $0.modelID == heavyModel.repoID
+        })
+    }
+
     @Test("resume download reuses original output directory and mirror before refreshing queue state")
     @MainActor
     func resumeDownloadReusesOriginalOutputDirectoryAndMirror() async throws {

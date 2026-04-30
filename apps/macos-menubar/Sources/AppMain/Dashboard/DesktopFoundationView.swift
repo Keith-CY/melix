@@ -256,59 +256,7 @@ struct DesktopModelsTabView: View {
                         }
                     }
 
-                    if viewModel.modelHubSearchResults.isEmpty {
-                        Text("No MLX Hub results.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(viewModel.modelHubSearchResults) { result in
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(result.repoID)
-                                            .font(.headline)
-                                        Text("\(result.author) • \(result.pipelineTag) • \(result.compatibilityText)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Text("\(result.downloadsText) • \(result.likesText)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Spacer()
-                                    Button("Details", action: inspectHubModelAction(repoID: result.repoID))
-                                        .buttonStyle(.bordered)
-                                    Button("Download", action: downloadHubModelAction(repoID: result.repoID))
-                                        .buttonStyle(.borderedProminent)
-                                }
-                            }
-                        }
-                    }
-
-                    if let card = viewModel.selectedHubModelCard {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(card.repoID)
-                                .font(.headline)
-                            Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if !card.summary.isEmpty {
-                                Text(card.summary)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if !card.tags.isEmpty {
-                                Text("Tags: \(card.tags.joined(separator: ", "))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            if !card.baseModels.isEmpty {
-                                Text("Base Models: \(card.baseModels.joined(separator: ", "))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
+                    DesktopModelRegistryEntriesView(viewModel: viewModel)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -602,6 +550,112 @@ struct DesktopModelsTabView: View {
 
     func rescanRegistryRoots() async {
         await viewModel.rescanRegistryRoots()
+    }
+}
+
+struct DesktopModelRegistryEntriesView: View {
+    let viewModel: RuntimeViewModel
+
+    var entries: [RuntimeRegistryEntryState] {
+        viewModel.modelRegistryEntries
+    }
+
+    var selectedCard: RuntimeHubModelCardState? {
+        viewModel.selectedHubModelCard
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if entries.isEmpty {
+                Text("No registry entries.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(entries) { entry in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.title)
+                                .font(.headline)
+                            Text("\(entry.sourceText) • \(entry.taskText) • \(entry.statusText)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Run Suitability: \(entry.runSuitabilityText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            if !entry.sizeText.isEmpty {
+                                Text(entry.sizeText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        Spacer()
+                        if entry.canInspect {
+                            Button("Details", action: inspectHubModelAction(repoID: entry.repoID))
+                                .buttonStyle(.bordered)
+                        }
+                        if !entry.repoID.isEmpty {
+                            Button("Download", action: downloadHubModelAction(repoID: entry.repoID))
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!entry.canDownload)
+                        }
+                    }
+                }
+            }
+
+            if let card = selectedCard {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(card.repoID)
+                        .font(.headline)
+                    Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Run Suitability: \(card.runSuitabilityText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Artifact: \(card.estimatedArtifactBytesText) • Resident: \(card.estimatedResidentBytesText)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    let modelSizeText = [card.parameterCountText, card.quantizationSummary]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " • ")
+                    if !modelSizeText.isEmpty {
+                        Text(modelSizeText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if !card.localFitReasons.isEmpty {
+                        Text("Evidence: \(card.localFitReasons.joined(separator: " • "))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if !card.summary.isEmpty {
+                        Text(card.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !card.tags.isEmpty {
+                        Text("Tags: \(card.tags.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if !card.baseModels.isEmpty {
+                        Text("Base Models: \(card.baseModels.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func inspectHubModelAction(repoID: String) -> () -> Void {
+        { Task { await viewModel.inspectHubModel(repoID: repoID) } }
+    }
+
+    private func downloadHubModelAction(repoID: String) -> () -> Void {
+        { Task { await viewModel.downloadHubModel(repoID: repoID) } }
     }
 }
 
