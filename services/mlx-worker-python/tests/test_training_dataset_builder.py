@@ -115,6 +115,47 @@ def test_write_normalized_dataset_snapshot_writes_matching_train_and_samples_jso
     )
 
 
+def test_write_normalized_dataset_snapshot_streams_train_jsonl_without_copying(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=2,
+        version="1",
+        normalized_samples=[
+            {"prompt": "alpha", "completion": "beta"},
+            {"prompt": "gamma", "completion": "delta"},
+        ],
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=False,
+    )
+
+    def fail_copyfile(src: Path, dst: Path) -> None:
+        raise AssertionError(f"write_normalized_dataset_snapshot should not copy {src} to {dst}")
+
+    monkeypatch.setattr(training_dataset_module.shutil, "copyfile", fail_copyfile)
+
+    snapshot = write_normalized_dataset_snapshot(dataset, output_dir=tmp_path / "exports")
+
+    expected_payload = (
+        '{"prompt": "alpha", "completion": "beta"}\n'
+        '{"prompt": "gamma", "completion": "delta"}\n'
+    )
+    assert snapshot.samples_path.read_text(encoding="utf-8") == expected_payload
+    assert snapshot.train_path.read_text(encoding="utf-8") == expected_payload
+    assert snapshot.valid_path is None
+
+
 def test_build_training_dataset_artifact_converts_alpaca_rows_and_records_quality_signals(
     tmp_path: Path,
 ) -> None:
