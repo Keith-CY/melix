@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import asdict, dataclass, replace
 import json
 import logging
@@ -593,14 +594,18 @@ def _mlx_peak_memory_gb() -> float:
 def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
     checkpoint_candidates: dict[str, Path] = {}
     root_weights_path = adapter_output_dir / "adapters.safetensors"
-    for weights_path in adapter_output_dir.rglob("*.safetensors"):
-        if weights_path == root_weights_path:
-            continue
-        relative_path = weights_path.relative_to(adapter_output_dir)
-        if len(relative_path.parts) > 1:
-            checkpoint_candidates.setdefault(relative_path.parts[0], weights_path)
-            continue
-        checkpoint_candidates.setdefault(weights_path.stem, weights_path)
+    for root, _directories, filenames in os.walk(os.fspath(adapter_output_dir)):
+        for filename in filenames:
+            if not filename.endswith(".safetensors"):
+                continue
+            file_path = Path(root) / filename
+            if file_path == root_weights_path:
+                continue
+            relative_path = file_path.relative_to(adapter_output_dir)
+            if len(relative_path.parts) > 1:
+                checkpoint_candidates.setdefault(relative_path.parts[0], file_path)
+                continue
+            checkpoint_candidates.setdefault(file_path.stem, file_path)
 
     if not checkpoint_candidates:
         return 0, ""
