@@ -5,7 +5,10 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from worker.productization.benchmark_export import (
+    _iter_jsonl_dict_rows,
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
@@ -573,6 +576,23 @@ def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp
     assert result["benchmark_batch_rows"] == [{"job_id": "bench-1", "row_kind": "batch"}]
     assert result["benchmark_matrix_summary_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
     assert result["benchmark_matrix_request_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
+
+
+def test_iter_jsonl_dict_rows_streams_rows_lazily(tmp_path: Path) -> None:
+    path = tmp_path / "streamed.jsonl"
+    path.write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "context"}),
+            "not-json",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = _iter_jsonl_dict_rows(path)
+
+    assert next(rows) == {"job_id": "bench-1", "row_kind": "context"}
+    with pytest.raises(json.JSONDecodeError):
+        next(rows)
 
 
 def test_collect_evaluation_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ import csv
 import json
 import io
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -446,8 +447,7 @@ def _collect_benchmark_matrix_run(
         request_rows.extend(_iter_jsonl_dict_rows(requests_path))
 
 
-def _iter_jsonl_dict_rows(path: Path) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             stripped = line.strip()
@@ -455,8 +455,7 @@ def _iter_jsonl_dict_rows(path: Path) -> list[dict[str, object]]:
                 continue
             row = json.loads(stripped)
             if isinstance(row, dict):
-                rows.append(row)
-    return rows
+                yield row
 
 
 def _rows_to_csv(rows: list[dict[str, object]], fieldnames: list[str]) -> str:
