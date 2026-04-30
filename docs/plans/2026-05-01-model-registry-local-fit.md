@@ -59,6 +59,14 @@ Model Card details include a Run Suitability evidence block with artifact size, 
 
 Download is disabled for `blocked` Hub rows. `heavy` rows remain downloadable and display the risk classification.
 
+The Models workspace uses the shared Melix desktop primitives rather than
+native SwiftUI structural containers for the primary Registry surface:
+
+- `MelixSectionCard("Model Registry")` owns Hub search inputs and the single primary search action.
+- `MelixSectionCard("Unified Model List")` owns the mixed local/download/Hub rows with compact source and suitability badges.
+- `MelixSectionCard("Model Card")` owns local summary details or Hub card metadata, including Run Suitability evidence.
+- The Tools workspace opens Models Library directly; it is not nested under an additional disclosure group.
+
 ## Probes
 
 This slice records:
@@ -77,6 +85,14 @@ Completed so far:
 - `PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest services/mlx-worker-python/tests/test_hub_catalog.py services/mlx-worker-python/tests/test_maintenance_service.py -q`
 - `swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests/modelRegistryEntriesMergeLocalManagedDownloadAndHubFitState`
 - `swift test --package-path apps/macos-menubar --filter RuntimeViewModelTests/blockedHubDownloadIsPreventedWhileHeavyRemainsAllowed`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests/modelsRegistryUsesDesignSystemWorkspacePrimitives`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter 'DesktopFoundationViewTests/(modelsTabRendersModelActionsAndSettings|modelsRegistryUsesDesignSystemWorkspacePrimitives|modelsTabRendersHuggingFaceHubIngressState|modelsTabRendersHubModelCardRunSuitabilityEvidence|modelsTabRendersRegistryRootManagement|modelsTabButtonsDispatchActions)'`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter 'DesktopFoundationViewTests/(modelsRegistryUsesDesignSystemWorkspacePrimitives|modelsTabRendersHuggingFaceHubIngressState|modelsTabRendersHubModelCardRunSuitabilityEvidence)'`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter 'DesktopFoundationViewTests/(modelRegistryRendersEmptyStateAndPlaceholderCard|modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches)'`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests|DesktopFoundationViewTests'`
+- `python3 scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`
+- `SWIFTPM_DISABLE_SANDBOX=1 swift test --package-path apps/macos-menubar --filter TempLoRAScreenshotTests/renderCurrentModelRegistryScreenshot` (temporary local screenshot-rendering test; removed before commit)
 - `swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests/modelsTabRendersHuggingFaceHubIngressState`
 - `swift test --package-path apps/macos-menubar --filter DesktopFoundationViewTests/modelsTabRendersHubModelCardRunSuitabilityEvidence`
 - `swift package --package-path services/control-plane-swift clean`
@@ -88,4 +104,10 @@ Full Swift verification:
 - `make swift-test` did not complete successfully. It passed the protocol package and many control-plane/menu-bar suites, then failed in an existing launch bootstrap test: `AppMainBootstrapTests/launchLive uses the shared launcher path` with `expected launchLive handshake to complete`.
 - A subsequent isolated rerun of that test hit a package build-cache compiler mismatch in `apps/macos-menubar/.build` (`module compiled with Swift 6.3.1 cannot be imported by the Swift 6.2.3 compiler`), so the isolated rerun did not reach the test body.
 
-Coverage: changed-line coverage is not yet measured for this slice. The touched Swift and Python scopes have targeted tests, but the repository does not currently expose a changed-line coverage command for these exact files.
+Coverage: changed-line coverage for the touched menu-bar UI files is 98.24%
+overall:
+
+- `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift`: 97.78% (441/451)
+- `apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift`: 100.00% (1/1)
+- `apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift`: 99.43% (173/174)
+- Total: 98.24% (615/626)

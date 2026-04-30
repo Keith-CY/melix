@@ -776,6 +776,39 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("models registry uses design-system workspace primitives")
+    func modelsRegistryUsesDesignSystemWorkspacePrimitives() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let modelsSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift"
+        )
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let modelsSource = try String(contentsOf: modelsSourceURL, encoding: .utf8)
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+        let modelsTabSource = try #require(
+            modelsSource.slice(
+                from: "struct DesktopModelsTabView: View",
+                to: "struct DesktopModelRegistryEntriesView: View"
+            )
+        )
+        let registrySource = try #require(
+            modelsSource.slice(
+                from: "struct DesktopModelRegistryEntriesView: View",
+                to: "private struct DesktopRegistryRootsSectionView: View"
+            )
+        )
+
+        #expect(modelsTabSource.contains("List(") == false)
+        #expect(modelsTabSource.contains("GroupBox(") == false)
+        #expect(shellSource.contains("DisclosureGroup(\"Models Library\")") == false)
+        #expect(modelsTabSource.contains("MelixSectionCard(\"Model Registry\")"))
+        #expect(registrySource.contains("MelixSectionCard(\"Unified Model List\")"))
+        #expect(registrySource.contains("MelixSectionCard(\"Model Card\")"))
+        #expect(registrySource.contains("Run Suitability"))
+    }
+
     @Test("models tab renders Hugging Face hub ingress state")
     @MainActor
     func modelsTabRendersHuggingFaceHubIngressState() async throws {
@@ -879,6 +912,147 @@ struct DesktopFoundationViewTests {
         #expect(selectedCard.estimatedResidentBytesText != "0 B")
         #expect(selectedCard.parameterCountText == "72.0B params")
         #expect(selectedCard.quantizationSummary == "4-bit")
+    }
+
+    @Test("model registry renders empty state and placeholder card")
+    @MainActor
+    func modelRegistryRendersEmptyStateAndPlaceholderCard() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        let view = hostView(DesktopModelRegistryEntriesView(viewModel: viewModel))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.modelRegistryEntries.isEmpty)
+        #expect(viewModel.selectedHubModelCard == nil)
+    }
+
+    @Test("model registry covers cache missing managed blocked unknown and gated branches")
+    @MainActor
+    func modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var missingModel = makeMenuBarModelSummary(modelID: "mlx-community/Qwen3", state: .modelDiscovered)
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        missingModel.settings.ext["melix.hf_repo_id"] = "mlx-community/Qwen3"
+        missingModel.settings.ext["melix.hf_revision"] = "refs/pr/7"
+        let warmModel = makeMenuBarModelSummary(modelID: "melix-warm", state: .modelWarm)
+        let discoveredModel = makeMenuBarModelSummary(modelID: "melix-discovered", state: .modelDiscovered)
+        snapshot.models = [missingModel, warmModel, discoveredModel]
+        await client.configureSnapshot(snapshot)
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(
+                    roots: [],
+                    downloads: [
+                        MenuBarDownloadFixture(
+                            jobID: "managed-download-a",
+                            sourceModel: "mlx-community/Qwen3-managed",
+                            status: "downloading",
+                            stage: "download",
+                            pct: 0.4,
+                            outputDir: "/tmp/melix-downloads/qwen3",
+                            outputPath: "/tmp/melix-downloads/qwen3/model.safetensors",
+                            partialPath: "/tmp/melix-downloads/qwen3/model.safetensors.partial",
+                            statePath: "/tmp/melix-downloads/qwen3/download.state.json",
+                            selectedMirror: "https://huggingface.co",
+                            downloadedBytes: 400,
+                            totalBytes: 1_000,
+                            resumeReady: false
+                        ),
+                    ]
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        var unknown = Melix_Controlplane_V1_HubModelSummary()
+        unknown.repoID = "mlx-community/Unknown-Fit"
+        unknown.author = "mlx-community"
+        unknown.modelName = "Unknown-Fit"
+        unknown.pipelineTag = "text-generation"
+        unknown.mlxCompatible = true
+        unknown.localFitStatus = "unknown"
+        unknown.recommendedAction = "inspect_metadata"
+        var blocked = Melix_Controlplane_V1_HubModelSummary()
+        blocked.repoID = "generic/Blocked"
+        blocked.author = "generic"
+        blocked.modelName = "Blocked"
+        blocked.pipelineTag = "text-generation"
+        blocked.mlxCompatible = false
+        blocked.localFitStatus = "blocked"
+        blocked.recommendedAction = "unsupported_runtime"
+        var searchResult = Melix_Controlplane_V1_HubSearchResult()
+        searchResult.models = [unknown, blocked]
+        await client.configureHubSearchResult(searchResult)
+        var card = Melix_Controlplane_V1_HubModelCard()
+        card.repoID = unknown.repoID
+        card.author = unknown.author
+        card.modelName = unknown.modelName
+        card.pipelineTag = unknown.pipelineTag
+        card.mlxCompatible = true
+        card.localFitStatus = "unknown"
+        card.gated = true
+        card.recommendedAction = "inspect_metadata"
+        await client.configureHubModelCard(card)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshDownloadQueueState()
+        viewModel.modelHubSearchQuery = "unknown blocked"
+        await viewModel.searchModelHub()
+        let registryView = DesktopModelRegistryEntriesView(viewModel: viewModel)
+        let localView = hostView(registryView)
+        let entries = viewModel.modelRegistryEntries
+
+        #expect(localView.subviews.isEmpty == false)
+        #expect(entries.contains { entry in
+            entry.id == "local:mlx-community/Qwen3"
+                && entry.sourceText == "Local"
+                && entry.runSuitabilityText == "Installed"
+        })
+        #expect(entries.contains { entry in
+            entry.id == "managed-download:managed-download-a"
+                && entry.sourceText == "Managed Download"
+                && entry.runSuitabilityText == "Pending"
+                && entry.sizeText == "400 bytes / 1,000 bytes • 40%"
+        })
+        #expect(entries.contains { entry in
+            entry.repoID == unknown.repoID
+                && entry.sourceText == "Hugging Face"
+                && entry.runSuitabilityText == "Unknown"
+                && entry.canDownload
+        })
+        #expect(entries.contains { entry in
+            entry.repoID == blocked.repoID
+                && entry.sourceText == "Hugging Face"
+                && entry.runSuitabilityText == "Blocked"
+                && entry.canDownload == false
+        })
+
+        await viewModel.inspectHubModel(repoID: unknown.repoID)
+        let gatedView = hostView(DesktopModelRegistryEntriesView(viewModel: viewModel))
+        #expect(gatedView.subviews.isEmpty == false)
+        #expect(viewModel.selectedHubModelCard?.gated == true)
+        #expect(viewModel.selectedHubModelCard?.runSuitabilityText == "Unknown")
+
+        let rows = viewModel.desktopFoundationState.models
+        await registryView.applyLatencyProfile(to: rows.first { $0.modelID == "melix-warm" })
+        await registryView.toggleModelLoad(for: rows.first { $0.modelID == "melix-warm" })
+        await registryView.toggleModelLoad(for: rows.first { $0.modelID == "melix-discovered" })
+        await registryView.toggleModelLoad(for: rows.first { $0.modelID == "mlx-community/Qwen3" })
+        await registryView.applyLatencyProfile(to: nil)
+        await registryView.toggleModelLoad(for: nil)
+
+        let actions = await client.recordedActions
+        let modelOps = await client.recordedModelOperationRequests
+        #expect(actions.contains("settings:melix-warm"))
+        #expect(actions.contains("unload:melix-warm"))
+        #expect(actions.contains("load:melix-discovered"))
+        #expect(modelOps.contains { $0.operation == "download" && $0.modelID == "mlx-community/Qwen3" })
     }
 
     @Test("models tab exposes explicit disk streaming picker options")
@@ -4745,6 +4919,17 @@ private func repositoryRootForDesktopFoundationTests(
         current = parent
     }
     throw DesktopFoundationTestError.repositoryRootNotFound
+}
+
+private extension String {
+    func slice(from startMarker: String, to endMarker: String) -> String? {
+        guard let startRange = range(of: startMarker),
+              let endRange = range(of: endMarker, range: startRange.upperBound..<endIndex)
+        else {
+            return nil
+        }
+        return String(self[startRange.lowerBound..<endRange.lowerBound])
+    }
 }
 
 @Suite("Phase 8 Window UI Acceptance Runner", .serialized)

@@ -124,112 +124,25 @@ struct DesktopModelsTabView: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            List(foundation.models, id: \.modelID) { model in
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(model.modelID)
-                                .font(.headline)
-                            if !model.runtimeModeText.isEmpty {
-                                // Capsule badge matching the pattern used in
-                                // DesktopChatView and DesktopWorkspaceShellView
-                                // for metadata tags. Adapter-backed and fused
-                                // derived models get a visible runtime tag;
-                                // base models render without a badge.
-                                Text(model.runtimeModeText)
-                                    .font(.caption2)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(.quaternary, in: Capsule())
-                                    .accessibilityLabel(model.runtimeModeAccessibilityLabel)
-                            }
-                            if model.runtimeCacheMissing {
-                                Text(model.runtimeCacheStatusText)
-                                    .font(.caption2)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.AccentOpacity.weak),
-                                        in: Capsule()
-                                    )
-                                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
-                                    .accessibilityLabel(model.runtimeCacheStatusText)
-                            }
-                        }
-                        Text(model.alias.isEmpty ? "\(model.kind) • \(model.stateText) • \(model.maxContext) ctx" : "\(model.alias) • \(model.stateText) • \(model.maxContext) ctx")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if model.runtimeCacheMissing {
-                            Text(model.runtimeCacheDetailText)
-                                .font(.caption2)
-                                .foregroundStyle(MelixDesignTokens.StatusColor.warning)
-                        }
-                        if !model.typeOverrideText.isEmpty {
-                            Text("type override: \(model.typeOverrideText)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(model.residencyText)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text(model.memoryText)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        if !model.memoryAlertText.isEmpty {
-                            Text(model.memoryAlertText)
-                                .font(.caption2)
-                                .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                        }
-                        if model.adaptiveThinkingText != "Off" || model.toolParserFallbackText != "Off" {
-                            Text("adaptive thinking: \(model.adaptiveThinkingText) • parser fallback: \(model.toolParserFallbackText)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if !model.cachePolicyText.isEmpty {
-                            Text("cache policy: \(model.cachePolicyText)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if !model.cacheSettingsText.isEmpty {
-                            Text("cache settings: \(model.cacheSettingsText)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        Text("\(model.memoryPolicyText) • \(model.diskStreamingModeText) • \(model.accelerationModeText) • \(model.accelerationProfileID.isEmpty ? "no-profile" : model.accelerationProfileID)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Button("Latency Profile", action: latencyProfileAction(for: model))
-                    .buttonStyle(.bordered)
-                    Button(model.actionTitle, action: toggleModelLoadAction(for: model))
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(.vertical, 4)
-            }
-            .frame(minHeight: 260)
-
-            DesktopRegistryRootsSectionView(viewModel: viewModel)
-
-            GroupBox("Hugging Face Hub") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .center, spacing: 12) {
-                        TextField(
-                            "Repo ID or keywords",
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
+            MelixSectionCard("Model Registry") {
+                VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+                    HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.md) {
+                        DesktopRegistryTextField(
+                            title: "Repo ID or keywords",
                             text: Binding(
                                 get: { viewModel.modelHubSearchQuery },
                                 set: { viewModel.modelHubSearchQuery = $0 }
                             )
                         )
-                        TextField(
-                            "Revision",
+                        DesktopRegistryTextField(
+                            title: "Revision",
                             text: Binding(
                                 get: { viewModel.modelHubSelectedRevision },
                                 set: { viewModel.modelHubSelectedRevision = $0 }
                             )
                         )
-                        .frame(maxWidth: 180)
+                        .frame(maxWidth: 160)
                         Toggle(
                             "MLX Only",
                             isOn: Binding(
@@ -240,10 +153,12 @@ struct DesktopModelsTabView: View {
                         .toggleStyle(.checkbox)
                         Button("Search", action: searchHubModelsAction())
                             .buttonStyle(.borderedProminent)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    HStack(alignment: .center, spacing: 12) {
-                        SecureField(
-                            "Hugging Face Token",
+
+                    HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.md) {
+                        DesktopRegistrySecureField(
+                            title: "Hugging Face Token",
                             text: Binding(
                                 get: { viewModel.modelHubTokenDraft },
                                 set: { viewModel.modelHubTokenDraft = $0 }
@@ -253,16 +168,19 @@ struct DesktopModelsTabView: View {
                             Text("Token saved: \(viewModel.modelHubTokenHint)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
-
-                    DesktopModelRegistryEntriesView(viewModel: viewModel)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            DesktopModelRegistryEntriesView(viewModel: viewModel)
+
+            DesktopRegistryRootsSectionView(viewModel: viewModel)
+
             if let primaryModel = viewModel.primaryModel {
-                GroupBox("Model Settings") {
+                MelixSectionCard("Model Settings") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(primaryModel.modelID)
                             .font(.headline)
@@ -553,6 +471,40 @@ struct DesktopModelsTabView: View {
     }
 }
 
+private struct DesktopRegistryTextField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField(title, text: $text)
+            .textFieldStyle(.plain)
+            .font(.body)
+            .padding(.vertical, MelixDesignTokens.Spacing.sm)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(MelixDesignTokens.StrokeOpacity.interactive))
+                    .frame(height: 1)
+            }
+    }
+}
+
+private struct DesktopRegistrySecureField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        SecureField(title, text: $text)
+            .textFieldStyle(.plain)
+            .font(.body)
+            .padding(.vertical, MelixDesignTokens.Spacing.sm)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(MelixDesignTokens.StrokeOpacity.interactive))
+                    .frame(height: 1)
+            }
+    }
+}
+
 struct DesktopModelRegistryEntriesView: View {
     let viewModel: RuntimeViewModel
 
@@ -565,89 +517,70 @@ struct DesktopModelRegistryEntriesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if entries.isEmpty {
-                Text("No registry entries.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(entries) { entry in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(entry.title)
-                                .font(.headline)
-                            Text("\(entry.sourceText) • \(entry.taskText) • \(entry.statusText)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("Run Suitability: \(entry.runSuitabilityText)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            if !entry.sizeText.isEmpty {
-                                Text(entry.sizeText)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        Spacer()
-                        if entry.canInspect {
-                            Button("Details", action: inspectHubModelAction(repoID: entry.repoID))
-                                .buttonStyle(.bordered)
-                        }
-                        if !entry.repoID.isEmpty {
-                            Button("Download", action: downloadHubModelAction(repoID: entry.repoID))
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!entry.canDownload)
-                        }
-                    }
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.lg) {
+                registryList
+                    .frame(minWidth: 440)
+                modelCard
+                    .frame(minWidth: 320, maxWidth: 380)
             }
 
-            if let card = selectedCard {
-                Divider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(card.repoID)
-                        .font(.headline)
-                    Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Run Suitability: \(card.runSuitabilityText)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Artifact: \(card.estimatedArtifactBytesText) • Resident: \(card.estimatedResidentBytesText)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    let modelSizeText = [card.parameterCountText, card.quantizationSummary]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " • ")
-                    if !modelSizeText.isEmpty {
-                        Text(modelSizeText)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    if !card.localFitReasons.isEmpty {
-                        Text("Evidence: \(card.localFitReasons.joined(separator: " • "))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    if !card.summary.isEmpty {
-                        Text(card.summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if !card.tags.isEmpty {
-                        Text("Tags: \(card.tags.joined(separator: ", "))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    if !card.baseModels.isEmpty {
-                        Text("Base Models: \(card.baseModels.joined(separator: ", "))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
+                registryList
+                modelCard
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var registryList: some View {
+        MelixSectionCard("Unified Model List") {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+                if entries.isEmpty {
+                    Text("No registry entries.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entries) { entry in
+                        DesktopRegistryEntryRowView(
+                            entry: entry,
+                            localModel: localModel(for: entry),
+                            isSelected: selectedCard?.repoID == entry.repoID,
+                            inspect: entry.canInspect ? inspectHubModelAction(repoID: entry.repoID) : nil,
+                            download: entry.repoID.isEmpty ? nil : downloadHubModelAction(repoID: entry.repoID),
+                            latencyProfile: latencyProfileAction(for: localModel(for: entry)),
+                            toggleLoad: toggleModelLoadAction(for: localModel(for: entry))
+                        )
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var modelCard: some View {
+        MelixSectionCard("Model Card") {
+            if let card = selectedCard {
+                DesktopHubModelCardContent(card: card)
+            } else if let entry = entries.first {
+                DesktopRegistryEntryCardContent(entry: entry, localModel: localModel(for: entry))
+            } else {
+                VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+                    Text("No Model Selected")
+                        .font(.headline)
+                    Text("Registry metadata unavailable.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func localModel(for entry: RuntimeRegistryEntryState) -> RuntimeModelRow? {
+        guard entry.id.hasPrefix("local:") else {
+            return nil
+        }
+        return viewModel.desktopFoundationState.models.first { "local:\($0.modelID)" == entry.id }
     }
 
     private func inspectHubModelAction(repoID: String) -> () -> Void {
@@ -657,13 +590,436 @@ struct DesktopModelRegistryEntriesView: View {
     private func downloadHubModelAction(repoID: String) -> () -> Void {
         { Task { await viewModel.downloadHubModel(repoID: repoID) } }
     }
+
+    func applyLatencyProfile(to model: RuntimeModelRow?) async {
+        guard let model else {
+            return
+        }
+        await viewModel.updateModelSettings(
+            modelID: model.modelID,
+            alias: model.alias.isEmpty ? "Melix Text Turbo" : model.alias,
+            pinOnLoad: true,
+            memoryPolicy: "pinned",
+            diskStreamingMode: "disabled",
+            accelerationMode: "speculative_decode",
+            accelerationProfileID: "draft-q4"
+        )
+    }
+
+    func toggleModelLoad(for model: RuntimeModelRow?) async {
+        guard let model else {
+            return
+        }
+        if model.runtimeCacheMissing {
+            await viewModel.restoreMissingRuntimeCache(modelID: model.modelID)
+        } else if model.isLoaded {
+            await viewModel.unloadModel(modelID: model.modelID)
+        } else {
+            await viewModel.loadModel(modelID: model.modelID)
+        }
+    }
+
+    private func latencyProfileAction(for model: RuntimeModelRow?) -> (() -> Void)? {
+        guard let model else {
+            return nil
+        }
+        return {
+            Task { await applyLatencyProfile(to: model) }
+        }
+    }
+
+    private func toggleModelLoadAction(for model: RuntimeModelRow?) -> (() -> Void)? {
+        guard let model else {
+            return nil
+        }
+        return {
+            Task { await toggleModelLoad(for: model) }
+        }
+    }
+}
+
+private struct DesktopRegistryEntryRowView: View {
+    let entry: RuntimeRegistryEntryState
+    let localModel: RuntimeModelRow?
+    let isSelected: Bool
+    let inspect: (() -> Void)?
+    let download: (() -> Void)?
+    let latencyProfile: (() -> Void)?
+    let toggleLoad: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.md) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                    Text(entry.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    DesktopRegistryBadgeView(
+                        title: entry.sourceText,
+                        tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
+                    )
+                    if localModel?.runtimeCacheMissing == true {
+                        DesktopRegistryBadgeView(
+                            title: localModel?.runtimeCacheStatusText ?? "Cache Missing",
+                            tint: MelixDesignTokens.StatusColor.warning
+                        )
+                    }
+                }
+
+                if !entry.subtitleText.isEmpty {
+                    Text(entry.subtitleText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.xs) {
+                    DesktopRegistryMetadataChipView(title: entry.taskText)
+                    DesktopRegistryMetadataChipView(title: entry.statusText)
+                    if !entry.sizeText.isEmpty {
+                        DesktopRegistryMetadataChipView(title: entry.sizeText, monospaced: true)
+                    }
+                }
+
+                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.xs) {
+                    Text("Run Suitability")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    DesktopRegistryBadgeView(
+                        title: entry.runSuitabilityText,
+                        tint: DesktopRegistryVisuals.fitColor(entry.runSuitabilityText)
+                    )
+                }
+
+                if let localModel, localModel.runtimeCacheMissing {
+                    Text(localModel.runtimeCacheDetailText)
+                        .font(.caption2)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: MelixDesignTokens.Spacing.md)
+
+            VStack(alignment: .trailing, spacing: MelixDesignTokens.Spacing.sm) {
+                if let latencyProfile {
+                    Button("Latency Profile", action: latencyProfile)
+                        .buttonStyle(.bordered)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if let localModel, let toggleLoad {
+                    Button(localModel.actionTitle, action: toggleLoad)
+                        .buttonStyle(.bordered)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if let inspect {
+                    Button("Details", action: inspect)
+                        .buttonStyle(.bordered)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if let download {
+                    Button("Download", action: download)
+                        .buttonStyle(.bordered)
+                        .disabled(!entry.canDownload)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+        .padding(MelixDesignTokens.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixSelection(isSelected)
+    }
+}
+
+private struct DesktopHubModelCardContent: View {
+    let card: RuntimeHubModelCardState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                    Text(card.repoID)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    DesktopRegistryBadgeView(
+                        title: card.runSuitabilityText,
+                        tint: DesktopRegistryVisuals.fitColor(card.runSuitabilityText)
+                    )
+                }
+                Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            DesktopRegistryRunSuitabilityEvidenceView(
+                statusText: card.runSuitabilityText,
+                reasons: card.localFitReasons,
+                gated: card.gated,
+                recommendedAction: card.recommendedAction
+            )
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: MelixDesignTokens.Spacing.sm)], spacing: MelixDesignTokens.Spacing.sm) {
+                DesktopRegistryMetricTileView(title: "Artifact", value: card.estimatedArtifactBytesText)
+                DesktopRegistryMetricTileView(title: "Resident", value: card.estimatedResidentBytesText)
+                if !card.parameterCountText.isEmpty {
+                    DesktopRegistryMetricTileView(title: "Params", value: card.parameterCountText)
+                }
+                if !card.quantizationSummary.isEmpty {
+                    DesktopRegistryMetricTileView(title: "Quantization", value: card.quantizationSummary)
+                }
+            }
+
+            if !card.summary.isEmpty {
+                Text(card.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+
+            DesktopRegistryTokenListView(title: "Tags", values: card.tags)
+            DesktopRegistryTokenListView(title: "Base Models", values: card.baseModels)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopRegistryEntryCardContent: View {
+    let entry: RuntimeRegistryEntryState
+    let localModel: RuntimeModelRow?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                    Text(entry.title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    DesktopRegistryBadgeView(
+                        title: entry.sourceText,
+                        tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
+                    )
+                }
+                if !entry.subtitleText.isEmpty {
+                    Text(entry.subtitleText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            DesktopRegistryRunSuitabilityEvidenceView(
+                statusText: entry.runSuitabilityText,
+                reasons: localFitReasons,
+                gated: false,
+                recommendedAction: entry.statusText
+            )
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: MelixDesignTokens.Spacing.sm)], spacing: MelixDesignTokens.Spacing.sm) {
+                DesktopRegistryMetricTileView(title: "Source", value: entry.sourceText)
+                DesktopRegistryMetricTileView(title: "Task", value: entry.taskText)
+                DesktopRegistryMetricTileView(title: "Status", value: entry.statusText)
+                if !entry.sizeText.isEmpty {
+                    DesktopRegistryMetricTileView(title: "Size", value: entry.sizeText)
+                }
+            }
+
+            if let localModel {
+                VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                    Text(localModel.residencyText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(localModel.memoryText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    if !localModel.memoryAlertText.isEmpty {
+                        Text(localModel.memoryAlertText)
+                            .font(.caption2)
+                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    }
+                    Text("\(localModel.memoryPolicyText) • \(localModel.diskStreamingModeText) • \(localModel.accelerationModeText)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var localFitReasons: [String] {
+        guard let localModel else {
+            return []
+        }
+        var reasons = [localModel.residencyText, localModel.memoryText]
+        if !localModel.runtimeCacheDetailText.isEmpty {
+            reasons.append(localModel.runtimeCacheDetailText)
+        }
+        return reasons
+    }
+}
+
+private struct DesktopRegistryRunSuitabilityEvidenceView: View {
+    let statusText: String
+    let reasons: [String]
+    let gated: Bool
+    let recommendedAction: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                Text("Run Suitability")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                DesktopRegistryBadgeView(
+                    title: statusText,
+                    tint: DesktopRegistryVisuals.fitColor(statusText)
+                )
+            }
+
+            if !recommendedAction.isEmpty {
+                Text("Recommended action: \(recommendedAction)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+            if gated {
+                Text("Gated repository")
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+            }
+            ForEach(reasons.prefix(4), id: \.self) { reason in
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(MelixDesignTokens.Spacing.sm)
+        .background(
+            Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopRegistryMetricTileView: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+            Text(title).melixSectionLabel()
+            Text(value.isEmpty ? "unknown" : value)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+        .padding(MelixDesignTokens.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+        )
+    }
+}
+
+private struct DesktopRegistryTokenListView: View {
+    let title: String
+    let values: [String]
+
+    var body: some View {
+        if !values.isEmpty {
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                Text(title).melixSectionLabel()
+                Text(values.joined(separator: ", "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(3)
+            }
+        }
+    }
+}
+
+private struct DesktopRegistryBadgeView: View {
+    let title: String
+    let tint: Color
+
+    var body: some View {
+        Text(title.isEmpty ? "Unknown" : title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                tint.opacity(MelixDesignTokens.AccentOpacity.weak),
+                in: Capsule()
+            )
+    }
+}
+
+private struct DesktopRegistryMetadataChipView: View {
+    let title: String
+    var monospaced = false
+
+    var body: some View {
+        Text(title.isEmpty ? "unknown" : title)
+            .font(monospaced ? .caption2.monospacedDigit() : .caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Color.secondary.opacity(MelixDesignTokens.SurfaceOpacity.card),
+                in: Capsule()
+            )
+    }
+}
+
+private enum DesktopRegistryVisuals {
+    static func fitColor(_ text: String) -> Color {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "good", "installed":
+            return MelixDesignTokens.StatusColor.success
+        case "heavy", "pending":
+            return MelixDesignTokens.StatusColor.warning
+        case "blocked":
+            return MelixDesignTokens.StatusColor.error
+        case "unknown":
+            return MelixDesignTokens.StatusColor.info
+        default:
+            return .secondary
+        }
+    }
+
+    static func sourceColor(_ text: String) -> Color {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "local":
+            return MelixDesignTokens.StatusColor.success
+        case "managed download":
+            return MelixDesignTokens.StatusColor.warning
+        case "hugging face":
+            return MelixDesignTokens.StatusColor.info
+        default:
+            return .secondary
+        }
+    }
 }
 
 private struct DesktopRegistryRootsSectionView: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        GroupBox("Registry Roots") {
+        MelixSectionCard("Registry Roots") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
