@@ -1009,19 +1009,11 @@ def _resolve_dataset_build_source(
             details={"dataset_uri": dataset_uri},
         )
 
-    rows = _read_local_jsonl_rows(source_path, sample_limit=sample_limit)
-    resolved_template = _resolve_local_conversion_template(
-        request_ext.get("template", "").strip() or "auto",
-        rows[0],
+    normalized_samples, format_name, resolved_template = _resolve_local_training_samples(
+        source_path,
+        template=request_ext.get("template", "").strip() or "auto",
+        sample_limit=sample_limit,
     )
-    format_name, converted_rows = _convert_local_rows(
-        rows,
-        resolved_template,
-    )
-    normalized_samples = [
-        _normalize_sample(sample, format_name=format_name, max_characters_per_sample=0)
-        for sample in converted_rows
-    ]
     dataset_id = request_ext.get("dataset_id", "").strip() or source_path.stem
     return {
         "dataset_id": dataset_id,
@@ -1039,8 +1031,8 @@ def _resolve_dataset_build_source(
     }
 
 
-def _read_local_jsonl_rows(path: Path, *, sample_limit: int) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+def _iter_local_jsonl_rows(path: Path, *, sample_limit: int) -> Iterable[dict[str, Any]]:
+    yielded = 0
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             line = raw_line.strip()
@@ -1060,9 +1052,16 @@ def _read_local_jsonl_rows(path: Path, *, sample_limit: int) -> list[dict[str, A
                     message="Local dataset rows must be JSON objects.",
                     details={"line": str(line_number)},
                 )
-            rows.append(payload)
-            if sample_limit > 0 and len(rows) >= sample_limit:
+            yield payload
+            yielded += 1
+            if sample_limit > 0 and yielded >= sample_limit:
                 break
+
+
+def _read_local_jsonl_rows(path: Path, *, sample_limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for payload in _iter_local_jsonl_rows(path, sample_limit=sample_limit):
+        rows.append(payload)
     if not rows:
         raise ModelOperationError(
             code="invalid_dataset_source",
@@ -1103,35 +1102,41 @@ def _resolve_local_conversion_template(template: str, sample_row: dict[str, Any]
     )
 
 
-def _convert_local_rows(
-    rows: list[dict[str, Any]],
-    template: str,
-) -> tuple[str, list[dict[str, Any]]]:
-    if template == "chat_messages":
-        return "chat_messages", [{"messages": row.get("messages")} for row in rows]
-    if template == "prompt_completion":
-        return "prompt_completion", [
-            {
-                "prompt": row.get("prompt"),
-                "completion": row.get("completion"),
-            }
-            for row in rows
-        ]
+def _local_conversion_format(template: str) -> str:
+    if template == "chat_messages" or template == "sharegpt":
+        return "chat_messages"
+    if template == "prompt_completion" or template == "alpaca":
+        return "prompt_completion"
     if template == "text_completion":
-        return "text_completion", [{"text": row.get("text")} for row in rows]
+        return "text_completion"
+    raise ModelOperationError(
+        code="invalid_dataset_source",
+        message=f"Unsupported dataset conversion template: {template}",
+    )
+
+
+def _convert_local_row(
+    row: dict[str, Any],
+    template: str,
+) -> dict[str, Any]:
+    if template == "chat_messages":
+        return {"messages": row.get("messages")}
+    if template == "prompt_completion":
+        return {
+            "prompt": row.get("prompt"),
+            "completion": row.get("completion"),
+        }
+    if template == "text_completion":
+        return {"text": row.get("text")}
     if template == "alpaca":
-        converted: list[dict[str, Any]] = []
-        for row in rows:
-            instruction = str(row.get("instruction", "")).strip()
-            input_text = str(row.get("input", "")).strip()
-            completion = str(row.get("output", row.get("response", ""))).strip()
-            prompt = instruction
-            if input_text:
-                prompt = f"{instruction}\n\nInput:\n{input_text}"
-            converted.append({"prompt": prompt, "completion": completion})
-        return "prompt_completion", converted
+        instruction = str(row.get("instruction", "")).strip()
+        input_text = str(row.get("input", "")).strip()
+        completion = str(row.get("output", row.get("response", ""))).strip()
+        prompt = instruction
+        if input_text:
+            prompt = f"{instruction}\n\nInput:\n{input_text}"
+        return {"prompt": prompt, "completion": completion}
     if template == "sharegpt":
-        converted = []
         role_map = {
             "system": "system",
             "human": "user",
@@ -1140,36 +1145,69 @@ def _convert_local_rows(
             "assistant": "assistant",
             "tool": "tool",
         }
-        for row in rows:
-            raw_conversations = row.get("conversations", row.get("conversation"))
-            if not isinstance(raw_conversations, list):
+        raw_conversations = row.get("conversations", row.get("conversation"))
+        if not isinstance(raw_conversations, list):
+            raise ModelOperationError(
+                code="invalid_dataset_source",
+                message="sharegpt conversion requires a conversations array.",
+            )
+        messages: list[dict[str, str]] = []
+        for turn_index, turn in enumerate(raw_conversations):
+            if not isinstance(turn, dict):
                 raise ModelOperationError(
                     code="invalid_dataset_source",
-                    message="sharegpt conversion requires a conversations array.",
+                    message="sharegpt conversations must contain JSON object turns.",
+                    details={"message_index": str(turn_index)},
                 )
-            messages: list[dict[str, str]] = []
-            for turn_index, turn in enumerate(raw_conversations):
-                if not isinstance(turn, dict):
-                    raise ModelOperationError(
-                        code="invalid_dataset_source",
-                        message="sharegpt conversations must contain JSON object turns.",
-                        details={"message_index": str(turn_index)},
-                    )
-                raw_role = str(turn.get("from", turn.get("role", ""))).strip().lower()
-                role = role_map.get(raw_role, "")
-                if not role:
-                    raise ModelOperationError(
-                        code="invalid_dataset_source",
-                        message="sharegpt conversion encountered an unsupported role.",
-                        details={"role": raw_role or "unknown"},
-                    )
-                messages.append({"role": role, "content": turn.get("value", turn.get("content", ""))})
-            converted.append({"messages": messages})
-        return "chat_messages", converted
+            raw_role = str(turn.get("from", turn.get("role", ""))).strip().lower()
+            role = role_map.get(raw_role, "")
+            if not role:
+                raise ModelOperationError(
+                    code="invalid_dataset_source",
+                    message="sharegpt conversion encountered an unsupported role.",
+                    details={"role": raw_role or "unknown"},
+                )
+            messages.append({"role": role, "content": turn.get("value", turn.get("content", ""))})
+        return {"messages": messages}
     raise ModelOperationError(
         code="invalid_dataset_source",
         message=f"Unsupported dataset conversion template: {template}",
     )
+
+
+def _resolve_local_training_samples(
+    path: Path,
+    *,
+    template: str,
+    sample_limit: int,
+) -> tuple[list[dict[str, Any]], str, str]:
+    row_iterator = iter(_iter_local_jsonl_rows(path, sample_limit=sample_limit))
+    first_row = next(row_iterator, None)
+    if first_row is None:
+        raise ModelOperationError(
+            code="invalid_dataset_source",
+            message="Local dataset source did not contain any usable rows.",
+            details={"dataset_uri": str(path)},
+        )
+    resolved_template = _resolve_local_conversion_template(template, first_row)
+    format_name = _local_conversion_format(resolved_template)
+    normalized_samples = [
+        _normalize_sample(
+            _convert_local_row(row, resolved_template),
+            format_name=format_name,
+            max_characters_per_sample=0,
+        )
+        for row in chain((first_row,), row_iterator)
+    ]
+    return normalized_samples, format_name, resolved_template
+
+
+def _convert_local_rows(
+    rows: list[dict[str, Any]],
+    template: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    format_name = _local_conversion_format(template)
+    return format_name, [_convert_local_row(row, template) for row in rows]
 
 
 def _deterministic_validation_split(
