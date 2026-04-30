@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
+from functools import lru_cache
 import logging
 from threading import Lock
 from typing import Any
@@ -178,20 +179,16 @@ class MultimodalFastPathController:
         quant_profile_id: str,
         metadata: dict[str, str],
     ) -> ImageFeatureCacheKey:
-        digest = hashlib.sha256()
-        for value in (
-            image.mime_type,
-            image.format,
-            metadata.get("vision_prompt_profile_id", ""),
-            metadata.get("vision_tokenization_mode", ""),
-            metadata.get("vision_max_images_per_prompt", ""),
-        ):
-            digest.update(str(value or "").encode("utf-8"))
-            digest.update(b"\0")
         return ImageFeatureCacheKey(
             family_id=family_id,
             adapter_hash=adapter_hash,
-            preprocessing_fingerprint=digest.hexdigest(),
+            preprocessing_fingerprint=_preprocessing_fingerprint(
+                image.mime_type,
+                image.format,
+                metadata.get("vision_prompt_profile_id", ""),
+                metadata.get("vision_tokenization_mode", ""),
+                metadata.get("vision_max_images_per_prompt", ""),
+            ),
             quant_profile_id=quant_profile_id,
             sha256_hex=image.sha256_hex,
         )
@@ -312,3 +309,24 @@ def _adapter_hash(metadata: dict[str, str]) -> str:
         or metadata.get("multimodal_adapter_hash", "").strip()
         or "adapter-unset"
     )
+
+
+@lru_cache(maxsize=256)
+def _preprocessing_fingerprint(
+    mime_type: str,
+    image_format: str,
+    vision_prompt_profile_id: str,
+    vision_tokenization_mode: str,
+    vision_max_images_per_prompt: str,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        mime_type,
+        image_format,
+        vision_prompt_profile_id,
+        vision_tokenization_mode,
+        vision_max_images_per_prompt,
+    ):
+        digest.update(str(value or "").encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()

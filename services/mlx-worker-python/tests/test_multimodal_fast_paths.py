@@ -10,6 +10,7 @@ from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_LOAD_FALLBACK,
     MULTIMODAL_LOAD_NATIVE_QUANTIZED,
     MultimodalFastPathController,
+    _preprocessing_fingerprint,
 )
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 
@@ -257,3 +258,23 @@ def test_fast_path_documents_within_request_eviction_when_request_exceeds_cache_
     assert decision.image_feature_cache_misses == 2
     assert repeat_first.image_feature_cache_hits == 0
     assert repeat_first.image_feature_cache_misses == 1
+
+
+def test_fast_path_reuses_cached_preprocessing_fingerprint_for_same_request_shape() -> None:
+    _preprocessing_fingerprint.cache_clear()
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    first_image = _image(b"first-image", filename="first.jpg")
+    second_image = _image(b"second-image", filename="second.jpg")
+
+    try:
+        before = _preprocessing_fingerprint.cache_info()
+        decision = controller.plan(loaded_model, _request([first_image, second_image]))
+        after = _preprocessing_fingerprint.cache_info()
+
+        assert decision.image_feature_cache_hits == 0
+        assert decision.image_feature_cache_misses == 2
+        assert after.misses - before.misses == 1
+        assert after.hits - before.hits == 1
+    finally:
+        _preprocessing_fingerprint.cache_clear()
