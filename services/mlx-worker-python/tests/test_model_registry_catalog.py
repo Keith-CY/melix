@@ -20,6 +20,7 @@ from worker.model_registry.catalog import (
     _hf_cache_revision,
     _hf_cache_revision_map,
     _infer_embedding_identity,
+    _is_hf_cache_pruned_subtree,
     _is_hf_cache_snapshot_dir,
     _local_model_id,
     _read_text_prefix,
@@ -596,6 +597,63 @@ def test_registry_directory_iterators_use_os_scandir_and_preserve_sorted_depth_f
     assert manifest_paths == [manifest_dir.resolve() / "manifest.json"]
     assert os.fspath(root.resolve()) in scandir_calls
 
+
+
+def test_registry_root_tree_prunes_hf_cache_snapshot_and_refs_subtrees(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    snapshot_dir = root / "models--mlx-community--Tiny" / "snapshots" / "abc123"
+    refs_dir = root / "models--mlx-community--Tiny" / "refs"
+    plain_model_dir = root / "plain-local"
+    _write_model_config(snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(snapshot_dir)
+    (snapshot_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (refs_dir / "main").write_text("abc123\n", encoding="utf-8")
+    _write_model_config(plain_model_dir, {"model_type": "qwen3"})
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert plain_dirs == [plain_model_dir.resolve()]
+    assert snapshot_dir.resolve() not in plain_dirs
+    assert manifest_paths == []
+
+
+
+def test_registry_root_tree_does_not_prune_invalid_models_prefix_dirs(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    invalid_snapshot_dir = root / "models--custom" / "snapshots" / "v1"
+    invalid_refs_dir = root / "models--custom" / "refs"
+    _write_model_config(invalid_snapshot_dir, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(invalid_snapshot_dir)
+    (invalid_snapshot_dir / "README.md").write_text("library_name: mlx\n", encoding="utf-8")
+    invalid_refs_dir.mkdir(parents=True, exist_ok=True)
+    (invalid_refs_dir / "main").write_text("v1\n", encoding="utf-8")
+
+    plain_dirs = list(WorkerModelCatalog._iter_plain_local_model_dirs(root))
+    manifest_paths = list(WorkerModelCatalog._iter_registry_manifest_paths(root))
+
+    assert _is_hf_cache_pruned_subtree(root.resolve(), (root / "models--custom" / "snapshots").resolve()) is False
+    assert _is_hf_cache_pruned_subtree(root.resolve(), invalid_refs_dir.resolve()) is False
+    assert _is_hf_cache_snapshot_dir(root.resolve(), invalid_snapshot_dir.resolve()) is False
+    assert invalid_snapshot_dir.resolve() in plain_dirs
+    assert manifest_paths == []
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+
+    assert [model.model_id for model in snapshot.models] == ["models--custom/snapshots/v1"]
+    model = snapshot.models[0]
+    assert model.model_path == str(invalid_snapshot_dir.resolve())
+    assert model.ext["melix.source_kind"] == "local_mlx_directory"
+    assert "melix.hf_repo_id" not in model.ext
+
+
+def test_is_hf_cache_pruned_subtree_returns_false_for_paths_outside_root(tmp_path: Path) -> None:
+    root = (tmp_path / "root").resolve()
+    outside_snapshot_dir = (tmp_path / "outside" / "models--mlx-community--Tiny" / "snapshots").resolve()
+
+    assert _is_hf_cache_pruned_subtree(root, outside_snapshot_dir) is False
 
 
 def test_registry_snapshot_reuses_single_plain_and_manifest_tree_walk_per_root(
