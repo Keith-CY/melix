@@ -176,6 +176,24 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_model_eval_sync_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_sample_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_sample_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_sample_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_id_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_id_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_token_id_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_detokenize_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_detokenize_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_detokenize_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_stream_yield_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_stream_yield_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_stream_yield_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_summary_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_summary_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_decode_summary_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_turboquant_candidate_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_turboquant_candidate_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.active_kv_turboquant_candidate_avg_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_loop_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_decode_quantize_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_fused_attention_total_us"], 0)
@@ -4506,6 +4524,18 @@ final class WorkerScaffoldTests: XCTestCase {
                     decodeTokenEvalCallCount: 3,
                     decodeModelEvalSyncTotalMicros: 1_500,
                     decodeModelEvalSyncCallCount: 3,
+                    decodeSampleTotalMicros: 210,
+                    decodeSampleCallCount: 3,
+                    decodeTokenIDTotalMicros: 90,
+                    decodeTokenIDCallCount: 3,
+                    decodeDetokenizeTotalMicros: 150,
+                    decodeDetokenizeCallCount: 3,
+                    decodeStreamYieldTotalMicros: 60,
+                    decodeStreamYieldCallCount: 3,
+                    decodeSummaryTotalMicros: 45,
+                    decodeSummaryCallCount: 1,
+                    turboQuantCandidateTotalMicros: 30,
+                    turboQuantCandidateCallCount: 1,
                     decodeQuantizeTotalMicros: 120,
                     decodeLoopTotalMicros: 2_100,
                     decodeTokenCount: 3,
@@ -4599,6 +4629,24 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_total_us"], 1_500)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_call_count"], 3)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_model_eval_sync_avg_us"], 500)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_sample_total_us"], 210)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_sample_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_sample_avg_us"], 70)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_id_total_us"], 90)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_id_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_token_id_avg_us"], 30)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_detokenize_total_us"], 150)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_detokenize_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_detokenize_avg_us"], 50)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_stream_yield_total_us"], 60)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_stream_yield_call_count"], 3)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_stream_yield_avg_us"], 20)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_summary_total_us"], 45)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_summary_call_count"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_decode_summary_avg_us"], 45)
+        XCTAssertEqual(metrics["swift_text.active_kv_turboquant_candidate_total_us"], 30)
+        XCTAssertEqual(metrics["swift_text.active_kv_turboquant_candidate_call_count"], 1)
+        XCTAssertEqual(metrics["swift_text.active_kv_turboquant_candidate_avg_us"], 30)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_total_us"], 120)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_quantize_avg_us"], 40)
         XCTAssertEqual(metrics["swift_text.active_kv_decode_loop_total_us"], 2_100)
@@ -4640,6 +4688,18 @@ final class WorkerScaffoldTests: XCTestCase {
             decodeTokenEvalCallCount: 0,
             decodeModelEvalSyncTotalMicros: 70,
             decodeModelEvalSyncCallCount: 0,
+            decodeSampleTotalMicros: 60,
+            decodeSampleCallCount: 0,
+            decodeTokenIDTotalMicros: 50,
+            decodeTokenIDCallCount: 0,
+            decodeDetokenizeTotalMicros: 40,
+            decodeDetokenizeCallCount: 0,
+            decodeStreamYieldTotalMicros: 30,
+            decodeStreamYieldCallCount: 0,
+            decodeSummaryTotalMicros: 20,
+            decodeSummaryCallCount: 0,
+            turboQuantCandidateTotalMicros: 10,
+            turboQuantCandidateCallCount: 0,
             decodeQuantizeTotalMicros: 80,
             decodeLoopTotalMicros: 400,
             decodeTokenCount: 0,
@@ -4652,6 +4712,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.decodeModelAverageMicros, 0)
         XCTAssertEqual(summary.decodeTokenEvalAverageMicros, 0)
         XCTAssertEqual(summary.decodeModelEvalSyncAverageMicros, 0)
+        XCTAssertEqual(summary.decodeSampleAverageMicros, 0)
+        XCTAssertEqual(summary.decodeTokenIDAverageMicros, 0)
+        XCTAssertEqual(summary.decodeDetokenizeAverageMicros, 0)
+        XCTAssertEqual(summary.decodeStreamYieldAverageMicros, 0)
+        XCTAssertEqual(summary.decodeSummaryAverageMicros, 0)
+        XCTAssertEqual(summary.turboQuantCandidateAverageMicros, 0)
         XCTAssertEqual(summary.decodeQuantizeAverageMicros, 0)
         XCTAssertEqual(summary.cacheUpdateAverageMicros, 0)
         XCTAssertEqual(summary.cacheMaterializeAverageMicros, 0)
@@ -7225,6 +7291,56 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             XCTAssertEqual(fused.dtype, queries.dtype)
+            XCTAssertTrue(allClose(fused, expected, rtol: 1e-2, atol: 1e-2).all().item())
+        }
+    }
+
+    func testVendoredFusedQ4AttentionMatchesQuantizedReferenceForDecodeHeadDimension128()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let sequenceLength = 4
+            let headDimension = 128
+            let groupSize = 64
+            let queryHeadCount = 2
+            let kvHeadCount = 1
+            let queryValues = (0 ..< queryHeadCount * headDimension).map { index in
+                Float((index % 37) - 18) / 19.0
+            }
+            let keyValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 29) - 14) / 13.0
+            }
+            let valueValues = (0 ..< sequenceLength * headDimension).map { index in
+                Float((index % 31) - 15) / 14.0
+            }
+            let queries = MLXArray(queryValues, [1, queryHeadCount, 1, headDimension]).asType(.bfloat16)
+            let keys = MLXArray(keyValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let values = MLXArray(valueValues, [1, kvHeadCount, sequenceLength, headDimension]).asType(.bfloat16)
+            let cache = QuantizedKVCache(groupSize: groupSize, bits: 4)
+            let (quantizedKeys, quantizedValues) = cache.updateQuantized(keys: keys, values: values)
+
+            let fused = try XCTUnwrap(fusedQ4ScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            ))
+            let expected = quantizedScaledDotProductAttention(
+                queries: queries,
+                quantizedKeys: quantizedKeys,
+                quantizedValues: quantizedValues,
+                scale: Float(1.0 / Double(headDimension).squareRoot()),
+                mask: .causal,
+                groupSize: groupSize,
+                bits: 4,
+                mode: .affine
+            )
+
+            XCTAssertEqual(fused.shape, expected.shape)
             XCTAssertTrue(allClose(fused, expected, rtol: 1e-2, atol: 1e-2).all().item())
         }
     }

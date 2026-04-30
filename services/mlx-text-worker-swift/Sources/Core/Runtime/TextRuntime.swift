@@ -55,6 +55,18 @@ struct ActiveKVProbeSummary: Sendable {
     let decodeTokenEvalCallCount: Int
     let decodeModelEvalSyncTotalMicros: Int
     let decodeModelEvalSyncCallCount: Int
+    let decodeSampleTotalMicros: Int
+    let decodeSampleCallCount: Int
+    let decodeTokenIDTotalMicros: Int
+    let decodeTokenIDCallCount: Int
+    let decodeDetokenizeTotalMicros: Int
+    let decodeDetokenizeCallCount: Int
+    let decodeStreamYieldTotalMicros: Int
+    let decodeStreamYieldCallCount: Int
+    let decodeSummaryTotalMicros: Int
+    let decodeSummaryCallCount: Int
+    let turboQuantCandidateTotalMicros: Int
+    let turboQuantCandidateCallCount: Int
     let decodeQuantizeTotalMicros: Int
     let decodeLoopTotalMicros: Int
     let decodeTokenCount: Int
@@ -92,6 +104,18 @@ struct ActiveKVProbeSummary: Sendable {
         decodeTokenEvalCallCount: Int = 0,
         decodeModelEvalSyncTotalMicros: Int = 0,
         decodeModelEvalSyncCallCount: Int = 0,
+        decodeSampleTotalMicros: Int = 0,
+        decodeSampleCallCount: Int = 0,
+        decodeTokenIDTotalMicros: Int = 0,
+        decodeTokenIDCallCount: Int = 0,
+        decodeDetokenizeTotalMicros: Int = 0,
+        decodeDetokenizeCallCount: Int = 0,
+        decodeStreamYieldTotalMicros: Int = 0,
+        decodeStreamYieldCallCount: Int = 0,
+        decodeSummaryTotalMicros: Int = 0,
+        decodeSummaryCallCount: Int = 0,
+        turboQuantCandidateTotalMicros: Int = 0,
+        turboQuantCandidateCallCount: Int = 0,
         decodeQuantizeTotalMicros: Int,
         decodeLoopTotalMicros: Int = 0,
         decodeTokenCount: Int,
@@ -128,6 +152,18 @@ struct ActiveKVProbeSummary: Sendable {
         self.decodeTokenEvalCallCount = decodeTokenEvalCallCount
         self.decodeModelEvalSyncTotalMicros = decodeModelEvalSyncTotalMicros
         self.decodeModelEvalSyncCallCount = decodeModelEvalSyncCallCount
+        self.decodeSampleTotalMicros = decodeSampleTotalMicros
+        self.decodeSampleCallCount = decodeSampleCallCount
+        self.decodeTokenIDTotalMicros = decodeTokenIDTotalMicros
+        self.decodeTokenIDCallCount = decodeTokenIDCallCount
+        self.decodeDetokenizeTotalMicros = decodeDetokenizeTotalMicros
+        self.decodeDetokenizeCallCount = decodeDetokenizeCallCount
+        self.decodeStreamYieldTotalMicros = decodeStreamYieldTotalMicros
+        self.decodeStreamYieldCallCount = decodeStreamYieldCallCount
+        self.decodeSummaryTotalMicros = decodeSummaryTotalMicros
+        self.decodeSummaryCallCount = decodeSummaryCallCount
+        self.turboQuantCandidateTotalMicros = turboQuantCandidateTotalMicros
+        self.turboQuantCandidateCallCount = turboQuantCandidateCallCount
         self.decodeQuantizeTotalMicros = decodeQuantizeTotalMicros
         self.decodeLoopTotalMicros = decodeLoopTotalMicros
         self.decodeTokenCount = decodeTokenCount
@@ -163,6 +199,30 @@ struct ActiveKVProbeSummary: Sendable {
 
     var decodeModelEvalSyncAverageMicros: Int {
         averageMicros(total: decodeModelEvalSyncTotalMicros, count: decodeModelEvalSyncCallCount)
+    }
+
+    var decodeSampleAverageMicros: Int {
+        averageMicros(total: decodeSampleTotalMicros, count: decodeSampleCallCount)
+    }
+
+    var decodeTokenIDAverageMicros: Int {
+        averageMicros(total: decodeTokenIDTotalMicros, count: decodeTokenIDCallCount)
+    }
+
+    var decodeDetokenizeAverageMicros: Int {
+        averageMicros(total: decodeDetokenizeTotalMicros, count: decodeDetokenizeCallCount)
+    }
+
+    var decodeStreamYieldAverageMicros: Int {
+        averageMicros(total: decodeStreamYieldTotalMicros, count: decodeStreamYieldCallCount)
+    }
+
+    var decodeSummaryAverageMicros: Int {
+        averageMicros(total: decodeSummaryTotalMicros, count: decodeSummaryCallCount)
+    }
+
+    var turboQuantCandidateAverageMicros: Int {
+        averageMicros(total: turboQuantCandidateTotalMicros, count: turboQuantCandidateCallCount)
     }
 
     var decodeQuantizeAverageMicros: Int {
