@@ -7,7 +7,9 @@ import pytest
 
 from worker.productization.benchmark_evaluation_report import (
     _aggregate_probe_values,
+    _finalize_numeric_aggregate,
     _markdown_cell,
+    _update_numeric_aggregate,
     build_benchmark_evaluation_report,
     build_sticky_comment_body,
     load_report_input,
@@ -230,6 +232,17 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
     assert rows_by_metric[f"{label}.dflash_rollback_count_sum"]["status"] == "warning"
     assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "not_comparable"
     assert report["summary"]["warning_count"] == 4
+
+
+def test_numeric_aggregate_helpers_track_running_totals() -> None:
+    aggregate = None
+    aggregate = _update_numeric_aggregate(aggregate, 3.0)
+    aggregate = _update_numeric_aggregate(aggregate, 5.0)
+
+    assert aggregate == (8.0, 2)
+    assert _finalize_numeric_aggregate("prefill_ms", aggregate) == ("mean", 4.0)
+    assert _finalize_numeric_aggregate("cache_hit", aggregate) == ("rate", 4.0)
+    assert _finalize_numeric_aggregate("speculative_fallback_count", aggregate) == ("sum", 8.0)
 
 
 def test_aggregate_probe_values_handles_empty_inputs() -> None:
