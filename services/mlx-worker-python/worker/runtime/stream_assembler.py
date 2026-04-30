@@ -44,6 +44,8 @@ class RequestStreamAssembler:
     _THINK_CLOSE = "</think>"
     _TOOL_OPEN = "<tool_call>"
     _TOOL_CLOSE = "</tool_call>"
+    _THINK_PREFIXES = tuple("<think>"[:index] for index in range(1, len("<think>")))
+    _TOOL_PREFIXES = tuple("<tool_call>"[:index] for index in range(1, len("<tool_call>")))
 
     def __init__(
         self,
@@ -109,6 +111,12 @@ class RequestStreamAssembler:
     @property
     def _tool_parsing_enabled(self) -> bool:
         return bool(self._tool_parser_mode) and not self._is_json_structured_output
+
+    @property
+    def _structural_tag_prefixes(self) -> tuple[str, ...]:
+        if self._tool_parsing_enabled:
+            return self._THINK_PREFIXES + self._TOOL_PREFIXES
+        return self._THINK_PREFIXES
 
     def _unseen_delta(self, raw: str) -> str:
         if raw.startswith(self._raw_seen):
@@ -203,27 +211,19 @@ class RequestStreamAssembler:
         return deltas
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
-        candidates: list[tuple[str, int]] = []
         think_index = self._buffer.find(self._THINK_OPEN)
-        if think_index >= 0:
-            candidates.append((self._THINK_OPEN, think_index))
-        if self._tool_parsing_enabled:
-            tool_index = self._buffer.find(self._TOOL_OPEN)
-            if tool_index >= 0:
-                candidates.append((self._TOOL_OPEN, tool_index))
-        if not candidates:
-            return None
-        return min(candidates, key=lambda item: item[1])
+        if not self._tool_parsing_enabled:
+            return None if think_index < 0 else (self._THINK_OPEN, think_index)
+
+        tool_index = self._buffer.find(self._TOOL_OPEN)
+        if think_index < 0:
+            return None if tool_index < 0 else (self._TOOL_OPEN, tool_index)
+        if tool_index < 0 or think_index <= tool_index:
+            return (self._THINK_OPEN, think_index)
+        return (self._TOOL_OPEN, tool_index)
 
     def _has_partial_structural_tag_suffix(self) -> bool:
-        tags = [self._THINK_OPEN]
-        if self._tool_parsing_enabled:
-            tags.append(self._TOOL_OPEN)
-        return any(
-            self._buffer.endswith(tag[:prefix_length])
-            for tag in tags
-            for prefix_length in range(1, len(tag))
-        )
+        return any(self._buffer.endswith(prefix) for prefix in self._structural_tag_prefixes)
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         self._assistant_parts.append(content)
@@ -266,7 +266,10 @@ class RequestStreamAssembler:
         )
 
     def _first_json_delimiter(self, text: str) -> int | None:
-        indexes = [index for index in (text.find("{"), text.find("[")) if index >= 0]
-        if not indexes:
-            return None
-        return min(indexes)
+        object_index = text.find("{")
+        array_index = text.find("[")
+        if object_index < 0:
+            return None if array_index < 0 else array_index
+        if array_index < 0 or object_index <= array_index:
+            return object_index
+        return array_index
