@@ -28,6 +28,16 @@ from worker.productization.benchmark_export import (
 )
 
 
+class _CountingMetricList(list[dict[str, float | str]]):
+    def __init__(self, items: list[dict[str, float | str]]) -> None:
+        super().__init__(items)
+        self.iteration_count = 0
+
+    def __iter__(self):
+        self.iteration_count += 1
+        return super().__iter__()
+
+
 def _write_bench_fixtures(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "bench-summary.json").write_text(
@@ -972,6 +982,43 @@ def test_build_comparison_table_handles_single_run() -> None:
 
     assert "| Metric | melix-dev |" in table
     assert "| bench.smoke.ttft_ms | 24.45 |" in table
+
+
+def test_build_comparison_table_indexes_metrics_once_per_result() -> None:
+    metrics = _CountingMetricList([
+        {"name": "bench.smoke.ttft_ms", "value": 24.45},
+        {"name": "bench.smoke.tokens_per_second", "value": 47.08},
+    ])
+    run = {
+        "benchmark_jobs": [{"job_id": "bench-1", "model_id": "melix-dev"}],
+        "benchmark_results": [{"suite": "smoke", "metrics": metrics}],
+    }
+
+    table = build_comparison_table([run])
+
+    assert "| bench.smoke.ttft_ms | 24.45 |" in table
+    assert "| bench.smoke.tokens_per_second | 47.08 |" in table
+    assert metrics.iteration_count == 1
+
+
+def test_build_comparison_table_ignores_blank_and_duplicate_metric_names() -> None:
+    run = {
+        "benchmark_jobs": [{"job_id": "bench-1", "model_id": "melix-dev"}],
+        "benchmark_results": [{
+            "suite": "smoke",
+            "metrics": [
+                {"name": "", "value": 999.0},
+                {"name": "bench.smoke.ttft_ms", "value": 24.45},
+                {"name": "bench.smoke.ttft_ms", "value": 88.88},
+            ],
+        }],
+    }
+
+    table = build_comparison_table([run])
+
+    assert "|  |" not in table
+    assert "| bench.smoke.ttft_ms | 24.45 |" in table
+    assert "88.88" not in table
 
 
 def test_build_comparison_table_ignores_evaluation_metrics() -> None:

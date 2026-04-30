@@ -319,13 +319,14 @@ def build_comparison_table(runs: list[dict[str, object]]) -> str:
 
     all_metric_names: list[str] = []
     seen: set[str] = set()
+    metric_values_by_run: list[dict[str, float]] = []
     for run in runs:
-        for result in run.get("benchmark_results", []):
-            for metric in result.get("metrics", []):
-                name = metric.get("name", "")
-                if name and name not in seen:
-                    all_metric_names.append(name)
-                    seen.add(name)
+        metric_values = _collect_metric_values(run)
+        metric_values_by_run.append(metric_values)
+        for name in metric_values:
+            if name not in seen:
+                all_metric_names.append(name)
+                seen.add(name)
 
     if not all_metric_names:
         return ""
@@ -337,8 +338,8 @@ def build_comparison_table(runs: list[dict[str, object]]) -> str:
     rows: list[str] = []
     for metric_name in all_metric_names:
         cells: list[str] = []
-        for run in runs:
-            value = _find_metric_value(run, metric_name)
+        for metric_values in metric_values_by_run:
+            value = metric_values.get(metric_name)
             cells.append(f"{value:.2f}" if value is not None else "-")
         rows.append(f"| {metric_name} | " + " | ".join(cells) + " |")
 
@@ -358,15 +359,15 @@ def _run_label(run: dict[str, object], index: int) -> str:
     return f"run-{index}"
 
 
-def _find_metric_value(
-    run: dict[str, object],
-    metric_name: str,
-) -> float | None:
+def _collect_metric_values(run: dict[str, object]) -> dict[str, float]:
+    metric_values: dict[str, float] = {}
     for result in run.get("benchmark_results", []):
         for metric in result.get("metrics", []):
-            if metric.get("name") == metric_name:
-                return float(metric["value"])
-    return None
+            name = metric.get("name", "")
+            if not name or name in metric_values:
+                continue
+            metric_values[name] = float(metric["value"])
+    return metric_values
 
 
 def _resolve_artifact_root(
