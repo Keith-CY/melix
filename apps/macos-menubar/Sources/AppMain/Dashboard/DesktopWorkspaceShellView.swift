@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import MelixCLICore
 import SwiftUI
 
 @MainActor
@@ -664,9 +665,198 @@ private struct DesktopServerSessionSidebar: View {
                 }
             }
 
+            Divider()
+
+            HStack {
+                Text("Remote Servers")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    viewModel.prepareNewRemoteServerDraft()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("New Remote Server")
+                .accessibilityLabel("New Remote Server")
+            }
+
+            if viewModel.remoteServers.isEmpty {
+                Text("No Remote Servers")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.remoteServers, id: \.id) { server in
+                        Button {
+                            viewModel.selectRemoteServer(id: server.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(server.title)
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(server.healthStatus)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("\(server.defaultModelID) • \(server.providerKind)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(
+                                viewModel.selectedRemoteServerID == server.id
+                                ? Color.accentColor.opacity(0.14)
+                                : Color.secondary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 12)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
             Spacer()
         }
         .padding(20)
+    }
+}
+
+private struct DesktopRemoteServerEditor: View {
+    let viewModel: RuntimeViewModel
+
+    private var selectedRemoteServer: RemoteServer? {
+        viewModel.remoteServers.first { $0.id == viewModel.selectedRemoteServerID }
+    }
+
+    var body: some View {
+        MelixSectionCard("Remote Server") {
+            VStack(alignment: .leading, spacing: 12) {
+                if let selectedRemoteServer {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "network.badge.shield.half.filled")
+                            .foregroundStyle(MelixDesignTokens.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedRemoteServer.title)
+                                .font(.headline)
+                            Text("\(selectedRemoteServer.defaultModelID) • key \(selectedRemoteServer.apiKeyHint.isEmpty ? "not saved" : selectedRemoteServer.apiKeyHint)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Remote Server ID",
+                        text: Binding(
+                            get: { viewModel.remoteServerIDDraft },
+                            set: { viewModel.remoteServerIDDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isRemoteServerIDEditable == false)
+
+                    TextField(
+                        "Title",
+                        text: Binding(
+                            get: { viewModel.remoteServerTitleDraft },
+                            set: { viewModel.remoteServerTitleDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    Picker(
+                        "Provider",
+                        selection: Binding(
+                            get: { viewModel.remoteServerProviderPresetDraft },
+                            set: { viewModel.selectRemoteServerProviderPreset($0) }
+                        )
+                    ) {
+                        ForEach(RemoteServerProviderPreset.allCases) { providerPreset in
+                            Text(providerPreset.title).tag(providerPreset)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    TextField(
+                        "Default Model",
+                        text: Binding(
+                            get: { viewModel.remoteServerDefaultModelIDDraft },
+                            set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                TextField(
+                    viewModel.isRemoteServerBaseURLEditable ? "Base URL" : "Base URL (preset)",
+                    text: Binding(
+                        get: { viewModel.remoteServerBaseURLDraft },
+                        set: { viewModel.remoteServerBaseURLDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isRemoteServerBaseURLEditable == false)
+
+                SecureField(
+                    selectedRemoteServer?.apiKeyHint.isEmpty == false ? "Replace API Key" : "API Key",
+                    text: Binding(
+                        get: { viewModel.remoteServerAPIKeyDraft },
+                        set: { viewModel.remoteServerAPIKeyDraft = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                HStack(alignment: .top, spacing: 12) {
+                    TextField(
+                        "Timeout (s)",
+                        value: Binding(
+                            get: { viewModel.remoteServerTimeoutSecondsDraft },
+                            set: { viewModel.remoteServerTimeoutSecondsDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Rate limit / min",
+                        value: Binding(
+                            get: { viewModel.remoteServerRateLimitPerMinuteDraft },
+                            set: { viewModel.remoteServerRateLimitPerMinuteDraft = $0 }
+                        ),
+                        format: .number
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack {
+                    Button("New") {
+                        viewModel.prepareNewRemoteServerDraft()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Save Remote Server") {
+                        viewModel.saveRemoteServerDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Remove") {
+                        viewModel.removeSelectedRemoteServer()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.selectedRemoteServerID.isEmpty)
+
+                    Spacer()
+                }
+            }
+        }
     }
 }
 
@@ -688,6 +878,8 @@ private struct DesktopServerSessionEditor: View {
                     title: "Server",
                     subtitle: "Choose model, configure listener, then start the server session."
                 ) {}
+
+                DesktopRemoteServerEditor(viewModel: viewModel)
 
                 if let session = viewModel.selectedServerSession {
                     if let notice = session.lifecycleBannerState {
@@ -3896,6 +4088,138 @@ struct DesktopDiagnosticsToolSectionView: View {
                     Text(viewModel.evaluationTargetSummaryText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Evaluation Prompt")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Evaluation Prompt",
+                            selection: Binding(
+                                get: { viewModel.selectedEvaluationPromptID },
+                                set: { viewModel.selectEvaluationPrompt(id: $0) }
+                            )
+                        ) {
+                            ForEach(viewModel.evaluationPrompts, id: \.id) { prompt in
+                                Text(prompt.title).tag(prompt.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(viewModel.selectedEvaluationPromptSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
+                        HStack(spacing: 10) {
+                            Button {
+                                viewModel.prepareNewEvaluationPromptDraft()
+                            } label: {
+                                Label("New Prompt", systemImage: "plus")
+                            }
+
+                            Button {
+                                viewModel.prepareEvaluationPromptDraftFromSelection()
+                            } label: {
+                                Label("Edit Draft", systemImage: "square.and.pencil")
+                            }
+                            .disabled(viewModel.selectedEvaluationPrompt?.readOnly ?? true)
+
+                            Button {
+                                viewModel.saveEvaluationPromptDraft()
+                            } label: {
+                                Label("Save Draft", systemImage: "tray.and.arrow.down")
+                            }
+                            .disabled(viewModel.isEvaluationPromptDraftEditable == false)
+
+                            Button {
+                                viewModel.freezeSelectedEvaluationPrompt()
+                            } label: {
+                                Label("Freeze Revision", systemImage: "snowflake")
+                            }
+                            .disabled(viewModel.canFreezeSelectedEvaluationPrompt == false)
+                        }
+                        .buttonStyle(.bordered)
+
+                        HStack(spacing: 16) {
+                            TextField(
+                                "Prompt ID",
+                                text: Binding(
+                                    get: { viewModel.evaluationPromptIDDraft },
+                                    set: { viewModel.evaluationPromptIDDraft = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(viewModel.isEvaluationPromptIDEditable == false)
+
+                            TextField(
+                                "Prompt Title",
+                                text: Binding(
+                                    get: { viewModel.evaluationPromptTitleDraft },
+                                    set: { viewModel.evaluationPromptTitleDraft = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(
+                                viewModel.isEvaluationPromptIDEditable == false
+                                    || viewModel.isEvaluationPromptDraftEditable == false
+                            )
+                        }
+
+                        TextEditor(
+                            text: Binding(
+                                get: { viewModel.evaluationPromptSystemPromptDraft },
+                                set: { viewModel.evaluationPromptSystemPromptDraft = $0 }
+                            )
+                        )
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 140)
+                        .padding(8)
+                        .background(
+                            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .disabled(viewModel.isEvaluationPromptDraftEditable == false)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Semantic Judge")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker(
+                            "Judge Remote Server",
+                            selection: Binding(
+                                get: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID },
+                                set: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID = $0 }
+                            )
+                        ) {
+                            Text("None").tag("")
+                            ForEach(viewModel.remoteServers, id: \.id) { server in
+                                Text(server.title.isEmpty ? server.id : "\(server.title) • \(server.id)")
+                                    .tag(server.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if viewModel.selectedEvaluationSemanticJudgeRemoteServerID.isEmpty == false {
+                            TextField(
+                                "Judge Model",
+                                text: Binding(
+                                    get: { viewModel.evaluationSemanticJudgeModelID },
+                                    set: { viewModel.evaluationSemanticJudgeModelID = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    }
+
+                    Divider()
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Dataset Source")

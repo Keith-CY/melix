@@ -383,6 +383,34 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
         }
     }
 
+    public struct RemoteTarget: Equatable, Sendable {
+        public let remoteServerID: String
+        public let providerKind: String
+        public let baseURL: String
+        public let apiKey: String
+        public let modelID: String
+        public let timeoutSeconds: UInt32
+        public let rateLimitPerMinute: UInt32
+
+        public init(
+            remoteServerID: String,
+            providerKind: String,
+            baseURL: String,
+            apiKey: String,
+            modelID: String,
+            timeoutSeconds: UInt32 = 60,
+            rateLimitPerMinute: UInt32 = 0
+        ) {
+            self.remoteServerID = remoteServerID
+            self.providerKind = providerKind
+            self.baseURL = baseURL
+            self.apiKey = apiKey
+            self.modelID = modelID
+            self.timeoutSeconds = timeoutSeconds
+            self.rateLimitPerMinute = rateLimitPerMinute
+        }
+    }
+
     public let modelID: String
     public let hfRepoID: String
     public let suiteID: String
@@ -392,6 +420,7 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
     public let fieldMapping: FieldMapping
     public let profile: Profile
     public let parameters: [String: String]
+    public let remoteTarget: RemoteTarget?
 
     public init(
         modelID: String = "",
@@ -402,7 +431,8 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
         source: Source = .builtinPackage,
         fieldMapping: FieldMapping = .init(),
         profile: Profile = .init(),
-        parameters: [String: String] = [:]
+        parameters: [String: String] = [:],
+        remoteTarget: RemoteTarget? = nil
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
@@ -413,6 +443,7 @@ public struct ControlPlaneEvaluationRequest: Equatable, Sendable {
         self.fieldMapping = fieldMapping
         self.profile = profile
         self.parameters = parameters
+        self.remoteTarget = remoteTarget
     }
 }
 
@@ -1498,6 +1529,15 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops.runEvaluation.profile.outputSchemaJson = evaluation.profile.outputSchemaJSON
         request.ops.runEvaluation.profile.ignoredPaths = evaluation.profile.ignoredPaths
         request.ops.runEvaluation.parameters = evaluation.parameters
+        if let remoteTarget = evaluation.remoteTarget {
+            request.ops.runEvaluation.remoteTarget.remoteServerID = remoteTarget.remoteServerID
+            request.ops.runEvaluation.remoteTarget.providerKind = remoteTarget.providerKind
+            request.ops.runEvaluation.remoteTarget.baseURL = remoteTarget.baseURL
+            request.ops.runEvaluation.remoteTarget.apiKey = remoteTarget.apiKey
+            request.ops.runEvaluation.remoteTarget.modelID = remoteTarget.modelID
+            request.ops.runEvaluation.remoteTarget.timeoutSeconds = remoteTarget.timeoutSeconds
+            request.ops.runEvaluation.remoteTarget.rateLimitPerMinute = remoteTarget.rateLimitPerMinute
+        }
         return request
     }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 import math
 from pathlib import Path
@@ -118,24 +119,123 @@ class ModelOpsJobRegistry:
         if self._jobs_root is None or self._jobs_root.exists() is False:
             return
 
+        manifest_paths = self._collect_restore_manifest_paths(self._jobs_root)
         self._restore_manifest_jobs(
             operation="train_lora",
-            manifest_paths=self._jobs_root.glob("train_lora/model-ops-*/train_lora.adapter.json"),
+            manifest_paths=manifest_paths["train_lora"],
             pct=0.97,
         )
         self._restore_manifest_jobs(
             operation="activate_adapter",
-            manifest_paths=self._jobs_root.glob("activate_adapter/model-ops-*/*/manifest.json"),
+            manifest_paths=manifest_paths["activate_adapter"],
             pct=0.95,
         )
         self._restore_manifest_jobs(
             operation="remove_derived_model",
-            manifest_paths=self._jobs_root.glob(
-                "remove_derived_model/model-ops-*/remove_derived_model.lifecycle.json"
-            ),
+            manifest_paths=manifest_paths["remove_derived_model"],
             pct=0.95,
         )
         self._next_id = max(self._next_id, self._max_numeric_job_id() + 1)
+
+    @staticmethod
+    def _collect_restore_manifest_paths(
+        jobs_root: Path,
+    ) -> dict[str, list[Path]]:
+        manifest_paths: dict[str, list[Path]] = {
+            "train_lora": [],
+            "activate_adapter": [],
+            "remove_derived_model": [],
+        }
+
+        try:
+            with os.scandir(os.fspath(jobs_root)) as op_entries:
+                for op_entry in op_entries:
+                    if not op_entry.is_dir(follow_symlinks=False):
+                        continue
+                    if op_entry.name == "train_lora":
+                        manifest_paths["train_lora"].extend(
+                            ModelOpsJobRegistry._collect_train_lora_restore_manifests(Path(op_entry.path))
+                        )
+                    elif op_entry.name == "activate_adapter":
+                        manifest_paths["activate_adapter"].extend(
+                            ModelOpsJobRegistry._collect_activate_adapter_restore_manifests(
+                                Path(op_entry.path)
+                            )
+                        )
+                    elif op_entry.name == "remove_derived_model":
+                        manifest_paths["remove_derived_model"].extend(
+                            ModelOpsJobRegistry._collect_remove_derived_model_restore_manifests(
+                                Path(op_entry.path)
+                            )
+                        )
+        except OSError:
+            return manifest_paths
+
+        manifest_paths["train_lora"].sort()
+        manifest_paths["activate_adapter"].sort()
+        manifest_paths["remove_derived_model"].sort()
+        return manifest_paths
+
+    @staticmethod
+    def _collect_train_lora_restore_manifests(manifest_root: Path) -> list[Path]:
+        manifests: list[Path] = []
+        try:
+            with os.scandir(os.fspath(manifest_root)) as job_id_entries:
+                for job_id_entry in job_id_entries:
+                    if (
+                        not job_id_entry.is_dir(follow_symlinks=False)
+                        or not job_id_entry.name.startswith("model-ops-")
+                    ):
+                        continue
+                    manifest_path = Path(job_id_entry.path) / "train_lora.adapter.json"
+                    if manifest_path.is_file():
+                        manifests.append(manifest_path)
+        except OSError:
+            return manifests
+        return manifests
+
+    @staticmethod
+    def _collect_activate_adapter_restore_manifests(manifest_root: Path) -> list[Path]:
+        manifests: list[Path] = []
+        try:
+            with os.scandir(os.fspath(manifest_root)) as job_id_entries:
+                for job_id_entry in job_id_entries:
+                    if (
+                        not job_id_entry.is_dir(follow_symlinks=False)
+                        or not job_id_entry.name.startswith("model-ops-")
+                    ):
+                        continue
+                    try:
+                        with os.scandir(os.fspath(job_id_entry.path)) as manifest_entry_parent_entries:
+                            for manifest_entry in manifest_entry_parent_entries:
+                                if not manifest_entry.is_dir(follow_symlinks=False):
+                                    continue
+                                manifest_path = Path(manifest_entry.path) / "manifest.json"
+                                if manifest_path.is_file():
+                                    manifests.append(manifest_path)
+                    except OSError:
+                        continue
+        except OSError:
+            return manifests
+        return manifests
+
+    @staticmethod
+    def _collect_remove_derived_model_restore_manifests(manifest_root: Path) -> list[Path]:
+        manifests: list[Path] = []
+        try:
+            with os.scandir(os.fspath(manifest_root)) as job_id_entries:
+                for job_id_entry in job_id_entries:
+                    if (
+                        not job_id_entry.is_dir(follow_symlinks=False)
+                        or not job_id_entry.name.startswith("model-ops-")
+                    ):
+                        continue
+                    manifest_path = Path(job_id_entry.path) / "remove_derived_model.lifecycle.json"
+                    if manifest_path.is_file():
+                        manifests.append(manifest_path)
+        except OSError:
+            return manifests
+        return manifests
 
     def _restore_manifest_jobs(
         self,

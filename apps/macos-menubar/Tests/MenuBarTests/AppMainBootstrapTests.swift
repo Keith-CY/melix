@@ -190,6 +190,28 @@ struct AppMainBootstrapTests {
         #expect(NSApplication.shared.mainMenu === menu)
     }
 
+    @Test("main menu includes standard edit commands so text fields receive paste")
+    @MainActor
+    func mainMenuIncludesStandardEditCommands() {
+        let target = MenuActionTarget()
+        let menu = MenuBarApplicationMenuBuilder.makeMainMenu(
+            target: target,
+            action: #selector(MenuActionTarget.performAction(_:))
+        )
+
+        let editItem = menu.items.first { $0.title == "Edit" }
+        let editMenu = editItem?.submenu
+        let pasteItem = editMenu?.items.first { $0.title == "Paste" }
+
+        #expect(editMenu != nil)
+        #expect(pasteItem?.action == #selector(NSText.paste(_:)))
+        #expect(pasteItem?.keyEquivalent == "v")
+        #expect(pasteItem?.keyEquivalentModifierMask == [.command])
+        #expect(editMenu?.items.contains { $0.action == #selector(NSText.cut(_:)) } == true)
+        #expect(editMenu?.items.contains { $0.action == #selector(NSText.copy(_:)) } == true)
+        #expect(editMenu?.items.contains { $0.action == #selector(NSText.selectAll(_:)) } == true)
+    }
+
     @Test("launchLive uses the shared launcher path")
     @MainActor
     func launchLiveUsesSharedLauncherPath() async throws {
@@ -1073,6 +1095,10 @@ private func withEnvironmentValue(
 private func posixPermissions(at url: URL) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
+}
+
+private final class MenuActionTarget: NSObject {
+    @objc func performAction(_ sender: Any?) {}
 }
 
 @MainActor

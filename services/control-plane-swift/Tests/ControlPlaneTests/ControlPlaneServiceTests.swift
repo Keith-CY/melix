@@ -5334,6 +5334,137 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.codeExecPolicy == "sandboxed")
     }
 
+    @Test("execute forwards remote evaluation target without persisting secret into parameters")
+    func executeForwardsRemoteEvaluationTargetWithoutPersistingSecretIntoParameters() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = true
+            response.job = Melix_Worker_V1_WorkerEvaluationJob()
+            response.job.jobID = "eval-remote"
+            response.job.modelID = "gemini-2.5-flash"
+            response.job.suiteID = "event_extraction"
+            response.job.datasetID = "top200"
+            response.job.sampleSize = 3
+            response.job.scoringMode = "event_extraction_weighted_f1"
+            response.job.parameters = [
+                "remote_server_id": "sub2api",
+                "remote_model_id": "gemini-2.5-flash",
+            ]
+            response.job.status = "completed"
+            response.results = []
+            return response
+        }())
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        var request = makeRunEvaluationRequest(modelID: "", suiteID: "event_extraction", datasetID: "top200")
+        request.ops.runEvaluation.scoringMode = "event_extraction_weighted_f1"
+        request.ops.runEvaluation.source.localJsonl.path = "/tmp/top200.jsonl"
+        request.ops.runEvaluation.remoteTarget.remoteServerID = "sub2api"
+        request.ops.runEvaluation.remoteTarget.providerKind = "openai-compatible"
+        request.ops.runEvaluation.remoteTarget.baseURL = "https://sub2api.example/v1"
+        request.ops.runEvaluation.remoteTarget.apiKey = "sk-secret"
+        request.ops.runEvaluation.remoteTarget.modelID = "gemini-2.5-flash"
+        request.ops.runEvaluation.remoteTarget.timeoutSeconds = 60
+        request.ops.runEvaluation.remoteTarget.rateLimitPerMinute = 30
+
+        _ = try await service.execute(request)
+        let lastRequest = try #require(await modelOpsClient.lastEvaluationRequest)
+
+        #expect(lastRequest.remoteTarget.remoteServerID == "sub2api")
+        #expect(lastRequest.remoteTarget.providerKind == "openai-compatible")
+        #expect(lastRequest.remoteTarget.baseURL == "https://sub2api.example/v1")
+        #expect(lastRequest.remoteTarget.apiKey == "sk-secret")
+        #expect(lastRequest.remoteTarget.modelID == "gemini-2.5-flash")
+        guard case .localJsonl(let source)? = lastRequest.source.kind else {
+            Issue.record("Expected remote evaluation to keep the local JSONL source.")
+            return
+        }
+        #expect(source.path == "/tmp/top200.jsonl")
+        #expect(lastRequest.parameters["remote_server_id"] == "sub2api")
+        #expect(lastRequest.parameters["remote_model_id"] == "gemini-2.5-flash")
+        #expect(lastRequest.parameters.values.contains("sk-secret") == false)
+    }
+
+    @Test("execute validates remote evaluation targets before dispatch")
+    func executeValidatesRemoteEvaluationTargetsBeforeDispatch() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        func remoteEvaluationRequest(
+            providerKind: String = "openai-compatible",
+            baseURL: String = "https://sub2api.example/v1",
+            apiKey: String = "sk-secret",
+            modelID: String = "gemini-2.5-flash"
+        ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+            var request = makeRunEvaluationRequest(modelID: "", suiteID: "event_extraction", datasetID: "top200")
+            request.ops.runEvaluation.remoteTarget.remoteServerID = "sub2api"
+            request.ops.runEvaluation.remoteTarget.providerKind = providerKind
+            request.ops.runEvaluation.remoteTarget.baseURL = baseURL
+            request.ops.runEvaluation.remoteTarget.apiKey = apiKey
+            request.ops.runEvaluation.remoteTarget.modelID = modelID
+            return request
+        }
+
+        let missingProvider = try await service.execute(remoteEvaluationRequest(providerKind: " "))
+        let missingBaseURL = try await service.execute(remoteEvaluationRequest(baseURL: " "))
+        let missingAPIKey = try await service.execute(remoteEvaluationRequest(apiKey: " "))
+        let missingModel = try await service.execute(remoteEvaluationRequest(modelID: " "))
+
+        #expect(missingProvider.error.code == "invalid_argument")
+        #expect(missingProvider.error.message == "Remote evaluation target is missing provider_kind.")
+        #expect(missingBaseURL.error.code == "invalid_argument")
+        #expect(missingBaseURL.error.message == "Remote evaluation target is missing base_url.")
+        #expect(missingAPIKey.error.code == "invalid_argument")
+        #expect(missingAPIKey.error.message == "Remote evaluation target is missing an API key.")
+        #expect(missingModel.error.code == "invalid_argument")
+        #expect(missingModel.error.message == "Remote evaluation target is missing model_id.")
+        #expect(await modelOpsClient.lastEvaluationRequest == nil)
+    }
+
+    @Test("execute maps remote evaluation worker failures")
+    func executeMapsRemoteEvaluationWorkerFailures() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setEvaluationResponse({
+            var response = Melix_Worker_V1_RunEvaluationResponse()
+            response.ok = false
+            response.error.code = "provider_timeout"
+            response.error.message = "Remote provider timed out."
+            return response
+        }())
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+        var request = makeRunEvaluationRequest(modelID: "", suiteID: "event_extraction", datasetID: "top200")
+        request.ops.runEvaluation.remoteTarget.remoteServerID = "sub2api"
+        request.ops.runEvaluation.remoteTarget.providerKind = "openai-compatible"
+        request.ops.runEvaluation.remoteTarget.baseURL = "https://sub2api.example/v1"
+        request.ops.runEvaluation.remoteTarget.apiKey = "sk-secret"
+        request.ops.runEvaluation.remoteTarget.modelID = "gemini-2.5-flash"
+
+        let workerError = try await service.execute(request)
+        #expect(workerError.error.code == "provider_timeout")
+        #expect(workerError.error.message == "Remote provider timed out.")
+
+        await modelOpsClient.setEvaluationError(WorkerClientError.unavailable)
+        let thrownError = try await service.execute(request)
+        #expect(thrownError.error.code == "unavailable")
+        #expect(thrownError.error.message.contains("Evaluation worker request failed"))
+    }
+
     @Test("execute forwards structured evaluation source profile and mapping to the worker request")
     func executeForwardsStructuredEvaluationSourceProfileAndMappingToTheWorkerRequest() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -5615,7 +5746,16 @@ struct ControlPlaneServiceTests {
                     "seed": "7",
                     "scoring_mode": "multiple_choice_accuracy",
                     "code_exec_policy": "sandboxed",
-                ]
+                ],
+                remoteTarget: .init(
+                    remoteServerID: "sub2api",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://sub2api.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "gemini-2.5-flash",
+                    timeoutSeconds: 45,
+                    rateLimitPerMinute: 12
+                )
             )
         )
         let evaluationRequest = try #require(await service.lastEvaluationRequest)
@@ -5638,6 +5778,13 @@ struct ControlPlaneServiceTests {
         #expect(evaluationRequest.profile.extractionMode == "heuristic_final")
         #expect(evaluationRequest.profile.scoringMode == "normalized_exact_match")
         #expect(evaluationRequest.profile.threshold == 1.0)
+        #expect(evaluationRequest.remoteTarget.remoteServerID == "sub2api")
+        #expect(evaluationRequest.remoteTarget.providerKind == "openai-compatible")
+        #expect(evaluationRequest.remoteTarget.baseURL == "https://sub2api.example/v1")
+        #expect(evaluationRequest.remoteTarget.apiKey == "sk-secret")
+        #expect(evaluationRequest.remoteTarget.modelID == "gemini-2.5-flash")
+        #expect(evaluationRequest.remoteTarget.timeoutSeconds == 45)
+        #expect(evaluationRequest.remoteTarget.rateLimitPerMinute == 12)
 
         let imageJob = try await client.editImage(
             ControlPlaneImageEditRequest(
@@ -7569,6 +7716,46 @@ struct ControlPlaneServiceTests {
             }
             return false
         }))
+    }
+
+    @Test("startChat routes remote server targets through the remote provider client")
+    func startChatRoutesRemoteServerTargetsThroughTheRemoteProviderClient() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .tokenDelta("remote"),
+            .completed(finishReason: "stop", assistantText: "remote"),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "hello")],
+                remoteTarget: .init(
+                    serverID: "sub2api",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://sub2api.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "gemini-2.5-flash",
+                    timeoutSeconds: 30,
+                    rateLimitPerMinute: 60
+                )
+            )
+        )
+        var events: [ControlPlaneChatStreamEvent] = []
+        for try await event in execution.stream {
+            events.append(event)
+        }
+
+        let lastRequest = try #require(await remoteClient.lastRequest)
+        #expect(execution.modelID == "gemini-2.5-flash")
+        #expect(lastRequest.serverID == "sub2api")
+        #expect(lastRequest.baseURL == "https://sub2api.example/v1")
+        #expect(lastRequest.apiKey == "sk-secret")
+        #expect(lastRequest.modelID == "gemini-2.5-flash")
+        #expect(events == [
+            .tokenDelta("remote"),
+            .completed(finishReason: "stop", assistantText: "remote", reasoningText: ""),
+        ])
     }
 
     @Test("startChat can resume a disconnected request through resumeRequestID")
@@ -10155,6 +10342,51 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient {
         var response = Melix_Worker_V1_UnloadModelResponse()
         response.ok = true
         return response
+    }
+}
+
+private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
+    private let events: [RemoteProviderChatStreamEvent]
+    private(set) var lastRequest: RemoteProviderChatRequest?
+
+    init(events: [RemoteProviderChatStreamEvent]) {
+        self.events = events
+    }
+
+    func complete(_ request: RemoteProviderChatRequest) async throws -> RemoteProviderChatCompletion {
+        lastRequest = request
+        var assistantText = ""
+        var finishReason = "stop"
+        for event in events {
+            switch event {
+            case .tokenDelta(let text):
+                assistantText += text
+            case .completed(let completedFinishReason, let completedAssistantText):
+                finishReason = completedFinishReason
+                assistantText = completedAssistantText
+            case .usage:
+                break
+            }
+        }
+        return RemoteProviderChatCompletion(
+            assistantText: assistantText,
+            finishReason: finishReason,
+            promptTokens: 0,
+            completionTokens: 0
+        )
+    }
+
+    func stream(
+        _ request: RemoteProviderChatRequest
+    ) async throws -> AsyncThrowingStream<RemoteProviderChatStreamEvent, Error> {
+        lastRequest = request
+        let events = self.events
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
     }
 }
 

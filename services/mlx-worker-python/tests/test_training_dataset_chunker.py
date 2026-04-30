@@ -332,7 +332,54 @@ def test_impossible_single_turn_short_circuits_before_trying_many_segment_counts
         chunk_long_samples([sample], chunk_size=205, tokenizer=tokenizer)
 
     assert exc.value.code == "chunk_size_too_small"
-    assert tokenizer.render_calls == 3
+    assert tokenizer.render_calls == 2
+
+
+def test_single_turn_chunking_reuses_full_render_length() -> None:
+    tokenizer = _CountingTokenizer()
+    sample = {
+        "id": "single-turn-render-reuse",
+        "messages": [
+            {"role": "user", "content": _words(200)},
+            {"role": "assistant", "content": "ack ack ack"},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=80, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 3
+    assert tokenizer.render_calls == 5
+
+
+def test_single_pair_with_trailing_malformed_messages_uses_pair_local_render_length() -> None:
+    tokenizer = _FakeTokenizer()
+    clean_sample = {
+        "id": "clean-single-pair",
+        "messages": [
+            {"role": "user", "content": _words(150)},
+            {"role": "assistant", "content": "ack ack ack"},
+        ],
+    }
+    malformed_sample = {
+        "id": "trailing-malformed-extra",
+        "messages": [
+            *clean_sample["messages"],
+            {"role": "tool", "content": _words(100)},
+        ],
+    }
+
+    clean_chunked, clean_stats = chunk_long_samples(
+        [clean_sample], chunk_size=80, tokenizer=tokenizer
+    )
+    malformed_chunked, malformed_stats = chunk_long_samples(
+        [malformed_sample], chunk_size=80, tokenizer=tokenizer
+    )
+
+    assert clean_stats.chunk_count == len(clean_chunked) == 3
+    assert malformed_stats.chunk_count == len(malformed_chunked) == 3
+    assert [chunk["messages"] for chunk in malformed_chunked] == [
+        chunk["messages"] for chunk in clean_chunked
+    ]
 
 
 class _NoSplitTokenizer:

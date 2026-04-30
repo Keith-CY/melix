@@ -205,6 +205,21 @@ enum MenuBarApplicationMenuBuilder {
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         return mainMenu
     }
 }
@@ -376,6 +391,8 @@ public final class MelixMenuBarBootstrap {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
+        remoteServerStore: (any RemoteServerStoring)? = nil,
+        evaluationPromptStore: (any EvaluationPromptStoring)? = nil,
         huggingFaceTokenStore: (any HuggingFaceTokenStoring)? = nil,
         desktopFoundationPresenterFactory: @MainActor @escaping (
             RuntimeViewModel,
@@ -412,6 +429,8 @@ public final class MelixMenuBarBootstrap {
                 : nil
         )
         let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
+        let resolvedRemoteServerStore = remoteServerStore ?? RemoteServerStore(melixHome: melixHome)
+        let resolvedEvaluationPromptStore = evaluationPromptStore ?? EvaluationPromptStore(melixHome: melixHome)
         let resolvedHuggingFaceTokenStore = huggingFaceTokenStore ?? HuggingFaceTokenStore(melixHome: melixHome)
         let viewModel = RuntimeViewModel(
             client: client,
@@ -420,6 +439,8 @@ public final class MelixMenuBarBootstrap {
             cliWorkflowRunner: cliWorkflowRunner,
             operatorCommandRunner: resolvedOperatorCommandRunner,
             serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore,
+            remoteServerStore: resolvedRemoteServerStore,
+            evaluationPromptStore: resolvedEvaluationPromptStore,
             huggingFaceTokenStore: resolvedHuggingFaceTokenStore
         )
         let desktopFoundationPresenter = desktopFoundationPresenterFactory(viewModel, metrics)
@@ -495,6 +516,8 @@ public final class MelixMenuBarBootstrap {
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
             cliWorkflowRunner: cliWorkflowRunner,
             serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
+            remoteServerStore: RemoteServerStore(melixHome: melixHome),
+            evaluationPromptStore: EvaluationPromptStore(melixHome: melixHome),
             terminationHandler: terminationHandler
         )
     }

@@ -181,6 +181,7 @@ def _chunk_single_turn(
     tokenizer: _ChatTemplateTokenizer,
     tools: list[dict[str, Any]] | None,
     sample_id: str,
+    full_len: int | None = None,
 ) -> list[list[dict[str, str]]]:
     """Segment a single (user, assistant) pair so each chunk fits chunk_size.
 
@@ -200,7 +201,8 @@ def _chunk_single_turn(
     """
 
     full = system_prefix + [user, assistant]
-    full_len = _render_len(full, tokenizer, tools=tools)
+    if full_len is None:
+        full_len = _render_len(full, tokenizer, tools=tools)
     if full_len <= chunk_size:
         return [full]
 
@@ -309,7 +311,8 @@ def _chunk_sample(
 
     tools = _extract_tools(sample)
     messages = _extract_messages(sample)
-    if _render_len(messages, tokenizer, tools=tools) <= chunk_size:
+    full_len = _render_len(messages, tokenizer, tools=tools)
+    if full_len <= chunk_size:
         return [_passthrough_sample(sample)]
 
     sample_id = str(sample.get("id", ""))
@@ -337,6 +340,9 @@ def _chunk_sample(
             )
     else:
         user, assistant = pairs[0]
+        single_turn_full_len = (
+            full_len if len(messages) == len(system_prefix) + 2 else None
+        )
         chunked_messages.extend(
             _chunk_single_turn(
                 system_prefix,
@@ -346,6 +352,7 @@ def _chunk_sample(
                 tokenizer=tokenizer,
                 tools=tools,
                 sample_id=sample_id,
+                full_len=single_turn_full_len,
             )
         )
 

@@ -60,6 +60,500 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-vlm")
     }
 
+    @Test("remote server draft saves through app store and clears the API key field")
+    @MainActor
+    func remoteServerDraftSavesThroughAppStoreAndClearsTheAPIKeyField() throws {
+        let store = FakeRemoteServerStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.remoteServerIDDraft = "sub2api"
+        viewModel.remoteServerTitleDraft = "sub2api"
+        viewModel.remoteServerProviderKindDraft = "openai-compatible"
+        viewModel.remoteServerBaseURLDraft = "https://sub2api.example/v1/"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        viewModel.remoteServerAPIKeyDraft = "sk-test-1234567890"
+        viewModel.remoteServerTimeoutSecondsDraft = 180
+        viewModel.remoteServerRateLimitPerMinuteDraft = 60
+
+        viewModel.saveRemoteServerDraft()
+
+        let saved = try #require(viewModel.remoteServers.first)
+        #expect(saved.id == "sub2api")
+        #expect(saved.baseURL == "https://sub2api.example/v1/")
+        #expect(saved.defaultModelID == "gemini-2.5-flash")
+        #expect(saved.apiKeyHint == "sk-t...7890")
+        #expect(viewModel.selectedRemoteServerID == "sub2api")
+        #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
+        #expect(store.savedMutations.first?.apiKey == "sk-test-1234567890")
+    }
+
+    @Test("remote server provider presets lock base URL and save resolved execution kind")
+    @MainActor
+    func remoteServerProviderPresetsLockBaseURLAndSaveResolvedExecutionKind() throws {
+        let store = FakeRemoteServerStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.selectRemoteServerProviderPreset(.gemini)
+        viewModel.remoteServerIDDraft = "gemini"
+        viewModel.remoteServerTitleDraft = "Gemini"
+        viewModel.remoteServerBaseURLDraft = "https://operator-override.example/v1"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        viewModel.remoteServerAPIKeyDraft = "AIza-secret"
+
+        #expect(viewModel.isRemoteServerBaseURLEditable == false)
+        #expect(viewModel.remoteServerProviderKindDraft == "gemini-generative-language")
+        #expect(viewModel.remoteServerBaseURLDraft == "https://generativelanguage.googleapis.com/v1beta")
+
+        viewModel.saveRemoteServerDraft()
+
+        let savedMutation = try #require(store.savedMutations.first)
+        #expect(savedMutation.providerPreset == .gemini)
+        #expect(savedMutation.providerKind == "gemini-generative-language")
+        #expect(savedMutation.baseURL == "https://generativelanguage.googleapis.com/v1beta")
+        #expect(viewModel.remoteServers.first?.providerPreset == .gemini)
+
+        viewModel.selectRemoteServerProviderPreset(.custom)
+        #expect(viewModel.isRemoteServerBaseURLEditable)
+        viewModel.remoteServerBaseURLDraft = "https://llm2api.owlia.ai/v1"
+        #expect(viewModel.remoteServerBaseURLDraft == "https://llm2api.owlia.ai/v1")
+    }
+
+    @Test("remote server selection hydrates metadata but not the API key")
+    @MainActor
+    func remoteServerSelectionHydratesMetadataButNotTheAPIKey() throws {
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "sub2api",
+                title: "sub2api",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://sub2api.example/v1",
+                defaultModelID: "deepseek-v4",
+                timeoutSeconds: 120,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
+                apiKeyHint: "sk-t...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "sub2api")
+
+        #expect(viewModel.remoteServerIDDraft == "sub2api")
+        #expect(viewModel.remoteServerBaseURLDraft == "https://sub2api.example/v1")
+        #expect(viewModel.remoteServerDefaultModelIDDraft == "deepseek-v4")
+        #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
+    }
+
+    @Test("remote server save rejects id changes for selected records")
+    @MainActor
+    func remoteServerSaveRejectsIDChangesForSelectedRecords() throws {
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "sub2api",
+                title: "sub2api",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://sub2api.example/v1",
+                defaultModelID: "deepseek-v4",
+                timeoutSeconds: 120,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
+                apiKeyHint: "sk-t...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "sub2api")
+        viewModel.remoteServerIDDraft = "kimi"
+        viewModel.remoteServerTitleDraft = "Kimi"
+        viewModel.remoteServerDefaultModelIDDraft = "kimi-2.6"
+
+        viewModel.saveRemoteServerDraft()
+
+        #expect(viewModel.remoteServers.map(\.id) == ["sub2api"])
+        #expect(store.savedMutations.isEmpty)
+        #expect(viewModel.lastError == "Remote Server ID cannot be changed after creation. Use New to create another server.")
+    }
+
+    @Test("remote server draft validates required fields and records persistence failures")
+    @MainActor
+    func remoteServerDraftValidatesRequiredFieldsAndRecordsPersistenceFailures() async throws {
+        let store = FakeRemoteServerStore()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            remoteServerStore: store
+        )
+
+        viewModel.prepareNewRemoteServerDraft()
+        viewModel.remoteServerIDDraft = " "
+        viewModel.saveRemoteServerDraft()
+
+        #expect(viewModel.lastError == "Remote Server requires id, title, provider, base URL, and default model.")
+        #expect(store.savedMutations.isEmpty)
+
+        viewModel.remoteServerIDDraft = "sub2api"
+        viewModel.remoteServerTitleDraft = "sub2api"
+        viewModel.remoteServerBaseURLDraft = "https://sub2api.example/v1"
+        viewModel.remoteServerDefaultModelIDDraft = "gemini-2.5-flash"
+        store.saveError = .save
+
+        viewModel.saveRemoteServerDraft()
+        try await waitForRuntimeMetric(
+            metrics,
+            name: "remote_server.persist_failures",
+            equals: 1
+        )
+
+        #expect(viewModel.lastError == "Remote Server save failed: save")
+    }
+
+    @Test("remote server removal selects the next server and surfaces failures")
+    @MainActor
+    func remoteServerRemovalSelectsNextServerAndSurfacesFailures() async throws {
+        let metrics = MenuBarMetricsStore()
+        let store = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "kimi",
+                title: "Kimi",
+                providerPreset: .kimi,
+                providerKind: "openai-compatible",
+                baseURL: "https://api.kimi.com/coding",
+                defaultModelID: "kimi-2.6",
+                timeoutSeconds: 60,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "kimi"),
+                apiKeyHint: "sk-k...7890"
+            ),
+            RemoteServer(
+                id: "glm",
+                title: "GLM",
+                providerPreset: .glm,
+                providerKind: "openai-compatible",
+                baseURL: "https://open.bigmodel.cn/api/paas/v4",
+                defaultModelID: "glm-5.1",
+                timeoutSeconds: 90,
+                rateLimitPerMinute: 5,
+                credentialRef: RemoteServerStore.credentialRef(for: "glm"),
+                apiKeyHint: "sk-g...7890"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            remoteServerStore: store
+        )
+
+        viewModel.selectRemoteServer(id: "kimi")
+        viewModel.removeSelectedRemoteServer()
+
+        #expect(store.removedIDs == ["kimi"])
+        #expect(viewModel.remoteServers.map(\.id) == ["glm"])
+        #expect(viewModel.selectedRemoteServerID == "glm")
+        #expect(viewModel.remoteServerIDDraft == "glm")
+
+        store.removeError = .remove
+        viewModel.removeSelectedRemoteServer()
+        try await waitForRuntimeMetric(
+            metrics,
+            name: "remote_server.persist_failures",
+            equals: 1
+        )
+
+        #expect(viewModel.lastError == "Remote Server remove failed: remove")
+    }
+
+    @Test("null remote server store materializes non-secret state")
+    func nullRemoteServerStoreMaterializesNonSecretState() throws {
+        let server = try NullRemoteServerStore().save(
+            RemoteServerMutation(
+                id: "gemini",
+                title: "Gemini",
+                providerPreset: .gemini,
+                providerKind: "gemini-generative-language",
+                baseURL: "https://override.example/v1",
+                defaultModelID: "gemini-2.5-flash",
+                timeoutSeconds: 75,
+                rateLimitPerMinute: 12,
+                apiKey: "AIza-secret"
+            )
+        )
+
+        #expect(server.id == "gemini")
+        #expect(server.providerKind == "gemini-generative-language")
+        #expect(server.baseURL == "https://generativelanguage.googleapis.com/v1beta")
+        #expect(server.defaultModelID == "gemini-2.5-flash")
+        #expect(server.apiKeyHint == "AIza...cret")
+        #expect(try NullRemoteServerStore().loadAPIKey(remoteServerID: "gemini") == nil)
+        try NullRemoteServerStore().remove(id: "gemini")
+        #expect(try NullRemoteServerStore().list().isEmpty)
+    }
+
+    @Test("null evaluation prompt store materializes deterministic revision hashes")
+    func nullEvaluationPromptStoreMaterializesDeterministicRevisionHashes() throws {
+        let store = NullEvaluationPromptStore()
+
+        let created = try store.create(
+            promptID: "custom",
+            title: "Custom",
+            systemPrompt: "Extract events."
+        )
+        let createdRevision = try #require(created.latestRevision)
+        let createdHash = try EvaluationPromptStore.contentHash(systemPrompt: "Extract events.")
+        #expect(createdRevision.contentHash == createdHash)
+
+        let updated = try store.update(promptID: "custom", systemPrompt: "Extract more events.")
+        let updatedRevision = try #require(updated.latestRevision)
+        let updatedHash = try EvaluationPromptStore.contentHash(systemPrompt: "Extract more events.")
+        #expect(updatedRevision.contentHash == updatedHash)
+
+        let frozen = try store.freeze(promptID: "custom", revisionID: "rev-9")
+        let frozenRevision = try #require(frozen.latestRevision)
+        let frozenHash = try EvaluationPromptStore.contentHash(
+            systemPrompt: EvaluationPromptStore.builtInBaselineSystemPrompt
+        )
+        #expect(frozenRevision.contentHash == frozenHash)
+    }
+
+    @Test("evaluation prompt drafts save freeze and create new draft revisions")
+    @MainActor
+    func evaluationPromptDraftsSaveFreezeAndCreateNewDraftRevisions() throws {
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: store
+        )
+
+        #expect(viewModel.evaluationPrompts.map(\.id).contains(EvaluationPromptStore.builtInBaselinePromptID))
+        #expect(viewModel.isEvaluationPromptDraftEditable == false)
+
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = "event-prod"
+        viewModel.evaluationPromptTitleDraft = "Event Production"
+        viewModel.evaluationPromptSystemPromptDraft = "Extract production events."
+        viewModel.saveEvaluationPromptDraft()
+
+        #expect(store.createdPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptID == "event-prod")
+        #expect(viewModel.canFreezeSelectedEvaluationPrompt)
+
+        viewModel.freezeSelectedEvaluationPrompt()
+
+        #expect(store.frozenPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptRevision?.status == .frozen)
+        #expect(viewModel.isEvaluationPromptDraftEditable == false)
+
+        viewModel.prepareEvaluationPromptDraftFromSelection()
+        #expect(viewModel.isEvaluationPromptDraftEditable)
+
+        viewModel.evaluationPromptSystemPromptDraft = "Extract production events with stricter JSON."
+        viewModel.saveEvaluationPromptDraft()
+
+        #expect(store.updatedPrompts.first?.id == "event-prod")
+        #expect(viewModel.selectedEvaluationPromptRevision?.revisionID == "rev-2")
+        #expect(viewModel.selectedEvaluationPromptRevision?.status == .draft)
+    }
+
+    @Test("event extraction evaluation sends the selected frozen prompt snapshot")
+    @MainActor
+    func eventExtractionEvaluationSendsSelectedFrozenPromptSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                ]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        let store = FakeEvaluationPromptStore()
+        _ = try store.create(
+            promptID: "event-prod",
+            title: "Event Production",
+            systemPrompt: "Extract only events from the current dialogue."
+        )
+        _ = try store.freeze(promptID: "event-prod", revisionID: "")
+        let viewModel = RuntimeViewModel(
+            client: client,
+            evaluationPromptStore: store
+        )
+
+        await viewModel.start()
+        viewModel.selectEvaluationPrompt(id: "event-prod")
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/tmp/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.suiteID == "event_extraction")
+        #expect(request.parameters["eval_prompt_id"] == "event-prod")
+        #expect(request.parameters["eval_prompt_revision_id"] == "rev-1")
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Extract only events from the current dialogue.")
+        #expect(request.parameters["eval_prompt_examples_json"] == "[]")
+    }
+
+    @Test("evaluation prompt guard rails surface local errors")
+    @MainActor
+    func evaluationPromptGuardRailsSurfaceLocalErrors() throws {
+        let listFailingStore = FakeEvaluationPromptStore()
+        listFailingStore.listError = .list
+        let listFailingViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: listFailingStore
+        )
+        #expect(listFailingViewModel.lastError?.contains("Evaluation prompt load failed") == true)
+
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            evaluationPromptStore: store
+        )
+
+        viewModel.selectedEvaluationPromptID = ""
+        #expect(viewModel.selectedEvaluationPromptSummaryText == "New draft prompt")
+        #expect(viewModel.isEvaluationPromptDraftEditable)
+
+        viewModel.freezeSelectedEvaluationPrompt()
+        #expect(viewModel.lastError == "Save the evaluation prompt draft before freezing it.")
+
+        viewModel.selectEvaluationPrompt(id: EvaluationPromptStore.builtInBaselinePromptID)
+        viewModel.prepareEvaluationPromptDraftFromSelection()
+        #expect(viewModel.lastError == "The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+
+        viewModel.evaluationPromptIDDraft = EvaluationPromptStore.builtInBaselinePromptID
+        viewModel.evaluationPromptTitleDraft = "Baseline"
+        viewModel.evaluationPromptSystemPromptDraft = "Cannot save baseline."
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError == "The built-in evaluation prompt is read-only. Create a new prompt to customize it.")
+
+        _ = try store.create(
+            promptID: "event-prod",
+            title: "Event Production",
+            systemPrompt: "Extract production events."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-prod")
+        viewModel.evaluationPromptIDDraft = "event-renamed"
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.evaluationPromptIDDraft == "event-prod")
+        #expect(viewModel.lastError == "Evaluation prompt ID cannot be changed after creation. Use New Prompt to create another prompt.")
+
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = ""
+        viewModel.evaluationPromptTitleDraft = ""
+        viewModel.evaluationPromptSystemPromptDraft = ""
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError == "Evaluation prompt requires id, title, and system prompt.")
+
+        store.createError = .create
+        viewModel.prepareNewEvaluationPromptDraft()
+        viewModel.evaluationPromptIDDraft = "event-create-error"
+        viewModel.evaluationPromptTitleDraft = "Event Create Error"
+        viewModel.evaluationPromptSystemPromptDraft = "Create fails."
+        viewModel.saveEvaluationPromptDraft()
+        #expect(viewModel.lastError?.contains("Evaluation prompt save failed") == true)
+        store.createError = nil
+
+        _ = try store.create(
+            promptID: "event-freeze-error",
+            title: "Event Freeze Error",
+            systemPrompt: "Freeze fails."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-freeze-error")
+        store.freezeError = .freeze
+        viewModel.freezeSelectedEvaluationPrompt()
+        #expect(viewModel.lastError?.contains("Evaluation prompt freeze failed") == true)
+        store.freezeError = nil
+
+        _ = try store.create(
+            promptID: "event-archive",
+            title: "Event Archive",
+            systemPrompt: "Archive succeeds."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-archive")
+        viewModel.archiveSelectedEvaluationPrompt()
+        #expect(store.archivedPromptIDs.contains("event-archive"))
+
+        _ = try store.create(
+            promptID: "event-archive-error",
+            title: "Event Archive Error",
+            systemPrompt: "Archive fails."
+        )
+        viewModel.reloadEvaluationPrompts()
+        viewModel.selectEvaluationPrompt(id: "event-archive-error")
+        store.archiveError = .archive
+        viewModel.archiveSelectedEvaluationPrompt()
+        #expect(viewModel.lastError?.contains("Evaluation prompt archive failed") == true)
+    }
+
+    @Test("event extraction prompt run guard rails surface local errors")
+    @MainActor
+    func eventExtractionPromptRunGuardRailsSurfaceLocalErrors() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
+                ]
+            )
+        )
+        let store = FakeEvaluationPromptStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            evaluationPromptStore: store
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction", "mmlu"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Event extraction prompts require selecting only the Event Extraction suite.")
+
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text-lora"]
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Event extraction prompts are available for standard Evaluation runs.")
+
+        store.resolveError = .resolve
+        viewModel.selectedEvaluationMode = .standard
+        viewModel.selectedEvaluationCompareTargetModelIDs = []
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/tmp/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("resolve") == true)
+    }
+
     @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
     @MainActor
     func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {
@@ -6107,6 +6601,155 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.ops_eval_ms"] != nil)
     }
 
+    @Test("evaluation semantic judge selection forwards remote server parameters")
+    @MainActor
+    func evaluationSemanticJudgeSelectionForwardsRemoteServerParameters() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12,
+                    credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                    apiKeyHint: "sk-j...udge"
+                ),
+            ],
+            apiKeys: ["judge": "sk-judge"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/Users/ChenYu/Downloads/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+
+        await viewModel.runEvaluation()
+
+        let request = try #require(await client.recordedEvaluationRequests.last)
+        #expect(request.parameters["semantic_judge_remote_server_id"] == "judge")
+        #expect(request.parameters["semantic_judge_provider_kind"] == "openai-compatible")
+        #expect(request.parameters["semantic_judge_base_url"] == "https://judge.example/v1")
+        #expect(request.parameters["semantic_judge_api_key"] == "sk-judge")
+        #expect(request.parameters["semantic_judge_model_id"] == "judge-model")
+        #expect(request.parameters["semantic_judge_timeout_seconds"] == "41")
+        #expect(request.parameters["semantic_judge_rate_limit_per_minute"] == "12")
+    }
+
+    @Test("evaluation semantic judge selection validates stale servers credentials and model")
+    @MainActor
+    func evaluationSemanticJudgeSelectionValidatesStaleServersCredentialsAndModel() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let judgeServer = RemoteServer(
+            id: "judge",
+            title: "Judge",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "https://judge.example/v1",
+            defaultModelID: "judge-default",
+            timeoutSeconds: 41,
+            rateLimitPerMinute: 12,
+            credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+            apiKeyHint: "sk-j...udge"
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [judgeServer],
+            apiKeys: ["judge": "sk-judge"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+            )
+        )
+        await viewModel.start()
+        viewModel.selectedEvaluationModelID = "melix-dev-text"
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationDatasetSourceKind = .localJSONL
+        viewModel.evaluationSourcePath = "/Users/ChenYu/Downloads/top200_final.jsonl"
+        viewModel.evaluationFieldInputTextPath = "dialogue"
+        viewModel.evaluationFieldTargetPath = "events"
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+
+        remoteStore.servers = []
+        viewModel.reloadRemoteServers()
+        #expect(viewModel.selectedEvaluationSemanticJudgeRemoteServerID == "")
+        #expect(viewModel.evaluationSemanticJudgeModelID == "")
+
+        remoteStore.servers = [judgeServer]
+        viewModel.reloadRemoteServers()
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = "judge-model"
+        viewModel.selectedEvaluationMode = .compare
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.evaluationScoringMode = "multiple_choice_accuracy"
+        viewModel.selectedEvaluationCompareTargetModelIDs = ["melix-dev-text"]
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Semantic judge scoring is available for standard Evaluation runs.")
+
+        viewModel.selectedEvaluationMode = .standard
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError == "Semantic judge scoring requires selecting only the Event Extraction suite.")
+
+        viewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
+        viewModel.evaluationScoringMode = "event_extraction_weighted_f1"
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "missing"
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server missing was not found.") == true)
+
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        remoteStore.apiKeys.removeValue(forKey: "judge")
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server judge has no API key configured.") == true)
+
+        remoteStore.apiKeys["judge"] = "sk-judge"
+        remoteStore.servers = [
+            RemoteServer(
+                id: "judge",
+                title: "Judge",
+                providerPreset: .custom,
+                providerKind: "openai-compatible",
+                baseURL: "https://judge.example/v1",
+                defaultModelID: "",
+                timeoutSeconds: 41,
+                rateLimitPerMinute: 12,
+                credentialRef: RemoteServerStore.credentialRef(for: "judge"),
+                apiKeyHint: "sk-j...udge"
+            ),
+        ]
+        viewModel.reloadRemoteServers()
+        viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
+        viewModel.evaluationSemanticJudgeModelID = " "
+        await viewModel.runEvaluation()
+        #expect(viewModel.lastError?.contains("Remote server judge has no model configured.") == true)
+    }
+
     @Test("evaluation configuration forwards structured source mapping and profile controls")
     @MainActor
     func evaluationConfigurationForwardsStructuredSourceMappingAndProfileControls() async throws {
@@ -8929,6 +9572,27 @@ private func waitForRuntimeViewModelCondition(
     }
 
     throw MenuBarTestError(description: description)
+}
+
+private func waitForRuntimeMetric(
+    _ metrics: MenuBarMetricsStore,
+    name: String,
+    equals expectedValue: Double,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await metrics.snapshot()[name] == expectedValue {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    let actualValue = await metrics.snapshot()[name]
+    throw MenuBarTestError(
+        description: "expected metric \(name) to equal \(expectedValue), got \(String(describing: actualValue))"
+    )
 }
 
 private actor EmptySnapshotControlPlaneXPCClient: ControlPlaneXPCClient {

@@ -481,6 +481,16 @@ message EvaluationProfile {
   repeated string ignored_paths = 7;
 }
 
+message RemoteProviderTarget {
+  string remote_server_id = 1;
+  string provider_kind = 2;
+  string base_url = 3;
+  string api_key = 4;
+  string model_id = 5;
+  uint32 timeout_seconds = 6;
+  uint32 rate_limit_per_minute = 7;
+}
+
 message RunEvaluation {
   string suite_id = 1;
   string dataset_id = 2;
@@ -495,6 +505,7 @@ message RunEvaluation {
   EvaluationSource source = 11;
   EvaluationFieldMapping field_mapping = 12;
   EvaluationProfile profile = 13;
+  RemoteProviderTarget remote_target = 14;
 }
 message SearchHubModels {
   string query = 1;

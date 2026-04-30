@@ -260,9 +260,17 @@ def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterabl
 
 
 
-def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
+def _hf_cache_revision_map(
+    cache_repo_dir: Path,
+    *,
+    snapshot_ids: set[str] | None = None,
+) -> dict[str, str]:
     refs_dir = cache_repo_dir / "refs"
     revisions: dict[str, str] = {}
+    remaining_snapshot_ids = set(snapshot_ids) if snapshot_ids is not None else None
+    if remaining_snapshot_ids is not None and not remaining_snapshot_ids:
+        return revisions
+
     if refs_dir.is_dir():
         try:
             for ref_path, relative_name in _iter_relative_file_paths_sorted(refs_dir):
@@ -272,7 +280,14 @@ def _hf_cache_revision_map(cache_repo_dir: Path) -> dict[str, str]:
                     continue
                 if not snapshot_id:
                     continue
+                if remaining_snapshot_ids is not None and snapshot_id not in remaining_snapshot_ids:
+                    continue
+
                 revisions.setdefault(snapshot_id, relative_name)
+                if remaining_snapshot_ids is not None:
+                    remaining_snapshot_ids.discard(snapshot_id)
+                    if not remaining_snapshot_ids:
+                        return revisions
         except OSError:
             return revisions
     return revisions
@@ -1100,8 +1115,12 @@ class WorkerModelCatalog:
             snapshots_dir = cache_repo_dir / "snapshots"
             if not snapshots_dir.is_dir():
                 continue
-            revision_map = _hf_cache_revision_map(cache_repo_dir)
-            for snapshot_dir in _sorted_child_directories(snapshots_dir):
+            snapshot_dirs = tuple(_sorted_child_directories(snapshots_dir))
+            revision_map = _hf_cache_revision_map(
+                cache_repo_dir,
+                snapshot_ids={snapshot_dir.name for snapshot_dir in snapshot_dirs},
+            )
+            for snapshot_dir in snapshot_dirs:
                 if not (snapshot_dir / "config.json").is_file() or not _has_model_weight_files(snapshot_dir):
                     continue
                 if not _has_mlx_signal(model_dir=snapshot_dir, repo_id=repo_id):
