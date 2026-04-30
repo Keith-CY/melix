@@ -42,16 +42,13 @@ class DeterministicEmbeddingBackend:
 
     def _project_digest(self, seed_text: str, dimensions: int) -> list[float]:
         digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
-        values: list[float] = []
-
-        for index in range(dimensions):
-            start = (index * 4) % len(digest)
-            chunk = digest[start : start + 4]
-            if len(chunk) < 4:
-                chunk = chunk + digest[: 4 - len(chunk)]
-            raw = int.from_bytes(chunk, "little")
-            normalized = (raw / 0xFFFFFFFF) * 2.0 - 1.0
-            values.append(normalized)
+        base_values = [
+            (int.from_bytes(digest[start : start + 4], "little") / 0xFFFFFFFF) * 2.0
+            - 1.0
+            for start in range(0, len(digest), 4)
+        ]
+        full_repeats, remainder = divmod(dimensions, len(base_values))
+        values = base_values * full_repeats + base_values[:remainder]
 
         l2_norm = math.sqrt(sum(value * value for value in values))
         if l2_norm == 0.0:

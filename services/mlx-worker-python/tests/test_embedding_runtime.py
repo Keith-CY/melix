@@ -1,3 +1,6 @@
+import hashlib
+import math
+
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
@@ -6,6 +9,7 @@ from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.embedding_backends import BERTEmbeddingBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -36,6 +40,34 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
     )
     assert response.ok is True
     return response.model_handle
+
+
+def _legacy_project_digest(seed_text: str, dimensions: int) -> list[float]:
+    digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
+    values: list[float] = []
+
+    for index in range(dimensions):
+        start = (index * 4) % len(digest)
+        chunk = digest[start : start + 4]
+        if len(chunk) < 4:
+            chunk = chunk + digest[: 4 - len(chunk)]
+        raw = int.from_bytes(chunk, "little")
+        normalized = (raw / 0xFFFFFFFF) * 2.0 - 1.0
+        values.append(normalized)
+
+    l2_norm = math.sqrt(sum(value * value for value in values))
+    if l2_norm == 0.0:
+        return [0.0] * dimensions
+    return [round(value / l2_norm, 6) for value in values]
+
+
+def test_project_digest_preserves_legacy_projection_values() -> None:
+    backend = BERTEmbeddingBackend()
+
+    for dimensions in (0, 1, 8, 9, 17, 384):
+        actual = backend._project_digest("bert::projection parity", dimensions)
+        expected = _legacy_project_digest("bert::projection parity", dimensions)
+        assert actual == expected
 
 
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
