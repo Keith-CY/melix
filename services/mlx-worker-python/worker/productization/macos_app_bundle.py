@@ -67,10 +67,29 @@ def resolve_python_runtime_root(python_executable: str | Path) -> Path:
 def resolve_site_packages_root(repo_root: str | Path) -> Path:
     repo_root_path = Path(repo_root).expanduser().resolve()
     lib_root = repo_root_path / ".venv/lib"
-    candidates = sorted(lib_root.glob("python*/site-packages"))
-    if not candidates:
+    best_entry_name: str | None = None
+    best_entry: Path | None = None
+
+    for entry in os.scandir(lib_root):
+        if not entry.name.startswith("python"):
+            continue
+        try:
+            if not entry.is_dir():
+                continue
+        except OSError:
+            continue
+
+        site_packages = Path(entry.path) / "site-packages"
+        if not site_packages.is_dir():
+            continue
+
+        if best_entry_name is None or entry.name < best_entry_name:
+            best_entry_name = entry.name
+            best_entry = site_packages
+
+    if best_entry is None:
         raise FileNotFoundError(f"Unable to locate site-packages under {lib_root}")
-    return candidates[0]
+    return best_entry
 
 
 def render_info_plist(*, app_name: str, bundle_id: str, version: str, icon_file: str) -> bytes:
