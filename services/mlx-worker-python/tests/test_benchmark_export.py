@@ -10,6 +10,8 @@ import pytest
 from worker.productization.benchmark_export import (
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
+    _iter_sorted_matching_files,
+    _load_json_object,
     _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
@@ -564,6 +566,65 @@ def test_iter_sorted_child_directories_nonexistent_root_returns_empty() -> None:
     assert _iter_sorted_child_directories(Path("/tmp/this-path-should-not-exist-12345")) == ()
 
 
+def test_iter_sorted_matching_files_returns_lexically_sorted_matching_files(tmp_path: Path) -> None:
+    parent = tmp_path / "artifacts"
+    parent.mkdir(parents=True)
+    (parent / "bench-result-b.json").write_text("{}\n")
+    (parent / "bench-result-a.json").write_text("{}\n")
+    (parent / "bench-result-z.json").mkdir()
+    (parent / "other.json").write_text("{}\n")
+
+    assert [path.name for path in _iter_sorted_matching_files(parent, prefix="bench-result-", suffix=".json")] == [
+        "bench-result-a.json",
+        "bench-result-b.json",
+    ]
+
+
+def test_load_json_object_reads_json_without_read_text_round_trip(tmp_path: Path) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(json.dumps({"job_id": "bench-1", "status": "completed"}) + "\n")
+
+    assert _load_json_object(payload_path) == {"job_id": "bench-1", "status": "completed"}
+
+
+def test_load_json_object_rejects_non_object_payload(tmp_path: Path) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(json.dumps(["not", "an", "object"]) + "\n")
+
+    with pytest.raises(TypeError, match="expected JSON object"):
+        _load_json_object(payload_path)
+
+
+def test_iter_sorted_matching_files_skips_entries_with_stat_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    parent = tmp_path / "artifacts"
+    parent.mkdir(parents=True)
+
+    class _BrokenEntry:
+        name = "bench-result-broken.json"
+
+        def is_file(self) -> bool:
+            raise OSError("stat failed")
+
+    class _GoodEntry:
+        name = "bench-result-ok.json"
+
+        def is_file(self) -> bool:
+            return True
+
+    class _Scandir:
+        def __enter__(self):
+            return iter((_BrokenEntry(), _GoodEntry()))
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr("worker.productization.benchmark_export.os.scandir", lambda path: _Scandir())
+
+    assert [path.name for path in _iter_sorted_matching_files(parent, prefix="bench-result-", suffix=".json")] == [
+        "bench-result-ok.json",
+    ]
+
+
 def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
     (tmp_path / "bench-context-rows.jsonl").write_text(
@@ -670,6 +731,29 @@ def test_collect_evaluation_artifacts_finds_persisted_eval_files(tmp_path: Path)
     assert result["evaluation_results"][0]["suite_id"] == "mmlu"
     assert len(result["evaluation_samples"]) == 1
     assert result["evaluation_samples"][0]["sample_id"] == "1"
+
+
+def test_collect_evaluation_artifacts_prefers_persisted_summary_json_when_present(tmp_path: Path) -> None:
+    _write_eval_fixtures(tmp_path)
+    (tmp_path / "evaluation-summary.json").write_text(
+        json.dumps({
+            "job_id": "eval-1",
+            "model_id": "summary-model",
+            "primary_score_name": "typed_score_mean",
+            "primary_score_value": 0.99,
+        }) + "\n"
+    )
+
+    result = collect_evaluation_artifacts(tmp_path)
+
+    assert result["evaluation_summary_rows"] == [
+        {
+            "job_id": "eval-1",
+            "model_id": "summary-model",
+            "primary_score_name": "typed_score_mean",
+            "primary_score_value": 0.99,
+        }
+    ]
 
 
 def test_collect_evaluation_artifacts_reads_per_run_history_from_runs_directory(
