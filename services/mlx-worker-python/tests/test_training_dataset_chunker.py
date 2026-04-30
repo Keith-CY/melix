@@ -55,6 +55,13 @@ def _words(count: int) -> str:
     return " ".join(f"w{i}" for i in range(count))
 
 
+class _TrackingStr(str):
+    """String subclass that fails if the chunker deep-copies message payloads."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "_TrackingStr":
+        raise AssertionError("message payload should not be deep-copied")
+
+
 def test_short_single_turn_sample_passes_through_unchanged() -> None:
     tokenizer = _FakeTokenizer()
     sample = {
@@ -204,6 +211,37 @@ def test_multi_turn_exceeding_chunk_size_splits_at_message_boundaries() -> None:
     # Ids are suffixed.
     assert chunked[0]["id"] == "multi-over#chunk-0"
     assert chunked[1]["id"] == "multi-over#chunk-1"
+
+
+
+def test_chunked_outputs_copy_message_dicts_without_deepcopying_string_payloads() -> None:
+    tokenizer = _FakeTokenizer()
+    metadata = {"tags": ["chunked"]}
+    user_content = _TrackingStr(_words(200))
+    sample = {
+        "id": "chunked-copy-contract",
+        "metadata": metadata,
+        "messages": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": _TrackingStr("ack")},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples(
+        [sample], chunk_size=80, tokenizer=tokenizer
+    )
+
+    assert stats.chunk_count == len(chunked) >= 2
+    for idx, emitted in enumerate(chunked):
+        assert emitted["id"] == f"chunked-copy-contract#chunk-{idx}"
+        assert emitted["metadata"] is metadata
+        assert emitted["messages"] is not sample["messages"]
+        for message, source_message in zip(
+            emitted["messages"], sample["messages"], strict=False
+        ):
+            assert message is not source_message
+    chunked[0]["messages"][0]["content"] = "mutated"
+    assert sample["messages"][0]["content"] == user_content
 
 
 def test_multi_turn_single_pair_exceeds_chunk_size_falls_through_to_segmentation() -> None:

@@ -23,7 +23,6 @@ but cannot be made to fit raise ``ModelOperationError(code="chunk_size_too_small
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -268,6 +267,12 @@ def _chunk_single_turn(
     )
 
 
+def _copy_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Copy the message containers without deep-copying immutable string payloads."""
+
+    return [message.copy() for message in messages]
+
+
 def _passthrough_sample(sample: dict) -> dict:
     """Return a passthrough sample with independent messages but shared top-level fields.
 
@@ -277,7 +282,7 @@ def _passthrough_sample(sample: dict) -> dict:
     """
 
     out = {k: v for k, v in sample.items() if k != "messages"}
-    out["messages"] = copy.deepcopy(_extract_messages(sample))
+    out["messages"] = _copy_messages(_extract_messages(sample))
     return out
 
 
@@ -347,10 +352,11 @@ def _chunk_sample(
     chunks: list[dict] = []
     for idx, chunk in enumerate(chunked_messages):
         # Preserve any non-messages keys from the source sample (id, tools,
-        # metadata) via a shallow top-level copy, then deep-copy only the
-        # new messages so each chunk has an independent message list.
+        # metadata) via a shallow top-level copy, then copy only the message
+        # dict containers so each chunk has an independent message list
+        # without re-copying immutable string payloads.
         out = {k: v for k, v in sample.items() if k != "messages"}
-        out["messages"] = copy.deepcopy(chunk)
+        out["messages"] = _copy_messages(chunk)
         if sample_id:
             out["id"] = f"{sample_id}#chunk-{idx}"
         chunks.append(out)
