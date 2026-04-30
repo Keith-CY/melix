@@ -88,6 +88,40 @@ struct RemoteServerStoreTests {
         #expect(try secretStore.loadAPIKey(remoteServerID: "sub2api") == nil)
     }
 
+    @Test("rejects blank remote server fields without crashing")
+    func rejectsBlankRemoteServerFieldsWithoutCrashing() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-remote-server-validation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = RemoteServerStore(melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path]))
+
+        #expect(throws: MelixCLIError.missingRequired("remote_server_id must not be empty.")) {
+            try store.get(id: " ")
+        }
+        #expect(throws: MelixCLIError.missingRequired("base_url must not be empty.")) {
+            try store.save(
+                RemoteServerMutation(
+                    id: "custom",
+                    title: "Custom",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: " ",
+                    defaultModelID: "model",
+                    apiKey: ""
+                )
+            )
+        }
+        #expect(throws: MelixCLIError.missingRequired("api_key must not be empty.")) {
+            try RemoteServerAPIKeyStore(melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path]))
+                .saveAPIKey(" ", remoteServerID: "custom")
+        }
+        #expect(throws: MelixCLIError.missingRequired("remote_server_id must not be empty.")) {
+            try RemoteServerAPIKeyStore(melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path]))
+                .saveAPIKey("sk-live", remoteServerID: " ")
+        }
+    }
+
     @Test("provider presets resolve fixed base URLs and keep legacy OpenAI compatible state as custom")
     func providerPresetsResolveFixedBaseURLsAndMigrateLegacyState() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

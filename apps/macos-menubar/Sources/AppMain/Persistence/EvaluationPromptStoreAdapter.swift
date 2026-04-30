@@ -25,7 +25,7 @@ public struct NullEvaluationPromptStore: EvaluationPromptStoring {
             revisionID: "rev-1",
             status: .draft,
             systemPrompt: systemPrompt,
-            contentHash: EvaluationPromptStore.contentHash(systemPrompt: systemPrompt),
+            contentHash: try EvaluationPromptStore.contentHash(systemPrompt: systemPrompt),
             createdAt: now,
             updatedAt: now
         )
@@ -53,7 +53,9 @@ public struct NullEvaluationPromptStore: EvaluationPromptStoring {
             revisionID: resolvedRevisionID,
             status: .frozen,
             systemPrompt: EvaluationPromptStore.builtInBaselineSystemPrompt,
-            contentHash: EvaluationPromptStore.contentHash(systemPrompt: EvaluationPromptStore.builtInBaselineSystemPrompt),
+            contentHash: try EvaluationPromptStore.contentHash(
+                systemPrompt: EvaluationPromptStore.builtInBaselineSystemPrompt
+            ),
             createdAt: now,
             updatedAt: now
         )

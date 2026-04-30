@@ -34,7 +34,8 @@ struct EvaluationPromptStoreTests {
         #expect(revision.systemPrompt.contains("周一晚上11点下飞机"))
         #expect(revision.systemPrompt.contains("周二晚上7点上飞机"))
         #expect(revision.systemPrompt.contains("同事/朋友/表姐"))
-        #expect(revision.contentHash == EvaluationPromptStore.contentHash(systemPrompt: revision.systemPrompt))
+        let expectedContentHash = try EvaluationPromptStore.contentHash(systemPrompt: revision.systemPrompt)
+        #expect(revision.contentHash == expectedContentHash)
         #expect(revision.contentHash.hasPrefix("sha256:"))
 
         let resolved = try store.resolveForRun()

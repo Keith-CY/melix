@@ -1674,12 +1674,7 @@ class EvaluationCore:
         runs_root = self._jobs_root / "runs"
         runs_root.mkdir(parents=True, exist_ok=True)
         with self._job_id_lock:
-            existing = sorted(
-                int(path.name.removeprefix("eval-"))
-                for path in runs_root.iterdir()
-                if path.is_dir() and path.name.startswith("eval-") and path.name.removeprefix("eval-").isdigit()
-            )
-            next_index = (existing[-1] + 1) if existing else 1
+            next_index = 1
             while True:
                 job_id = f"eval-{next_index:04d}"
                 try:

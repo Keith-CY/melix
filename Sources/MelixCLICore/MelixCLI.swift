@@ -6198,7 +6198,7 @@ public actor MelixCLIRunner {
         options: EvalRunOptions,
         suites: [String]
     ) async throws -> [ControlPlaneEvaluationResult] {
-        let remoteTargetOptions = effectiveRemoteTargetOptions(for: options)
+        let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: options)
         let resolvedRemoteTargets: [ControlPlaneEvaluationRequest.RemoteTarget?] = try remoteTargetOptions.isEmpty
             ? [nil]
             : remoteTargetOptions.map {
@@ -6308,10 +6308,6 @@ public actor MelixCLIRunner {
             ]
         }
         return []
-    }
-
-    private func effectiveRemoteTargetOptions(for options: EvalRunOptions) -> [EvalRemoteTargetOptions] {
-        Self.effectiveRemoteTargetOptions(for: options)
     }
 
     private func runEvaluationRequestsConcurrently(

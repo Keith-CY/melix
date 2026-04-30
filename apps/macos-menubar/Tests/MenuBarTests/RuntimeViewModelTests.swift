@@ -305,6 +305,32 @@ struct RuntimeViewModelTests {
         #expect(try NullRemoteServerStore().list().isEmpty)
     }
 
+    @Test("null evaluation prompt store materializes deterministic revision hashes")
+    func nullEvaluationPromptStoreMaterializesDeterministicRevisionHashes() throws {
+        let store = NullEvaluationPromptStore()
+
+        let created = try store.create(
+            promptID: "custom",
+            title: "Custom",
+            systemPrompt: "Extract events."
+        )
+        let createdRevision = try #require(created.latestRevision)
+        let createdHash = try EvaluationPromptStore.contentHash(systemPrompt: "Extract events.")
+        #expect(createdRevision.contentHash == createdHash)
+
+        let updated = try store.update(promptID: "custom", systemPrompt: "Extract more events.")
+        let updatedRevision = try #require(updated.latestRevision)
+        let updatedHash = try EvaluationPromptStore.contentHash(systemPrompt: "Extract more events.")
+        #expect(updatedRevision.contentHash == updatedHash)
+
+        let frozen = try store.freeze(promptID: "custom", revisionID: "rev-9")
+        let frozenRevision = try #require(frozen.latestRevision)
+        let frozenHash = try EvaluationPromptStore.contentHash(
+            systemPrompt: EvaluationPromptStore.builtInBaselineSystemPrompt
+        )
+        #expect(frozenRevision.contentHash == frozenHash)
+    }
+
     @Test("evaluation prompt drafts save freeze and create new draft revisions")
     @MainActor
     func evaluationPromptDraftsSaveFreezeAndCreateNewDraftRevisions() throws {

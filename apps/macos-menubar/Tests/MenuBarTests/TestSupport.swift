@@ -253,7 +253,7 @@ final class FakeEvaluationPromptStore: EvaluationPromptStoring, @unchecked Senda
             revisionID: revisionID,
             status: status,
             systemPrompt: systemPrompt,
-            contentHash: EvaluationPromptStore.contentHash(systemPrompt: systemPrompt),
+            contentHash: try! EvaluationPromptStore.contentHash(systemPrompt: systemPrompt),
             createdAt: now,
             updatedAt: now
         )

@@ -506,7 +506,7 @@ public struct EvaluationPromptStore: Sendable {
             throw MelixCLIError.runtime("Evaluation prompt \(normalizedID) already exists.")
         }
         let now = Date()
-        let revision = Self.makeRevision(
+        let revision = try Self.makeRevision(
             revisionID: "rev-1",
             status: .draft,
             systemPrompt: normalizedPrompt,
@@ -550,7 +550,7 @@ public struct EvaluationPromptStore: Sendable {
            revisions[latestIndex].status == .draft
         {
             let existing = revisions[latestIndex]
-            revisions[latestIndex] = Self.makeRevision(
+            revisions[latestIndex] = try Self.makeRevision(
                 revisionID: existing.revisionID,
                 status: .draft,
                 systemPrompt: normalizedPrompt,
@@ -561,7 +561,7 @@ public struct EvaluationPromptStore: Sendable {
         } else {
             let baseExamples = prompt.latestRevision?.examples ?? []
             let revisionID = "rev-\(revisions.count + 1)"
-            let revision = Self.makeRevision(
+            let revision = try Self.makeRevision(
                 revisionID: revisionID,
                 status: .draft,
                 systemPrompt: normalizedPrompt,
@@ -611,7 +611,7 @@ public struct EvaluationPromptStore: Sendable {
         guard let revisionIndex = revisions.firstIndex(where: { $0.revisionID == revision.revisionID }) else {
             throw MelixCLIError.runtime("Evaluation prompt \(normalizedID) revision \(revision.revisionID) was not found.")
         }
-        revisions[revisionIndex] = Self.makeRevision(
+        revisions[revisionIndex] = try Self.makeRevision(
             revisionID: revision.revisionID,
             status: .frozen,
             systemPrompt: revision.systemPrompt,
@@ -668,14 +668,14 @@ public struct EvaluationPromptStore: Sendable {
         scoringMode: String = eventExtractionScoringMode,
         systemPrompt: String,
         examples: [EvaluationPromptExample] = []
-    ) -> String {
+    ) throws -> String {
         let payload = EvaluationPromptHashPayload(
             taskKind: taskKind,
             scoringMode: scoringMode,
             systemPrompt: systemPrompt,
             examples: examples
         )
-        let data = (try? hashEncoder.encode(payload)) ?? Data()
+        let data = try hashEncoder.encode(payload)
         let digest = SHA256.hash(data: data)
         return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -689,7 +689,7 @@ public struct EvaluationPromptStore: Sendable {
     }
 
     public static var builtInBaselinePrompt: EvaluationPrompt {
-        let legacyRevision = makeRevision(
+        let legacyRevision = try! makeRevision(
             revisionID: builtInLegacyBaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInLegacyBaselineSystemPrompt,
@@ -697,7 +697,7 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
-        let stage1Revision = makeRevision(
+        let stage1Revision = try! makeRevision(
             revisionID: builtInStage1BaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInStage1BaselineSystemPrompt,
@@ -705,7 +705,7 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
-        let directJSONRevision = makeRevision(
+        let directJSONRevision = try! makeRevision(
             revisionID: builtInDirectJSONBaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInDirectJSONBaselineSystemPrompt,
@@ -713,7 +713,7 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
-        let feedbackRevision = makeRevision(
+        let feedbackRevision = try! makeRevision(
             revisionID: builtInFeedbackBaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInFeedbackBaselineSystemPrompt,
@@ -721,7 +721,7 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
-        let feedbackV5Revision = makeRevision(
+        let feedbackV5Revision = try! makeRevision(
             revisionID: builtInFeedbackV5BaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInFeedbackV5BaselineSystemPrompt,
@@ -729,7 +729,7 @@ public struct EvaluationPromptStore: Sendable {
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
-        let revision = makeRevision(
+        let revision = try! makeRevision(
             revisionID: builtInBaselineRevisionID,
             status: .frozen,
             systemPrompt: builtInBaselineSystemPrompt,
@@ -769,13 +769,13 @@ public struct EvaluationPromptStore: Sendable {
         examples: [EvaluationPromptExample],
         createdAt: Date,
         updatedAt: Date
-    ) -> EvaluationPromptRevision {
+    ) throws -> EvaluationPromptRevision {
         EvaluationPromptRevision(
             revisionID: revisionID,
             status: status,
             systemPrompt: systemPrompt,
             examples: examples,
-            contentHash: contentHash(systemPrompt: systemPrompt, examples: examples),
+            contentHash: try contentHash(systemPrompt: systemPrompt, examples: examples),
             createdAt: createdAt,
             updatedAt: updatedAt
         )

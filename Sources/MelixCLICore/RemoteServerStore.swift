@@ -246,17 +246,22 @@ public struct RemoteServerStore: Sendable {
     }
 
     public func get(id: String) throws -> RemoteServer? {
-        let normalizedID = Self.normalizedRequired(id, fieldName: "remote_server_id")
+        let normalizedID = try Self.normalizedRequired(id, fieldName: "remote_server_id")
         return try list().first { $0.id == normalizedID }
     }
 
     @discardableResult
     public func save(_ mutation: RemoteServerMutation) throws -> RemoteServer {
-        let normalizedID = Self.normalizedRequired(mutation.id, fieldName: "remote_server_id")
-        let normalizedTitle = Self.normalizedRequired(mutation.title, fieldName: "title")
+        let normalizedID = try Self.normalizedRequired(mutation.id, fieldName: "remote_server_id")
+        let normalizedTitle = try Self.normalizedRequired(mutation.title, fieldName: "title")
         let normalizedProvider = mutation.providerPreset.providerKind
-        let normalizedBaseURL = mutation.providerPreset.fixedBaseURL ?? Self.normalizedBaseURL(mutation.baseURL)
-        let normalizedDefaultModel = Self.normalizedRequired(mutation.defaultModelID, fieldName: "default_model_id")
+        let normalizedBaseURL: String
+        if let fixedBaseURL = mutation.providerPreset.fixedBaseURL {
+            normalizedBaseURL = fixedBaseURL
+        } else {
+            normalizedBaseURL = try Self.normalizedBaseURL(mutation.baseURL)
+        }
+        let normalizedDefaultModel = try Self.normalizedRequired(mutation.defaultModelID, fieldName: "default_model_id")
         var document = try loadDocument()
         let existing = document.servers.first { $0.id == normalizedID }
         let now = Date()
@@ -293,7 +298,7 @@ public struct RemoteServerStore: Sendable {
     }
 
     public func remove(id: String) throws {
-        let normalizedID = Self.normalizedRequired(id, fieldName: "remote_server_id")
+        let normalizedID = try Self.normalizedRequired(id, fieldName: "remote_server_id")
         var document = try loadDocument()
         document.servers.removeAll { $0.id == normalizedID }
         try saveDocument(document)
@@ -317,14 +322,16 @@ public struct RemoteServerStore: Sendable {
         try melixHome.writeAtomically(data, to: melixHome.remoteServersFileURL)
     }
 
-    private static func normalizedRequired(_ value: String, fieldName: String) -> String {
+    private static func normalizedRequired(_ value: String, fieldName: String) throws -> String {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        precondition(normalized.isEmpty == false, "\(fieldName) must not be empty")
+        guard normalized.isEmpty == false else {
+            throw MelixCLIError.missingRequired("\(fieldName) must not be empty.")
+        }
         return normalized
     }
 
-    private static func normalizedBaseURL(_ value: String) -> String {
-        var normalized = normalizedRequired(value, fieldName: "base_url")
+    private static func normalizedBaseURL(_ value: String) throws -> String {
+        var normalized = try normalizedRequired(value, fieldName: "base_url")
         while normalized.hasSuffix("/") {
             normalized.removeLast()
         }
@@ -364,8 +371,12 @@ public struct RemoteServerAPIKeyStore: Sendable {
     public func saveAPIKey(_ apiKey: String, remoteServerID: String) throws -> RemoteServerAPIKeyRecord {
         let normalizedID = remoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        precondition(normalizedID.isEmpty == false, "remote_server_id must not be empty")
-        precondition(normalizedAPIKey.isEmpty == false, "api_key must not be empty")
+        guard normalizedID.isEmpty == false else {
+            throw MelixCLIError.missingRequired("remote_server_id must not be empty.")
+        }
+        guard normalizedAPIKey.isEmpty == false else {
+            throw MelixCLIError.missingRequired("api_key must not be empty.")
+        }
 
         var document = try loadDocument()
         let record = RemoteServerAPIKeyRecord(remoteServerID: normalizedID, apiKey: normalizedAPIKey)
