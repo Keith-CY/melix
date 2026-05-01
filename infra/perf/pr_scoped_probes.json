@@ -1,0 +1,55 @@
+[
+  {
+    "id": "benchmark-evaluation-report-running-aggregates",
+    "name": "Benchmark evaluation report running aggregates",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py",
+      "services/mlx-worker-python/tests/test_benchmark_evaluation_report.py",
+      "scripts/benchmark_evaluation_report.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_benchmark_evaluation_report.py",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_benchmark_evaluation_report.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py services/mlx-worker-python/tests/test_benchmark_evaluation_report.py",
+    "probe_impl": "benchmark_evaluation_report",
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
+    "id": "closure-audit-probe-source-short-circuit",
+    "name": "Closure audit probe-source short circuit",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/closure_audit.py",
+      "services/mlx-worker-python/tests/test_closure_audit.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_closure_audit.py",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_closure_audit.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/productization/closure_audit.py services/mlx-worker-python/tests/test_closure_audit.py",
+    "probe_impl": "closure_audit",
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "probe_file_reads_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  }
+]
